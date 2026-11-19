@@ -1,0 +1,4 @@
+{
+  "sha256": "a236c4abcdfc7fe58b6bb8f423999dcf106c9f5c545e74d76c1e0bd2b5ddfdd2",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"0.882\" timestamp=\"2026-11-02T16:11:08.025425-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\"><testcase classname=\"Tests.QA.test_project_chat_uat_support\" name=\"test_approval_readiness_waits_for_children_without_filtering_rows\" time=\"0.851\" /></testsuite></testsuites>"
+}

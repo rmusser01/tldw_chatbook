@@ -1,0 +1,55 @@
+FFFFFFFF                                                                 [100%]
+=================================== FAILURES ===================================
+_____ test_direct_admission_retains_source_across_hook_await[scope-queue] ______
+Tests/Chat/test_console_prompt_mixin_admission.py:889: in test_direct_admission_retains_source_across_hook_await
+    assert isinstance(result, MixinSourceChangedError)
+E   AssertionError: assert False
+E    +  where False = isinstance(PromptQueueMutationResult(status=<QueueMutationStatus.APPLIED: 'applied'>, session_id='chat-a', revision=2, total_count=1, entry_id='1c3dcdfdba594bfa80236b28fa1aad80', claim_entry_id=None, detail=None), MixinSourceChangedError)
+_____ test_direct_admission_retains_source_across_hook_await[scope-manual] _____
+Tests/Chat/test_console_prompt_mixin_admission.py:889: in test_direct_admission_retains_source_across_hook_await
+    assert isinstance(result, MixinSourceChangedError)
+E   AssertionError: assert False
+E    +  where False = isinstance(ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='reply-1', session_closed=False, session_id='...manual'>, queue_entry_id=None, committed_context_epoch=0, preparation_id=None, provider_started=False, queue_notice=''), MixinSourceChangedError)
+____ test_direct_admission_retains_source_across_hook_await[backend-queue] _____
+Tests/Chat/test_console_prompt_mixin_admission.py:889: in test_direct_admission_retains_source_across_hook_await
+    assert isinstance(result, MixinSourceChangedError)
+E   AssertionError: assert False
+E    +  where False = isinstance(PromptQueueMutationResult(status=<QueueMutationStatus.APPLIED: 'applied'>, session_id='chat-a', revision=2, total_count=1, entry_id='5e6091a84d2e4061a4d7dd66edca862e', claim_entry_id=None, detail=None), MixinSourceChangedError)
+____ test_direct_admission_retains_source_across_hook_await[backend-manual] ____
+Tests/Chat/test_console_prompt_mixin_admission.py:889: in test_direct_admission_retains_source_across_hook_await
+    assert isinstance(result, MixinSourceChangedError)
+E   AssertionError: assert False
+E    +  where False = isinstance(ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='reply-1', session_closed=False, session_id='...manual'>, queue_entry_id=None, committed_context_epoch=0, preparation_id=None, provider_started=False, queue_notice=''), MixinSourceChangedError)
+____ test_direct_admission_retains_source_across_hook_await[database-queue] ____
+Tests/Chat/test_console_prompt_mixin_admission.py:889: in test_direct_admission_retains_source_across_hook_await
+    assert isinstance(result, MixinSourceChangedError)
+E   AssertionError: assert False
+E    +  where False = isinstance(PromptQueueMutationResult(status=<QueueMutationStatus.APPLIED: 'applied'>, session_id='chat-a', revision=2, total_count=1, entry_id='b2e5067fe5a94a4eaeeb8154b463cc56', claim_entry_id=None, detail=None), MixinSourceChangedError)
+___ test_direct_admission_retains_source_across_hook_await[database-manual] ____
+Tests/Chat/test_console_prompt_mixin_admission.py:889: in test_direct_admission_retains_source_across_hook_await
+    assert isinstance(result, MixinSourceChangedError)
+E   AssertionError: assert False
+E    +  where False = isinstance(ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='reply-1', session_closed=False, session_id='...manual'>, queue_entry_id=None, committed_context_epoch=0, preparation_id=None, provider_started=False, queue_notice=''), MixinSourceChangedError)
+______ test_direct_admission_retains_source_across_hook_await[path-queue] ______
+Tests/Chat/test_console_prompt_mixin_admission.py:889: in test_direct_admission_retains_source_across_hook_await
+    assert isinstance(result, MixinSourceChangedError)
+E   AssertionError: assert False
+E    +  where False = isinstance(PromptQueueMutationResult(status=<QueueMutationStatus.APPLIED: 'applied'>, session_id='chat-a', revision=2, total_count=1, entry_id='543192f2048145658ec845230c87740c', claim_entry_id=None, detail=None), MixinSourceChangedError)
+_____ test_direct_admission_retains_source_across_hook_await[path-manual] ______
+Tests/Chat/test_console_prompt_mixin_admission.py:889: in test_direct_admission_retains_source_across_hook_await
+    assert isinstance(result, MixinSourceChangedError)
+E   AssertionError: assert False
+E    +  where False = isinstance(ConsoleSubmitResult(accepted=True, should_clear_draft=True, visible_copy='reply-1', session_closed=False, session_id='...manual'>, queue_entry_id=None, committed_context_epoch=0, preparation_id=None, provider_started=False, queue_notice=''), MixinSourceChangedError)
+============================= slowest 25 durations =============================
+
+(24 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[scope-queue]
+FAILED Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[scope-manual]
+FAILED Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[backend-queue]
+FAILED Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[backend-manual]
+FAILED Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[database-queue]
+FAILED Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[database-manual]
+FAILED Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[path-queue]
+FAILED Tests/Chat/test_console_prompt_mixin_admission.py::test_direct_admission_retains_source_across_hook_await[path-manual]
+8 failed in 2.00s

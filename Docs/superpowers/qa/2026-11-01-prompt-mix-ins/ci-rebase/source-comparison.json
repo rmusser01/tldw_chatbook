@@ -1,0 +1,58 @@
+{
+  "Tests/Performance/test_ui_latency_guardrails.py": {
+    "same_as_target": true,
+    "current_bytes": 13612,
+    "baseline_bytes": 13612,
+    "current_sha256": "9c7b218ee6fcacc94c6e16229577280ef49437c4d384f04676d3f6eb5038fca4",
+    "baseline_sha256": "9c7b218ee6fcacc94c6e16229577280ef49437c4d384f04676d3f6eb5038fca4",
+    "archive_matches_git": true
+  },
+  "Tests/private_profile.py": {
+    "same_as_target": true,
+    "current_bytes": 18397,
+    "baseline_bytes": 18397,
+    "current_sha256": "a9df402fd0d91f7f9585e2ff278b419d22385fd7e3ce48e98a0f739a039341a6",
+    "baseline_sha256": "a9df402fd0d91f7f9585e2ff278b419d22385fd7e3ce48e98a0f739a039341a6",
+    "archive_matches_git": true
+  },
+  "tldw_chatbook/UI/Screens/llm_screen.py": {
+    "same_as_target": true,
+    "current_bytes": 208542,
+    "baseline_bytes": 208542,
+    "current_sha256": "af4a5d8f52b8f9b95897257c7d7392736de396eb3e025853c31489f0702de999",
+    "baseline_sha256": "af4a5d8f52b8f9b95897257c7d7392736de396eb3e025853c31489f0702de999",
+    "archive_matches_git": true
+  },
+  "tldw_chatbook/UI/Screens/lab_frame.py": {
+    "same_as_target": true,
+    "current_bytes": 23906,
+    "baseline_bytes": 23906,
+    "current_sha256": "d26b80c511dfdb58e5e19806e5d54fd5cb5c0f56cd811327f6b290fa35af28b6",
+    "baseline_sha256": "d26b80c511dfdb58e5e19806e5d54fd5cb5c0f56cd811327f6b290fa35af28b6",
+    "archive_matches_git": true
+  },
+  "tldw_chatbook/UI/LLM_Management_Window.py": {
+    "same_as_target": true,
+    "current_bytes": 97337,
+    "baseline_bytes": 97337,
+    "current_sha256": "764739201f95121263e21e275b7917a85bd76b1835b74f71458235b7c0dea45f",
+    "baseline_sha256": "764739201f95121263e21e275b7917a85bd76b1835b74f71458235b7c0dea45f",
+    "archive_matches_git": true
+  },
+  "tldw_chatbook/app.py": {
+    "same_as_target": true,
+    "current_bytes": 260544,
+    "baseline_bytes": 260544,
+    "current_sha256": "ccf3f303e10f3f92187b9a574dc672c8f79498586c7acb61689d5a09cee43422",
+    "baseline_sha256": "ccf3f303e10f3f92187b9a574dc672c8f79498586c7acb61689d5a09cee43422",
+    "archive_matches_git": true
+  },
+  "tldw_chatbook/css/tldw_cli_modular.tcss": {
+    "same_as_target": false,
+    "current_bytes": 425664,
+    "baseline_bytes": 424545,
+    "current_sha256": "e8e856c3b61ef03e0237013d2080de4ef2013f83be710c3ff225c1fb16460343",
+    "baseline_sha256": "9310aea7430a788e87c1b9a385fc4f1fdf5649173efb97bb732108ce933676e2",
+    "archive_matches_git": true
+  }
+}

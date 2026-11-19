@@ -151,6 +151,7 @@ def _page_status(screen) -> str:
     return str(screen.query_one("#library-media-page-status", Static).renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_previous_page_returns_to_the_page_before_it() -> None:
     """"‹ Previous" walks the exact pager back, one page per press.
@@ -201,6 +202,7 @@ async def test_media_previous_page_returns_to_the_page_before_it() -> None:
         assert len(screen.query(".library-media-row")) == 20
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_review_selected_orders_exactly_the_selected_ids() -> None:
     """"Review" pins the CURRENT Select-mode selection, not the whole page.
@@ -249,6 +251,7 @@ async def test_media_review_selected_orders_exactly_the_selected_ids() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_open_original_opens_the_stored_url(
     monkeypatch: pytest.MonkeyPatch,

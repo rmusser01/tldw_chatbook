@@ -5,8 +5,8 @@ This module contains shared data structures used across the RAG system
 to avoid circular imports.
 """
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 
 @dataclass
@@ -18,6 +18,9 @@ class IndexingResult:
     time_taken: float
     success: bool = True
     error: Optional[str] = None
+    metadata: dict[str, Any] = field(
+        default_factory=dict, kw_only=True, repr=False, compare=False
+    )
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""

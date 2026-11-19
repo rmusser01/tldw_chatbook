@@ -22,6 +22,8 @@ from tldw_chatbook.Local_Ingestion.transcription_service import (
     TranscriptionService,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _write_silent_wav(path) -> None:
     with wave.open(str(path), "wb") as wav_file:

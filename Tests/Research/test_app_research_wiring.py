@@ -19,6 +19,7 @@ import pytest
 from Tests.UI.app_factory import _build_test_app
 
 
+@pytest.mark.bootstrap_profile
 def test_boot_wires_full_research_service_set():
     app = _build_test_app()
 
@@ -30,6 +31,7 @@ def test_boot_wires_full_research_service_set():
     assert app.research_search_scope_service is not None
 
 
+@pytest.mark.bootstrap_profile
 def test_second_wire_research_services_call_reuses_existing_services():
     app = _build_test_app()
 

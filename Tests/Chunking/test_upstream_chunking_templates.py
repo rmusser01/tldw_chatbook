@@ -13,8 +13,10 @@ import pytest
 # Skipped: TERMINAL disposition (2026-08-23 program close): templates and the template endpoints remain server-side by #2's ruling — this suite imports the server repo's FastAPI router/schemas (tldw_Server_API), the not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry; the propositions vendoring does not change it; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7. Terminal disposition (2026-08-23 program close):
 # pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
 # this block verbatim.
-pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: TERMINAL disposition (2026-08-23 program close): templates and the template endpoints remain server-side by #2's ruling — this suite imports the server repo's FastAPI router/schemas (tldw_Server_API), the not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry; the propositions vendoring does not change it; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7")
+pytest.importorskip(
+    "tldw_chatbook.NoSuchDeferredModule",
+    reason="skipped: TERMINAL disposition (2026-08-23 program close): templates and the template endpoints remain server-side by #2's ruling — this suite imports the server repo's FastAPI router/schemas (tldw_Server_API), the not-vendored template_initialization (spec §13 decision 5), and _shims/DB_Management + _shims/AuthNZ fixtures chatbook does not carry; the propositions vendoring does not change it; chatbook-side parity is pinned by test_template_runtime/test_chunking_interop_v7",
+)
 from pathlib import Path
 from typing import Dict, Any, List
 from unittest.mock import patch, MagicMock
@@ -25,16 +27,24 @@ os.environ["SINGLE_USER_API_KEY"] = "test-api-key-that-is-long-enough"
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
-from tldw_chatbook.Chunking._shims.DB_Management.media_db.native_class import MediaDatabase
+from tldw_chatbook.Chunking._shims.DB_Management.media_db.native_class import (
+    MediaDatabase,
+)
 from tldw_chatbook.Chunking._shims.AuthNZ.settings import get_settings
-from tldw_chatbook.Chunking.engine.templates import TemplateProcessor, ChunkingTemplate, TemplateStage
+from tldw_chatbook.Chunking.engine.templates import (
+    TemplateProcessor,
+    ChunkingTemplate,
+    TemplateStage,
+)
 from tldw_chatbook.Chunking.engine import template_initialization as template_init
 from tldw_chatbook.Chunking.engine.template_initialization import (
     load_builtin_templates,
     initialize_chunking_templates,
     ensure_templates_initialized,
 )
-from tldw_Server_API.app.api.v1.endpoints.chunking_templates import router as templates_router
+from tldw_Server_API.app.api.v1.endpoints.chunking_templates import (
+    router as templates_router,
+)
 from tldw_Server_API.app.api.v1.schemas.chunking_templates_schemas import (
     ChunkingTemplateCreate,
     ChunkingTemplateResponse,
@@ -91,7 +101,9 @@ def test_client(temp_db):
 @pytest.fixture
 def auth_headers():
     """Authentication headers for API requests."""
-    api_key = get_settings().SINGLE_USER_API_KEY or os.getenv("SINGLE_USER_API_KEY", "test-api-key-that-is-long-enough")
+    api_key = get_settings().SINGLE_USER_API_KEY or os.getenv(
+        "SINGLE_USER_API_KEY", "test-api-key-that-is-long-enough"
+    )
     return {"X-API-KEY": api_key, "Content-Type": "application/json"}
 
 
@@ -102,7 +114,9 @@ def sample_template():
         "name": "test_template",
         "description": "Test template for unit tests",
         "tags": ["test", "sample"],
-        "preprocessing": [{"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}],
+        "preprocessing": [
+            {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}
+        ],
         "chunking": {"method": "sentences", "config": {"max_size": 5, "overlap": 1}},
         "postprocessing": [{"operation": "filter_empty", "config": {"min_length": 10}}],
     }
@@ -135,7 +149,9 @@ class TestDatabaseOperations:
 
         # Create first template
         db.create_chunking_template(
-            name="unique_template", template_json='{"chunking": {"method": "words"}}', description="First template"
+            name="unique_template",
+            template_json='{"chunking": {"method": "words"}}',
+            description="First template",
         )
 
         # Try to create duplicate
@@ -154,7 +170,9 @@ class TestDatabaseOperations:
 
         # Create template
         created = db.create_chunking_template(
-            name="get_test", template_json='{"chunking": {"method": "words"}}', description="Get test"
+            name="get_test",
+            template_json='{"chunking": {"method": "words"}}',
+            description="Get test",
         )
 
         # Get by name
@@ -198,12 +216,16 @@ class TestDatabaseOperations:
 
         # Create template
         created = db.create_chunking_template(
-            name="update_test", template_json='{"chunking": {"method": "words"}}', description="Original description"
+            name="update_test",
+            template_json='{"chunking": {"method": "words"}}',
+            description="Original description",
         )
 
         # Update it
         result = db.update_chunking_template(
-            name="update_test", description="Updated description", tags=["updated", "test"]
+            name="update_test",
+            description="Updated description",
+            tags=["updated", "test"],
         )
 
         assert result is True
@@ -229,7 +251,9 @@ class TestDatabaseOperations:
 
         # Try to update it
         with pytest.raises(Exception) as exc_info:
-            db.update_chunking_template(name="builtin_test", description="Modified builtin")
+            db.update_chunking_template(
+                name="builtin_test", description="Modified builtin"
+            )
 
         assert "built-in" in str(exc_info.value).lower()
 
@@ -239,7 +263,9 @@ class TestDatabaseOperations:
 
         # Create template
         db.create_chunking_template(
-            name="delete_test", template_json='{"chunking": {"method": "words"}}', description="To be deleted"
+            name="delete_test",
+            template_json='{"chunking": {"method": "words"}}',
+            description="To be deleted",
         )
 
         # Delete it
@@ -302,7 +328,9 @@ class TestTemplateInitialization:
         initialize_chunking_templates(db)
 
         # Check that built-in templates exist
-        templates = db.list_chunking_templates(include_builtin=True, include_custom=False)
+        templates = db.list_chunking_templates(
+            include_builtin=True, include_custom=False
+        )
         assert len(templates) > 0
 
         # Verify academic_paper template
@@ -311,7 +339,9 @@ class TestTemplateInitialization:
         assert academic["is_builtin"] is True
         assert "research" in academic["tags"]
 
-    def test_initialize_chunking_templates_uses_managed_media_database_for_owned_db(self, monkeypatch, tmp_path):
+    def test_initialize_chunking_templates_uses_managed_media_database_for_owned_db(
+        self, monkeypatch, tmp_path
+    ):
         events = []
         db_path = str(tmp_path / "chunking-templates.db")
 
@@ -340,7 +370,9 @@ class TestTemplateInitialization:
         monkeypatch.setattr(
             template_init,
             "managed_media_database",
-            lambda client_id, **kwargs: FakeManagedDbContext(client_id=client_id, **kwargs),
+            lambda client_id, **kwargs: FakeManagedDbContext(
+                client_id=client_id, **kwargs
+            ),
         )
 
         count = template_init.initialize_chunking_templates(
@@ -350,13 +382,18 @@ class TestTemplateInitialization:
 
         assert count == 1
         assert events == [
-            ("managed", {"client_id": "template-test", "db_path": db_path, "initialize": False}),
+            (
+                "managed",
+                {"client_id": "template-test", "db_path": db_path, "initialize": False},
+            ),
             "enter",
             ("seed", [{"name": "built-in", "template": {"name": "built-in"}}]),
             "exit",
         ]
 
-    def test_update_builtin_templates_uses_managed_media_database_for_owned_db(self, monkeypatch, tmp_path):
+    def test_update_builtin_templates_uses_managed_media_database_for_owned_db(
+        self, monkeypatch, tmp_path
+    ):
         events = []
         db_path = str(tmp_path / "chunking-templates.db")
 
@@ -400,7 +437,9 @@ class TestTemplateInitialization:
         monkeypatch.setattr(
             template_init,
             "managed_media_database",
-            lambda client_id, **kwargs: FakeManagedDbContext(client_id=client_id, **kwargs),
+            lambda client_id, **kwargs: FakeManagedDbContext(
+                client_id=client_id, **kwargs
+            ),
         )
 
         count = template_init.update_builtin_templates(
@@ -410,14 +449,19 @@ class TestTemplateInitialization:
 
         assert count == 1
         assert events == [
-            ("managed", {"client_id": "template-test", "db_path": db_path, "initialize": False}),
+            (
+                "managed",
+                {"client_id": "template-test", "db_path": db_path, "initialize": False},
+            ),
             "enter",
             ("get", "built-in"),
             ("update", "built-in"),
             "exit",
         ]
 
-    def test_ensure_templates_initialized_uses_managed_media_database_for_existing_check(self, monkeypatch, tmp_path):
+    def test_ensure_templates_initialized_uses_managed_media_database_for_existing_check(
+        self, monkeypatch, tmp_path
+    ):
         events = []
         db_path = str(tmp_path / "chunking-templates.db")
 
@@ -438,18 +482,25 @@ class TestTemplateInitialization:
                 events.append("exit")
                 return False
 
-        monkeypatch.setattr(template_init, "initialize_chunking_templates", lambda **_kwargs: 0)
+        monkeypatch.setattr(
+            template_init, "initialize_chunking_templates", lambda **_kwargs: 0
+        )
         monkeypatch.setattr(
             template_init,
             "managed_media_database",
-            lambda client_id, **kwargs: FakeManagedDbContext(client_id=client_id, **kwargs),
+            lambda client_id, **kwargs: FakeManagedDbContext(
+                client_id=client_id, **kwargs
+            ),
         )
 
         result = template_init.ensure_templates_initialized(db_path=db_path)
 
         assert result is True
         assert events == [
-            ("managed", {"client_id": "system", "db_path": db_path, "initialize": False}),
+            (
+                "managed",
+                {"client_id": "system", "db_path": db_path, "initialize": False},
+            ),
             "enter",
             ("list", {"include_builtin": True, "include_custom": False}),
             "exit",
@@ -482,7 +533,9 @@ class TestAPIEndpoints:
         assert data["total"] >= 1
 
         # Test filtering
-        response = test_client.get("/api/v1/chunking/templates?tags=api", headers=auth_headers)
+        response = test_client.get(
+            "/api/v1/chunking/templates?tags=api", headers=auth_headers
+        )
         assert response.status_code == 200
         data = response.json()
         assert all("api" in t["tags"] for t in data["templates"])
@@ -493,11 +546,15 @@ class TestAPIEndpoints:
 
         # Create template
         db.create_chunking_template(
-            name="get_api_test", template_json='{"chunking": {"method": "words"}}', description="Get API test"
+            name="get_api_test",
+            template_json='{"chunking": {"method": "words"}}',
+            description="Get API test",
         )
 
         # Get existing template
-        response = test_client.get("/api/v1/chunking/templates/get_api_test", headers=auth_headers)
+        response = test_client.get(
+            "/api/v1/chunking/templates/get_api_test", headers=auth_headers
+        )
         assert response.status_code == 200
 
         data = response.json()
@@ -505,7 +562,9 @@ class TestAPIEndpoints:
         assert data["description"] == "Get API test"
 
         # Get non-existent template
-        response = test_client.get("/api/v1/chunking/templates/non_existent", headers=auth_headers)
+        response = test_client.get(
+            "/api/v1/chunking/templates/non_existent", headers=auth_headers
+        )
         assert response.status_code == 404
 
     def test_create_template_endpoint(self, test_client, auth_headers, sample_template):
@@ -522,7 +581,9 @@ class TestAPIEndpoints:
             },
         }
 
-        response = test_client.post("/api/v1/chunking/templates", json=request_data, headers=auth_headers)
+        response = test_client.post(
+            "/api/v1/chunking/templates", json=request_data, headers=auth_headers
+        )
         assert response.status_code == 201
 
         data = response.json()
@@ -531,7 +592,9 @@ class TestAPIEndpoints:
         assert data["is_builtin"] is False
 
         # Try to create duplicate
-        response = test_client.post("/api/v1/chunking/templates", json=request_data, headers=auth_headers)
+        response = test_client.post(
+            "/api/v1/chunking/templates", json=request_data, headers=auth_headers
+        )
         assert response.status_code == 409
 
     def test_update_template_endpoint(self, test_client, auth_headers, temp_db):
@@ -540,13 +603,19 @@ class TestAPIEndpoints:
 
         # Create template first
         db.create_chunking_template(
-            name="update_api_test", template_json='{"chunking": {"method": "words"}}', description="Original"
+            name="update_api_test",
+            template_json='{"chunking": {"method": "words"}}',
+            description="Original",
         )
 
         # Update via API
         update_data = {"description": "Updated via API", "tags": ["updated", "api"]}
 
-        response = test_client.put("/api/v1/chunking/templates/update_api_test", json=update_data, headers=auth_headers)
+        response = test_client.put(
+            "/api/v1/chunking/templates/update_api_test",
+            json=update_data,
+            headers=auth_headers,
+        )
         assert response.status_code == 200
 
         data = response.json()
@@ -554,7 +623,11 @@ class TestAPIEndpoints:
         assert data["tags"] == ["updated", "api"]
 
         # Update non-existent
-        response = test_client.put("/api/v1/chunking/templates/non_existent", json=update_data, headers=auth_headers)
+        response = test_client.put(
+            "/api/v1/chunking/templates/non_existent",
+            json=update_data,
+            headers=auth_headers,
+        )
         assert response.status_code == 404
 
     def test_delete_template_endpoint(self, test_client, auth_headers, temp_db):
@@ -563,19 +636,27 @@ class TestAPIEndpoints:
 
         # Create template first
         db.create_chunking_template(
-            name="delete_api_test", template_json='{"chunking": {"method": "words"}}', description="To delete"
+            name="delete_api_test",
+            template_json='{"chunking": {"method": "words"}}',
+            description="To delete",
         )
 
         # Delete via API
-        response = test_client.delete("/api/v1/chunking/templates/delete_api_test", headers=auth_headers)
+        response = test_client.delete(
+            "/api/v1/chunking/templates/delete_api_test", headers=auth_headers
+        )
         assert response.status_code == 204
 
         # Verify deleted
-        response = test_client.get("/api/v1/chunking/templates/delete_api_test", headers=auth_headers)
+        response = test_client.get(
+            "/api/v1/chunking/templates/delete_api_test", headers=auth_headers
+        )
         assert response.status_code == 404
 
         # Delete non-existent
-        response = test_client.delete("/api/v1/chunking/templates/non_existent", headers=auth_headers)
+        response = test_client.delete(
+            "/api/v1/chunking/templates/non_existent", headers=auth_headers
+        )
         assert response.status_code == 404
 
     def test_validate_template_endpoint(self, test_client, auth_headers):
@@ -587,7 +668,11 @@ class TestAPIEndpoints:
             "postprocessing": [],
         }
 
-        response = test_client.post("/api/v1/chunking/templates/validate", json=valid_template, headers=auth_headers)
+        response = test_client.post(
+            "/api/v1/chunking/templates/validate",
+            json=valid_template,
+            headers=auth_headers,
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["valid"] is True
@@ -596,13 +681,19 @@ class TestAPIEndpoints:
         # Invalid template (missing chunking)
         invalid_template = {"preprocessing": [{"operation": "normalize_whitespace"}]}
 
-        response = test_client.post("/api/v1/chunking/templates/validate", json=invalid_template, headers=auth_headers)
+        response = test_client.post(
+            "/api/v1/chunking/templates/validate",
+            json=invalid_template,
+            headers=auth_headers,
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["valid"] is False
         assert data["errors"] is not None
 
-    def test_validate_template_with_hierarchical_boundaries_valid(self, test_client, auth_headers):
+    def test_validate_template_with_hierarchical_boundaries_valid(
+        self, test_client, auth_headers
+    ):
         """Validate accepts hierarchical_template with a small set of safe boundaries."""
         payload = {
             "chunking": {
@@ -612,34 +703,57 @@ class TestAPIEndpoints:
                     "hierarchical": True,
                     "hierarchical_template": {
                         "boundaries": [
-                            {"kind": "header_atx", "pattern": r"^\s*#{1,6}\s+.+$", "flags": "m"},
-                            {"kind": "abstract", "pattern": r"^\s*Abstract\b", "flags": "im"},
+                            {
+                                "kind": "header_atx",
+                                "pattern": r"^\s*#{1,6}\s+.+$",
+                                "flags": "m",
+                            },
+                            {
+                                "kind": "abstract",
+                                "pattern": r"^\s*Abstract\b",
+                                "flags": "im",
+                            },
                         ]
                     },
                 },
             }
         }
-        resp = test_client.post("/api/v1/chunking/templates/validate", json=payload, headers=auth_headers)
+        resp = test_client.post(
+            "/api/v1/chunking/templates/validate", json=payload, headers=auth_headers
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["valid"] is True
         assert body.get("errors") in (None, [])
 
-    def test_validate_template_with_hierarchical_boundaries_limits(self, test_client, auth_headers):
+    def test_validate_template_with_hierarchical_boundaries_limits(
+        self, test_client, auth_headers
+    ):
         """Validation rejects too many boundaries and overlong patterns/flags."""
         # >20 boundaries should trigger an error
-        many_boundaries = [{"kind": f"k{i}", "pattern": r"^X$", "flags": "m"} for i in range(25)]
+        many_boundaries = [
+            {"kind": f"k{i}", "pattern": r"^X$", "flags": "m"} for i in range(25)
+        ]
         payload_too_many = {
             "chunking": {
                 "method": "sentences",
-                "config": {"hierarchical": True, "hierarchical_template": {"boundaries": many_boundaries}},
+                "config": {
+                    "hierarchical": True,
+                    "hierarchical_template": {"boundaries": many_boundaries},
+                },
             }
         }
-        resp = test_client.post("/api/v1/chunking/templates/validate", json=payload_too_many, headers=auth_headers)
+        resp = test_client.post(
+            "/api/v1/chunking/templates/validate",
+            json=payload_too_many,
+            headers=auth_headers,
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["valid"] is False
-        assert any("boundaries" in (err.get("field") or "") for err in body.get("errors", []))
+        assert any(
+            "boundaries" in (err.get("field") or "") for err in body.get("errors", [])
+        )
 
         # Overlong pattern
         long_pattern = "^" + ("a" * 1200) + "$"
@@ -648,15 +762,25 @@ class TestAPIEndpoints:
                 "method": "sentences",
                 "config": {
                     "hierarchical": True,
-                    "hierarchical_template": {"boundaries": [{"kind": "x", "pattern": long_pattern, "flags": "m"}]},
+                    "hierarchical_template": {
+                        "boundaries": [
+                            {"kind": "x", "pattern": long_pattern, "flags": "m"}
+                        ]
+                    },
                 },
             }
         }
-        resp2 = test_client.post("/api/v1/chunking/templates/validate", json=payload_long_pattern, headers=auth_headers)
+        resp2 = test_client.post(
+            "/api/v1/chunking/templates/validate",
+            json=payload_long_pattern,
+            headers=auth_headers,
+        )
         assert resp2.status_code == 200
         body2 = resp2.json()
         assert body2["valid"] is False
-        assert any("pattern" in (err.get("field") or "") for err in body2.get("errors", []))
+        assert any(
+            "pattern" in (err.get("field") or "") for err in body2.get("errors", [])
+        )
 
         # Overlong flags
         payload_long_flags = {
@@ -664,15 +788,25 @@ class TestAPIEndpoints:
                 "method": "sentences",
                 "config": {
                     "hierarchical": True,
-                    "hierarchical_template": {"boundaries": [{"kind": "x", "pattern": r"^.$", "flags": "i" * 50}]},
+                    "hierarchical_template": {
+                        "boundaries": [
+                            {"kind": "x", "pattern": r"^.$", "flags": "i" * 50}
+                        ]
+                    },
                 },
             }
         }
-        resp3 = test_client.post("/api/v1/chunking/templates/validate", json=payload_long_flags, headers=auth_headers)
+        resp3 = test_client.post(
+            "/api/v1/chunking/templates/validate",
+            json=payload_long_flags,
+            headers=auth_headers,
+        )
         assert resp3.status_code == 200
         body3 = resp3.json()
         assert body3["valid"] is False
-        assert any("flags" in (err.get("field") or "") for err in body3.get("errors", []))
+        assert any(
+            "flags" in (err.get("field") or "") for err in body3.get("errors", [])
+        )
 
 
 # Template Processing Tests
@@ -710,19 +844,35 @@ class TestTemplateProcessing:
             description="Test template",
             base_method="sentences",
             stages=[
-                TemplateStage("preprocess", [{"type": "normalize_whitespace", "params": {"max_line_breaks": 1}}]),
+                TemplateStage(
+                    "preprocess",
+                    [
+                        {
+                            "type": "normalize_whitespace",
+                            "params": {"max_line_breaks": 1},
+                        }
+                    ],
+                ),
                 TemplateStage("chunk", [{"method": "sentences", "max_size": 2}]),
-                TemplateStage("postprocess", [{"type": "filter_empty", "params": {"min_length": 5}}]),
+                TemplateStage(
+                    "postprocess",
+                    [{"type": "filter_empty", "params": {"min_length": 5}}],
+                ),
             ],
             default_options={"max_size": 2},
         )
 
-        text = "This is a test.    Another sentence.\n\n\nShort.\nOne more test sentence."
+        text = (
+            "This is a test.    Another sentence.\n\n\nShort.\nOne more test sentence."
+        )
 
         # Mock the chunker since it's not available in test
         with patch("tldw_chatbook.Chunking.engine.templates.Chunker") as mock_chunker:
             mock_instance = MagicMock()
-            mock_instance.chunk_text.return_value = ["This is a test. Another sentence.", "One more test sentence."]
+            mock_instance.chunk_text.return_value = [
+                "This is a test. Another sentence.",
+                "One more test sentence.",
+            ]
             mock_chunker.return_value = mock_instance
 
             result = processor.process_template(text, template)
@@ -738,12 +888,19 @@ class TestTemplateProcessing:
         stages = [
             TemplateStage(
                 name="preprocess",
-                operations=[{"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}],
+                operations=[
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 1},
+                    }
+                ],
                 enabled=True,
             ),
             TemplateStage(
                 name="chunk",
-                operations=[{"method": "words", "config": {"max_size": 3, "overlap": 0}}],
+                operations=[
+                    {"method": "words", "config": {"max_size": 3, "overlap": 0}}
+                ],
                 enabled=True,
             ),
             TemplateStage(
@@ -754,7 +911,11 @@ class TestTemplateProcessing:
         ]
 
         tmpl = ChunkingTemplate(
-            name="db_style", description="DB style schema", base_method="words", stages=stages, default_options={}
+            name="db_style",
+            description="DB style schema",
+            base_method="words",
+            stages=stages,
+            default_options={},
         )
 
         text = "One   two three\n\n\nFour five six seven"
@@ -777,7 +938,10 @@ class TestIntegration:
             template_json=json.dumps(
                 {
                     "preprocessing": [],
-                    "chunking": {"method": "words", "config": {"max_size": 10, "overlap": 2}},
+                    "chunking": {
+                        "method": "words",
+                        "config": {"max_size": 10, "overlap": 2},
+                    },
                     "postprocessing": [],
                 }
             ),
@@ -792,7 +956,9 @@ class TestIntegration:
         }
 
         # Mock the TemplateProcessor to avoid complex setup
-        with patch("tldw_Server_API.app.api.v1.endpoints.chunking_templates.TemplateProcessor") as mock_processor:
+        with patch(
+            "tldw_Server_API.app.api.v1.endpoints.chunking_templates.TemplateProcessor"
+        ) as mock_processor:
             mock_instance = MagicMock()
             mock_instance.process_template.return_value = [
                 "This is a long text",
@@ -802,7 +968,11 @@ class TestIntegration:
             ]
             mock_processor.return_value = mock_instance
 
-            response = test_client.post("/api/v1/chunking/templates/apply", json=request_data, headers=auth_headers)
+            response = test_client.post(
+                "/api/v1/chunking/templates/apply",
+                json=request_data,
+                headers=auth_headers,
+            )
             assert response.status_code == 200
 
             data = response.json()
@@ -811,7 +981,9 @@ class TestIntegration:
             assert len(data["chunks"]) == 4
             assert "metadata" in data
 
-    def test_apply_template_endpoint_real_processor(self, test_client, auth_headers, temp_db):
+    def test_apply_template_endpoint_real_processor(
+        self, test_client, auth_headers, temp_db
+    ):
         """Apply template without mocking, ensure end-to-end DB schema mapping works."""
         db, _ = temp_db
 
@@ -820,9 +992,19 @@ class TestIntegration:
             name="apply_real",
             template_json=json.dumps(
                 {
-                    "preprocessing": [{"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}],
-                    "chunking": {"method": "words", "config": {"max_size": 4, "overlap": 0}},
-                    "postprocessing": [{"operation": "filter_empty", "config": {"min_length": 1}}],
+                    "preprocessing": [
+                        {
+                            "operation": "normalize_whitespace",
+                            "config": {"max_line_breaks": 1},
+                        }
+                    ],
+                    "chunking": {
+                        "method": "words",
+                        "config": {"max_size": 4, "overlap": 0},
+                    },
+                    "postprocessing": [
+                        {"operation": "filter_empty", "config": {"min_length": 1}}
+                    ],
                 }
             ),
             description="Real processor apply test",
@@ -833,7 +1015,9 @@ class TestIntegration:
             "template_name": "apply_real",
         }
 
-        resp = test_client.post("/api/v1/chunking/templates/apply", json=req, headers=auth_headers)
+        resp = test_client.post(
+            "/api/v1/chunking/templates/apply", json=req, headers=auth_headers
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["template_name"] == "apply_real"
@@ -842,8 +1026,13 @@ class TestIntegration:
 
     def test_template_in_chunking_endpoint(self):
         """Test using templates in the main chunking endpoint."""
-        from tldw_Server_API.app.api.v1.endpoints.chunking import process_text_for_chunking_json
-        from tldw_Server_API.app.api.v1.schemas.chunking_schema import ChunkingTextRequest, ChunkingOptionsRequest
+        from tldw_Server_API.app.api.v1.endpoints.chunking import (
+            process_text_for_chunking_json,
+        )
+        from tldw_Server_API.app.api.v1.schemas.chunking_schema import (
+            ChunkingTextRequest,
+            ChunkingOptionsRequest,
+        )
 
         # This would require more complex mocking of the chunking endpoint
         # For now, we just verify the schema accepts template_name

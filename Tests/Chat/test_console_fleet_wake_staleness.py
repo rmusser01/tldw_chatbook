@@ -29,6 +29,7 @@ the terminal word and the result the snapshot was hiding.
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 
 import pytest
 
@@ -39,6 +40,24 @@ from Tests.Chat.test_console_fleet_wake import (
     _settle,
     _survivor,
 )
+
+
+@contextmanager
+def _pinned_snapshot(runs_db):
+    """Yield a mid-iteration cursor that pins this thread's held connection.
+
+    The cursor is taken inside a short ``connection()`` scope and kept open
+    after it: the pin lives on the held connection, while the scope is an
+    admitted storage operation (b5251e9a6e) that must not stay open on the
+    loop thread across awaits -- every config read the wake makes there
+    would refuse with ``operation_provenance_invalid`` (TASK-39044).
+    """
+    with runs_db.connection() as conn:
+        cursor = conn.execute("SELECT * FROM agent_runs")
+    try:
+        yield cursor
+    finally:
+        cursor.close()
 
 
 @pytest.mark.asyncio
@@ -73,8 +92,7 @@ async def test_deferred_wake_notice_reports_done_despite_a_pinned_snapshot(
         # cursor) holds the connection's WAL read transaction open. This
         # is the composing thread -- pytest-asyncio's loop runs here, so
         # `_attempt`/`_rows_for` read through this exact connection.
-        with runs_db.connection() as pinned_conn:
-            pinned_cursor = pinned_conn.execute("SELECT * FROM agent_runs")
+        with _pinned_snapshot(runs_db) as pinned_cursor:
             assert pinned_cursor.fetchone() is not None, (
                 "precondition: the pinning statement must be mid-iteration"
             )

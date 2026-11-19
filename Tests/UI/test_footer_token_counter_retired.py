@@ -21,6 +21,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_footer_token_counter_cannot_appear() -> None:
     """No write can surface the footer token counter on Console."""
@@ -45,6 +46,7 @@ async def test_console_footer_token_counter_cannot_appear() -> None:
         assert token_display.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_footer_word_count_still_works() -> None:
     """Retiring the token counter must not touch the footer's other chips."""

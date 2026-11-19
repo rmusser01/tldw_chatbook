@@ -137,9 +137,9 @@ elif route == 'unloaded_hf':
  assert not service.embeddings.factory._cache
 elif route == 'parent_write':
  result=asyncio.run(service.index_document_with_parents('parent-source','Parent source text requiring separate unqualified indexing. '*30,use_structural_chunking=False))
- # Installed parent API writes its rows but cannot construct IndexingResult
- # with metadata. Even this partial write must invalidate existing proof.
- assert not result.success and result.error,result
+ # A successful parent write still invalidates existing recovery proof.
+ assert result.success and result.error is None and result.chunks_created > 0,result
+ assert result.metadata['parent_chunks_created'] > 0,result
  assert service.vector_store.recovery_snapshot()!=before
 elif route == 'other_owner':
  other=MediaDatabase(data/'other.db',client_id='other-owner')

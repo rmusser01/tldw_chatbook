@@ -1,8 +1,9 @@
-"""Console shell-strip chips are actionable and show longer model ids.
+"""Console status strip segments are actionable and show full model ids.
 
-tasks 1670-1672: Provider/Model chips open the quick model popover, the
-Character chip opens a character picker that also asks where the pick
-lands, and the chip width cap fits common model ids.
+tasks 1670-1672 (chip era) carried into TASK-35160's single text line: the
+Provider/Model segments open the quick model popover, the Assistant segment
+opens a character picker, and -- unlike the old capped chips -- the line
+never ellipsizes a model id.
 """
 
 from pathlib import Path
@@ -15,10 +16,11 @@ from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleAssistantChip,
-    ConsoleChip,
-    ConsoleLibraryChip,
+    ConsoleCostChip,
     ConsoleModelChip,
     ConsoleSourcesChip,
+    ConsoleStatusText,
+    ConsoleTemporaryChip,
     ConsoleToolsChip,
 )
 
@@ -26,72 +28,50 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
+# The strip/app import chain binds real config getters; per-test env
+# redirect trips the config-participant admission (same opt-in as the
+# sibling strip suites).
+pytestmark = pytest.mark.bootstrap_profile
+
 _CSS = (
     Path(__file__).resolve().parents[2]
-    / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
+    / "tldw_chatbook"
+    / "css"
+    / "features"
+    / "_console.tcss"
 )
 
 
 @pytest.mark.unit
-def test_provider_and_model_chips_are_action_chips():
-    """task-1670: both chips must be activatable, not inert labels."""
-    for action in ("enter", "space"):
-        assert any(
-            binding.key == action for binding in ConsoleModelChip.BINDINGS
-        ), action
-    assert issubclass(ConsoleModelChip, ConsoleChip)
+def test_provider_model_assistant_segments_are_actionable():
+    """task-1670/1672: both provider/model views and the assistant segment
+    must be activatable, not inert labels."""
+    for name in ("provider", "model", "assistant"):
+        assert ConsoleStatusText.SEGMENT_MESSAGES.get(name) is not None, name
     assert hasattr(ConsoleModelChip, "OpenRequested")
-
-
-@pytest.mark.unit
-def test_assistant_chip_is_an_action_chip():
-    """task-1672: the Character chip opens the picker."""
-    for action in ("enter", "space"):
-        assert any(
-            binding.key == action for binding in ConsoleAssistantChip.BINDINGS
-        ), action
     assert hasattr(ConsoleAssistantChip, "OpenRequested")
 
 
 @pytest.mark.unit
-def test_library_chip_is_an_action_chip():
-    """The Library policy chip opens its policy editor."""
-    for action in ("enter", "space"):
-        assert any(
-            binding.key == action for binding in ConsoleLibraryChip.BINDINGS
-        ), action
-    assert issubclass(ConsoleLibraryChip, ConsoleChip)
-    assert hasattr(ConsoleLibraryChip, "OpenRequested")
+def test_sources_tools_segments_are_actionable():
+    """The Sources and Tools segments must be activatable --
+    below 150 cols they are the only route to the Inspector's staged-sources
+    tray and tool rows."""
+    for name in ("sources", "tools"):
+        assert ConsoleStatusText.SEGMENT_MESSAGES.get(name) is not None, name
+    assert hasattr(ConsoleToolsChip, "OpenRequested")
 
 
 @pytest.mark.unit
-def test_sources_and_tools_chips_are_action_chips():
-    """TASK-2154.2 (DS-06): the Sources and Tools chips must be activatable,
-    not inert focus traps -- below 150 cols they are the only route to the
-    Inspector's staged-sources tray and tool rows."""
-    for chip in (ConsoleSourcesChip, ConsoleToolsChip):
-        for action in ("enter", "space"):
-            assert any(
-                binding.key == action for binding in chip.BINDINGS
-            ), (chip.__name__, action)
-        assert issubclass(chip, ConsoleChip)
-        assert hasattr(chip, "OpenRequested")
-
-
-@pytest.mark.unit
-def test_chip_width_fits_25_chars_of_model_name():
-    """task-1671: the ask was 25 chars of the model NAME, not 25 cells.
-
-    "Model: " costs 7 cells and padding 2, so the cap must be 34 for the
-    name itself to reach 25. Chips are ``width: auto``, so a higher cap
-    never widens short chips like "Library search: off".
-    """
-    block = _CSS.read_text(encoding="utf-8").split(".console-control-chip {", 1)[1]
-    block = block.split("}", 1)[0]
-    assert "width: auto;" in block
-    assert "max-width: 34;" in block
-    prefix_and_padding = len("Model: ") + 2
-    assert 34 - prefix_and_padding == 25
+def test_transient_segments_are_actionable_and_rate_is_not():
+    """Run/temporary/cost keep their activation contracts; the rate segment
+    stays display-only (TASK-35100)."""
+    assert ConsoleStatusText.SEGMENT_MESSAGES["run"] is not None
+    assert ConsoleStatusText.SEGMENT_MESSAGES["temporary"] is not None
+    assert ConsoleStatusText.SEGMENT_MESSAGES["cost"] is not None
+    assert hasattr(ConsoleTemporaryChip, "SaveRequested")
+    assert hasattr(ConsoleCostChip, "ConsoleCostChipPressed")
+    assert "rate" not in ConsoleStatusText.SEGMENT_MESSAGES
 
 
 @pytest.mark.unit
@@ -108,9 +88,7 @@ def test_character_filter_ranks_name_matches_first():
 @pytest.mark.unit
 def test_character_filter_blank_query_and_limit():
     """A blank query lists the head of the library, bounded."""
-    options = tuple(
-        ConsoleCharacterOption(i, f"C{i}") for i in range(1, 60)
-    )
+    options = tuple(ConsoleCharacterOption(i, f"C{i}") for i in range(1, 60))
     assert len(filter_character_options(options, "")) == 40
     assert len(filter_character_options(options, "", limit=5)) == 5
     assert filter_character_options(options, "nope") == ()
@@ -130,7 +108,6 @@ def test_screen_subscribes_to_both_new_chip_messages():
     for handler_name, chip in (
         ("_console_model_chip_activated", ConsoleModelChip),
         ("_console_assistant_chip_activated", ConsoleAssistantChip),
-        ("_console_library_chip_activated", ConsoleLibraryChip),
         ("_console_sources_chip_activated", ConsoleSourcesChip),
         ("_console_tools_chip_activated", ConsoleToolsChip),
     ):

@@ -71,6 +71,7 @@ def _require_beautifulsoup() -> type:
         raise ImportError(_BS4_INSTALL_HINT)
     return BeautifulSoup
 
+
 #
 # Local Imports
 from ..DB.Subscriptions_DB import SubscriptionsDB

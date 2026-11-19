@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.UI.background_signals import wait_for_background_signal
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -83,7 +84,7 @@ def test_retrieval_status_vocabulary_is_controller_owned() -> None:
     assert controller._console_rag_source_status(None) == "not staged"
     assert (
         controller._console_rag_source_status(None, sent_source_count=2)
-        == "sent with the last message · 2 sources"
+        == "attached to the last message · 2 sources"
     )
     assert (
         controller._console_rag_source_status(searching)
@@ -162,10 +163,14 @@ async def test_rag_scope_save_keeps_fork_transition_through_final_publication(
     task = asyncio.create_task(
         controller._apply_console_retrieval_scope_save(session, scope)
     )
-    await entered.wait()
-    eligibility = store.fork_eligibility(assistant.id)
-    assert eligibility.eligible is False
-    assert "changing" in eligibility.reason.lower()
-    release.set()
-    await asyncio.wait_for(task, timeout=2)
+    try:
+        await wait_for_background_signal(
+            entered, task, what="retrieval scope save transition", timeout=2
+        )
+        eligibility = store.fork_eligibility(assistant.id)
+        assert eligibility.eligible is False
+        assert "changing" in eligibility.reason.lower()
+    finally:
+        release.set()
+        await asyncio.wait_for(task, timeout=2)
     assert session.id not in store._fork_source_transitions

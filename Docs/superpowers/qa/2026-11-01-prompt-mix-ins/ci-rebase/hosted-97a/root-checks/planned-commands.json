@@ -1,0 +1,33 @@
+{
+  "static": [
+    [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "Tests/Architecture/test_module_size_ratchet.py",
+      "Tests/UI/test_design_token_governance.py",
+      "-q",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=/private/tmp/mixins-97a-final/static-pytest"
+    ]
+  ],
+  "preflights": [
+    [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_textual_worker_contract.py"
+    ],
+    [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_markup_interpolation.py"
+    ],
+    [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_persistent_diagnostic_inventory.py"
+    ],
+    [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_ui_pr_gate_census.py"
+    ]
+  ]
+}

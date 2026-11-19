@@ -15,7 +15,6 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BENCHMARK_PATH = (
     REPO_ROOT / "Helper_Scripts" / "Benchmarks" / "rag_citation_provenance_benchmark.py"
@@ -331,6 +330,23 @@ def test_sample_group_uses_isolated_temp_chachanotes_db_and_sidecar(
         assert workspace.sidecar_path.name == "chat_rag_context.json"
 
 
+@pytest.mark.asyncio
+async def test_direct_runner_refuses_missing_private_profile_before_work(
+    monkeypatch, tmp_path
+):
+    benchmark = _load_benchmark()
+    monkeypatch.delenv("TLDW_TEST_CONFIG_ROOT", raising=False)
+
+    def must_not_load_fixture():
+        pytest.fail("benchmark started without a private profile")
+
+    monkeypatch.setattr(benchmark, "_load_fixture", must_not_load_fixture)
+    with pytest.raises(ValueError, match="private profile"):
+        await benchmark.run_benchmark(
+            mode="baseline", samples=1, warmups=0, scratch_root=tmp_path
+        )
+
+
 def test_benchmark_host_state_context_isolates_and_restores_environment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -338,6 +354,7 @@ def test_benchmark_host_state_context_isolates_and_restores_environment(
     benchmark = _load_benchmark()
     original = {
         "HOME": "sentinel-home",
+        "USERPROFILE": "sentinel-windows-home",
         "XDG_CONFIG_HOME": "sentinel-config",
         "XDG_DATA_HOME": "sentinel-data",
         "TLDW_CONFIG_PATH": "sentinel-config.toml",
@@ -352,6 +369,7 @@ def test_benchmark_host_state_context_isolates_and_restores_environment(
         with benchmark.isolated_benchmark_host_state(benchmark_root):
             assert os.environ["TLDW_TEST_MODE"] == "1"
             assert Path(os.environ["HOME"]).is_relative_to(tmp_path)
+            assert os.environ["USERPROFILE"] == os.environ["HOME"]
             assert Path(os.environ["XDG_CONFIG_HOME"]).is_relative_to(tmp_path)
             assert Path(os.environ["XDG_DATA_HOME"]).is_relative_to(tmp_path)
             assert Path(os.environ["TLDW_CONFIG_PATH"]).is_relative_to(tmp_path)
@@ -401,6 +419,7 @@ def test_cli_never_reads_or_writes_host_config_data_or_secrets(tmp_path: Path) -
     environment = {
         **os.environ,
         "HOME": str(host_home),
+        "USERPROFILE": str(host_home),
         "XDG_CONFIG_HOME": str(host_config.parent.parent),
         "XDG_DATA_HOME": str(host_data.parent.parent),
         "TLDW_CONFIG_PATH": str(host_config),
@@ -432,7 +451,6 @@ def test_cli_never_reads_or_writes_host_config_data_or_secrets(tmp_path: Path) -
         timeout=120,
     )
 
-    assert completed.returncode == 0, completed.stderr
     emitted = completed.stdout + completed.stderr
     assert secret not in emitted
     assert str(host_home) not in emitted
@@ -444,6 +462,7 @@ def test_cli_never_reads_or_writes_host_config_data_or_secrets(tmp_path: Path) -
     assert host_snapshot() == before
     assert output.is_relative_to(process_temp)
     assert _load_json(output)["budgets"]["overall_pass"] is True
+    assert completed.returncode == 0, completed.stderr
 
 
 @pytest.mark.parametrize(

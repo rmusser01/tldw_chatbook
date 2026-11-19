@@ -14,6 +14,7 @@ def preflight():
     return importlib.import_module(name)
 
 
+@pytest.mark.bootstrap_profile
 def test_unknown_operation_cannot_be_silently_skipped():
     gate = preflight()
     body = {
@@ -90,6 +91,7 @@ def test_unsupported_executable_fields_have_actionable_paths(body, field):
     assert caught.value.reason
 
 
+@pytest.mark.bootstrap_profile
 def test_prepared_snapshot_preserves_authoring_and_captures_defaults():
     gate = preflight()
     body = {
@@ -116,6 +118,7 @@ def test_prepared_snapshot_preserves_authoring_and_captures_defaults():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_local_admission_and_execution_never_open_network(monkeypatch):
     def no_network(*args, **kwargs):
         pytest.fail("Local preview attempted network or asset download")
@@ -136,6 +139,7 @@ def test_local_admission_and_execution_never_open_network(monkeypatch):
     ] == ["local sample"]
 
 
+@pytest.mark.bootstrap_profile
 def test_sentence_preservation_that_loses_words_is_refused_without_rewriting_body():
     gate = preflight()
     body = {"chunking": {"method": "words", "config": {"preserve_sentences": True}}}

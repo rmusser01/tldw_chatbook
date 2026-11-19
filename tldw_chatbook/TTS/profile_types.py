@@ -403,9 +403,10 @@ class TTSProfileVerificationEvidence:
             speed,
             MappingProxyType({}),
         )
-        if (
-            type(self.options_fingerprint) is not str
-            or not _OPTIONS_FINGERPRINT_PATTERN.fullmatch(self.options_fingerprint)
+        if type(
+            self.options_fingerprint
+        ) is not str or not _OPTIONS_FINGERPRINT_PATTERN.fullmatch(
+            self.options_fingerprint
         ):
             raise ProfileValidationError("options_fingerprint")
         provider_revision = _validate_nonnegative_integer(

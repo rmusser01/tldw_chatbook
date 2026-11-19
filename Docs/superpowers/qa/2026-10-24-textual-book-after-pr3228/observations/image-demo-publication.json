@@ -1,0 +1,84 @@
+{
+  "cases": [
+    {
+      "case": "serial_control",
+      "generate_enabled_while_old_running": true,
+      "old_cancelled_before_release": false,
+      "new_result_before_old_release": "backend=probe format=image/png bytes=77 seed=-1 prompt='NEW'",
+      "final_status": "Done",
+      "final_metadata": "backend=probe format=image/png bytes=77 seed=-1 prompt='NEW'",
+      "publication_order": [
+        {
+          "kind": "status",
+          "message": "Generating…"
+        },
+        {
+          "kind": "result",
+          "meta": "backend=probe format=image/png bytes=75 seed=-1 prompt='OLD'"
+        },
+        {
+          "kind": "status",
+          "message": "Generating…"
+        },
+        {
+          "kind": "result",
+          "meta": "backend=probe format=image/png bytes=77 seed=-1 prompt='NEW'"
+        }
+      ]
+    },
+    {
+      "case": "stale_success",
+      "generate_enabled_while_old_running": true,
+      "old_cancelled_before_release": true,
+      "new_result_before_old_release": "backend=probe format=image/png bytes=77 seed=-1 prompt='NEW'",
+      "final_status": "Done",
+      "final_metadata": "backend=probe format=image/png bytes=75 seed=-1 prompt='OLD'",
+      "publication_order": [
+        {
+          "kind": "status",
+          "message": "Generating…"
+        },
+        {
+          "kind": "status",
+          "message": "Generating…"
+        },
+        {
+          "kind": "result",
+          "meta": "backend=probe format=image/png bytes=77 seed=-1 prompt='NEW'"
+        },
+        {
+          "kind": "result",
+          "meta": "backend=probe format=image/png bytes=75 seed=-1 prompt='OLD'"
+        }
+      ]
+    },
+    {
+      "case": "stale_failure",
+      "generate_enabled_while_old_running": true,
+      "old_cancelled_before_release": true,
+      "new_result_before_old_release": "backend=probe format=image/png bytes=77 seed=-1 prompt='NEW'",
+      "final_status": "Error: OLD adapter failure",
+      "final_metadata": "backend=probe format=image/png bytes=77 seed=-1 prompt='NEW'",
+      "publication_order": [
+        {
+          "kind": "status",
+          "message": "Generating…"
+        },
+        {
+          "kind": "status",
+          "message": "Generating…"
+        },
+        {
+          "kind": "result",
+          "meta": "backend=probe format=image/png bytes=77 seed=-1 prompt='NEW'"
+        },
+        {
+          "kind": "status",
+          "message": "Error: OLD adapter failure"
+        }
+      ]
+    }
+  ],
+  "blocked_network_attempts": [],
+  "profile_violations": []
+}

@@ -1,0 +1,23 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.6.0 -- /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook
+configfile: pyproject.toml
+plugins: anyio-4.12.1, mock-3.15.1, asyncio-1.2.0, Faker-40.15.0, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, hypothesis-6.152.3
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+collecting ... collected 1 item
+
+Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged PASSED [100%]
+
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-diagnostic-fix-safe-evidence/diagnostic-node.xml -
+============================= slowest 25 durations =============================
+81.96s call     Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged
+
+(2 durations < 1s hidden.)
+========================= 1 passed in 83.01s (0:01:23) =========================
+
+--- STDERR ---

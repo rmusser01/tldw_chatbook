@@ -16,6 +16,7 @@ which `_check_now_source` swallows into a debug log and a transient toast.
 types -- `_run_id_from_item_id` and `_rule_id_from_item_id`. Sources were the
 type it did not cover.
 """
+
 from __future__ import annotations
 
 import inspect
@@ -40,13 +41,18 @@ def services(tmp_path):
     return local, WatchlistScopeService(local_service=local, server_service=None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_accepts_the_namespaced_source_id(services):
     """The id the screen holds is the namespaced one; it must work."""
     local, scope = services
     source = await _maybe(
         local.create_source(
-            {"name": "Example", "type": "rss", "source": "https://example.invalid/f.xml"}
+            {
+                "name": "Example",
+                "type": "rss",
+                "source": "https://example.invalid/f.xml",
+            }
         )
     )
     assert source["id"] == f"local:subscription:{source['source_id']}", (
@@ -62,13 +68,18 @@ async def test_check_now_accepts_the_namespaced_source_id(services):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_still_accepts_a_plain_integer_id(services):
     """Callers holding the integer keep working."""
     local, scope = services
     source = await _maybe(
         local.create_source(
-            {"name": "Example", "type": "rss", "source": "https://example.invalid/f.xml"}
+            {
+                "name": "Example",
+                "type": "rss",
+                "source": "https://example.invalid/f.xml",
+            }
         )
     )
     run = await _maybe(

@@ -164,6 +164,7 @@ def _assert_notes_footer_is_current(screen) -> None:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
     """CRITICAL: the media sync branch must mirror the resolved selection.
@@ -211,9 +212,7 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         screen.query_one("#library-media-type-filter", Button).focus()
         await pilot.pause()
         screen.query_one("#library-media-type-filter", Button).press()
-        chooser = await _wait_for_selector(
-            screen, pilot, "#library-media-type-choices"
-        )
+        chooser = await _wait_for_selector(screen, pilot, "#library-media-type-choices")
         assert isinstance(chooser, OptionList)
         chooser.highlighted = next(
             index
@@ -234,6 +233,7 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         assert screen._media_state.selected_media_id == canvas_state.selected_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     # task-32128 dropped "sort_open": this app pages a folder tree, and the
@@ -294,6 +294,7 @@ async def test_converted_notes_sites_keep_focus_inside_the_canvas(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_converted_notes_site_keeps_focus_on_a_real_key_press(
     monkeypatch, paged_notes_app_factory
@@ -326,6 +327,7 @@ async def test_converted_notes_site_keeps_focus_on_a_real_key_press(
 LIBRARY_COMPACT_TEST_SIZE = (100, 24)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_notes_list_keeps_its_scroll_offset_across_a_sync(
     paged_notes_app_factory,
@@ -368,6 +370,7 @@ async def test_compact_notes_list_keeps_its_scroll_offset_across_a_sync(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notes_footer_tier_follows_a_canvas_scoped_sync(
     paged_notes_app_factory,
@@ -405,6 +408,7 @@ async def test_notes_footer_tier_follows_a_canvas_scoped_sync(
         assert ("esc", "done") in screen._library_notes_footer_shortcuts()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notes_row_press_to_editor_keeps_focus_inside_the_canvas(
     monkeypatch, paged_notes_app_factory
@@ -442,6 +446,7 @@ async def test_notes_row_press_to_editor_keeps_focus_inside_the_canvas(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("kind", "row_id", "canvas_selector", "focus_selector"),
@@ -606,6 +611,7 @@ async def test_entry_canvas_sync_restores_portable_focus_and_scroll(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_header_only_sync_keeps_current_mounted_focus() -> None:
     """A no-recompose Skills header patch must not clear its valid focus owner."""
@@ -638,6 +644,7 @@ async def test_skills_header_only_sync_keeps_current_mounted_focus() -> None:
         assert focused.parent is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
     """Falling back from a missing semantic row to its reused index is wrong."""
@@ -692,6 +699,7 @@ async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
         assert getattr(screen.focused, "conversation_id", None) != "chat-replacement"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_overlapping_reconciles_retain_original_semantic_focus():
     """A replace-latest callback must not discard the first focus capture."""
@@ -729,6 +737,7 @@ async def test_overlapping_reconciles_retain_original_semantic_focus():
         assert screen._library_snapshot_rendered_generation == second_generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_strict_failure_retry_retains_original_semantic_focus(monkeypatch):
     """Clearing a failed strict callback must not clear its focus capture."""
@@ -773,6 +782,7 @@ async def test_strict_failure_retry_retains_original_semantic_focus(monkeypatch)
         assert screen._library_snapshot_rendered_generation == generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_automatic_notes_reconcile_restores_richer_control_focus(
     paged_notes_app_factory,

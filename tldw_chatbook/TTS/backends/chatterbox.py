@@ -84,7 +84,6 @@ class ChatterboxTTSBackend(TTSBackendBase):
     - Fallback strategies for robust generation
     """
 
-    @voice_files.call
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
 
@@ -164,7 +163,6 @@ class ChatterboxTTSBackend(TTSBackendBase):
                 ),
             )
         ).expanduser()
-        voice_files.mkdir(self, self.voice_dir, parents=True, exist_ok=True)
 
         # Streaming configuration
         self.streaming_enabled = self.config.get(
@@ -188,9 +186,13 @@ class ChatterboxTTSBackend(TTSBackendBase):
             )
         )
 
+        # Config reads have their own custody before voice file work.
+        with voice_files._scope(self):
+            voice_files.mkdir(self, self.voice_dir, parents=True, exist_ok=True)
+            self.audio_service = get_audio_service()
+
         # Model instances
         self.model = None
-        self.audio_service = get_audio_service()
         self.transcription_service = (
             None  # Will be initialized if validation is enabled
         )

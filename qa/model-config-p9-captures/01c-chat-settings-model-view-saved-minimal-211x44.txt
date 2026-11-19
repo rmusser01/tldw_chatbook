@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                       Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ────────────────╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
+ Conversations   │  Chat settings · Chat 1                                                                                                                                                      │       │
+        Archive t│                                                                                                                                                                              │       │
+          Archive│  ● Model and generation  Context and memory                                                                                                                                  │       │
+        Search al│ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                                                │       │
+   Chat 1        │  Response rules                                                                                                                                                              │       │
+                 │ Model             model-a · llama.cpp                                                                       this chat  Ready · not tested · context unknown   Change Alt+M   │       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔│ Temperature       █ 0.6         Console Behavior   Lower stays focused; higher is more varied.                                                                               │       │
+  ▊  Filter visib│ Max tokens        │ 4096        provider           Longest reply the model may give, in tokens.                                                                              │       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁│ Streaming         │ On       ▼  provider           Show the reply as it is generated.                                                                                        │       │
+                 │ Reasoning effort  │ Minimal  ▼  model default      Minimal is not supported here, so it is not sent.                                                                         │       │◂ Inspect
+   New conversati│ Thinking budget   │             provider           the provider decides · Tokens reserved for Thinking when it is on.                                                        │       │
+  Chats          │  ▶ Sampling · hidden for llama.cpp: Reasoning summary, Verbosity, Thinking (this provider does not accept them)                                                              │       │
+    Today        │  ▶ Connection · 127.0.0.1:18612 · no key needed · change it in Settings ▸ Providers & Models                                                                                 │       │
+                 │  ▶ Request estimate · 0 / 32,000 tokens (assumed; window unknown)                                                                                                            │       │
+ ────────────────│  ▶ Your name in this chat · User (global default)                                                                                                                            │       │
+ Character · No c│                                                                                                                                                                              │       │
+ ────────────────│                                                                                                                                                                              │       │
+ Model           │                                                                                                                                                                              │       │
+  Temperature 0.6│                                                                                                                                                                              │       │
+  Max tokens  409│                                                                        Esc close  Matches saved defaults   Default for new chats (Ctrl+N)   Apply to this chat (Ctrl+Enter)  │       │
+  Streaming   On ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯       │
+  Ready · not tested                │                                                                                                                                                                   │
+  System: none ▸                    │                                                                                                                                                                   │
+   Change  Alt+M                    │                                                                                                                                                                   │
+ ▼ Agent · Details                  │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent access off     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Ctx 0% · Now $0.00
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                                     Send disabled: type a message       Send         Dictate
+
+  Ctrl+P palette | Ctrl+Q quit

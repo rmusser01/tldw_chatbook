@@ -28,7 +28,9 @@ def service(tmp_path: Path) -> ModelArtifactService:
     return ModelArtifactService(tmp_path / "root")
 
 
-def test_consume_source_moves_files_and_installs(service: ModelArtifactService, tmp_path: Path) -> None:
+def test_consume_source_moves_files_and_installs(
+    service: ModelArtifactService, tmp_path: Path
+) -> None:
     """Files are moved (source emptied), install verifies and promotes."""
     # Use a descriptor with a single file to keep things simple
     desc = descriptor()
@@ -49,7 +51,9 @@ def test_consume_source_moves_files_and_installs(service: ModelArtifactService, 
         assert not (source / file.path).exists()
 
 
-def test_consume_source_outside_root_raises(service: ModelArtifactService, tmp_path: Path) -> None:
+def test_consume_source_outside_root_raises(
+    service: ModelArtifactService, tmp_path: Path
+) -> None:
     """Raises ArtifactPathError when source is outside the service root."""
     desc = descriptor()
     outside = tmp_path / "elsewhere"
@@ -67,7 +71,9 @@ def test_consume_source_outside_root_raises(service: ModelArtifactService, tmp_p
         assert (outside / file.path).exists()
 
 
-def test_consume_source_exdev_falls_back_to_copy(service: ModelArtifactService, monkeypatch) -> None:
+def test_consume_source_exdev_falls_back_to_copy(
+    service: ModelArtifactService, monkeypatch
+) -> None:
     """EXDEV inside the root degrades to copy+delete, still installing."""
     desc = descriptor()
     source = Path(service.staging_path) / "managed" / "src"
@@ -87,13 +93,19 @@ def test_consume_source_exdev_falls_back_to_copy(service: ModelArtifactService, 
             raise OSError(18, "Invalid cross-device link")  # errno.EXDEV
         return real_replace(src, dst, *a, **k)
 
-    monkeypatch.setattr("tldw_chatbook.Model_Artifacts.service.os.replace", exdev_replace)
+    monkeypatch.setattr(
+        "tldw_chatbook.Model_Artifacts.service.os.replace", exdev_replace
+    )
     ref = service.install(desc, source, consume_source=True)
-    monkeypatch.setattr("tldw_chatbook.Model_Artifacts.service.os.replace", real_replace)
+    monkeypatch.setattr(
+        "tldw_chatbook.Model_Artifacts.service.os.replace", real_replace
+    )
     assert service.artifact_path(ref).exists()
 
 
-def test_default_copy_behavior_unchanged(service: ModelArtifactService, tmp_path: Path) -> None:
+def test_default_copy_behavior_unchanged(
+    service: ModelArtifactService, tmp_path: Path
+) -> None:
     """consume_source=False keeps today's copy semantics: source intact."""
     desc = descriptor()
     source = tmp_path / "root" / "staging" / "src2"
@@ -109,7 +121,9 @@ def test_default_copy_behavior_unchanged(service: ModelArtifactService, tmp_path
         assert (source / file.path).exists()
 
 
-def test_consume_source_rejects_symlinked_file(service: ModelArtifactService, tmp_path: Path) -> None:
+def test_consume_source_rejects_symlinked_file(
+    service: ModelArtifactService, tmp_path: Path
+) -> None:
     """consume_source rejects when a declared file is a symlink.
 
     NOTE: This test exercises the _validate_payload_tree layer (defense-in-depth).
@@ -140,7 +154,9 @@ def test_consume_source_rejects_symlinked_file(service: ModelArtifactService, tm
         assert (source / file.path).exists()
 
 
-def test_consume_source_rejects_symlink_in_ancestry(service: ModelArtifactService, tmp_path: Path) -> None:
+def test_consume_source_rejects_symlink_in_ancestry(
+    service: ModelArtifactService, tmp_path: Path
+) -> None:
     """consume_source rejects when source path contains a symlink component.
 
     NOTE: This test exercises the _assert_managed_path layer (defense-in-depth).

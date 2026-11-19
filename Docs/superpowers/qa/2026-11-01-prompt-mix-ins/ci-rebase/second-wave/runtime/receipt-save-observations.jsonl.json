@@ -1,0 +1,4 @@
+{
+  "sha256": "7fc457149002d76d10df1f1b56f41c9dbd8b4ec54ef9a98a2ea1248a61b03ab4",
+  "raw_text": "{\"attempt\": \"a60da9ad-3433-4edf-be88-c01b8c171eda\", \"user\": \"0342f066-992f-4ac7-8917-99c1ca240d66\", \"assistant\": \"359bc28a-bde7-4c72-a9f6-bcb057d20db4\", \"count\": 0, \"replaces\": null, \"retry_of\": null}\n{\"attempt\": \"0b5e90d0-b1cf-4fb3-85ad-0eae43796446\", \"user\": \"0342f066-992f-4ac7-8917-99c1ca240d66\", \"assistant\": \"359bc28a-bde7-4c72-a9f6-bcb057d20db4\", \"count\": 0, \"replaces\": null, \"retry_of\": \"a60da9ad-3433-4edf-be88-c01b8c171eda\", \"exception\": \"MixinSnapshotUnavailableError\", \"message\": \"mixin_checkpoint_ownership\"}\n"
+}

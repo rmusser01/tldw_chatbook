@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────┐  I       ‹ Back                                        │
+│   a  │ Media (23)      Sets                                 │  t  Voice memo 2026-09-29                              │
+│   v  │ Media · 23 of 23 · all types · sort: Newest          │  e  me                                                 │
+│      │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m    ○ Find  Read later  Use in Console  More         │
+│      │  ▊  Title/keyword…                  ▎                │  s  No analysis to search yet.                         │
+│      │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │                                                        │
+│      │    type: All types    sort: Newest                   │       Read  Analysis (selected)  Highlights  Info      │
+│      │                                                      │     No analysis yet.                                   │
+│      │    Export…     Trash     Select                      │        Add analysis      ○ Generate                    │
+│      │    Review these                                      │     No analysis provider is configured · Set one in    │
+│ ---> │    A field guide to Markdown tables                  │     Settings ▸ Providers & Models.                     │
+│      │      article · updated 5d                            │                                                        │
+│      │  ▸ Voice memo 2026-09-29                             │                                                        │
+│      │      audio · updated 6d · loaded                     │                                                        │
+│      │    学習メモ — 日本語の文法                           │<---                                                    │
+│      │      document · updated 1w                         ▃ │                                                        │
+│      │    Server logs excerpt 2026-09-27                    │                                                        │
+│      │      plaintext · updated 1w                          │                                                        │
+│ ---> │    Spaced repetition, explained                      │                                                        │
+│      │      article · updated 1w                            │                                                        │
+│      │    Podcast: Deep Work revisited (ep. 112) — trans…   │                                                        │
+│      │      audio · updated 1w                              │                                                        │
+│      │    Grocery receipt (OCR text)                        │                                                        │
+│      │      plaintext · updated 1w                          │                                                        │
+│      │    Research notes — interview synthesis (export)     │                                                        │
+│      │               1-20 of 23 · Page 1 of 2               │                                                        │
+│      │              Already on the first page.              │                                                        │
+│      │                 ○ Previous     Next                  │                                                        │
+│      └──────────────────────────────────────────────────────┘                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ] next item | [ prev item | l read later | F1 · Ctrl+P · Ctrl+Q

@@ -205,6 +205,7 @@ def _install_fake_provider(monkeypatch, responder: Callable[[list], str]) -> Non
     monkeypatch.setattr(reranker_module, "chat_api_call", fake_chat_api_call)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reranker_parse_failure_reports_shape_not_model_reply(
     monkeypatch, captured_lines
@@ -217,9 +218,7 @@ async def test_reranker_parse_failure_reports_shape_not_model_reply(
     """
     _install_fake_provider(monkeypatch, lambda _messages: SENTINEL_RESPONSE)
     reranker = PointwiseReranker(
-        RerankingConfig(
-            strategy="pointwise", top_k_to_rerank=2, retry_on_failure=False
-        )
+        RerankingConfig(strategy="pointwise", top_k_to_rerank=2, retry_on_failure=False)
     )
     results = [
         SearchResult(
@@ -358,9 +357,7 @@ def _unsafe_content_names(expression: ast.AST) -> set[str]:
     return {
         sub.id
         for sub in ast.walk(expression)
-        if isinstance(sub, ast.Name)
-        and sub.id in CONTENT_NAMES
-        and id(sub) not in safe
+        if isinstance(sub, ast.Name) and sub.id in CONTENT_NAMES and id(sub) not in safe
     }
 
 
@@ -421,9 +418,12 @@ def test_no_rag_search_diagnostic_interpolates_user_content() -> None:
     as last time.
     """
     findings = rag_search_content_interpolations()
-    assert not findings, "user content rendered into RAG_Search diagnostics:\n" + "\n".join(
-        f"  {path}:{line} {names}\n      {text}"
-        for path, line, text, names in findings
+    assert not findings, (
+        "user content rendered into RAG_Search diagnostics:\n"
+        + "\n".join(
+            f"  {path}:{line} {names}\n      {text}"
+            for path, line, text, names in findings
+        )
     )
 
 
@@ -436,7 +436,7 @@ def test_census_detects_the_shape_it_exists_to_catch() -> None:
     module = ast.parse(
         "from loguru import logger\n"
         "def f(query, correlation_id):\n"
-        "    logger.info(f\"[{correlation_id}] Cache hit for query: "
+        '    logger.info(f"[{correlation_id}] Cache hit for query: '
         "'{query[:50]}...'\")\n"
     )
     symbols = _logger_symbols(module)

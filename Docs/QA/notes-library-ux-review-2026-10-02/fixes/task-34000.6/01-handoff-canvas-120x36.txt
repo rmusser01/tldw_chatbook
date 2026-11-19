@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐┌─────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │    Notes (122)            ││ Study decks                                                                         │ │
+│ │    Prompts (10) — reuse   ││ Plan study decks from Library sources.                                              │ │
+│ │    Skills (4)             ││ Carries forward: Ideas inbox, Reading list, Thesis outline — retrieval-augmented    │ │
+│ │    Collections (6)        ││ tutoring and 7 more.                                                                │ │
+│ │    Search / RAG           ││ This page shows what carries over; generation and review run in Study.              │ │
+│ │ ────────────────────────  ││ Generating a pack from sources needs a tldw server; you can still make cards by     │ │
+│ │ Artifacts            ▾    ││ hand in Study.                                                                      │ │
+│ │    All artifacts        ▆ ││    Continue in Study                                                                │ │
+│ │    Chatbooks              ││                                                                                     │ │
+│ │    Reports                ││                                                                                     │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Create               ▾    ││                                                                                     │ │
+│ │    New note               ││                                                                                     │ │
+│ │    New prompt             ││                                                                                     │ │
+│ │    New skill              ││                                                                                     │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Study                ▾    ││                                                                                     │ │
+│ │ █▸ Study decks (0)        ││                                                                                     │ │
+│ │    Flashcards due: 0      ││                                                                                     │ │
+│ │    Quizzes (0)            ││                                                                                     │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Import / Export      ▾    ││                                                                                     │ │
+│ │    Import…                ││                                                                                     │ │
+│ │    Export                 ││                                                                                     │ │
+│ │ ────────────────────────  ││                                                                                     │ │
+│ │ Details              ▸    ││                                                                                     │ │
+│ │  ▾ scroll for more        ││                                                                                     │ │
+│ └───────────────────────────┘└─────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to hub | F1 help · Ctrl+P palette · Ctrl+Q quit

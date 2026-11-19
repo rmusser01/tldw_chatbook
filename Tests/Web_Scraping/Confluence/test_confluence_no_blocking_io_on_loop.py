@@ -199,11 +199,13 @@ async def test_concurrent_scrapes_do_not_use_the_session_simultaneously(monkeypa
             response.is_redirect = False
             response.iter_content.return_value = [b"{}"]
             response.json.return_value = {
-                "id": "1", "title": "T",
+                "id": "1",
+                "title": "T",
                 "body": {"storage": {"value": "<p>x</p>"}},
                 "version": {"number": 1},
                 "space": {"key": "S", "name": "S"},
-                "results": [], "size": 0,
+                "results": [],
+                "size": 0,
             }
             response.content = b""
             return response

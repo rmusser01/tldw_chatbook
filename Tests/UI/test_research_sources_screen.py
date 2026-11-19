@@ -100,6 +100,7 @@ class _MountedScreenApp(App[None]):
         await self.push_screen(self._screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_owner_failure_preserves_qualified_receipts_loaded_first() -> None:
     ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "workspace-1")
@@ -150,6 +151,7 @@ async def test_owner_failure_preserves_qualified_receipts_loaded_first() -> None
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failing_selection_worker_recovers_without_workerfailed_or_app_exit() -> (
     None
@@ -216,6 +218,7 @@ async def test_failing_selection_worker_recovers_without_workerfailed_or_app_exi
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expected_intake_reorder_preview_remove_folder_and_retry_failures_stay_mounted() -> (
     None
@@ -341,6 +344,7 @@ async def test_expected_intake_reorder_preview_remove_folder_and_retry_failures_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_remove_association_requires_confirmation_and_escape_is_non_mutating() -> (
     None
@@ -432,6 +436,7 @@ async def test_remove_association_requires_confirmation_and_escape_is_non_mutati
         assert removed == ["membership-1"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_filtered_preview_targets_the_one_displayed_selected_association(
     monkeypatch: pytest.MonkeyPatch,
@@ -1266,6 +1271,7 @@ async def test_screen_overlay_keeps_device_source_data_qualified_across_switch(
     assert server.source_annotations == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_annotation_edit_reopens_and_survives_overlay_store_restart(
     tmp_path,
@@ -1363,6 +1369,7 @@ async def test_annotation_edit_reopens_and_survives_overlay_store_restart(
     assert restarted.source_annotations[0].note == "Edited note"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_overlay_conflict_retains_draft_and_offers_private_recovery_actions(
     tmp_path,

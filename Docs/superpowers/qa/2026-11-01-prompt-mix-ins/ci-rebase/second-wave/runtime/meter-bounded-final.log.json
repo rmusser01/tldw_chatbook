@@ -1,0 +1,4 @@
+{
+  "sha256": "bb832d21c5837fc9dfb1db872625a68631d64de4988d87fb04351a4c6db4bbe4",
+  "raw_text": "..                                                                       [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/meter-bounded-final.xml -\n============================= slowest 25 durations =============================\n1.76s call     Tests/Chat/test_console_light_surface_context_meter.py::test_a_window_too_small_for_the_light_set_counts_what_the_plan_sends\n1.36s call     Tests/Chat/test_console_light_surface_context_meter.py::test_a_local_reasoning_resolution_still_counts_the_light_set\n\n(4 durations < 1s hidden.)\n2 passed in 5.99s\n"
+}

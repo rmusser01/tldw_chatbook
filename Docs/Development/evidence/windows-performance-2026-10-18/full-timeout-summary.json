@@ -1,0 +1,213 @@
+{
+  "full-after-debug2": {
+    "source_report": "plain-ready-full-after-debug2.json",
+    "sha256": "1607e7b8188088565312faf7b3bf640bc72ea53a84851c6c72c18a7bcd60149e",
+    "baseline_revision": null,
+    "completed_cycles": 0,
+    "input_timeout": {
+      "iteration": 0,
+      "screen": "ChatScreen",
+      "focused": "ConsoleComposerBar(id='console-native-composer', classes='ds-panel console-composer-focused')",
+      "composer_can_focus": true,
+      "composer_disabled": false,
+      "draft_before": "",
+      "draft_after": "",
+      "attach_reconciled": false,
+      "sync_in_progress": true,
+      "projection_pending": false,
+      "projection_reads": "set()",
+      "projection_settled": true
+    },
+    "full_await_chains": [
+      [
+        [
+          "message_pump.py",
+          "_process_messages",
+          571
+        ],
+        [
+          "message_pump.py",
+          "_process_messages_loop",
+          663
+        ],
+        [
+          "message_pump.py",
+          "_dispatch_message",
+          741
+        ],
+        [
+          "message_pump.py",
+          "_flush_next_callbacks",
+          702
+        ],
+        [
+          "_callback.py",
+          "invoke",
+          96
+        ],
+        [
+          "_callback.py",
+          "_invoke",
+          58
+        ],
+        [
+          "screen.py",
+          "_invoke_and_clear_callbacks",
+          1272
+        ],
+        [
+          "_callback.py",
+          "invoke",
+          96
+        ],
+        [
+          "_callback.py",
+          "_invoke",
+          58
+        ],
+        [
+          "chat_screen.py",
+          "_reconcile_console_after_attach",
+          15384
+        ],
+        [
+          "chat_screen.py",
+          "_sync_native_console_chat_ui",
+          17699
+        ],
+        [
+          "character_context.py",
+          "refresh_presentation_if_scope_changed",
+          994
+        ],
+        [
+          "character_context.py",
+          "_capture_scope",
+          784
+        ],
+        [
+          "character_context.py",
+          "_await_database_work",
+          738
+        ],
+        [
+          "console_preparation_reads.py",
+          "run_preparation_read",
+          226
+        ]
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "full-control": {
+    "source_report": "plain-ready-full-control.json",
+    "sha256": "ffafb68e2ec47a830f9e66e2f1411d6e01dac67effe2398aa6c7b7a26b752e6d",
+    "baseline_revision": "2a9cf92464982cb0d53e6452ade220e4e4884976",
+    "completed_cycles": 0,
+    "input_timeout": {
+      "iteration": 0,
+      "screen": "ChatScreen",
+      "focused": "ConsoleComposerBar(id='console-native-composer', classes='console-composer-focused ds-panel')",
+      "composer_can_focus": true,
+      "composer_disabled": false,
+      "draft_before": "",
+      "draft_after": "",
+      "attach_reconciled": false,
+      "sync_in_progress": true,
+      "projection_pending": true,
+      "projection_reads": "{ConsolePreparationRead(session_id='54f1b581-b93b-4ed1-b58d-5d5957ad7d84')}",
+      "projection_settled": false
+    },
+    "full_await_chains": [
+      [
+        [
+          "message_pump.py",
+          "_process_messages",
+          571
+        ],
+        [
+          "message_pump.py",
+          "_process_messages_loop",
+          663
+        ],
+        [
+          "message_pump.py",
+          "_dispatch_message",
+          741
+        ],
+        [
+          "message_pump.py",
+          "_flush_next_callbacks",
+          702
+        ],
+        [
+          "_callback.py",
+          "invoke",
+          96
+        ],
+        [
+          "_callback.py",
+          "_invoke",
+          58
+        ],
+        [
+          "screen.py",
+          "_invoke_and_clear_callbacks",
+          1272
+        ],
+        [
+          "_callback.py",
+          "invoke",
+          96
+        ],
+        [
+          "_callback.py",
+          "_invoke",
+          58
+        ],
+        [
+          "chat_screen.py",
+          "_reconcile_console_after_attach",
+          15384
+        ],
+        [
+          "chat_screen.py",
+          "_sync_native_console_chat_ui",
+          17699
+        ],
+        [
+          "character_context.py",
+          "refresh_presentation_if_scope_changed",
+          994
+        ],
+        [
+          "character_context.py",
+          "_capture_scope",
+          784
+        ],
+        [
+          "character_context.py",
+          "_await_database_work",
+          738
+        ],
+        [
+          "console_preparation_reads.py",
+          "run_preparation_read",
+          226
+        ]
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "baseline_native_stacks": {
+    "source": "plain-ready-full-control-stacks.txt",
+    "sha256": "beaf536e6316909f5ad76f66bae8b0d5ee2362661e63575340ead94ea5be1196",
+    "selected_threads": [
+      "Thread 0x000063bc (most recent call first):\n  File \"C:\\Python312\\Lib\\threading.py\", line 364 in wait\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 247 in initializing\n  File \"C:\\Python312\\Lib\\contextlib.py\", line 137 in __enter__\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 1432 in _acquire_storage\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 1386 in acquire_storage\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\private_sqlite.py\", line 1523 in admitted\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\private_sqlite.py\", line 1934 in connect_private_sqlite\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\Client_Media_DB_v2.py\", line 1221 in _get_thread_connection\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\participants.py\", line 596 in accessed\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\Client_Media_DB_v2.py\", line 1285 in get_connection\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\Client_Media_DB_v2.py\", line 1326 in execute_query\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\Client_Media_DB_v2.py\", line 6904 in get_paginated_files\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Media\\local_media_reading_service.py\", line 699 in list_media_items\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Media\\media_reading_scope_service.py\", line 2398 in list_media_items\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\UI\\Screens\\home_screen.py\", line 173 in _await_home_seam_result\n  File \"C:\\Python312\\Lib\\asyncio\\events.py\", line 88 in _run\n  File \"C:\\Python312\\Lib\\asyncio\\base_events.py\", line 1999 in _run_once\n  File \"C:\\Python312\\Lib\\asyncio\\base_events.py\", line 645 in run_forever\n  File \"C:\\Python312\\Lib\\asyncio\\windows_events.py\", line 322 in run_forever\n  File \"C:\\Python312\\Lib\\asyncio\\base_events.py\", line 678 in run_until_complete\n  File \"C:\\Python312\\Lib\\asyncio\\runners.py\", line 118 in run\n  File \"C:\\Python312\\Lib\\asyncio\\runners.py\", line 195 in run\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\UI\\Screens\\home_screen.py\", line 693 in invoke_seam_in_worker\n  File \"C:\\Python312\\Lib\\concurrent\\futures\\thread.py\", line 59 in run\n  File \"C:\\Python312\\Lib\\concurrent\\futures\\thread.py\", line 93 in _worker\n  File \"C:\\Python312\\Lib\\threading.py\", line 1012 in run\n  File \"C:\\Python312\\Lib\\threading.py\", line 1075 in _bootstrap_inner\n  File \"C:\\Python312\\Lib\\threading.py\", line 1032 in _bootstrap",
+      "Thread 0x0000902c (most recent call first):\n  File \"C:\\Python312\\Lib\\threading.py\", line 364 in wait\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 247 in initializing\n  File \"C:\\Python312\\Lib\\contextlib.py\", line 137 in __enter__\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 1432 in _acquire_storage\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 1386 in acquire_storage\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 167 in _repository_operation\n  File \"C:\\Python312\\Lib\\contextlib.py\", line 137 in __enter__\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\participants.py\", line 435 in _core_operation\n  File \"C:\\Python312\\Lib\\contextlib.py\", line 137 in __enter__\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\console_browser_read.py\", line 378 in _read_pair\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Chat\\console_preparation_reads.py\", line 202 in invoke\n  File \"C:\\Python312\\Lib\\concurrent\\futures\\thread.py\", line 59 in run\n  File \"C:\\Python312\\Lib\\concurrent\\futures\\thread.py\", line 93 in _worker\n  File \"C:\\Python312\\Lib\\threading.py\", line 1012 in run\n  File \"C:\\Python312\\Lib\\threading.py\", line 1075 in _bootstrap_inner\n  File \"C:\\Python312\\Lib\\threading.py\", line 1032 in _bootstrap",
+      "Thread 0x0000798c (most recent call first):\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Utils\\windows_files.py\", line 429 in info\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Utils\\windows_files.py\", line 581 in open_handle\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Utils\\windows_files.py\", line 773 in stat\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 83 in check\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 109 in _check_operation\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 214 in check\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 224 in initializing\n  File \"C:\\Python312\\Lib\\contextlib.py\", line 137 in __enter__\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 1432 in _acquire_storage\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\storage_admission.py\", line 1386 in acquire_storage\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\private_sqlite.py\", line 1523 in admitted\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\private_sqlite.py\", line 1934 in connect_private_sqlite\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\ChaChaNotes_DB.py\", line 3064 in _get_thread_connection\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Backup_Recovery\\participants.py\", line 596 in accessed\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\ChaChaNotes_DB.py\", line 3174 in get_connection\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\ChaChaNotes_DB.py\", line 24908 in _enter_transaction\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\ChaChaNotes_DB.py\", line 24883 in __enter__\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\DB\\ChaChaNotes_DB.py\", line 3331 in get_local_authority_id\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\character_context.py\", line 665 in _read_database_scope_metadata\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\character_context.py\", line 683 in _read_database_scope_metadata_pair\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\character_context.py\", line 736 in invoke\n  File \"C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\tldw_chatbook\\Chat\\console_preparation_reads.py\", line 202 in invoke\n  File \"C:\\Python312\\Lib\\concurrent\\futures\\thread.py\", line 59 in run\n  File \"C:\\Python312\\Lib\\concurrent\\futures\\thread.py\", line 93 in _worker\n  File \"C:\\Python312\\Lib\\threading.py\", line 1012 in run\n  File \"C:\\Python312\\Lib\\threading.py\", line 1075 in _bootstrap_inner\n  File \"C:\\Python312\\Lib\\threading.py\", line 1032 in _bootstrap"
+    ]
+  }
+}

@@ -571,6 +571,13 @@ def _policy_snapshot(
     return values, tuple(dict.fromkeys(issues))
 
 
+def legacy_sync_directory_for_picker() -> object:
+    """Return a legacy start-location suggestion without granting sync authority."""
+    from ..config import get_cli_setting
+
+    return get_cli_setting("notes", "sync_directory", None)
+
+
 def legacy_sync_directory_configured(settings: object) -> bool:
     """Return True when the legacy ``notes.sync_directory`` key is present.
 
@@ -1181,6 +1188,7 @@ __all__ = [
     "LegacyNotesSyncSnapshotError",
     "authorize_legacy_candidate_activation",
     "legacy_sync_directory_configured",
+    "legacy_sync_directory_for_picker",
     "persist_legacy_notes_sync_migration",
     "plan_legacy_notes_sync_migration",
     "snapshot_legacy_notes_sync",

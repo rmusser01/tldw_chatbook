@@ -199,11 +199,12 @@ def test_console_controllers_read_only_self_attributes_they_define() -> None:
     )
 
 
-@pytest.mark.parametrize("key", sorted(_EXEMPT))
-def test_exempt_reads_are_still_unresolved(key: str) -> None:
+def test_exempt_reads_are_still_unresolved() -> None:
     """An exemption whose read got fixed must be deleted with it."""
 
-    assert key in _unresolved_reads()[1], f"{key} is resolved now; drop its exemption"
+    _, unresolved = _unresolved_reads()
+    stale = _EXEMPT.keys() - unresolved.keys()
+    assert not stale, f"Drop resolved exemptions: {sorted(stale)}"
 
 
 def _probe_reads(body: str) -> set[str]:

@@ -674,9 +674,7 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
                 yield Button("Clear", id="clear-search", variant="default")
 
             # Column headers for the listing below (task-3304, MI-15).
-            yield Static(
-                _listing_column_headers(), id="file-dialog-column-headers"
-            )
+            yield Static(_listing_column_headers(), id="file-dialog-column-headers")
 
             yield from self._listing_controls()
 
@@ -701,9 +699,7 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
                 # without a second dialog. Off by default, so every other
                 # caller's bar is unchanged.
                 if getattr(self, "_offer_select_folder", False):
-                    yield Button(
-                        self.FOLDER_CONFIRM_LABEL, id="select-current-folder"
-                    )
+                    yield Button(self.FOLDER_CONFIRM_LABEL, id="select-current-folder")
                 yield Button(self._label(self._cancel_button, "Cancel"), id="cancel")
 
             # task-32251 AC#2: the refusal used to be the Dialog's
@@ -831,14 +827,14 @@ class FileSystemPickerScreen(SafeModalDismissMixin, ModalScreen[Path | None]):
         self._set_error()
 
     @on(DirectoryNavigation.PermissionError)
-    def _show_permission_error(self, event: DirectoryNavigation.PermissionError) -> None:
+    def _show_permission_error(
+        self, event: DirectoryNavigation.PermissionError
+    ) -> None:
         """Show any permission error bubbled up from the directory navigator."""
         if event.path == event.control.location:
             self._set_error(self.ERROR_PERMISSION_ERROR)
 
-    def check_action(
-        self, action: str, parameters: tuple[object, ...]
-    ) -> bool | None:
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Hide the folder shortcut on dialogs that do not offer it.
 
         (task-2222 Qodo round) The binding is declared on the shared base,

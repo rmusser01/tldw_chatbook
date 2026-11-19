@@ -545,7 +545,11 @@ class WorkspaceCreateModal(
                 + "\n".join(f"{folder}: {message}" for folder, message in failed)
             )
             self._stash_form_state()
-            self.run_worker(self._show_binding_retry(), exclusive=True)
+            self.run_worker(
+                self._show_binding_retry(),
+                exclusive=True,
+                group="workspace-create-binding-retry",
+            )
             return
         self._bound_folders = all_bound
         self._failed_folder_messages = {}

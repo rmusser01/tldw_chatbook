@@ -25,6 +25,10 @@ FORBIDDEN_IMPORT_PARTS = frozenset(
     }
 )
 SAFE_EXTERNAL_IMPORT_ROOTS = frozenset({"PIL"})
+#: Reviewed exceptions, keyed by (module, imported name). Empty since
+#: TASK-39057 deleted the dead built-in Buddy installer (owner decision,
+#: 2026-11-06); Persona_Buddy.library seeds the built-in Buddy.
+REVIEWED_BOUNDARY_EXCEPTIONS: dict[tuple[str, str], str] = {}
 PRIVATE_FIELD_TOKENS = ("path", "relpath", "exception", "traceback")
 
 
@@ -53,6 +57,8 @@ def test_persona_visual_modules_stay_outside_other_runtime_and_ui_boundaries() -
     for path in PRODUCTION_MODULES:
         imports = _imports(path)
         for imported in imports:
+            if (path.name, imported) in REVIEWED_BOUNDARY_EXCEPTIONS:
+                continue
             assert not FORBIDDEN_IMPORT_PARTS.intersection(imported.split(".")), (
                 f"{path.relative_to(REPO_ROOT)} imports forbidden boundary {imported}"
             )
@@ -63,6 +69,12 @@ def test_persona_visual_modules_stay_outside_other_runtime_and_ui_boundaries() -
                 external_roots.add(root)
 
     assert external_roots <= SAFE_EXTERNAL_IMPORT_ROOTS
+
+
+def test_reviewed_boundary_exceptions_are_live() -> None:
+    """TASK-38990: an exception outlives neither its module nor its import."""
+    for module, imported in REVIEWED_BOUNDARY_EXCEPTIONS:
+        assert imported in _imports(PACKAGE_ROOT / module), (module, imported)
 
 
 def test_persona_visual_tables_are_separate_from_shared_visual_identity() -> None:

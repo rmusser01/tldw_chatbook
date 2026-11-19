@@ -21,7 +21,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from ..config import get_cli_setting, save_settings_to_cli_config
+from ..config import save_settings_to_cli_config
 from ..Utils.path_validation import validate_existing_absolute_directory
 
 #: Serializes the generation check with the config write it guards, so the
@@ -72,14 +72,11 @@ def browse_start_directory(remembered: object) -> Path:
         through :func:`validated_browse_directory`, so a configured value
         that is relative, traversing or gone is skipped like any other.
     """
-    for candidate in (
-        remembered,
-        get_cli_setting("notes", "sync_directory", None),
-    ):
-        validated = validated_browse_directory(candidate)
-        if validated is not None:
-            return validated
-    return Path.home()
+    if validated := validated_browse_directory(remembered):
+        return validated
+    from ..Notes.notes_sync_legacy import legacy_sync_directory_for_picker
+
+    return validated_browse_directory(legacy_sync_directory_for_picker()) or Path.home()
 
 
 def picker_recent_context(section: str) -> str:

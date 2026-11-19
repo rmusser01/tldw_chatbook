@@ -1,0 +1,80 @@
+{
+  "started_utc": "2026-10-27T17:37:11.245679+00:00",
+  "finished_utc": "2026-10-27T17:38:07.070318+00:00",
+  "baseline_ref": "origin/dev",
+  "baseline_oid": "416feb50ee667fdc95cb269bf50f8b1d5b3ff8ff",
+  "branch_ref_count": 349,
+  "unique_branch_tip_oids": 330,
+  "tree_source_oids_including_worktrees": 338,
+  "registered_worktrees": 52,
+  "task_occurrences": 1522614,
+  "unique_task_blobs": 8386,
+  "baseline_task_paths": 5862,
+  "different_from_dev_occurrences": 65429,
+  "uncommitted_task_records": 185,
+  "max_observed_root_id": 37030,
+  "historical_path_max_root_id": 37030,
+  "historical_path_id_matches": 17496,
+  "open_pr_count": 34,
+  "errors": [],
+  "limits": [
+    "No refs fetched by this script; caller refreshed origin before collection.",
+    "Snapshot only, not a reservation or safe next ID; rerun immediately before filing.",
+    "Only registered worktrees are included; unregistered directories are not discoverable.",
+    "Immutable Git evidence is identified by blob OID; working task evidence is copied by SHA256.",
+    "Historical paths inform ID usage, not active ownership.",
+    "PR files endpoint is paginated; GitHub limits response to 3000 files per PR.",
+    "Release promotion PRs are not exclusive implementation owners."
+  ],
+  "final_filing_check": {
+    "checked_utc": "2026-10-27T17:57:26.549361+00:00",
+    "dev": "416feb50ee667fdc95cb269bf50f8b1d5b3ff8ff",
+    "unique_tip_and_worktree_oids": 338,
+    "registered_worktrees": 52,
+    "max_root_id": 37030,
+    "proposed_ids": [
+      37031,
+      37032,
+      37033,
+      37034
+    ]
+  },
+  "content_reservations": {
+    "ids": [
+      37031,
+      37032,
+      37033,
+      37034
+    ],
+    "immutable_bodies": 8386,
+    "hits": [],
+    "checked_utc": "2026-10-27T18:00:09.943210+00:00"
+  },
+  "created_tasks": [
+    {
+      "id": 37031,
+      "path": "backlog/tasks/task-37031 - Preserve-newer-Evals-bench-input-when-queued-Save-completes.md",
+      "title": "Preserve newer Evals bench input when queued Save completes",
+      "priority": "medium"
+    },
+    {
+      "id": 37032,
+      "path": "backlog/tasks/task-37032 - Keep-full-reminder-form-saves-independent-across-submissions.md",
+      "title": "Keep full reminder-form saves independent across submissions",
+      "priority": "medium"
+    },
+    {
+      "id": 37033,
+      "path": "backlog/tasks/task-37033 - Keep-saved-Prompt-export-writes-off-the-UI-loop.md",
+      "title": "Keep saved-Prompt export writes off the UI loop",
+      "priority": "medium"
+    },
+    {
+      "id": 37034,
+      "path": "backlog/tasks/task-37034 - Scope-Speech-playground-footer-actions-to-the-active-view.md",
+      "title": "Scope Speech playground footer actions to the active view",
+      "priority": "low"
+    }
+  ],
+  "new_related_owner": "TASK-34000.97 (unmerged PR3259): Notes destination-permission failure, distinct from Prompt export scheduling."
+}

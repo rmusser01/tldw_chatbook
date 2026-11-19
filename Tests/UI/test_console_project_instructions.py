@@ -481,7 +481,7 @@ def test_disposable_preview_matches_live_exact_request_when_source_is_omitted(
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 20)
     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 95)
+    monkeypatch.setattr(agent_service, "count_model_messages", lambda *_a, **_k: 95)
     preview_consent = Mock(side_effect=AssertionError("preview requested consent"))
     preview_service = AgentService(
         AgentRunsDB(tmp_path / "preview.db", client_id="test"),
@@ -835,7 +835,7 @@ async def test_controller_preview_applies_live_skill_turn_before_admission(
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
     monkeypatch.setattr(
         agent_service,
-        "_count_model_messages",
+        "count_model_messages",
         lambda messages, *_a, **_k: 95 if "$code-review" in str(messages) else 20,
     )
     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 5)
@@ -1453,12 +1453,12 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
         async def resolve_for_send(self, selection):
             self.selections.append(selection)
             return provider_resolution(
-                       ready=True,
-                       provider=selection.provider,
-                       execution_key=f"exec-{selection.provider}",
-                       model=selection.explicit_model,
-                       max_tokens=selection.max_tokens,
-                   )
+                ready=True,
+                provider=selection.provider,
+                execution_key=f"exec-{selection.provider}",
+                model=selection.explicit_model,
+                max_tokens=selection.max_tokens,
+            )
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(
@@ -1505,7 +1505,7 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
         lambda **_kwargs: True,
     )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "count_model_messages", lambda *_a, **_k: 20)
     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 15)
     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
 
@@ -1565,13 +1565,13 @@ async def test_captured_context_uses_provider_fallbacks_for_images_and_admission
         async def resolve_for_send(self, selection):
             self.selections.append(selection)
             return provider_resolution(
-                       ready=True,
-                       provider=selection.provider,
-                       execution_key=selection.provider,
-                       model=selection.explicit_model or selection.configured_model,
-                       max_tokens=selection.max_tokens,
-                       base_url=selection.base_url,
-                   )
+                ready=True,
+                provider=selection.provider,
+                execution_key=selection.provider,
+                model=selection.explicit_model or selection.configured_model,
+                max_tokens=selection.max_tokens,
+                base_url=selection.base_url,
+            )
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(
@@ -1629,7 +1629,7 @@ async def test_captured_context_uses_provider_fallbacks_for_images_and_admission
     )
     monkeypatch.setattr(controller_module, "max_history_images", lambda *_a: 2)
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a, **_k: 100)
-    monkeypatch.setattr(agent_service, "_count_model_messages", lambda *_a, **_k: 20)
+    monkeypatch.setattr(agent_service, "count_model_messages", lambda *_a, **_k: 20)
     monkeypatch.setattr(agent_service, "count_tokens_messages", lambda *_a, **_k: 15)
     monkeypatch.setattr(agent_service, "estimate_tokens", lambda *_a, **_k: 0)
 

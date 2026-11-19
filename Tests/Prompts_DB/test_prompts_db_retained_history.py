@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -433,7 +434,16 @@ def test_prompt_history_count_is_exact_and_decodes_no_payload(monkeypatch):
         def fail_json_decode(_raw: str) -> Any:
             raise AssertionError("history count must not decode payloads")
 
-        monkeypatch.setattr(prompts_db_module.json, "loads", fail_json_decode)
+        # Patch Prompts_DB's own ``json`` name, not the shared stdlib function.
+        monkeypatch.setattr(
+            prompts_db_module,
+            "json",
+            SimpleNamespace(
+                loads=fail_json_decode,
+                dumps=json.dumps,
+                JSONDecodeError=json.JSONDecodeError,
+            ),
+        )
 
         assert database.get_prompt_history_count(TARGET_UUID) == 4
         assert database.get_prompt_history_count(OTHER_UUID) == 1
@@ -452,7 +462,16 @@ def test_prompt_history_page_is_filtered_bounded_and_cursor_paged(monkeypatch):
             decoded_payloads.append(raw)
             return real_loads(raw)
 
-        monkeypatch.setattr(prompts_db_module.json, "loads", recording_loads)
+        # Patch Prompts_DB's own ``json`` name, not the shared stdlib function.
+        monkeypatch.setattr(
+            prompts_db_module,
+            "json",
+            SimpleNamespace(
+                loads=recording_loads,
+                dumps=json.dumps,
+                JSONDecodeError=json.JSONDecodeError,
+            ),
+        )
         statements: list[str] = []
         database.get_connection().set_trace_callback(statements.append)
 
@@ -1297,3 +1316,104 @@ def test_all_prompt_state_rolls_back_on_snapshot_finalize_failure(operation):
         assert _prompt_storage_state(database) == before
     finally:
         database.close_connection()
+
+
+def test_v5_mixin_migration_preserves_records_and_history(tmp_path, monkeypatch):
+    path = tmp_path / "old.db"
+    _seed_v3_database(path)
+    with monkeypatch.context() as patch:
+        patch.setattr(PromptsDatabase, "_CURRENT_SCHEMA_VERSION", 5)
+        old = PromptsDatabase(path, client_id="seed")
+        old.add_prompt(
+            name="old prompt",
+            author=None,
+            details=None,
+            user_prompt="searchable",
+            keywords=["tag"],
+        )
+        from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+            LocalPromptService,
+        )
+
+        LocalPromptService(old)._ensure_collection_schema()
+        conn = old.get_connection()
+        conn.execute("INSERT INTO LocalPromptCollections (name) VALUES ('collection')")
+        conn.execute(
+            "INSERT INTO LocalPromptCollectionItems (collection_id, prompt_id) VALUES (1, 1)"
+        )
+        conn.execute("UPDATE sqlite_sequence SET seq=50 WHERE name='Prompts'")
+        conn.commit()
+        before_prompts = [tuple(row) for row in conn.execute("SELECT * FROM Prompts")]
+        before_links = [
+            tuple(row) for row in conn.execute("SELECT * FROM PromptKeywordLinks")
+        ]
+        before_collections = [
+            tuple(row)
+            for row in conn.execute("SELECT * FROM LocalPromptCollectionItems")
+        ]
+        before_history = [
+            tuple(row)
+            for row in conn.execute("SELECT * FROM sync_log ORDER BY change_id")
+        ]
+        old.close()
+    upgraded = PromptsDatabase(path, client_id="upgrade")
+    conn = upgraded.get_connection()
+    assert (
+        conn.execute("SELECT seq FROM sqlite_sequence WHERE name='Prompts'").fetchone()[
+            0
+        ]
+        == 50
+    )
+    assert [
+        tuple(row) for row in conn.execute("SELECT * FROM Prompts")
+    ] == before_prompts
+    assert [
+        tuple(row) for row in conn.execute("SELECT * FROM PromptKeywordLinks")
+    ] == before_links
+    assert [
+        tuple(row) for row in conn.execute("SELECT * FROM sync_log ORDER BY change_id")
+    ] == before_history
+    assert [
+        tuple(row) for row in conn.execute("SELECT * FROM LocalPromptCollectionItems")
+    ] == before_collections
+    assert upgraded.search_prompts("searchable")[1] == 1
+    upgraded.add_prompt(name="mixin", author=None, details=None, artifact_type="mixin")
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_v5_mixin_migration_rolls_back_on_failure(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    path = tmp_path / "rollback.db"
+    _seed_v3_database(path)
+    with monkeypatch.context() as patch:
+        patch.setattr(PromptsDatabase, "_CURRENT_SCHEMA_VERSION", 5)
+        old = PromptsDatabase(path, client_id="seed")
+        old.add_prompt("old", None, None, user_prompt="body", keywords=["tag"])
+        old.close()
+    with sqlite3.connect(path) as conn:
+        before = conn.execute("SELECT * FROM Prompts").fetchall()
+        links = conn.execute("SELECT * FROM PromptKeywordLinks").fetchall()
+        history = conn.execute("SELECT * FROM sync_log ORDER BY change_id").fetchall()
+    original_read = Path.read_text
+
+    def fail_after_rebuild(file, *args, **kwargs):
+        value = original_read(file, *args, **kwargs)
+        return (
+            value + "\nINVALID SQL;\n"
+            if file.name == "prompts_literal_mixins.sql"
+            else value
+        )
+
+    monkeypatch.setattr(Path, "read_text", fail_after_rebuild)
+    with pytest.raises(DatabaseError):
+        PromptsDatabase(path, client_id="upgrade")
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone() == (5,)
+        assert conn.execute("SELECT * FROM Prompts").fetchall() == before
+        assert conn.execute("SELECT * FROM PromptKeywordLinks").fetchall() == links
+        assert (
+            conn.execute("SELECT * FROM sync_log ORDER BY change_id").fetchall()
+            == history
+        )
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

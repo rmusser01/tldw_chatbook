@@ -63,9 +63,12 @@ class DictionaryEntriesReorderRequested(Message):
 
 
 class DictionarySettingsSaveRequested(Message):
-    def __init__(self, payload: dict) -> None:
+    def __init__(
+        self, payload: dict, *, submitted_snapshot: dict | None = None
+    ) -> None:
         super().__init__()
         self.payload = payload
+        self.submitted_snapshot = submitted_snapshot
 
 
 class DictionarySettingsEdited(Message):
@@ -384,7 +387,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         )
         self.update_entries(list(record.get("entries") or []))
         self.query_one("#personas-dict-status", Static).update("")
-        self._loaded_settings = self.settings_payload()
+        self._loaded_settings = self._settings_snapshot()
         self._last_dirty_sent = False
 
     def update_entries(self, entries: list[dict]) -> None:
@@ -676,6 +679,35 @@ class PersonasDictionaryDetailWidget(Vertical):
             "priority": priority,
         }
 
+    def _settings_snapshot(self) -> dict:
+        """Capture raw controls, including unfinished names and token budgets."""
+        return {
+            **self.settings_payload(),
+            "name": self.query_one("#personas-dict-name", Input).value,
+            "max_tokens": self.query_one("#personas-dict-max-tokens", Input).value,
+        }
+
+    @property
+    def has_unsaved_settings(self) -> bool:
+        """Whether current raw settings differ from the acknowledged form."""
+        return (
+            self._loaded_settings is not None
+            and self._settings_snapshot() != self._loaded_settings
+        )
+
+    def mark_settings_saved(self, submitted_snapshot: dict) -> bool:
+        """Acknowledge submitted controls without replacing a newer draft.
+
+        Args:
+            submitted_snapshot: Raw settings captured when Save was requested.
+
+        Returns:
+            Whether newer settings remain unsaved.
+        """
+        self._loaded_settings = dict(submitted_snapshot)
+        self._last_dirty_sent = self.has_unsaved_settings
+        return self._last_dirty_sent
+
     def settings_payload(self) -> dict:
         raw_tokens = (
             self.query_one("#personas-dict-max-tokens", Input).value.strip() or "1000"
@@ -818,7 +850,11 @@ class PersonasDictionaryDetailWidget(Vertical):
     @on(Button.Pressed, "#personas-dict-settings-save")
     def _settings_save_pressed(self, event: Button.Pressed) -> None:
         event.stop()
-        self.post_message(DictionarySettingsSaveRequested(self.settings_payload()))
+        self.post_message(
+            DictionarySettingsSaveRequested(
+                self.settings_payload(), submitted_snapshot=self._settings_snapshot()
+            )
+        )
 
     @on(Button.Pressed, "#personas-dict-export-json")
     def _export_json_pressed(self, event: Button.Pressed) -> None:
@@ -866,7 +902,7 @@ class PersonasDictionaryDetailWidget(Vertical):
         """
         if self._loaded_settings is None:
             return  # nothing loaded yet - mount-time Changed noise
-        is_dirty = self.settings_payload() != self._loaded_settings
+        is_dirty = self.has_unsaved_settings
         if is_dirty != self._last_dirty_sent:
             self._last_dirty_sent = is_dirty
             self.post_message(DictionarySettingsEdited(is_dirty))

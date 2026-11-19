@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 import json
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,29 @@ from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, TransactionContextManager
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+
+@pytest.fixture(autouse=True)
+def owned_acceptance_databases(request, monkeypatch, owned_console_databases):
+    """Register only this module's exact returned and direct database owners.
+
+    Args:
+        request: Supplies this module's local helper binding.
+        monkeypatch: Restores the helper after the test.
+        owned_console_databases: Existing supported shutdown/quiescence owner.
+
+    Yields:
+        Registration for directly constructed database/controller pairs.
+    """
+    build_store = _ready_store
+
+    def store_owner(*args, **kwargs):
+        result = build_store(*args, **kwargs)
+        owned_console_databases(result[0])
+        return result
+
+    monkeypatch.setattr(request.module, "_ready_store", store_owner)
+    yield owned_console_databases
 
 
 class _AcceptedCancellationGateway:
@@ -575,6 +599,96 @@ def test_existing_conversation_policy_mismatch_fails_closed_without_version_drif
     )
 
 
+def _safe_row_missing_at_commit(
+    tmp_path: Path,
+    *,
+    source: str,
+) -> tuple[CharactersRAGDB, ConsoleChatStore, ConsoleDurableTurnAcceptance]:
+    """An existing chat with no policy row, a safe candidate, and ``source``.
+
+    The session stages Never/Blocked and the turn was frozen under
+    Never/Blocked too; only the frozen authority's ``source`` varies.
+    """
+    db, _service, store, _preparation, acceptance = _ready_store(
+        tmp_path,
+        existing=True,
+        attachments=False,
+    )
+    safe = ConsoleLibraryPolicySnapshot(
+        auto_retrieve=ConsoleAutoRetrieve.NEVER,
+        assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+        policy_revision=1 if source == "durable" else None,
+        source=source,  # type: ignore[arg-type]
+        error_code="policy_read_error" if source == "unavailable" else None,
+    )
+    store._session_or_raise(
+        "session-1"
+    ).library_policy_holder.snapshot = dataclass_replace(
+        safe, policy_revision=None, source="missing", error_code=None
+    )
+    acceptance = dataclass_replace(
+        acceptance,
+        frozen_authority=dataclass_replace(acceptance.frozen_authority, policy=safe),
+    )
+    db.get_connection().execute(
+        "DELETE FROM console_conversation_library_policy WHERE conversation_id = ?",
+        (acceptance.conversation_id,),
+    )
+    db.get_connection().commit()
+    return db, store, acceptance
+
+
+def _policy_rows(db: CharactersRAGDB, conversation_id: str) -> list[tuple[Any, ...]]:
+    return [
+        tuple(row)
+        for row in db.get_connection().execute(
+            "SELECT auto_retrieve_on_send, assistant_library_access, policy_revision "
+            "FROM console_conversation_library_policy WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+    ]
+
+
+def test_a_missing_policy_row_is_repaired_only_for_a_turn_frozen_on_that_missing_row(
+    tmp_path: Path,
+) -> None:
+    """Positive control for the refusal cases below (TASK-33620.3).
+
+    The same setup, frozen under ``source="missing"``, commits and writes the
+    safe row -- so a refusal below is the source check, not the fixture.
+    """
+    db, store, acceptance = _safe_row_missing_at_commit(tmp_path, source="missing")
+
+    store.commit_durable_turn(acceptance)
+
+    assert _policy_rows(db, acceptance.conversation_id) == [(0, 0, 1)]
+
+
+@pytest.mark.parametrize("source", ["unavailable", "durable"])
+def test_a_turn_frozen_on_an_unreadable_or_since_deleted_row_is_not_repaired(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    """ADR-079 as amended: an unreadable row is never permission (TASK-33620.3).
+
+    A turn frozen while its policy row could not be read (``unavailable``) or
+    while a row existed that has since been deleted (``durable``) did not run
+    under a missing row, so its commit must refuse rather than write one --
+    even though both sides hold the safe Never/Blocked values.
+    """
+    db, store, acceptance = _safe_row_missing_at_commit(tmp_path, source=source)
+    before = _database_snapshot(db)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Durable Console Library policy no longer matches acceptance",
+    ):
+        store.commit_durable_turn(acceptance)
+
+    assert _policy_rows(db, acceptance.conversation_id) == []
+    assert _database_snapshot(db) == before
+
+
 def test_success_persists_exact_attachment_state_hash_sync_intent_and_private_checkpoint(
     tmp_path: Path,
 ) -> None:
@@ -635,6 +749,7 @@ def test_success_persists_exact_attachment_state_hash_sync_intent_and_private_ch
 async def test_explicit_accepted_cancellation_settles_stopped_without_receipt(
     tmp_path: Path,
     cancellation: str,
+    owned_acceptance_databases,
 ) -> None:
     db = CharactersRAGDB(
         tmp_path / f"accepted-{cancellation}.sqlite",
@@ -651,6 +766,7 @@ async def test_explicit_accepted_cancellation_settles_stopped_without_receipt(
         base_url="http://127.0.0.1:9099",
         agent_runtime_enabled=False,
     )
+    owned_acceptance_databases(db, controller)
     task = asyncio.create_task(controller.submit_draft("accepted turn"))
     await asyncio.wait_for(gateway.started.wait(), timeout=1)
     assistant_id = controller._active_assistant_message_ids[session.id]
@@ -679,6 +795,7 @@ async def test_explicit_accepted_cancellation_settles_stopped_without_receipt(
 @pytest.mark.asyncio
 async def test_reasonless_accepted_cancellation_settles_failed_with_receipt(
     tmp_path: Path,
+    owned_acceptance_databases,
 ) -> None:
     db = CharactersRAGDB(
         tmp_path / "accepted-unexpected.sqlite",
@@ -695,6 +812,7 @@ async def test_reasonless_accepted_cancellation_settles_failed_with_receipt(
         base_url="http://127.0.0.1:9099",
         agent_runtime_enabled=False,
     )
+    owned_acceptance_databases(db, controller)
     task = asyncio.create_task(controller.submit_draft("accepted turn"))
     await asyncio.wait_for(gateway.started.wait(), timeout=1)
     assistant_id = controller._active_assistant_message_ids[session.id]
@@ -731,3 +849,32 @@ def test_durable_publication_preserves_committed_parent_metadata(tmp_path, publi
         assert assistant.parent_message_id == user.persisted_message_id
     finally:
         db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "failure_point", ["checkpoint", "contribution_insert", "commit"]
+)
+def test_missing_policy_repair_rolls_back_with_a_late_turn_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    db, store, acceptance = _safe_row_missing_at_commit(tmp_path, source="missing")
+    before = _database_snapshot(db)
+    cleanup = _install_failure(db, store.persistence, failure_point, monkeypatch)
+    try:
+        with pytest.raises(
+            Exception,
+            match="injected|task14|could not be committed|Commit failed|FOREIGN KEY",
+        ):
+            store.commit_durable_turn(acceptance)
+        assert _policy_rows(db, acceptance.conversation_id) == []
+        assert _database_snapshot(db) == before
+    finally:
+        cleanup()
+    paused = store.preparation_by_id(acceptance.preparation_id)
+    assert paused is not None
+    assert paused.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
+    _resume_persistence_retry(store, paused)
+    store.commit_durable_turn(acceptance)
+    assert _policy_rows(db, acceptance.conversation_id) == [(0, 0, 1)]

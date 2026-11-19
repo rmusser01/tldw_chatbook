@@ -10,7 +10,7 @@ import time
 import unicodedata
 from collections.abc import Mapping
 from itertools import islice
-from typing import Annotated, Any, Literal, NoReturn, Optional, TypeVar, Union
+from typing import Annotated, Any, Literal, NoReturn, Optional, Union
 from urllib.parse import urlparse
 
 import regex
@@ -143,11 +143,13 @@ def validate_batch_transcription_provider(value: object) -> str:
     Raises:
         ValueError: The value is not a supported provider identifier.
     """
+    from .local_stt_providers import provider_release_deferral
+
+    if type(value) is str and (reason := provider_release_deferral(value)):
+        raise ValueError(reason)
     return _BATCH_TRANSCRIPTION_PROVIDER.validate_python(value, strict=True)
 
-PROVIDER_API_KEY_MAX_LENGTH = 4096
 CONSOLE_DRAFT_MAX_LENGTH = 100_000
-CONSOLE_FORK_TITLE_MAX_LENGTH = 60
 CONSOLE_SWITCHER_QUERY_MAX_LENGTH = 512
 CONSOLE_CHARACTER_QUERY_MAX_LENGTH = 200
 WORKFLOW_SEARCH_MAX_LENGTH = 512
@@ -796,52 +798,6 @@ def _validate_strict_json_container(
     active_containers.add(marker)
 
 
-def derive_console_session_title(draft: str, *, max_length: int) -> str:
-    """Load the Console title helper lazily to keep validation imports acyclic."""
-    from tldw_chatbook.Chat.console_chat_models import (
-        derive_console_session_title as derive_title,
-    )
-
-    return derive_title(draft, max_length=max_length)
-
-
-def validate_console_fork_title(value: object) -> str:
-    """Return one normalized, bounded Console fork title.
-
-    Args:
-        value: Raw value received from the Console naming dialog.
-
-    Returns:
-        A nonblank title normalized by the shared Console title helper.
-
-    Raises:
-        ValueError: If ``value`` is not text or normalizes to blank.
-    """
-
-    if type(value) is not str:
-        raise ValueError("Fork title must be text.")
-    normalized = derive_console_session_title(
-        value,
-        max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
-    )
-    if not normalized:
-        raise ValueError("Fork title cannot be blank.")
-    return normalized
-
-
-class ConsoleForkTitleInput(BaseModel):
-    """Strict shared validation boundary for the Console fork naming dialog."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    title: str = Field(min_length=1, max_length=CONSOLE_FORK_TITLE_MAX_LENGTH)
-
-    @field_validator("title", mode="before")
-    @classmethod
-    def _normalize_title(cls, value: object) -> str:
-        return validate_console_fork_title(value)
-
-
 class ConsoleSwitcherQueryInput(BaseModel):
     """Strict shared boundary for the local Ctrl+K search query."""
 
@@ -1079,202 +1035,6 @@ class TerminalSessionNameInput(BaseModel):
         if "[" in normalized or "]" in normalized:
             raise ValueError("terminal session name must not contain markup")
         return normalized
-
-
-TerminalPasteViolation = Literal["too_large", "prohibited_control"]
-
-
-class TerminalPasteInput(BaseModel):
-    """Strict shared boundary for one terminal paste offer."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    text: str = Field(repr=False)
-    bracketed: bool
-
-    def classify(self) -> tuple[TerminalPasteViolation | None, bytes]:
-        """Classify paste content and return its replacement-encoded payload.
-
-        Returns:
-            A content-free violation category and payload bytes. The payload is
-            empty when a violation is present.
-        """
-        from ..Terminal.contracts import MAX_PASTE_BYTES
-
-        if len(self.text) > MAX_PASTE_BYTES:
-            return "too_large", b""
-        for character in self.text:
-            codepoint = ord(character)
-            if codepoint < 0x20 and character not in "\t\n\r":
-                return "prohibited_control", b""
-            if 0x7F <= codepoint <= 0x9F:
-                return "prohibited_control", b""
-        payload = self.text.encode("utf-8", "replace")
-        if len(payload) > MAX_PASTE_BYTES:
-            return "too_large", b""
-        return None, payload
-
-
-class TerminalKeyInput(BaseModel):
-    """Strict shared boundary for encoded terminal key bytes."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    data: bytes = Field(repr=False)
-
-
-class TerminalReplyInput(BaseModel):
-    """Strict shared boundary for code-owned terminal reply bytes."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    data: bytes = Field(repr=False)
-
-
-class TerminalOutputInput(BaseModel):
-    """Strict shared boundary for terminal backend output bytes."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    data: bytes = Field(repr=False)
-
-
-class TerminalResizeInput(BaseModel):
-    """Strict shared boundary for terminal resize dimensions."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    columns: int
-    rows: int
-
-    @field_validator("columns")
-    @classmethod
-    def _validate_columns(cls, value: int) -> int:
-        from ..Terminal.contracts import MAX_COLUMNS, MIN_COLUMNS
-
-        if not MIN_COLUMNS <= value <= MAX_COLUMNS:
-            raise ValueError("terminal columns are outside contract")
-        return value
-
-    @field_validator("rows")
-    @classmethod
-    def _validate_rows(cls, value: int) -> int:
-        from ..Terminal.contracts import MAX_ROWS, MIN_ROWS
-
-        if not MIN_ROWS <= value <= MAX_ROWS:
-            raise ValueError("terminal rows are outside contract")
-        return value
-
-
-_TerminalBytesInput = TypeVar(
-    "_TerminalBytesInput",
-    TerminalKeyInput,
-    TerminalReplyInput,
-    TerminalOutputInput,
-)
-
-
-def _validate_terminal_bytes_input(
-    model_type: type[_TerminalBytesInput],
-    data: object,
-    *,
-    label: str,
-) -> _TerminalBytesInput:
-    """Return one strict bytes model with a content-free type error."""
-    try:
-        return model_type.model_validate({"data": data})
-    except PydanticValidationError:
-        raise TypeError(f"terminal {label} data must be bytes") from None
-
-
-def validate_terminal_key_input(data: object) -> TerminalKeyInput:
-    """Validate encoded terminal key bytes through the shared model.
-
-    Args:
-        data: Candidate encoded key bytes.
-
-    Returns:
-        Strict validated key model.
-
-    Raises:
-        TypeError: If ``data`` is not immutable bytes.
-    """
-    return _validate_terminal_bytes_input(TerminalKeyInput, data, label="key")
-
-
-def validate_terminal_paste_input(
-    text: object, bracketed: object
-) -> TerminalPasteInput:
-    """Validate a terminal paste offer through the shared model.
-
-    Args:
-        text: Candidate paste text.
-        bracketed: Candidate bracketed-paste mode flag.
-
-    Returns:
-        Strict validated paste model.
-
-    Raises:
-        TypeError: If either value has the wrong type.
-    """
-    try:
-        return TerminalPasteInput.model_validate({"text": text, "bracketed": bracketed})
-    except PydanticValidationError:
-        raise TypeError("terminal paste values have invalid types") from None
-
-
-def validate_terminal_reply_input(data: object) -> TerminalReplyInput:
-    """Validate terminal reply bytes through the shared model.
-
-    Args:
-        data: Candidate terminal reply bytes.
-
-    Returns:
-        Strict validated reply model.
-
-    Raises:
-        TypeError: If ``data`` is not immutable bytes.
-    """
-    return _validate_terminal_bytes_input(TerminalReplyInput, data, label="reply")
-
-
-def validate_terminal_output_input(data: object) -> TerminalOutputInput:
-    """Validate terminal backend output through the shared model.
-
-    Args:
-        data: Candidate backend output bytes.
-
-    Returns:
-        Strict validated output model.
-
-    Raises:
-        TypeError: If ``data`` is not immutable bytes.
-    """
-    return _validate_terminal_bytes_input(TerminalOutputInput, data, label="output")
-
-
-def validate_terminal_resize_input(
-    columns: object, rows: object
-) -> TerminalResizeInput:
-    """Validate terminal dimensions through the shared model.
-
-    Args:
-        columns: Candidate terminal width.
-        rows: Candidate terminal height.
-
-    Returns:
-        Strict validated resize model.
-
-    Raises:
-        TypeError: If either dimension is not an integer.
-        ValueError: If either dimension is outside the terminal contract.
-    """
-    if type(columns) is not int or type(rows) is not int:
-        raise TypeError("terminal dimensions must be integers")
-    try:
-        return TerminalResizeInput.model_validate({"columns": columns, "rows": rows})
-    except PydanticValidationError:
-        raise ValueError("terminal dimensions are outside contract") from None
 
 
 class TerminalEnvironmentInput(BaseModel):
@@ -1723,6 +1483,273 @@ def validate_text_input(
     return True
 
 
+#: Bound for one user-typed Dreams phrase (a topic, a goal, the region):
+#: this many code points that are NOT combining marks. The text is
+#: embedded in the query-synthesis prompt and, on the deterministic
+#: fallback, in an outbound search query.
+#:
+#: Marks are left out of the count because the count has to be the same
+#: every time the text is read (review of #2921, round 5, F3): NFC writes
+#: some single letters as a letter and a mark (the Devanagari nukta
+#: letters) and some letter-and-mark pairs as one letter, so a measure in
+#: plain code points depends on which form it is taken of -- and the
+#: typed form is gone once the text is stored. Round 4 took the shorter
+#: of the two, stored text that was longer than 200, and then refused
+#: its own stored form.
+DREAMS_PROFILE_TEXT_MAX_LENGTH = 200
+
+#: Bound on the stored form as a whole, marks included: no phrase is
+#: longer than this however its letters are decorated.
+_DREAMS_TEXT_MAX_STORED_LENGTH = DREAMS_PROFILE_TEXT_MAX_LENGTH * 3
+
+#: Raw input longer than this is refused before anything is done with
+#: it: it only keeps a multi-megabyte paste from being copied, normalised
+#: and scanned. Generous on purpose -- it runs BEFORE the invisible
+#: characters are removed, and text that is short once they are gone is
+#: not refused for them (round 5, N6: 800 zero width spaces and an "x"
+#: were "longer than 200 characters").
+_DREAMS_TEXT_RAW_LENGTH_CAP = 20_000
+
+#: Text still longer than this once the invisible characters are removed
+#: is refused before any per-character Unicode work. NFC composition can
+#: shorten text, so the exact bound is applied after it; this one only
+#: bounds the work.
+_DREAMS_TEXT_PRECHECK_LENGTH = DREAMS_PROFILE_TEXT_MAX_LENGTH * 4
+
+#: General categories that end a line or are raw controls: every C0/C1
+#: control (which includes every ASCII line break) and Unicode's own line
+#: and paragraph separators.
+_DREAMS_TEXT_LINE_CATEGORIES = frozenset({"Cc", "Zl", "Zp"})
+
+#: The bidirectional embedding, override and isolate controls: they make
+#: text DISPLAY in another order than it is stored and sent.
+_DREAMS_TEXT_DIRECTION_CONTROLS = frozenset(
+    "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+
+#: The format characters (category Cf) real text needs or shows:
+#:
+#: * the two joiners (emoji sequences, Persian and Indic shaping), the
+#:   three directional MARKS, and the Mongolian vowel separator (shaping);
+#: * the VISIBLE ones -- Unicode's prepended concatenation marks: the
+#:   Arabic number sign and its siblings, end of ayah, the Syriac
+#:   abbreviation mark, the Kaithi number signs (round 4, C4: these were
+#:   refused although people type them and they show).
+#:
+#: Every other Cf character is refused -- the direction controls above,
+#: invisible operators, deprecated format characters, interlinear
+#: annotation, tag characters outside a flag: all of them change what
+#: the text IS without changing what the user sees. (Variation selectors
+#: are category Mn, not Cf, and stay allowed.)
+_DREAMS_TEXT_ALLOWED_FORMAT = frozenset(
+    "\u200c\u200d\u200e\u200f\u061c\u180e"
+    "\u0600\u0601\u0602\u0603\u0604\u0605\u06dd\u070f"
+    "\u0890\u0891\u08e2\U000110bd\U000110cd")
+
+#: Invisible characters that only hint at line breaks or ride along with
+#: a paste. They are REMOVED from the text, not refused (round 4, C4):
+#: Thai and Khmer are typed with zero width spaces between words, pasted
+#: text carries soft hyphens and a leading byte order mark, and none of
+#: them is part of what the user means. Zero width space, soft hyphen,
+#: word joiner, byte order mark, object replacement character -- and the
+#: invisible maths operators (function application, invisible times,
+#: separator and plus) that pasted formulas carry (round 5, N6).
+_DREAMS_TEXT_REMOVED = dict.fromkeys(
+    map(ord, "\u200b\u00ad\u2060\ufeff\ufffc\u2061\u2062\u2063\u2064"))
+
+#: Blanks that take up room: braille's own space and the Hangul fillers
+#: people use as an "invisible letter". Written as a plain space, so
+#: ``jazz<U+2800>guitar`` is stored as what it looks like (round 4, I3).
+_DREAMS_TEXT_BLANK_AS_SPACE = dict.fromkeys(
+    map(ord, "\u2800\u3164\uffa0"), " ")
+
+#: Characters that render as nothing although Unicode files them under
+#: letters or symbols, and that are left where they are because Hangul
+#: jamo composition (and music notation) uses them structurally. They do
+#: not count as readable text.
+_DREAMS_TEXT_BLANK = frozenset("\u115f\u1160\U0001d159")
+
+#: A well-formed emoji tag sequence -- a subdivision flag such as
+#: England's: WAVING BLACK FLAG, tag letters/digits, CANCEL TAG. Tag
+#: characters are legitimate inside one and nowhere else (round 4, C4).
+_DREAMS_TEXT_FLAG_SEQUENCE_RE = re.compile(
+    "\U0001f3f4[\U000e0030-\U000e0039\U000e0061-\U000e007a]+\U000e007f")
+
+#: An emoji Unicode writes as punctuation or a maths sign with a selector
+#: after it (round 5, N4): a keycap -- 0-9, ``#`` or ``*``, optionally
+#: U+FE0F, then the combining enclosing keycap U+20E3 -- or one of the
+#: few emoji presentation sequences on such a base (the double
+#: exclamation and exclamation-question marks, the left-right arrow, the
+#: medium and small squares, the curved arrows, the wavy dash, the part
+#: alternation mark). Alone each base is not readable; the emoji is.
+#:
+#: Only the sequences Unicode DEFINES (round 6, G2). Round 5 accepted any
+#: character in front of a selector, and so a zero width joiner, a
+#: direction mark, a combining mark or a filler with U+FE0F after it was
+#: a topic. ``+\ufe0f`` and ``-\u20e3`` are not emoji either: they are
+#: what ``+`` and ``-`` are, maths signs, which alone are refused.
+#:
+#: The selector is OPTIONAL on these bases, and the five skin-tone
+#: swatches (category Sk) count on their own too (round 7, H4): the
+#: medium small squares and the swatches show as emoji by default, so an
+#: emoji keyboard produces them without U+FE0F, and the rest are emoji
+#: whichever way they were typed. Every entry of rich's emoji table is
+#: readable with and without its selectors (pinned by a test).
+_DREAMS_TEXT_EMOJI_PRESENTATION_RE = re.compile(
+    "[#*0-9]\ufe0f?\u20e3"
+    "|[\u203c\u2049\u2194\u25fb-\u25fe\u2934\u2935\u3030\u303d"
+    "\U0001f3fb-\U0001f3ff]")
+
+# One refusal per thing that can be wrong (round 4, C4): the caller shows
+# it after "Topic not added: " / "Goal not added: " / "Region not saved: ".
+_DREAMS_TEXT_TOO_LONG = (
+    f"it is longer than {DREAMS_PROFILE_TEXT_MAX_LENGTH} characters.")
+_DREAMS_TEXT_NOT_ONE_LINE = (
+    "it has a line break or a control character in it; use a single line.")
+_DREAMS_TEXT_NOTHING_READABLE = (
+    "there is nothing readable in it; type a word, a number or an emoji.")
+_DREAMS_TEXT_HIDDEN_DIRECTION = (
+    "it has hidden text-direction characters in it, which make text show "
+    "in another order than it is stored; type it again without them.")
+_DREAMS_TEXT_HIDDEN_FORMAT = (
+    "it has invisible formatting characters in it; type it again without "
+    "them.")
+_DREAMS_TEXT_NOT_TEXT = "it has a character in it that is not valid text."
+
+
+def _is_noncharacter(char: str) -> bool:
+    """Whether a code point is one of Unicode's 66 noncharacters."""
+    code = ord(char)
+    return 0xFDD0 <= code <= 0xFDEF or (code & 0xFFFE) == 0xFFFE
+
+
+def validate_dreams_profile_text(value: object) -> str:
+    """Validate one user-typed Dreams phrase and return the form to store.
+
+    A topic, a goal and the region each end up embedded in the
+    query-synthesis prompt and (on the deterministic fallback, and for
+    the region in a tracked question) in an outbound search query. The
+    rule is about what the text IS, not about what it mentions:
+
+    * one line: no control character, no line or paragraph separator;
+    * something to read: a letter or a number in any script, an emoji
+      (including one written as punctuation or a sign with the emoji
+      selector or the keycap, round 5, N4), or a symbol of the "other"
+      or currency kind (heart, euro, copyright); punctuation, maths signs
+      (+, infinity, arrows), modifier symbols, combining marks and
+      characters that render as nothing alone are not a topic (round 4,
+      I3);
+    * nothing hidden that changes what the text is: no bidirectional
+      embedding/override/isolate control, and no other invisible format
+      character except the joiners, directional marks and visible format
+      characters real text needs (``_DREAMS_TEXT_ALLOWED_FORMAT``), and
+      tag characters inside a subdivision flag;
+    * no noncharacter and no lone surrogate (which cannot even be written
+      to SQLite or TOML);
+    * at most ``DREAMS_PROFILE_TEXT_MAX_LENGTH`` Unicode code points that
+      are not combining marks, and three times that in all -- measured on
+      the stored form, in a way normalisation cannot change, so that the
+      stored form always passes this rule again (round 5, F3). An emoji
+      counts once per code point, an accent never counts apart from its
+      letter, and a letter NFC writes as a letter and a mark counts once.
+
+    Text people type is not refused for what this interpreter's Unicode
+    tables happen to know (round 4, C4): private-use code points (the
+    Apple logo) and code points "unassigned" in this Python's Unicode
+    version (next year's emoji) are ordinary characters here. Invisible
+    characters that are not part of what the user means are removed
+    instead of refused -- zero width space, soft hyphen, word joiner,
+    byte order mark -- and a blank that takes up room (braille's space,
+    the Hangul filler) is stored as a space.
+
+    There is deliberately NO script or markup rule (review of #2921,
+    round 3, item 8). Nothing renders this text as HTML or script -- the
+    TUI shows it literally (``markup=False`` / ``rich.text.Text``), prompts
+    and searches carry it as plain strings -- so such a rule protected
+    nothing, while it refused ordinary interests ("JavaScript: The Good
+    Parts") and was trivially evaded anyway. Angle brackets, square
+    brackets and braces are ordinary text here. The app-wide
+    ``validate_text_input`` is therefore not consulted.
+
+    "Shows it literally" is a statement about Dreams' OWN screens, and it
+    stopped being the whole story once this text leaves them (round 4,
+    C1): a watched query becomes an event reminder's title and a
+    notification's title, a story's title an alert rule's and a source's
+    name, and other features' screens DO read ``[...]`` as Rich markup.
+    That is handled where the text leaves, not here:
+    ``Dreams.track_service._label`` writes those copies with square
+    brackets as parentheses, and the shared notification helper shows
+    runtime text with markup off. This rule still accepts brackets.
+
+    Args:
+        value: The raw text from the input widget or the config.
+
+    Returns:
+        The text to store: trimmed, without the removable invisible
+        characters, every run of spaces written as one space, in NFC --
+        so a composed and a decomposed spelling, and two spacings, of the
+        same phrase are one stored value.
+
+    Raises:
+        ValueError: If the value is not text, has nothing readable in it,
+            or breaks one of the rules above. The message names the one
+            thing that was wrong, is fixed copy fit for a notice, and
+            never echoes the input.
+    """
+    typed = value.strip() if isinstance(value, str) else ""
+    if not typed:
+        raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
+    # Length first: nothing below may run on an unbounded paste. The raw
+    # bound is generous, the real one is taken once the characters that
+    # are removed anyway are gone (round 5, N6).
+    if len(typed) > _DREAMS_TEXT_RAW_LENGTH_CAP:
+        raise ValueError(_DREAMS_TEXT_TOO_LONG)
+    typed = typed.translate(_DREAMS_TEXT_REMOVED).translate(
+        _DREAMS_TEXT_BLANK_AS_SPACE).strip()
+    if not typed:
+        raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
+    if len(typed) > _DREAMS_TEXT_PRECHECK_LENGTH:
+        raise ValueError(_DREAMS_TEXT_TOO_LONG)
+    text = unicodedata.normalize("NFC", typed)
+    # Tag characters count only inside a well-formed flag: scan the text
+    # with every such flag reduced to its base emoji.
+    scanned = _DREAMS_TEXT_FLAG_SEQUENCE_RE.sub("\U0001f3f4", text)
+    readable = False
+    for char in scanned:
+        category = unicodedata.category(char)
+        if category in _DREAMS_TEXT_LINE_CATEGORIES:
+            raise ValueError(_DREAMS_TEXT_NOT_ONE_LINE)
+        if category == "Cs" or _is_noncharacter(char):
+            raise ValueError(_DREAMS_TEXT_NOT_TEXT)
+        if char in _DREAMS_TEXT_DIRECTION_CONTROLS:
+            raise ValueError(_DREAMS_TEXT_HIDDEN_DIRECTION)
+        if category == "Cf":
+            if char not in _DREAMS_TEXT_ALLOWED_FORMAT:
+                raise ValueError(_DREAMS_TEXT_HIDDEN_FORMAT)
+        elif char not in _DREAMS_TEXT_BLANK and (
+            # A letter, a number, an emoji or symbol, a currency sign --
+            # or a code point these tables do not know (Cn) or leave to
+            # the font (Co): a newer Unicode's emoji must not be
+            # "unreadable" on an older Python.
+            category[0] in "LN" or category in ("So", "Sc", "Cn", "Co")
+        ):
+            readable = True
+    if not readable and not _DREAMS_TEXT_EMOJI_PRESENTATION_RE.search(text):
+        raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
+    # One spacing, one topic (round 5, N5): every run of spaces -- a
+    # no-break, ideographic or em space, or what is left where an
+    # invisible character was removed -- is stored as ONE ASCII space;
+    # "rust  tui" and "rust tui" were two topics under the exact key.
+    # Safe here: line breaks and controls were refused above, so only
+    # spaces are whitespace now.
+    text = " ".join(text.split())
+    letters = sum(
+        1 for char in text if not unicodedata.category(char).startswith("M"))
+    if (letters > DREAMS_PROFILE_TEXT_MAX_LENGTH
+            or len(text) > _DREAMS_TEXT_MAX_STORED_LENGTH):
+        raise ValueError(_DREAMS_TEXT_TOO_LONG)
+    return text
+
+
 def validate_navigation_context_text(
     value: object,
     *,
@@ -1756,86 +1783,6 @@ def validate_navigation_context_text(
     ):
         raise ValueError(f"{name} is invalid")
     return value
-
-
-def validate_navigation_provider_key(value: object) -> str:
-    """Normalize and validate one provider key from navigation context.
-
-    Args:
-        value: External provider label or key.
-
-    Returns:
-        The normalized provider configuration key.
-
-    Raises:
-        ValueError: If the provider cannot be represented by the key contract.
-    """
-
-    from tldw_chatbook.Chat.provider_readiness import provider_config_key
-
-    raw_provider = validate_navigation_context_text(
-        value,
-        name="provider",
-        max_length=128,
-    )
-    provider = provider_config_key(raw_provider)
-    allowed = "abcdefghijklmnopqrstuvwxyz0123456789_"
-    if (
-        not provider
-        or not provider[0].isalnum()
-        or any(character not in allowed for character in provider)
-    ):
-        raise ValueError("provider is invalid")
-    return provider
-
-
-def provider_api_key_validation_error(
-    api_key: object,
-    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
-) -> Optional[str]:
-    """Return a validation error for a provider API key, or None when valid.
-
-    Args:
-        api_key: User-entered provider API key. Empty values are allowed so
-            optional local-key fields can represent "not configured."
-        max_length: Maximum allowed key length.
-
-    Returns:
-        A user-facing validation error, or None when the value is acceptable.
-    """
-    key = str(api_key or "")
-    if not key:
-        return None
-
-    sanitized = sanitize_string(key, max_length=max_length)
-    if (
-        sanitized != key
-        or any(char in key for char in "\r\n\t")
-        or not validate_text_input(key, max_length=max_length, allow_html=False)
-    ):
-        return f"API key must be a single-line value under {max_length} characters."
-
-    from tldw_chatbook.Chat.provider_readiness import is_valid_provider_api_key
-
-    if not is_valid_provider_api_key(key):
-        return "API key looks like a placeholder; paste a real key."
-    return None
-
-
-def validate_provider_api_key(
-    api_key: object,
-    max_length: int = PROVIDER_API_KEY_MAX_LENGTH,
-) -> bool:
-    """Validate provider API-key input without leaking the value.
-
-    Args:
-        api_key: User-entered provider API key.
-        max_length: Maximum allowed key length.
-
-    Returns:
-        True when the value is empty or a usable single-line provider key.
-    """
-    return provider_api_key_validation_error(api_key, max_length=max_length) is None
 
 
 def validate_number_range(

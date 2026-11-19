@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,7 +45,11 @@ from tldw_chatbook.Chat.answer_citations import (
     build_answer_citation_validation,
     format_evidence_for_cited_answer,
 )
-from tldw_chatbook.Chat.Chat_Functions import chat_api_call, extract_response_content
+from tldw_chatbook.Chat.Chat_Functions import (
+    API_CALL_HANDLERS,
+    chat_api_call,
+    extract_response_content,
+)
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
@@ -161,33 +165,127 @@ Write plain prose, and no preamble about what you are about to do.
 
 
 def resolve_library_rag_answer_provider() -> tuple[str | None, str | None]:
-    """The provider (and, optionally, model) `generate_library_rag_answer`
-    should call.
+    """The provider AND model `generate_library_rag_answer` should call.
 
-    Reads `config.default_api_endpoint` THROUGH the module (`from .. import
-    config as app_config; app_config.default_api_endpoint`), not imported
-    once into this module's own namespace -- precedent
-    `Subscriptions/briefing_service.py:315 _default_provider()`. Reading
-    through the module lets a test monkeypatch `app_config.default_
-    api_endpoint` directly and have this function observe the patched value
-    on its very next call; importing the name once here would freeze
-    whatever value was bound at import time.
+    TASK-34000.21 (review finding L-06): both halves come from the
+    PERSISTED `[chat_defaults]` -- the pair First Run and Settings write and
+    the pair the user was shown -- the same way no-preset briefings resolve
+    theirs (`Subscriptions/briefing_service.resolve_persisted_briefing_
+    defaults`). Before this task the function returned `(default_api_
+    endpoint, None)` by design, so a user whose `[chat_defaults]` said
+    gpt-4.1-mini was billed for the OpenAI handler's own default (a
+    reasoning model nobody chose), and a user whose `[chat_defaults]` said
+    Anthropic was billed by OpenAI.
 
-    No model is resolved: the provider handler picks its own default (same
-    briefing_service precedent, and matches `generate_library_rag_answer`'s
-    own `model: str | None = None`).
+    Resolution order:
+
+    1. `[chat_defaults] provider`, when it is a supported alias
+       (`canonical_provider_key`); its model is `resolve_remembered_
+       provider_model` -- `[chat_defaults] model` when that names the same
+       provider, else the provider table's OWN remembered model, never
+       another provider's.
+    2. Otherwise today's `config.default_api_endpoint`, read THROUGH the
+       module (`app_config.default_api_endpoint`, never imported once into
+       this namespace) so a test monkeypatching the attribute is observed on
+       the very next call; its model is resolved the same way, and stays
+       `None` for an endpoint the provider registry does not know (a local
+       endpoint name), where the handler keeps picking its own default.
+       This arm is reached ONLY when `[chat_defaults]` names no supported
+       provider -- and the merged config always carries the template's
+       `provider = "OpenAI"` / `model = "gpt-5.6-terra"` unless the user
+       blanks or mis-spells it -- so in practice step 1 decides. That is a
+       precedence change from before this task: a user with
+       `[llm_api_settings] default_api = "anthropic"` and an untouched
+       `[chat_defaults]` now bills the chat-defaults pair (what Console
+       shows), no longer `default_api`. `default_api` does not steer RAG
+       Answer; the persisted pair does.
+    3. `(None, None)` only when nothing names a provider.
+
+    The settings are the SAME cached `load_settings()` mapping the gate
+    hands to `get_provider_readiness` -- not a forced disk reload, which the
+    briefing path can afford once a day but a resolver run on every panel
+    render cannot. A settings read that raises (the config-participant
+    admission handshake refusing a changed config path, an unreadable
+    file) resolves like a config that names nothing: this runs on every
+    panel render and on the scheduler's thread, and neither may crash on
+    it -- the gate's "never raises" contract, and the pre-task behaviour
+    (endpoint, no model) for the fallback.
 
     Returns:
-        `(provider, model)`. `provider` is `None` when no default endpoint
-        is configured (blank or unset) -- `model` is then always `None` too,
-        since a provider-less model has nothing to run against.
+        `(provider, model)`; `model` is `None` when neither `[chat_defaults]`
+        nor the provider's own table names one.
     """
     from .. import config as app_config
+    from ..Chat.provider_setup_persistence import canonical_provider_key
 
-    endpoint = str(app_config.default_api_endpoint or "").strip()
-    if not endpoint:
-        return None, None
-    return endpoint, None
+    settings = _persisted_settings()
+    provider: str | None = None
+    chat_defaults = settings.get("chat_defaults") if isinstance(settings, Mapping) else None
+    if isinstance(chat_defaults, Mapping):
+        try:
+            provider = canonical_provider_key(chat_defaults.get("provider"))
+        except (TypeError, ValueError):
+            provider = None
+    if provider is None:
+        endpoint = str(app_config.default_api_endpoint or "").strip()
+        if not endpoint:
+            return None, None
+        provider = endpoint
+    return provider, _remembered_model(settings, provider)
+
+
+def resolve_library_rag_answer_model(provider: str) -> str | None:
+    """The model `provider` itself remembers, from the same persisted settings.
+
+    Review round 1 of TASK-34000.21: the scheduler's `resolve_execution_
+    target` used to take `resolve_library_rag_answer_provider`'s model half
+    whenever an automation named a provider but no model -- harmless while
+    that half was always `None`, a cross-provider borrow once it was not
+    (`[scheduling] executor_provider = "anthropic"` under an OpenAI /
+    gpt-4.1-mini `[chat_defaults]` ran Anthropic with gpt-4.1-mini). This is
+    the one-provider half of the rule, for a caller that already knows WHICH
+    provider it will bill: `[chat_defaults] model` only when that names the
+    same provider, else the provider's own table, else `None` (the handler's
+    default). Same cached, guarded settings read as the pair resolver, so
+    the two cannot disagree about where the model comes from.
+
+    Args:
+        provider: A provider key or alias the caller will bill.
+
+    Returns:
+        That provider's remembered model, or `None` when nothing names one
+        or the provider registry does not know the endpoint.
+    """
+    return _remembered_model(_persisted_settings(), provider)
+
+
+def _persisted_settings() -> Mapping[str, Any]:
+    """The cached `load_settings()` mapping, or `{}` when the read raises."""
+    from .. import config as app_config
+
+    try:
+        settings = app_config.load_settings()
+    except Exception as exc:  # noqa: BLE001 - any settings failure is "names nothing"
+        # Class name only: an admission or config error can carry a path in
+        # its message, and this sink persists.
+        logger.debug(
+            "library rag answer: settings unreadable, no persisted pair "
+            f"({type(exc).__name__})"
+        )
+        return {}
+    return settings if isinstance(settings, Mapping) else {}
+
+
+def _remembered_model(settings: Mapping[str, Any], provider: str) -> str | None:
+    """`resolve_remembered_provider_model`, with an unknown endpoint as `None`."""
+    from ..Chat.provider_setup_persistence import resolve_remembered_provider_model
+
+    try:
+        return resolve_remembered_provider_model(settings, provider)
+    except (TypeError, ValueError):
+        # An endpoint the provider registry does not own (a local server
+        # name): the handler picks its own default, as before this task.
+        return None
 
 
 @dataclass(frozen=True)
@@ -220,11 +318,15 @@ class LibraryRagProviderGate:
             invariant intact -- it is a message, never a second readiness
             flag, and cannot make a blocked state look ready.
         model: The model half of `resolve_library_rag_answer_provider`'s
-            pair, carried so the answer path does not have to resolve the
-            endpoint a second time just to read it. Always `None` today
-            (that function resolves no model by design -- the provider
-            handler picks its own default); meaningless, and unread, when
-            `provider` is `None`.
+            pair -- the persisted `[chat_defaults]` model (or the provider
+            table's own, TASK-34000.21) -- carried so the answer path does
+            not have to resolve the endpoint a second time just to read it,
+            and so the panel can NAME it before Run (`LibraryRagQueryState.
+            ready_answer_model`). `None` when no model is named anywhere
+            (the handler then picks its own default). Carried even when
+            `provider` is `None`, but the panel never names a model for a
+            provider that cannot be billed: `ready_answer_model` is derived
+            under the same ready condition as `ready_answer_provider`.
     """
 
     provider: str | None
@@ -322,9 +424,11 @@ class LibraryRagAnswer:
             ``model``.
         model: The MODEL THE PROVIDER ACTUALLY RAN, read from the response
             payload's own ``"model"`` key -- never the configured endpoint
-            name. This is the only app-side source of the model, since
-            ``resolve_library_rag_answer_provider`` deliberately resolves
-            ``model=None`` and leaves the handler to pick its own default.
+            name and never the requested model: since TASK-34000.21
+            ``resolve_library_rag_answer_provider`` names the persisted
+            ``[chat_defaults]`` model (or the provider table's own), but a
+            config naming none anywhere still leaves the handler to pick its
+            own default, and only the response says which model answered.
             ``""`` when no response was ever obtained -- no call was made
             (no-evidence path), or an exception fired before `_invoke_chat`
             returned one (a bundle-build failure, or the provider call
@@ -488,10 +592,10 @@ def _effective_max_tokens(endpoint: str, model: str | None) -> int:
     another provider serving a deepseek-named model has its own budget
     semantics, which this must not guess at.
 
-    Qodo #7/#8: this path deliberately resolves no model of its own
-    (``resolve_library_rag_answer_provider`` returns ``model=None`` -- the
-    provider handler picks its own default), so the predicate is consulted
-    on the RESOLVED default
+    Qodo #7/#8: ``model`` can still be ``None`` -- since TASK-34000.21 the
+    resolver names the persisted ``[chat_defaults]`` model, but a config
+    that names none anywhere leaves the handler to pick its own default --
+    so the predicate is consulted on the RESOLVED model
     (:func:`model_capabilities.resolve_deepseek_effective_model`), never on
     the literal ``None``.
     """
@@ -501,6 +605,52 @@ def _effective_max_tokens(endpoint: str, model: str | None) -> int:
     ):
         return ANSWER_REASONING_MAX_TOKENS
     return ANSWER_MAX_TOKENS
+
+
+def _execution_endpoint(provider: str) -> str:
+    """The `chat_api_call` handler key for a configured provider key.
+
+    Final review of TASK-34000.21 (Important 1, 2026-10-20):
+    `resolve_library_rag_answer_provider` returns the canonical READINESS key
+    -- `canonical_provider_key([chat_defaults].provider)`, what First Run
+    persists and `get_provider_readiness` checks -- and for `custom`,
+    `custom_2` and `local_llm` that is not a handler key (`custom-openai-api`,
+    `custom-openai-api-2`, `local-llm`). The gate said ready and the pre-Run
+    line named the pair, then the real dispatcher raised `ValueError:
+    Unsupported API endpoint`; the scheduler's `resolve_execution_target`
+    adopts the same key and failed the same way, unattended.
+
+    Console already owns this exact mapping (`console_provider_support.
+    _READINESS_TO_EXECUTION_ALIASES`, through `resolve_console_provider_
+    identity(...).execution_key`), so it is reused rather than restated.
+    Imported lazily: this module is on the Library boot path and the
+    scheduler thread, and the Console module is not needed until a call is
+    actually made. A provider the mapping cannot place on a handler --
+    including the readiness key itself when it is one -- is passed through
+    unchanged, so every provider that worked before still reaches the same
+    handler.
+
+    Args:
+        provider: The configured provider key (`LibraryRagAnswer.provider`
+            keeps naming this; only the wire call takes the handler key).
+
+    Returns:
+        The key `chat_api_call` dispatches on.
+    """
+    from ..Chat.console_provider_support import resolve_console_provider_identity
+
+    try:
+        identity = resolve_console_provider_identity(provider)
+    except Exception as exc:  # noqa: BLE001 - never let the alias lookup fail the call
+        logger.debug(
+            f"library rag answer: execution key for {provider!r} unresolved "
+            f"({type(exc).__name__}); calling it as configured"
+        )
+        return provider
+    execution_key = identity.execution_key
+    if execution_key != provider and execution_key in API_CALL_HANDLERS:
+        return execution_key
+    return provider
 
 
 async def _invoke_chat(
@@ -529,6 +679,15 @@ async def _invoke_chat(
         "max_tokens": _effective_max_tokens(endpoint, model),
         "temp": ANSWER_TEMPERATURE,
     }
+    # TASK-34000.21: the request names its model in the app log, in the
+    # same words the quiet line used before Run -- the dispatcher logs only
+    # the endpoint ("Routing to endpoint: openai") and no handler logs the
+    # model it was asked for, which is why the 2026-10-02 review could only
+    # infer the billed model from the provider's reply. Endpoint and model
+    # only; never the prompt, never a credential.
+    logger.info(
+        f"library rag answer: asking {endpoint} for {model or 'its default model'}"
+    )
     if inspect.iscoroutinefunction(chat):
         return await chat(**kwargs)
     result = await asyncio.to_thread(chat, **kwargs)
@@ -626,7 +785,7 @@ async def generate_library_rag_answer(
 
         raw = await _invoke_chat(
             _resolve_answer_chat(chat),
-            endpoint=provider,
+            endpoint=_execution_endpoint(provider),
             model=model,
             system=LIBRARY_RAG_ANSWER_SYSTEM_PROMPT,
             user=user_message,
@@ -642,9 +801,10 @@ async def generate_library_rag_answer(
         #
         # `model` here is the answer's own field: it is the provider's
         # ACTUAL model, never the configured endpoint (`provider`) and never
-        # duplicated from `resolve_library_rag_answer_provider`, which
-        # deliberately resolves `model=None` for exactly this reason -- only
-        # the response itself knows what ran.
+        # copied from the REQUESTED model (`resolve_library_rag_answer_
+        # provider`'s pair, TASK-34000.21) -- only the response itself knows
+        # what ran, and a provider may answer a requested `gpt-4.1-mini`
+        # with its dated snapshot id. The footer reports what was billed.
         raw_model = raw.get("model") if isinstance(raw, dict) else None
         response_model = str(raw_model or "")
         raw_usage_payload = raw.get("usage") if isinstance(raw, dict) else None
@@ -654,12 +814,14 @@ async def generate_library_rag_answer(
         usage = ProviderUsage.from_provider_payload(
             raw_usage_payload, provider=provider, model=response_model
         )
+        # No session-ledger tap here (code-review of PR #3046): `raw` comes
+        # from `chat_api_call` by default, whose provider-function taps
+        # already recorded this response -- recording again would
+        # double-count every Library RAG answer.
 
         body = extract_response_content(raw).strip()
         if not body:
-            logger.warning(
-                f"library rag answer: {provider} returned an empty response"
-            )
+            logger.warning(f"library rag answer: {provider} returned an empty response")
             return LibraryRagAnswer(
                 status=ANSWER_STATUS_FAILED,
                 text="",

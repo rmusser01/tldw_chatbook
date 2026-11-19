@@ -1,0 +1,203 @@
+{
+  "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": {
+    "lines": 5356,
+    "lint": [
+      {
+        "code": "I001",
+        "message": "Import block is un-sorted or un-formatted",
+        "source_line": "from __future__ import annotations"
+      },
+      {
+        "code": "UP037",
+        "message": "Remove quotes from type annotation",
+        "source_line": "screen: \"LibraryScreen\","
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception as exc:"
+      },
+      {
+        "code": "I001",
+        "message": "Import block is un-sorted or un-formatted",
+        "source_line": "from .library_file_export import library_export_picker_location  # lazy, TASK-34000.3"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception as exc:"
+      },
+      {
+        "code": "S110",
+        "message": "`try`-`except`-`pass` detected, consider logging the exception",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception as exc:"
+      }
+    ]
+  },
+  "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": {
+    "lines": 184,
+    "lint": []
+  },
+  "tldw_chatbook/Widgets/Console/console_prompts_modal.py": {
+    "lines": 2925,
+    "lint": [
+      {
+        "code": "RUF012",
+        "message": "Mutable default value for class attribute",
+        "source_line": "BINDINGS = [(\"escape\", \"request_safe_cancel\", \"Close\")]"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception as exc:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception as exc:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "B009",
+        "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+        "source_line": "snapshot = getattr(captured, \"composer_snapshot\", None) or getattr("
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "S110",
+        "message": "`try`-`except`-`pass` detected, consider logging the exception",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "BLE001",
+        "message": "Do not catch blind exception: `Exception`",
+        "source_line": "except Exception:"
+      },
+      {
+        "code": "RUF022",
+        "message": "`__all__` is not sorted",
+        "source_line": "__all__ = ["
+      }
+    ]
+  },
+  "tldw_chatbook/Widgets/Console/console_conversation_inspector.py": {
+    "lines": 2112,
+    "lint": [
+      {
+        "code": "ISC004",
+        "message": "Unparenthesized implicit string concatenation in collection",
+        "source_line": "\"Could not load captures: storage was busy. \""
+      }
+    ]
+  },
+  "Tests/UI/test_library_prompt_mixins.py": {
+    "lines": 1071,
+    "lint": []
+  },
+  "Tests/UI/test_console_prompt_mixins.py": {
+    "lines": 1234,
+    "lint": []
+  },
+  "Tests/UI/test_console_conversation_inspector.py": {
+    "lines": 1623,
+    "lint": []
+  },
+  "tldw_chatbook/Widgets/Library/library_prompts_canvas.py": {
+    "lines": 2007,
+    "lint": [
+      {
+        "code": "I001",
+        "message": "Import block is un-sorted or un-formatted",
+        "source_line": "from __future__ import annotations"
+      }
+    ]
+  }
+}

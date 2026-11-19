@@ -77,6 +77,7 @@ def _strip_children_inside_viewport(console) -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(140, 42), (160, 48)])
 async def test_temporary_button_fully_visible_with_inspector_handle(
@@ -108,6 +109,7 @@ async def test_temporary_button_fully_visible_with_inspector_handle(
         assert "✕" in _rendered_button_line(close)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_temporary_button_fully_visible_with_inspector_open_at_140() -> None:
     """LY-02 AC#1: at 140 cols with the Inspector OPEN (the state after
@@ -150,6 +152,7 @@ async def _wait_for_strip_child_count(pilot, strip, count: int) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_many_tabs_scroll_and_keep_all_controls_reachable() -> None:
     """LY-02 AC#3: with four sessions the strip content (4*24 + 24 = 120
@@ -227,9 +230,7 @@ async def test_max_length_session_label_keeps_its_ellipsis() -> None:
     app = StyledTabStripHost()
     async with app.run_test(size=(120, 24)) as pilot:
         surface = app.query_one(ConsoleSessionSurface)
-        session = ConsoleChatSession(
-            title="summarize the UX review plan", id="s1"
-        )
+        session = ConsoleChatSession(title="summarize the UX review plan", id="s1")
         await surface.sync_sessions(sessions=[session], active_session_id="s1")
         await pilot.pause(0.2)
 

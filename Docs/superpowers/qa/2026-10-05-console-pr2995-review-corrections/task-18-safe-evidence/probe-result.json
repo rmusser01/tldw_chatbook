@@ -1,0 +1,29 @@
+{
+  "exit_code": 1,
+  "timed_out": false,
+  "elapsed_seconds": 3.276506124995649,
+  "pid": 404,
+  "closed": true,
+  "source_hashes_stable": true,
+  "log_sha256": "48d40800d81aa2851d1a3311bafa439700110e1232c10a448d6e745ca3aca4a1",
+  "xml_present": true,
+  "suites": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "1",
+      "skipped": "0",
+      "tests": "1",
+      "time": "1.332",
+      "timestamp": "2026-10-04T18:48:50.805853-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    }
+  ],
+  "cases": [
+    {
+      "classname": "Tests.UI.test_buddy_speech",
+      "name": "test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge",
+      "status": "failed"
+    }
+  ]
+}

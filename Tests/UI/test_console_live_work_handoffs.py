@@ -2078,6 +2078,7 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         stub_image_controller,
         stub_library_activity_controller,
         stub_message_controller,
+        stub_session_controller,
     )
 
     screen = ChatScreen.__new__(ChatScreen)
@@ -2099,9 +2100,16 @@ def _bare_console_screen_for_restore(app_instance=None) -> ChatScreen:
         context="live work handoffs screen",
         app_instance=resolved_app,
     )
-    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    # TASK-38988: the store setter's hook build reads `_session`'s project-
+    # instruction projections; the restore paths below use a bare session.
+    stub_session_controller(
+        screen, context="live work handoffs screen", app_instance=resolved_app
+    )
     screen._console_chat_store = ConsoleChatStore()
-    screen._console_visible_draft_session_id = None
+    screen._session = ConsoleSessionController.__new__(ConsoleSessionController)
+    # The `__new__` session lacks the attribute its `__init__` seeds, and the
+    # screen proxy's setter reads it first (TASK-38988).
+    screen._session._console_visible_draft_session_id = None
     screen._console_composer_or_none = lambda: None
     screen._task_resume_state = TaskResumeState()
     # `_restore_native_console_state` calls the three
@@ -2538,7 +2546,7 @@ def test_console_live_work_presentation_failure_keeps_owned_claim_settled(
 
 @pytest.mark.asyncio
 async def test_console_armed_sent_notice_round_trips_to_a_fresh_screen():
-    """D3: the one-send "Evidence sent with this message" memory
+    """D3: the one-send sent-sources receipt
     (``_console_evidence_sent_notice``) must also survive screen
     re-creation, independent of any staged launch.
 
@@ -2575,11 +2583,12 @@ async def test_console_armed_sent_notice_round_trips_to_a_fresh_screen():
     assert restored_screen._pending_console_launch_context is None
     assert restored_screen._console_evidence_sent_notice == 5
 
+    # TASK-33620.7: the receipt survives for the Inspector; the strip shows
+    # only staged evidence, so it stays hidden.
     strip_state = restored_screen._build_console_staged_evidence_strip_state(
         restored_screen._pending_console_launch_context
     )
-    assert strip_state.visible is True
-    assert strip_state.notice == "Evidence sent with this message · 5 sources"
+    assert strip_state.visible is False
 
 
 def test_console_native_state_restore_tolerates_legacy_payload_without_launch_or_notice_keys():
@@ -3150,11 +3159,53 @@ class _ExistingChaChaDBDouble:
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(request):
-    """The send-time capture contains media text, not its display label."""
-    app = _build_test_app()
-    host = ConsoleHarness(app)
+async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(
+    request, monkeypatch
+):
+    """Mounted handoff staging reaches real canonical capture and provider dispatch."""
+    from Tests.UI.app_factory import attach_chachanotes_db
+    from Tests.Chat.test_console_local_citation_boundary import (
+        _ScriptedCitationGateway,
+        _active_citation_repair_session,
+    )
+    from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
 
+    from tldw_chatbook.Chat.citation_provenance_runtime import (
+        CitationProvenanceRuntimePolicy,
+    )
+    from tldw_chatbook.Chat.citation_trace_identity import CitationFingerprintCodec
+    from tldw_chatbook.Chat.citation_trace_repository import (
+        CitationTraceRepository,
+        load_local_citation_identity_context,
+    )
+
+    app = _build_test_app()
+    db = attach_chachanotes_db(app)
+    # TASK-33620.8 (AC#4): evidence carries [S#] labels and a repair
+    # contract only when a citation record can cover the reply, so this
+    # canonical round trip needs a ready repository (key already loaded).
+    app.citation_trace_repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+        identity_context=load_local_citation_identity_context(db),
+        fingerprint_codec=CitationFingerprintCodec(b"k" * 32),
+    )
+    app.media_db = _ExistingMediaDBDouble("media-77")
+    captured = []
+
+    async def capture(app_instance, launch, *, user_message):
+        result = await capture_console_staged_evidence_for_chat(
+            app_instance,
+            launch,
+            user_message=user_message,
+        )
+        captured.append(result)
+        return result
+
+    monkeypatch.setattr(
+        chat_rag_events, "capture_console_staged_evidence_for_chat", capture
+    )
+    host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = _active_console_screen(host)
         await _wait_for_selector(screen, pilot, "#console-native-composer")
@@ -3162,16 +3213,45 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(req
         await pilot.pause()
         launch = screen._pending_console_launch_context
         assert launch is not None
+        controller = screen._ensure_console_chat_controller()
+        gateway = _ScriptedCitationGateway((("README.md describes the app.",),))
+        controller.provider_gateway = gateway
+        controller._agent_runtime_enabled = False
+        contract_identity = []
 
-    capture_app = SimpleNamespace(media_db=_ExistingMediaDBDouble("media-77"))
-    result = await capture_console_staged_evidence_for_chat(
-        capture_app, launch, user_message="What does this media say?"
-    )
+        def observe(_call_index):
+            assert len(captured) == 1
+            contract_identity.append(
+                _active_citation_repair_session(controller).contract
+                is captured[0].citation_repair_contract
+            )
 
-    assert isinstance(result, LocalRagContextResult)
-    assert result.context is not None
-    assert "Attention is all you need. " * 4 in result.context
-    assert "Media staged:" not in result.context
+        gateway.on_call = observe
+        sent = await controller.submit_draft("Explain this project from README.md")
+
+        assert sent.accepted
+        assert sent.visible_copy == "README.md describes the app."
+        assert len(captured) == len(gateway.calls) == 1
+        result = captured[0]
+        assert isinstance(result, LocalRagContextResult)
+        assert "Attention is all you need. " * 4 in result.context
+        assert "Media staged:" not in result.context
+        provider_text = gateway.calls[0]["messages"][-1]["content"]
+        instructions, exact_evidence = provider_text.split("Evidence: ", 1)
+        assert "[S#] labels only for the supplied Library references" in instructions
+        assert (
+            "cite claims supported by those references with their labels"
+            in instructions
+        )
+        assert (
+            "binding label, relative path, and line range when available"
+            in instructions
+        )
+        assert "do not assign Library labels" in instructions
+        assert exact_evidence.startswith(result.context + "\n\n---\n\n")
+        assert result.citation_repair_contract.require_markers is False
+        assert contract_identity == [True]
+        assert screen._pending_console_launch_context is None
 
 
 @pytest.mark.asyncio

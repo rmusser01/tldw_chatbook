@@ -2,7 +2,7 @@
 
 The existing Textual Settings workbench and ADR-150/161 govern this surface.
 Keep the detail pane as its single scroll owner and preserve the distinction
-between global configuration and Speech Lab operations from ADR-039.
+between global configuration and Speech Lab operations from ADR-304.
 
 Global defaults, selected-provider setup, conversation/realtime options and
 collapsed configuration details precede Save, Revert, Restore Non-secret

@@ -6,7 +6,7 @@ model popover in PR #2672):
 
 * Coverage contract -- every anchor registered in
   ``Tests/UI/modal_wide_tier_registry.py`` has an ``App.-wide-viewport`` rule
-  in the built bundle (and the source module) with the registered cap, every
+  in the built sheets (and the source modules) with the registered cap, every
   rule in the block is registered, and every anchor still targets real code
   (the owner module names its id/class/type). A renamed modal id without a
   tier update fails here instead of silently losing the wide tier.
@@ -21,9 +21,11 @@ model popover in PR #2672):
 from __future__ import annotations
 
 import ast
+import json
 import re
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -36,12 +38,17 @@ from Tests.UI.modal_wide_tier_registry import (
     WIDE_TIER_WIDTH_PERCENT,
     WIDE_VIEWPORT_COLUMNS,
 )
+from tldw_chatbook.Agents.goal_models import (
+    GoalBindingRef,
+    GoalProviderRef,
+    GoalRequest,
+    GoalToolScope,
+)
 from tldw_chatbook.Library.library_prompts_state import (
     begin_prompt_collection_catalog,
 )
 from tldw_chatbook.Notes.recovery_review import NotesRecoveryReview
 from tldw_chatbook.Skills_Interop.recovery_activation import RecoveryReview
-from tldw_chatbook.UI.ChatbookCreationWindow import ChatbookCreationWindow
 from tldw_chatbook.UI.ChatbookExportManagementWindow import (
     ChatbookExportManagementWindow,
 )
@@ -49,7 +56,24 @@ from tldw_chatbook.UI.ChatbookTemplatesWindow import ChatbookTemplatesWindow
 from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
     PromptCollectionManagerModal,
 )
-from tldw_chatbook.UI.Screens.skills_screen import SkillRecoveryReviewModal
+from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
+    SkillRecoveryReviewModal,
+)
+from tldw_chatbook.UI.MCP_Modules.mcp_recovery_review import MCPRecoveryReviewDialog
+from tldw_chatbook.UI.Screens.artifacts_dreams_goals_modal import DreamsGoalsModal
+from tldw_chatbook.UI.Screens.artifacts_dreams_modal import DreamsStoryModal
+from tldw_chatbook.UI.Screens.settings_screen import GuardianRuleEditModal
+from tldw_chatbook.UI.Workflows_Modules.run_controls import (
+    WorkflowRunConfirmation,
+    WorkflowRunSetup,
+)
+from tldw_chatbook.Widgets.Console.console_goal_setup_modal import (
+    ConsoleGoalSetupModal,
+)
+from tldw_chatbook.Widgets.Console.console_goal_status import (
+    ConsoleGoalHistory,
+    ConsoleGoalStatus,
+)
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
@@ -57,11 +81,22 @@ from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     ConsoleSystemPromptModal,
 )
+from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+    FileNotesHistoryDialog,
+)
 from tldw_chatbook.Widgets.Library.notes_recovery_dialog import NotesRecoveryDialog
 from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (
     BuddyManagementModal,
 )
+from tldw_chatbook.Widgets.Persona_Widgets.portrait_composition_review import (
+    PortraitCompositionReview,
+)
+from tldw_chatbook.Widgets.Persona_Widgets.portrait_region_editor import (
+    PortraitRegionEditor,
+)
 from tldw_chatbook.Widgets.template_selector import TemplateSelectorDialog
+from tldw_chatbook.Workflows.models import Revision
+from tldw_chatbook.Workflows.session import ModelSelection
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CSS_ROOT = REPO_ROOT / "tldw_chatbook/css"
@@ -71,6 +106,40 @@ WIDE_TIER_SOURCE = CSS_ROOT / "components/_agentic_terminal.tcss"
 
 #: The boot bundle the app parses (rebuilt from the modules by build_css).
 WIDE_TIER_BUNDLE = CSS_ROOT / "tldw_cli_modular.tcss"
+
+#: Tier rules that left the boot bundle with the rest of their modal's CSS,
+#: as ``(source module, built split sheet, anchor)``. Each split claims the
+#: ``-wide-viewport`` token in ``build_css.py``, and the sheet loads with the
+#: modal: the hook review's through its ``CSS_PATH`` (1256af2d39, startup
+#: budget), the File Notes history dialog's through its ``CSS_PATH`` and the
+#: workflow run dialogs' on entry to the Workflows route (TASK-38719).
+WIDE_TIER_SPLITS = (
+    (
+        "features/_settings.tcss",
+        "screen_agentic_settings.tcss",
+        "#console-hooks-review",
+    ),
+    (
+        "features/_notes.tcss",
+        "screen_modal_file_notes_history.tcss",
+        "#file-notes-history-dialog",
+    ),
+    (
+        "features/_workflows.tcss",
+        "screen_feature_workflows.tcss",
+        ".workflow-run-dialog",
+    ),
+)
+
+#: Source modules, then the built sheets they produce.
+WIDE_TIER_SOURCES = (
+    WIDE_TIER_SOURCE,
+    *(CSS_ROOT / source for source, _built, _anchor in WIDE_TIER_SPLITS),
+)
+WIDE_TIER_BUILT = (
+    WIDE_TIER_BUNDLE,
+    *(CSS_ROOT / built for _source, built, _anchor in WIDE_TIER_SPLITS),
+)
 
 #: One ``App.-wide-viewport <anchor> { width: $ds-percent-85; max-width: N }``.
 WIDE_RULE_RE = re.compile(
@@ -100,10 +169,7 @@ def _wide_rules(text: str) -> dict[str, int]:
             return int(tokens[value])
         return int(value)
 
-    return {
-        anchor.strip(): resolve(cap)
-        for anchor, cap in WIDE_RULE_RE.findall(text)
-    }
+    return {anchor.strip(): resolve(cap) for anchor, cap in WIDE_RULE_RE.findall(text)}
 
 
 def test_wide_tier_block_exists_in_source_module() -> None:
@@ -113,39 +179,63 @@ def test_wide_tier_block_exists_in_source_module() -> None:
     assert "App.-wide-viewport" in source
 
 
-@pytest.mark.parametrize("path", [WIDE_TIER_SOURCE, WIDE_TIER_BUNDLE])
-def test_every_registered_anchor_has_a_wide_tier_rule(path: Path) -> None:
-    """The registry and the shipped block agree, anchor for anchor."""
-    rules = _wide_rules(path.read_text(encoding="utf-8"))
+@pytest.mark.parametrize("paths", [WIDE_TIER_SOURCES, WIDE_TIER_BUILT])
+def test_every_registered_anchor_has_a_wide_tier_rule(paths: tuple[Path, ...]) -> None:
+    """The registry and the shipped blocks agree, anchor for anchor."""
+    rules: dict[str, int] = {}
+    for path in paths:
+        found = _wide_rules(path.read_text(encoding="utf-8"))
+        assert found, f"no App.-wide-viewport rules parsed from {path.name}"
+        assert not set(found) & set(rules), (path.name, set(found) & set(rules))
+        rules.update(found)
     expected = {anchor: cap for anchor, cap, _owner in MODAL_WIDE_TIER}
-    assert rules, f"no App.-wide-viewport rules parsed from {path.name}"
     assert rules == expected
+
+
+@pytest.mark.parametrize(
+    ("built", "anchor"),
+    [(built, anchor) for _source, built, anchor in WIDE_TIER_SPLITS],
+    ids=[anchor.lstrip("#.") for _source, _built, anchor in WIDE_TIER_SPLITS],
+)
+def test_split_modal_tier_rules_stay_off_the_boot_bundle(
+    built: str, anchor: str
+) -> None:
+    """A modal whose CSS loads with it gets its tier from that sheet, not boot."""
+    assert anchor in _wide_rules((CSS_ROOT / built).read_text(encoding="utf-8"))
+    assert anchor not in _wide_rules(WIDE_TIER_BUNDLE.read_text(encoding="utf-8"))
 
 
 def test_every_wide_tier_rule_is_registered() -> None:
     """No orphan rules: an unregistered rule means the registry is stale."""
-    for path in (WIDE_TIER_SOURCE, WIDE_TIER_BUNDLE):
+    for path in (*WIDE_TIER_SOURCES, *WIDE_TIER_BUILT):
         rules = _wide_rules(path.read_text(encoding="utf-8"))
         registered = {anchor for anchor, _cap, _owner in MODAL_WIDE_TIER}
         assert set(rules) <= registered, (path.name, set(rules) - registered)
 
 
-@pytest.mark.parametrize(["anchor", "cap", "owner"], MODAL_WIDE_TIER)
-def test_every_anchor_targets_real_code(
-    anchor: str, cap: int, owner: str
-) -> None:
+def test_every_anchor_targets_real_code() -> None:
     """Each registered anchor resolves inside its owner module.
 
     A renamed modal id (or a moved file) fails here naming the owner, so the
-    tier cannot silently keep styling an id nothing mounts.
+    tier cannot silently keep styling an id nothing mounts. One test over
+    every anchor, reporting all the bad ones at once: as ~90 parametrized
+    cases it cost ~1 s of teardown each in the UI lane (TASK-36382).
     """
-    owner_path = REPO_ROOT / "tldw_chatbook" / owner
-    assert owner_path.exists(), owner
-    owner_text = owner_path.read_text(encoding="utf-8")
-    for token in re.findall(
-        r"(?<!\w)([#.][A-Za-z0-9_-]+|[A-Z][A-Za-z0-9]+)(?!\w)", anchor
-    ):
-        assert token.lstrip("#.") in owner_text, (anchor, token, owner)
+    failures = []
+    for anchor, _cap, owner in MODAL_WIDE_TIER:
+        owner_path = REPO_ROOT / "tldw_chatbook" / owner
+        if not owner_path.exists():
+            failures.append(f"{anchor}: owner {owner} does not exist")
+            continue
+        owner_text = owner_path.read_text(encoding="utf-8")
+        failures.extend(
+            f"{anchor}: {token!r} not in {owner}"
+            for token in re.findall(
+                r"(?<!\w)([#.][A-Za-z0-9_-]+|[A-Z][A-Za-z0-9]+)(?!\w)", anchor
+            )
+            if token.lstrip("#.") not in owner_text
+        )
+    assert not failures, "anchors that no longer resolve:\n  " + "\n  ".join(failures)
 
 
 # --------------------------------------------------------------------------
@@ -288,9 +378,7 @@ def test_every_modalscreen_class_is_tiered_or_explicitly_skipped() -> None:
     modals = sorted(name for name in classes if _is_modal(name, classes))
 
     uncovered = {
-        name: classes[name][0]
-        for name in modals
-        if not _is_anchored(name, classes)
+        name: classes[name][0] for name in modals if not _is_anchored(name, classes)
     }
 
     stale_class_skips = sorted(set(MODAL_WIDE_TIER_SKIPPED) - set(modals))
@@ -306,16 +394,14 @@ def test_every_modalscreen_class_is_tiered_or_explicitly_skipped() -> None:
     )
     assert not missing, (
         "ModalScreen subclasses outside the wide tier and absent from both "
-        "skip lists (register an anchor or document a skip):\n  "
-        + "\n  ".join(missing)
+        "skip lists (register an anchor or document a skip):\n  " + "\n  ".join(missing)
     )
 
     stale_module_skips = sorted(
         module
         for module in MODAL_WIDE_TIER_SKIPPED_MODULES
         if not any(
-            unanchored_module == module
-            for unanchored_module in uncovered.values()
+            unanchored_module == module for unanchored_module in uncovered.values()
         )
     )
     assert not stale_module_skips, (
@@ -335,7 +421,7 @@ try:  # The real toggle, from the app module (heavy import, done once).
 
         CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
-        # ChatbookCreationWindow.on_mount reads self.app.config_data (the
+        # The Chatbook modals' on_mount reads self.app.config_data (the
         # real TldwCli carries one); the empty dict is the no-user-name path.
         config_data: dict = {}  # noqa: RUF012 - class-level default is the point
 
@@ -417,38 +503,6 @@ def _build_prompt_collection_modal(_app: object) -> PromptCollectionManagerModal
     )
 
 
-def _build_chatbook_creation_modal(_app: object) -> ChatbookCreationWindow:
-    # Two constructor dependencies load the CLI config, which trips this
-    # machine's pre-existing ``RecoveryRequired: raw_source_selection_changed``
-    # profile condition when config first loads mid-test-session (see
-    # .superpowers/wide-tier-rollout-report.md, environment note). Both are
-    # stubbed just around __init__ and the window only stores the results:
-    # get_chatbook_database_paths -> paths that do not exist (the fresh-
-    # install empty-database branch on_mount reads from self.db_paths), and
-    # ChatbookCreator -> None (self.creator is only touched by the create
-    # button's action, never on the mount/geometry path).
-    # TASK-32829 removed the constructor's ``self.app`` assignment (and its
-    # ``app_instance`` parameter), so the shipped class mounts directly now;
-    # the ``_MountedCreationWindow`` subclass that used to shadow the
-    # read-only ``Widget.app`` property is gone.
-    import tldw_chatbook.UI.ChatbookCreationWindow as creation_module
-
-    empty_dir = Path(tempfile.mkdtemp(prefix="tldw-wide-tier-spot-"))
-    real_paths = creation_module.get_chatbook_database_paths
-    real_creator = creation_module.ChatbookCreator
-    creation_module.get_chatbook_database_paths = lambda: {
-        "ChaChaNotes": str(empty_dir / "chachanotes.db"),
-        "Prompts": str(empty_dir / "prompts.db"),
-        "Media": str(empty_dir / "media.db"),
-    }
-    creation_module.ChatbookCreator = lambda *_args, **_kwargs: None
-    try:
-        return ChatbookCreationWindow()
-    finally:
-        creation_module.get_chatbook_database_paths = real_paths
-        creation_module.ChatbookCreator = real_creator
-
-
 def _build_chatbook_export_modal(app: object) -> ChatbookExportManagementWindow:
     # app_instance is only stored; every mount-path read goes through
     # getattr-with-defaults, so the harness app exercises the empty-list
@@ -477,6 +531,122 @@ def _build_template_selector_modal(_app: object) -> TemplateSelectorDialog:
     return TemplateSelectorDialog()
 
 
+# The portrait dialogs' artwork jobs only run while ``is_current`` says so;
+# False keeps them idle, and geometry needs no frames or source pixels.
+def _build_portrait_pairs_modal(_app: object) -> PortraitCompositionReview:
+    return PortraitCompositionReview((), None, lambda: False)  # type: ignore[arg-type]
+
+
+def _build_portrait_regions_modal(_app: object) -> PortraitRegionEditor:
+    async def save(_recipe: object) -> bool:
+        return False
+
+    return PortraitRegionEditor(
+        b"",
+        width=64,
+        height=64,
+        pixel_sha256="",
+        recipe=None,
+        save=save,
+        is_current=lambda: False,
+    )
+
+
+# TASK-36522: the ten modals added after wave 2. Each is built idle: no
+# database, goal store, notes service or provider behind it (the goal view's
+# one read fails closed), because geometry needs none of them.
+def _build_goal_setup_modal(_app: object) -> ConsoleGoalSetupModal:
+    async def start(_request: object, _launch_id: str) -> object:
+        raise AssertionError("the geometry harness never starts a goal")
+
+    request = GoalRequest(
+        objective="Fixture objective",
+        criteria="Fixture criteria",
+        provider=GoalProviderRef(
+            provider="fixture",
+            model="fixture",
+            config_ref="fixture",
+            authority_ref="fixture",
+            endpoint_ref="fixture",
+        ),
+        binding=GoalBindingRef(
+            workspace_id="fixture", binding_id="fixture", locator="/tmp", access="rw"
+        ),
+        tool_scope=GoalToolScope(),
+    )
+    return ConsoleGoalSetupModal(request, start=start)
+
+
+def _build_goal_status_modal(app: object) -> ConsoleGoalStatus:
+    async def no_goal_store(*_args: object) -> object:
+        raise LookupError("no goal store in the geometry harness")
+
+    coordinator = SimpleNamespace(
+        subscribe=lambda _changed: lambda: None,
+        service=SimpleNamespace(get=None, call=no_goal_store),
+    )
+    return ConsoleGoalStatus(coordinator, "fixture", app_instance=app)
+
+
+def _build_goal_history_modal(_app: object) -> ConsoleGoalHistory:
+    return ConsoleGoalHistory(
+        (), open_goal=lambda *_args: None, new_goal=lambda *_args: None
+    )
+
+
+def _build_dreams_goals_modal(_app: object) -> DreamsGoalsModal:
+    return DreamsGoalsModal(dreams_db_getter=lambda: None, on_changed=lambda: None)
+
+
+def _build_dreams_story_modal(_app: object) -> DreamsStoryModal:
+    # A synthetic failed-cycle row: the Close-only view, which reads no DB.
+    return DreamsStoryModal(
+        {"synthetic": True},
+        dreams_db_getter=lambda: None,
+        capture_backend_getter=lambda: None,
+        on_changed=lambda: None,
+    )
+
+
+def _build_guardian_rule_modal(_app: object) -> GuardianRuleEditModal:
+    return GuardianRuleEditModal(db_getter=lambda: None, on_changed=lambda: None)
+
+
+def _build_mcp_recovery_modal(_app: object) -> MCPRecoveryReviewDialog:
+    return MCPRecoveryReviewDialog(
+        title="Review restored MCP roots",
+        message="Workspace: fixture\n/tmp/fixture-root",
+        confirm_label="Use fresh MCP defaults",
+    )
+
+
+def _build_file_notes_history_modal(_app: object) -> FileNotesHistoryDialog:
+    return FileNotesHistoryDialog("note.md", (), "note-restored.md", None, 0)  # type: ignore[arg-type]
+
+
+_WORKFLOW_REVISION = Revision(
+    "fixture-workflow",
+    "fixture-revision",
+    (),
+    json.dumps({"metadata": {"tldw_workflow": {}}, "inputs": {}}),
+)
+_WORKFLOW_MODEL = ModelSelection("llama_cpp", "http://127.0.0.1:9", "fixture")
+
+
+def _build_workflow_run_setup_modal(_app: object) -> WorkflowRunSetup:
+    return WorkflowRunSetup(_WORKFLOW_REVISION, (_WORKFLOW_MODEL,), "fixture", ())
+
+
+def _build_workflow_run_confirmation_modal(_app: object) -> WorkflowRunConfirmation:
+    binding = SimpleNamespace(
+        source=Path("/tmp/fixture.txt"),
+        model=_WORKFLOW_MODEL,
+        dispatch_url="http://127.0.0.1:9/v1/chat/completions",
+        notes=SimpleNamespace(db_path="/tmp/fixture.db", user_id="fixture"),
+    )
+    return WorkflowRunConfirmation(_WORKFLOW_REVISION, binding, "Fixture note")  # type: ignore[arg-type]
+
+
 #: One representative per cap tier: anchor -> (cap, base width rule).
 #: Base geometry is pinned here so the tier provably leaves it untouched:
 #: prompts ``90% / 104``, system prompt ``84 / 95%``, reaction ``76 / 100%``.
@@ -490,6 +660,13 @@ def _build_template_selector_modal(_app: object) -> TemplateSelectorDialog:
 #: ``#prompt-collection-manager`` fixed ``96``, 150;
 #: ``TemplateSelectorDialog .template-selector-dialog`` (base rule shipped
 #: with wave 2) ``95% / 76``, 120.
+#: TASK-38641: the two portrait dialogs, base ``120 / 100%``, cap 170.
+#: TASK-36522: the ten modals added after wave 2. Goal setup and history
+#: ``76 / 100%``, 120; goal status ``90 / 100%``, 150; Dreams goals, Dreams
+#: story and the Guardian rule editor ``76 / 96%``, 120; MCP recovery review
+#: ``80 / 96%``, 120; File Notes history ``90 / 95%``, 150; both workflow run
+#: modals ``90% / 100``, 170. The two workflow modals share one anchor, so the
+#: setup modal is keyed by a type-scoped query of it.
 SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     WIDE_TIER_CAPS[170]: (170, (104, 90)),  # base max-width, base percent
     WIDE_TIER_CAPS[150]: (150, (84, 95)),
@@ -497,11 +674,22 @@ SPOT_REPRESENTATIVES: dict[str, tuple[int, tuple[int, int | None]]] = {
     "#buddy-management": (120, (78, 96)),
     "#notes-recovery-dialog": (170, (100, 85)),
     "#skills-recovery-review": (170, (110, 90)),
-    "ChatbookCreationWindow > Container": (170, (120, 90)),
     "ChatbookExportManagementWindow > Container": (170, (120, 90)),
     "ChatbookTemplatesWindow > Container": (170, (100, 80)),
     "#prompt-collection-manager": (150, (96, None)),
     "TemplateSelectorDialog .template-selector-dialog": (120, (76, 95)),
+    ".portrait-pairs-dialog": (170, (120, 100)),
+    ".portrait-regions-dialog": (170, (120, 100)),
+    "ConsoleGoalSetupModal > .goal-dialog-panel": (120, (76, 100)),
+    "ConsoleGoalHistory > .goal-dialog-panel": (120, (76, 100)),
+    "ConsoleGoalStatus > .goal-dialog-panel": (150, (90, 100)),
+    "#dgm-dialog": (120, (76, 96)),
+    "#dsm-dialog": (120, (76, 96)),
+    "#grm-dialog": (120, (76, 96)),
+    "MCPRecoveryReviewDialog #confirmation-dialog": (120, (80, 96)),
+    "#file-notes-history-dialog": (150, (90, 95)),
+    ".workflow-run-dialog": (170, (100, 90)),
+    "WorkflowRunSetup .workflow-run-dialog": (170, (100, 90)),
 }
 SPOT_BUILDERS = {
     WIDE_TIER_CAPS[170]: _build_prompts_modal,
@@ -510,12 +698,31 @@ SPOT_BUILDERS = {
     "#buddy-management": _build_buddy_management_modal,
     "#notes-recovery-dialog": _build_notes_recovery_modal,
     "#skills-recovery-review": _build_skills_recovery_modal,
-    "ChatbookCreationWindow > Container": _build_chatbook_creation_modal,
     "ChatbookExportManagementWindow > Container": _build_chatbook_export_modal,
     "ChatbookTemplatesWindow > Container": _build_chatbook_templates_modal,
     "#prompt-collection-manager": _build_prompt_collection_modal,
     "TemplateSelectorDialog .template-selector-dialog": _build_template_selector_modal,
+    ".portrait-pairs-dialog": _build_portrait_pairs_modal,
+    ".portrait-regions-dialog": _build_portrait_regions_modal,
+    "ConsoleGoalSetupModal > .goal-dialog-panel": _build_goal_setup_modal,
+    "ConsoleGoalHistory > .goal-dialog-panel": _build_goal_history_modal,
+    "ConsoleGoalStatus > .goal-dialog-panel": _build_goal_status_modal,
+    "#dgm-dialog": _build_dreams_goals_modal,
+    "#dsm-dialog": _build_dreams_story_modal,
+    "#grm-dialog": _build_guardian_rule_modal,
+    "MCPRecoveryReviewDialog #confirmation-dialog": _build_mcp_recovery_modal,
+    "#file-notes-history-dialog": _build_file_notes_history_modal,
+    ".workflow-run-dialog": _build_workflow_run_confirmation_modal,
+    "WorkflowRunSetup .workflow-run-dialog": _build_workflow_run_setup_modal,
 }
+
+#: TASK-38641 / TASK-36522: every spot entry from the portrait dialogs on is
+#: also measured at the full-screen sizes the app runs at, and one column
+#: under the breakpoint, where its base rule (not the tier) sets the width.
+FULL_SCREEN_SPOT_ANCHORS = tuple(SPOT_REPRESENTATIVES)[
+    tuple(SPOT_REPRESENTATIVES).index(".portrait-pairs-dialog") :
+]
+FULL_SCREEN_SPOT_SIZES = ((211, 44), (235, 52), (149, 44))
 
 
 def _expected_base_width(
@@ -529,18 +736,15 @@ def _expected_base_width(
 @pytest.mark.parametrize(
     ("anchor", "size"),
     (
+        *[(anchor, (200, 50)) for anchor in SPOT_REPRESENTATIVES],
+        *[(anchor, (120, 40)) for anchor in SPOT_REPRESENTATIVES],
         *[
-            (anchor, (200, 50))
-            for anchor in SPOT_REPRESENTATIVES
-        ],
-        *[
-            (anchor, (120, 40))
-            for anchor in SPOT_REPRESENTATIVES
+            (anchor, size)
+            for anchor in FULL_SCREEN_SPOT_ANCHORS
+            for size in FULL_SCREEN_SPOT_SIZES
         ],
     ),
-    ids=lambda value: (
-        value[1:] if isinstance(value, str) else f"{value[0]}x{value[1]}"
-    ),
+    ids=lambda value: value[1:] if isinstance(value, str) else f"{value[0]}x{value[1]}",
 )
 @pytest.mark.asyncio
 async def test_spot_modal_geometry_per_tier(anchor: str, size: tuple[int, int]) -> None:

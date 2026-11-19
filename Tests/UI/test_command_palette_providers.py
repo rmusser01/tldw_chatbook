@@ -47,13 +47,26 @@ try:
     )
     from tldw_chatbook.Constants import (
         ALL_TABS,
-        TAB_CHAT, TAB_CCP, TAB_MEDIA, TAB_SEARCH,
-        TAB_INGEST, TAB_TOOLS_SETTINGS, TAB_LLM, TAB_LOGS,
-        TAB_STATS, TAB_EVALS, TAB_CODING, TAB_STTS, TAB_MCP,
-        TAB_SETTINGS, TAB_STUDY, TAB_WATCHLISTS_COLLECTIONS, TAB_LIBRARY,
+        TAB_CHAT,
+        TAB_CCP,
+        TAB_MEDIA,
+        TAB_SEARCH,
+        TAB_INGEST,
+        TAB_TOOLS_SETTINGS,
+        TAB_LLM,
+        TAB_LOGS,
+        TAB_STATS,
+        TAB_EVALS,
+        TAB_CODING,
+        TAB_STTS,
+        TAB_MCP,
+        TAB_SETTINGS,
+        TAB_STUDY,
+        TAB_WATCHLISTS_COLLECTIONS,
+        TAB_LIBRARY,
         LIBRARY_NAV_CONTEXT_NOTES_CREATE,
         LIBRARY_NAV_CONTEXT_INGEST,
-        get_tab_display_label
+        get_tab_display_label,
     )
     from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -61,7 +74,8 @@ try:
     IMPORTS_AVAILABLE = True
 
     ALL_PROVIDERS = [
-        cmd for cmd in TldwCli.COMMANDS
+        cmd
+        for cmd in TldwCli.COMMANDS
         if isinstance(cmd, type)
         and issubclass(cmd, Provider)
         and cmd is not ConsoleCommandProvider
@@ -75,8 +89,12 @@ except ImportError as e:
         def __init__(self):
             self.app = None
             self.matcher = None
-        async def search(self, query): return []
-        async def discover(self): return []
+
+        async def search(self, query):
+            return []
+
+        async def discover(self):
+            return []
 
     ThemeProvider = DummyProvider
     TabNavigationProvider = DummyProvider
@@ -87,7 +105,7 @@ except ImportError as e:
     DeveloperProvider = DummyProvider
     LibraryIngestProvider = DummyProvider
     ALL_PROVIDERS = []
-    
+
     # Constants
     TAB_CHAT = "chat"
     TAB_CCP = "conversations_characters_prompts"
@@ -271,7 +289,9 @@ class TestThemeProvider:
                 return_value="textual-dark",
             ),
         ):
-            mock_apply.return_value = SimpleNamespace(file_replaced=True, caches_reloaded=True)
+            mock_apply.return_value = SimpleNamespace(
+                file_replaced=True, caches_reloaded=True
+            )
             # TASK-33243: the launch-default write is queued and awaited off
             # the UI thread via run_worker; capture the coroutine and await
             # it here the way the app's worker loop would.
@@ -285,9 +305,12 @@ class TestThemeProvider:
             await captured["coro"]
 
             theme_provider.app.notify.assert_called_once_with(
-                "Test Theme is now your theme (was: Textual Dark)", severity="information"
+                "Test Theme is now your theme (was: Textual Dark)",
+                severity="information",
             )
-            mock_apply.assert_called_once_with({"general": {"default_theme": "test-theme"}})
+            mock_apply.assert_called_once_with(
+                {"general": {"default_theme": "test-theme"}}
+            )
 
     @pytest.mark.asyncio
     async def test_switch_theme_persisted_but_cache_reload_failed(self, theme_provider):
@@ -303,7 +326,9 @@ class TestThemeProvider:
                 return_value="textual-dark",
             ),
         ):
-            mock_apply.return_value = SimpleNamespace(file_replaced=True, caches_reloaded=False)
+            mock_apply.return_value = SimpleNamespace(
+                file_replaced=True, caches_reloaded=False
+            )
             captured = {}
             theme_provider.app.run_worker = MagicMock(
                 side_effect=lambda coro, **kw: captured.setdefault("coro", coro)
@@ -371,8 +396,13 @@ class TestTabNavigationProvider:
         assert any("Console" in name for name in tab_names)
         assert any("Library" in name for name in tab_names)
         assert any("Artifacts" in name for name in tab_names)
-        assert any("MCP" in name for name in tab_names)
-        assert any("Settings" in name for name in tab_names)
+        # task-35152 / ADR-240: the retired MCP destination's popular slot
+        # is a labeled "Tools & MCP" deep-link, so the row carries exactly
+        # one "Switch to Settings" (the Settings destination's own) and one
+        # "Switch to Tools & MCP" -- not a duplicate Settings entry.
+        assert sum("Switch to Settings" in name for name in tab_names) == 1
+        assert sum("Switch to Tools & MCP" in name for name in tab_names) == 1
+        assert any("Home" in name for name in tab_names)
 
     @pytest.mark.asyncio
     async def test_search_shows_one_command_per_shell_destination(self, tab_provider):
@@ -381,10 +411,10 @@ class TestTabNavigationProvider:
         async for hit in tab_provider.search("tab"):
             hits.append(hit)
 
-        # One command per current destination plus the labeled Library
-        # sub-route deep links (currently just Skills).
+        # One command per current destination plus the labeled folded-route
+        # deep links (Library — Artifacts, Library — Skills, Tools & MCP).
         expected = len(TabNavigationProvider.command_palette_tab_ids()) + len(
-            TabNavigationProvider.LIBRARY_SUBROUTE_COMMANDS
+            TabNavigationProvider.FOLDED_ROUTE_COMMANDS
         )
         assert len(hits) == expected
         tab_texts = [hit.text for hit in hits]
@@ -400,6 +430,9 @@ class TestTabNavigationProvider:
         # DEEP-LINK command (lands on the Skills rail row) -- still no
         # standalone Skills destination.
         assert any("Library — Skills" in text for text in tab_texts)
+        # task-35152: the retired MCP route's deep-link is a labeled
+        # command distinct from the Settings destination's own.
+        assert any("Switch to Tools & MCP" in text for text in tab_texts)
 
     @pytest.mark.asyncio
     async def test_palette_library_skills_command_opens_hidden_starter_route(
@@ -443,9 +476,7 @@ class TestTabNavigationProvider:
             async for hit in provider.search("Library — Skills"):
                 hits.append(hit)
             command = next(
-                hit
-                for hit in hits
-                if hit.text == "Tab Navigation: Library — Skills"
+                hit for hit in hits if hit.text == "Tab Navigation: Library — Skills"
             )
 
             command.command()
@@ -487,7 +518,9 @@ class TestTabNavigationProvider:
             "Watchlists",
             "Schedules",
             "Workflows",
-            "MCP",
+            # ADR-240: the MCP destination retired into Settings > Tools &
+            # MCP; "mcp" rides the labeled Tools & MCP deep-link command
+            # plus Settings' alias terms, not a duplicate Settings command.
             "ACP",
             "Lab",
             "Settings",
@@ -497,6 +530,7 @@ class TestTabNavigationProvider:
             assert texts.count(expected_text) == 1, expected_text
 
         assert texts.count("Tab Navigation: Library — Artifacts") == 1
+        assert texts.count("Tab Navigation: Switch to Tools & MCP") == 1
         joined_text = "\n".join(texts)
         assert "Tab Navigation: Switch to Chat" not in joined_text
         assert "Tab Navigation: Switch to Skills" not in joined_text
@@ -575,7 +609,14 @@ class TestTabNavigationProvider:
             ("logs", "Tab Navigation: Switch to Logs"),
             ("stats", "Tab Navigation: Switch to Settings"),
             ("media", "Tab Navigation: Switch to Library"),
-            ("tools_settings", "Tab Navigation: Switch to MCP"),
+            # ADR-240 / task-35152: the retired MCP routes surface the
+            # labeled "Tools & MCP" deep-link command (which lands on
+            # Settings' Tools category) alongside the Settings
+            # destination's own command (still matched via its alias
+            # terms); asserting the deep-link keeps the search truthful
+            # about where "tools"/"mcp" actually land.
+            ("tools", "Tab Navigation: Switch to Tools & MCP"),
+            ("mcp", "Tab Navigation: Switch to Tools & MCP"),
         ]
 
         for query, expected_text in cases:
@@ -935,10 +976,14 @@ class TestLibraryIngestProvider:
         assert hits[0].text == "Library: Import…"
 
     @pytest.mark.asyncio
-    async def test_search_unmatched_query_returns_no_hits(self, library_ingest_provider):
+    async def test_search_unmatched_query_returns_no_hits(
+        self, library_ingest_provider
+    ):
         """A query that does not match the command returns no hits."""
         library_ingest_provider.matcher = MagicMock(
-            return_value=MagicMock(match=MagicMock(return_value=0.0), highlight=lambda text: text)
+            return_value=MagicMock(
+                match=MagicMock(return_value=0.0), highlight=lambda text: text
+            )
         )
         hits = []
         async for hit in library_ingest_provider.search("xyz"):
@@ -1102,7 +1147,9 @@ class TestCommandPaletteIntegration:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
-        providers = [ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS]
+        providers = [
+            ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS
+        ]
 
         for provider in providers:
             # provider.app is accessed via provider.screen.app, no need to set directly
@@ -1142,7 +1189,11 @@ class TestCommandPaletteIntegration:
             matcher.match = MagicMock(return_value=1.0)
             matcher.highlight = MagicMock(side_effect=lambda x: x)
             provider.matcher = MagicMock(return_value=matcher)
-            texts += [str(hit.text) async for hit in provider.discover() if isinstance(hit, Hit)]
+            texts += [
+                str(hit.text)
+                async for hit in provider.discover()
+                if isinstance(hit, Hit)
+            ]
             for query in ("llm provider", "switch to", "current provider"):
                 texts += [str(hit.text) async for hit in provider.search(query)]
 
@@ -1154,7 +1205,9 @@ class TestCommandPaletteIntegration:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
-        providers = [ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS]
+        providers = [
+            ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS
+        ]
 
         test_queries = ["test", "switch", "open", "new"]
 
@@ -1192,7 +1245,11 @@ class TestCommandPaletteIntegration:
                 ["new_chat"],
             ),
             (SettingsProvider(screen=mock_screen), "handle_setting", ["open_settings"]),
-            (LibraryIngestProvider(screen=mock_screen), "handle_library_ingest_action", ["open_library_ingest"]),
+            (
+                LibraryIngestProvider(screen=mock_screen),
+                "handle_library_ingest_action",
+                ["open_library_ingest"],
+            ),
         ]
 
         for provider, method_name, args in providers:
@@ -1200,7 +1257,11 @@ class TestCommandPaletteIntegration:
             # Don't try to set provider.app as it's a read-only property
 
             # Mock app to raise exception based on the method being tested
-            if method_name in ("switch_tab", "execute_quick_action", "handle_library_ingest_action"):
+            if method_name in (
+                "switch_tab",
+                "execute_quick_action",
+                "handle_library_ingest_action",
+            ):
                 provider.app.post_message.side_effect = Exception("Test error")
             elif method_name == "switch_theme":
                 # This method sets theme
@@ -1243,7 +1304,9 @@ class TestCommandPalettePerformance:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
-        providers = [ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS]
+        providers = [
+            ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS
+        ]
 
         for provider in providers:
             # provider.app is accessed via provider.screen.app, no need to set directly
@@ -1273,7 +1336,9 @@ class TestCommandPalettePerformance:
         mock_screen = MagicMock()
         mock_screen.app = mock_app
 
-        providers = [ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS]
+        providers = [
+            ProviderClass(screen=mock_screen) for ProviderClass in ALL_PROVIDERS
+        ]
 
         for provider in providers:
             # provider.app is accessed via provider.screen.app, no need to set directly
@@ -1332,7 +1397,11 @@ async def test_palette_theme_hit_shows_a_markup_name_literally():
     provider = ThemeProvider(screen=screen)
     provider.matcher = lambda query: Matcher(query)
     hits = [hit async for hit in provider.search("theme")]
-    shown = [hit for hit in hits if "X[/]" in str(getattr(hit.match_display, "plain", hit.match_display))]
+    shown = [
+        hit
+        for hit in hits
+        if "X[/]" in str(getattr(hit.match_display, "plain", hit.match_display))
+    ]
     assert shown
     for hit in shown:
         assert Content.from_markup(hit.help).plain == "Change theme to x[/]"

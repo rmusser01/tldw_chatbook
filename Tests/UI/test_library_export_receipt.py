@@ -250,15 +250,15 @@ async def test_apply_library_export_counts_patches_tooltip_alongside_disabled():
         # task-32055: the canvas state now renders the structural wait's own
         # line while an export runs, and the completion path clears the wait.
         fake._library_structural_waits = {}
-        fake._library_export_status_line = (
-            lambda: LibraryScreen._library_export_status_line(fake)
+        fake._library_export_status_line = lambda: (
+            LibraryScreen._library_export_status_line(fake)
         )
-        fake._library_structural_wait_for = (
-            lambda owner: LibraryScreen._library_structural_wait_for(fake, owner)
+        fake._library_structural_wait_for = lambda owner: (
+            LibraryScreen._library_structural_wait_for(fake, owner)
         )
         fake._end_library_structural_wait = lambda owner: None
-        fake._build_library_export_state = (
-            lambda: LibraryScreen._build_library_export_state(fake)
+        fake._build_library_export_state = lambda: (
+            LibraryScreen._build_library_export_state(fake)
         )
 
         LibraryScreen._apply_library_export_counts(
@@ -332,24 +332,22 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
             query=pilot.app.query,
         )
         fake._library_structural_waits = {}
-        fake._library_export_status_line = (
-            lambda: LibraryScreen._library_export_status_line(fake)
+        fake._library_export_status_line = lambda: (
+            LibraryScreen._library_export_status_line(fake)
         )
-        fake._library_structural_wait_for = (
-            lambda owner: LibraryScreen._library_structural_wait_for(fake, owner)
+        fake._library_structural_wait_for = lambda owner: (
+            LibraryScreen._library_structural_wait_for(fake, owner)
         )
         fake._end_library_structural_wait = lambda owner: None
-        fake._build_library_export_state = (
-            lambda: LibraryScreen._build_library_export_state(fake)
+        fake._build_library_export_state = lambda: (
+            LibraryScreen._build_library_export_state(fake)
         )
 
         LibraryScreen._update_library_export_canvas_after_run(fake)
 
         last_line = pilot.app.query_one("#library-export-last-line", Static)
         assert last_line.display is True
-        assert "✓ exported · 2 items · 3 KB · /tmp/out.zip" in str(
-            last_line.render()
-        )
+        assert "✓ exported · 2 items · 3 KB · /tmp/out.zip" in str(last_line.render())
         button = pilot.app.query_one("#library-export-submit", Button)
         assert button.disabled is False
         assert button.tooltip == EXPORT_BUTTON_READY_TOOLTIP
@@ -358,6 +356,7 @@ async def test_update_library_export_canvas_after_run_patches_receipt_and_toolti
 # --- Receipt survives leaving/re-entering the canvas (LIB-12) ----------------
 
 
+@pytest.mark.bootstrap_profile
 def test_reset_library_export_transient_state_preserves_the_receipt():
     """task-2858 AC#3 (LIB-12): every OTHER export field resets on entry
     (a fresh form each visit is correct), but the receipt must NOT --
@@ -380,6 +379,7 @@ def test_reset_library_export_transient_state_preserves_the_receipt():
     assert screen._export_state.form["name"] != "edited but about to be reset"
 
 
+@pytest.mark.bootstrap_profile
 def test_build_library_export_state_includes_receipt_after_reset():
     """The receipt must actually reach the rendered state -- not just
     survive as a dangling, unused instance attribute."""
@@ -396,6 +396,7 @@ def test_build_library_export_state_includes_receipt_after_reset():
     assert state.last_export_line.startswith("Last export: /tmp/prior.zip")
 
 
+@pytest.mark.bootstrap_profile
 def test_build_library_export_state_has_no_receipt_before_any_export():
     from Tests.UI.app_factory import _build_test_app
 
@@ -410,6 +411,7 @@ def test_build_library_export_state_has_no_receipt_before_any_export():
 # --- Receipt round-trips through save_state/restore_state --------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_save_state_and_restore_state_round_trip_the_receipt():
     """task-2858 AC#3 (LIB-12): extends the receipt's durability past a
     full navigate-away-and-back to Library (not just an in-session canvas
@@ -431,6 +433,7 @@ def test_save_state_and_restore_state_round_trip_the_receipt():
     assert restored._export_state.last_at == 12345.0
 
 
+@pytest.mark.bootstrap_profile
 def test_restore_state_degrades_gracefully_with_no_prior_receipt():
     from Tests.UI.app_factory import _build_test_app
 
@@ -469,6 +472,7 @@ async def test_submit_button_offers_retry_after_a_failed_run():
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_restore_state_rejects_impossible_receipt_counts():
     """PR #2568 review: a foreign/corrupted saved-state dict must not
     restore impossible artifact facts (a negative item count or byte size),
@@ -495,20 +499,25 @@ def test_restore_state_rejects_impossible_receipt_counts():
     saved = restored.save_state()
     assert saved["library_export_last_items"] is None
     assert saved["library_export_last_bytes"] is None
-    assert format_last_export_line(
-        restored._export_state.last_path,
-        restored._export_state.last_at,
-        now=12345.0,
-        item_count=restored._export_state.last_items,
-        size_bytes=restored._export_state.last_bytes,
-    ) == "Last export: /tmp/prior.zip · just now"
+    assert (
+        format_last_export_line(
+            restored._export_state.last_path,
+            restored._export_state.last_at,
+            now=12345.0,
+            item_count=restored._export_state.last_items,
+            size_bytes=restored._export_state.last_bytes,
+        )
+        == "Last export: /tmp/prior.zip · just now"
+    )
 
 
 def test_receipt_copy_is_singular_for_one_item():
     """A one-item export reads "1 item", and a one-item failed selection
     reads "1 item was selected" -- the receipts never say "1 items"."""
     assert (
-        format_last_export_line("/tmp/one.zip", 0.0, now=0.0, item_count=1, size_bytes=2048)
+        format_last_export_line(
+            "/tmp/one.zip", 0.0, now=0.0, item_count=1, size_bytes=2048
+        )
         == "✓ exported · 1 item · 2 KB · /tmp/one.zip"
     )
     assert (
@@ -545,16 +554,21 @@ def test_choosing_an_unwritable_destination_refuses_it_with_a_reason(tmp_path):
     ``.../Library export 2026-09-10.zip/private/tmp/.../notes-bundle.zip``
     and the form showed it as the chosen destination.
     """
+    from unittest.mock import Mock
+
     form: dict[str, object] = {}
-    refreshed: list[bool] = []
+    canvas = SimpleNamespace(sync_state=Mock())
+    screen = SimpleNamespace(
+        query_one=Mock(return_value=canvas),
+        _build_library_export_state=lambda: _state(**form),
+        is_running=False,
+    )
     fake = SimpleNamespace(
         _library_export_form=form,
-        refresh=lambda **kwargs: refreshed.append(True),
+        _screen=screen,
     )
-    fake._refuse_library_export_destination = (
-        lambda reason: LibraryExportController._refuse_library_export_destination(
-            fake, reason
-        )
+    fake._refuse_library_export_destination = lambda reason: (
+        LibraryExportController._refuse_library_export_destination(fake, reason)
     )
 
     LibraryExportController._apply_library_export_destination(
@@ -566,19 +580,32 @@ def test_choosing_an_unwritable_destination_refuses_it_with_a_reason(tmp_path):
     assert form["destination_exists"] is False
     assert str(form["destination_error"]).startswith("Can't save there:")
     assert "does not exist" in str(form["destination_error"])
-    assert refreshed
+    screen.query_one.assert_called_once_with(
+        "#library-export-canvas", LibraryExportCanvas
+    )
+    canvas.sync_state.assert_called_once_with(_state(**form))
 
 
 def test_choosing_a_writable_destination_clears_any_previous_reason(tmp_path):
+    from unittest.mock import Mock
+
     form: dict[str, object] = {"destination_error": "Can't save there: stale."}
+    canvas = SimpleNamespace(sync_state=Mock())
+    screen = SimpleNamespace(
+        query_one=Mock(return_value=canvas),
+        _build_library_export_state=lambda: _state(**form),
+        is_running=False,
+    )
     fake = SimpleNamespace(
         _library_export_form=form,
-        refresh=lambda **kwargs: None,
+        _screen=screen,
     )
 
-    LibraryExportController._apply_library_export_destination(
-        fake, tmp_path / "bundle"
-    )
+    LibraryExportController._apply_library_export_destination(fake, tmp_path / "bundle")
 
     assert form["destination"] == str(tmp_path / "bundle.zip")
     assert form["destination_error"] == ""
+    screen.query_one.assert_called_once_with(
+        "#library-export-canvas", LibraryExportCanvas
+    )
+    canvas.sync_state.assert_called_once_with(_state(**form))

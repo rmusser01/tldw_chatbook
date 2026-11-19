@@ -11,6 +11,7 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Widgets.Console.compose_delta import ComposeReadView
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceStatusPair,
 )
@@ -48,14 +49,39 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
 
     def __init__(self, state: ConsoleWorkspaceContextState, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._state: Any = None
+        #: Top-level state fields the running ``compose`` reads (None outside
+        #: one), and the frozen set the last COMPLETED compose read: the
+        #: recompose guard's evidence (TASK-36012, as TASK-26836 for the
+        #: Conversations tray).
+        self._state_field_reads: set[str] | None = None
+        self._composed_state_reads: frozenset[str] | None = None
         self.state = state
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
         self.set_styles(height=None)
         self.add_class("h-auto")
         self.styles.min_height = 0
 
+    @property
+    def state(self) -> Any:
+        """The tray's display state; records field reads during compose."""
+        reads = self._state_field_reads
+        if reads is None or self._state is None:
+            return self._state
+        return ComposeReadView(self._state, reads)
+
+    @state.setter
+    def state(self, value: Any) -> None:
+        self._state = value
+
     def sync_state(self, state: ConsoleWorkspaceContextState) -> None:
         """Refresh the mounted workspace details tray from new display state.
+
+        TASK-36012: the Details tray shares the Conversations tray's state, so
+        every conversation-browser delta (a send's start and end flip the
+        active row's "Running" attention) used to rebuild it -- five mounts and
+        a whole-screen layout -- although it renders no browser field. It now
+        rebuilds only when a field its last completed ``compose`` read changed.
 
         Args:
             state: Latest workspace context display state.
@@ -63,9 +89,20 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
         Returns:
             None.
         """
-        if state == self.state:
+        if state == self._state:
             return
-        self.state = state
+        reads = self._composed_state_reads
+        if (
+            reads is not None
+            and self.is_mounted
+            and not getattr(self, "_recompose_required", False)
+            and all(
+                getattr(state, name) == getattr(self._state, name) for name in reads
+            )
+        ):
+            self._state = state
+            return
+        self._state = state
         self.refresh(recompose=True)
 
     @staticmethod
@@ -158,8 +195,21 @@ class ConsoleWorkspaceDetailsTray(RecomposeCaptureGuard, Vertical):
         )
 
     def compose(self) -> ComposeResult:
-        """Render workspace status, readiness, runtime, and handoff rows."""
+        """Render workspace status, readiness, runtime, and handoff rows.
 
+        Records the state fields it reads; the record is published only when
+        the pass completes, so an abandoned pass leaves no evidence.
+        """
+        reads: set[str] = set()
+        self._state_field_reads = reads
+        self._composed_state_reads = None
+        try:
+            yield from self._compose_rows()
+        finally:
+            self._state_field_reads = None
+        self._composed_state_reads = frozenset(reads)
+
+    def _compose_rows(self) -> ComposeResult:
         collapse_server_features = self._server_features_unconfigured()
 
         if self.state.workspace_id and self.state.workspace_id != DEFAULT_WORKSPACE_ID:

@@ -588,8 +588,7 @@ async def test_one_drag_gesture_rebuilds_the_ledger_once() -> None:
             TrajectoryScreen._render_ledger = real_render
 
         assert rebuilds["count"] == 1, (
-            f"a {end - start}-column drag rebuilt the ledger "
-            f"{rebuilds['count']} times"
+            f"a {end - start}-column drag rebuilt the ledger {rebuilds['count']} times"
         )
         # The throttle may not cost the gesture its result.
         assert timeline.brush is not None

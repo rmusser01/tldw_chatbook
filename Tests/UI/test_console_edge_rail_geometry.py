@@ -5,12 +5,21 @@ from __future__ import annotations
 import pytest
 from textual.widget import Widget
 
+from Tests.UI.app_factory import _build_test_app, persist_seeded_config
 from Tests.UI.test_console_shell_regions import make_console_pilot
 
 
 _LEFT_OWNERS = ("#console-left-rail", "#console-context-rail-handle")
 _RIGHT_OWNERS = ("#console-right-rail", "#console-inspector-rail-handle")
 
+
+def _make_console_pilot_without_onboarding(*, size: tuple[int, int]):
+    """Mount the ordinary post-onboarding Console for physical rail checks."""
+    app = _build_test_app(
+        config_overrides={"console": {"onboarding": {"first_send_completed": True}}}
+    )
+    persist_seeded_config(app, "console.onboarding")
+    return make_console_pilot(size=size, app=app, hide_setup_overlay=False)
 
 def _visible(screen, selectors: tuple[str, ...]) -> Widget:
     candidates = [screen.query_one(selector) for selector in selectors]
@@ -110,6 +119,7 @@ def _assert_edge_owned_workbench(screen) -> tuple[int, int]:
     return screen.size.width, screen.size.height
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size",
@@ -123,25 +133,27 @@ def _assert_edge_owned_workbench(screen) -> tuple[int, int]:
 async def test_production_workspace_regions_touch_application_edges(
     size: tuple[int, int],
 ) -> None:
-    async with make_console_pilot(size=size) as pilot:
+    async with _make_console_pilot_without_onboarding(size=size) as pilot:
         _assert_edge_owned_workbench(pilot.app.screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expanded_and_collapsed_rail_owners_keep_one_divider() -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-inspector-rail-open")
         await pilot.pause()
         _assert_edge_owned_workbench(screen)
 
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-context-rail-collapse")
         await pilot.pause()
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("focus_selector", "owner_selector", "divider_edge"),
@@ -155,7 +167,7 @@ async def test_focus_repaints_only_owned_divider_without_moving_geometry(
     owner_selector: str,
     divider_edge: str,
 ) -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-inspector-rail-open")
         await pilot.pause()
@@ -174,12 +186,13 @@ async def test_focus_repaints_only_owned_divider_without_moving_geometry(
         assert control.styles.text_style.underline
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f6_transcript_focus_marks_only_stable_title_without_geometry_change() -> (
     None
 ):
     """Transcript focus remains visible without relying on a color delta."""
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         title = screen.query_one("#console-transcript-title")
         region = screen.query_one("#console-transcript-region")
@@ -222,10 +235,11 @@ async def test_f6_transcript_focus_marks_only_stable_title_without_geometry_chan
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_live_resize_reasserts_edge_ownership_and_preserves_rail_intent() -> None:
     """One mounted Console retains physical ownership through every band."""
-    async with make_console_pilot(size=(150, 30)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(150, 30)) as pilot:
         screen = pilot.app.screen
         assert await pilot.click("#console-inspector-rail-open")
         await pilot.pause()
@@ -260,6 +274,7 @@ async def test_live_resize_reasserts_edge_ownership_and_preserves_rail_intent() 
         assert checks == [(150, 30), (120, 30), (100, 30), (100, 24)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("collapse_selector", "control_selector", "owner_selector", "divider_edge"),
@@ -284,7 +299,7 @@ async def test_collapsed_handle_focus_is_non_color_and_dimension_stable(
     owner_selector: str,
     divider_edge: str,
 ) -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         if collapse_selector is not None:
             assert await pilot.click(collapse_selector)
@@ -316,6 +331,7 @@ async def test_collapsed_handle_focus_is_non_color_and_dimension_stable(
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("focus_selector", "owner_selector", "cue_selector", "focus_class", "edge"),
@@ -350,7 +366,7 @@ async def test_focus_paint_clears_when_focus_becomes_none(
     focus_class: str,
     edge: str | None,
 ) -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         target = screen.query_one(focus_selector)
         owner = screen.query_one(owner_selector)
@@ -388,10 +404,11 @@ async def test_focus_paint_clears_when_focus_becomes_none(
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_native_widget_blur_repaints_the_actual_focus_successor() -> None:
-    """Widget.blur advances focus; paint must follow rather than clear blindly."""
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    """Native blur retains the owning cue until focus crosses into Transcript."""
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         reveal = screen.query_one("#console-inspector-rail-open")
         handle = screen.query_one("#console-inspector-rail-handle")
@@ -403,10 +420,25 @@ async def test_native_widget_blur_repaints_the_actual_focus_successor() -> None:
 
         reveal.focus()
         await pilot.pause()
+        assert pilot.app.focused is reveal
+        assert handle.has_class("console-edge-region-focused")
+
         reveal.blur()
         await pilot.pause()
+        assert pilot.app.focused is handle
+        assert not reveal.has_focus
+        assert handle.has_class("console-edge-region-focused")
+        assert reveal.styles.text_style.bold
+        assert reveal.styles.text_style.underline
+        assert not transcript_region.has_class("console-transcript-region-focused")
 
-        assert pilot.app.focused is transcript
+        # The empty transcript's recovery button is its last stop when present.
+        recovery = transcript.query("#console-empty-provider-action")
+        transcript_target = recovery.first() if recovery else transcript
+        handle.blur()
+        await pilot.pause()
+
+        assert pilot.app.focused is transcript_target
         assert not handle.has_class("console-edge-region-focused")
         assert not reveal.styles.text_style.bold
         assert not reveal.styles.text_style.underline
@@ -418,9 +450,10 @@ async def test_native_widget_blur_repaints_the_actual_focus_successor() -> None:
         _assert_edge_owned_workbench(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rapid_focus_transfer_keeps_only_the_current_edge_painted() -> None:
-    async with make_console_pilot(size=(160, 45)) as pilot:
+    async with _make_console_pilot_without_onboarding(size=(160, 45)) as pilot:
         screen = pilot.app.screen
         context = screen.query_one("#console-context-rail-collapse")
         inspector = screen.query_one("#console-inspector-rail-open")

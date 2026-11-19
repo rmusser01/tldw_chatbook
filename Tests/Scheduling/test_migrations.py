@@ -62,9 +62,11 @@ def test_migration_v0_to_v1_directly(tmp_path):
     db = _DirectMigrationDB(db_path)
     v0_to_v1.migrate(db)
 
-    assert db.get_schema_version() == 1
     with closing(db._get_connection()) as conn:
         assert _EXPECTED_TABLES.issubset(_table_names(conn))
+    # Trailing on purpose (task-19866): a version assertion before the
+    # substantive one switches this body off on a schema bump.
+    assert db.get_schema_version() == 1
 
 
 def test_migration_v0_to_v1_to_v0_rollback(tmp_path):
@@ -73,15 +75,17 @@ def test_migration_v0_to_v1_to_v0_rollback(tmp_path):
     # (schedules-handoff §4, dev); v5 = scheduled_task_runs ledger
     # (task-26026); v6 = task_incidents (task-26027);
     # v7 = automation_results server_id unique index (schedules-handoff PR-6 task 1).
-    assert db.get_schema_version() == 7
+    # A floor, not an equality: this pin must not switch the body off
+    # when the current schema version advances (task-19866).
+    assert db.get_schema_version() >= 7
 
     v0_to_v1.rollback(db)
 
-    assert db.get_schema_version() == 0
     with closing(db._get_connection()) as conn:
         tables = _table_names(conn)
     scheduling_tables = _EXPECTED_TABLES - {"schema_version"}
     assert scheduling_tables.isdisjoint(tables)
+    assert db.get_schema_version() == 0
 
 
 def test_v4_creates_runs_and_results_tables(tmp_path):
@@ -132,7 +136,6 @@ def test_v4_migrate_then_rollback_round_trips_to_v3(tmp_path):
 
     rollback(db)
 
-    assert db.get_schema_version() == 3
     with closing(db._get_connection()) as conn:
         def_cols = {r[1] for r in conn.execute("PRAGMA table_info(automation_definitions)")}
         rem_cols = {r[1] for r in conn.execute("PRAGMA table_info(reminder_tasks)")}
@@ -149,6 +152,8 @@ def test_v4_migrate_then_rollback_round_trips_to_v3(tmp_path):
     })
     assert "transfer_state" not in rem_cols
     assert {"automation_runs", "automation_results"}.isdisjoint(tables)
+    # Trailing on purpose (task-19866).
+    assert db.get_schema_version() == 3
 
 
 def test_v4_finding_and_retention_policy_defaults_hydrate(tmp_path):
@@ -260,9 +265,10 @@ def test_v7_migration_dedupes_existing_duplicates_keeping_newest_by_updated_at(t
 
     migrate(db)
 
-    assert db.get_schema_version() == 7
     rows = db.list_automation_results("owner-a")
     assert [row["id"] for row in rows] == ["new-row"]
+    # Trailing on purpose (task-19866).
+    assert db.get_schema_version() == 7
 
 
 def test_v7_migration_dedupe_handles_mixed_offset_updated_at(tmp_path):
@@ -307,9 +313,10 @@ def test_v7_migration_dedupe_handles_mixed_offset_updated_at(tmp_path):
 
     migrate(db)
 
-    assert db.get_schema_version() == 7
     kept = db.list_automation_results("owner-a")
     assert [row["id"] for row in kept] == ["true-newer"]
+    # Trailing on purpose (task-19866).
+    assert db.get_schema_version() == 7
 
 
 def test_v7_migration_dedupe_keeps_the_true_newest_within_one_second(tmp_path):
@@ -363,9 +370,10 @@ def test_v7_migration_dedupe_keeps_the_true_newest_within_one_second(tmp_path):
 
     migrate(db)
 
-    assert db.get_schema_version() == 7
     kept = db.list_automation_results("owner-a")
     assert [row["id"] for row in kept] == ["row-a"]
+    # Trailing on purpose (task-19866).
+    assert db.get_schema_version() == 7
 
 
 def test_v7_migrate_then_rollback_round_trips_to_v6(tmp_path):
@@ -376,7 +384,6 @@ def test_v7_migrate_then_rollback_round_trips_to_v6(tmp_path):
 
     rollback(db)
 
-    assert db.get_schema_version() == 6
     with closing(db._get_connection()) as conn:
         indexes = {
             row[0]
@@ -386,6 +393,8 @@ def test_v7_migrate_then_rollback_round_trips_to_v6(tmp_path):
             )
         }
     assert "idx_automation_results_owner_server_id" not in indexes
+    # Trailing on purpose (task-19866).
+    assert db.get_schema_version() == 6
 
 
 def test_warm_reopen_skips_migration_module_imports(tmp_path):
@@ -402,12 +411,14 @@ def test_warm_reopen_skips_migration_module_imports(tmp_path):
         sys.modules.pop(name)
 
     db2 = ScheduledTasksDB(path, client_id="t")  # warm reopen
-    assert db2.get_schema_version() == 7
     reimported = [m for m in sys.modules if m.startswith(prefix)]
     assert reimported == [], (
         "warm reopen re-imported migration modules despite the recorded "
         f"schema version proving the chain already ran: {reimported}"
     )
+    # Trailing on purpose (task-19866): the census above is the subject;
+    # a current-version pin must not be able to switch it off.
+    assert db2.get_schema_version() == 7
 
 
 def test_v5_migrate_then_rollback_round_trips_to_v4(tmp_path):
@@ -425,7 +436,6 @@ def test_v5_migrate_then_rollback_round_trips_to_v4(tmp_path):
 
     rollback(db)
 
-    assert db.get_schema_version() == 4
     with closing(db._get_connection()) as conn:
         tables = {
             row[0]
@@ -434,6 +444,8 @@ def test_v5_migrate_then_rollback_round_trips_to_v4(tmp_path):
     assert "scheduled_task_runs" not in tables
     # The v4 tables the rollback must NOT have touched.
     assert {"automation_runs", "automation_results"} <= tables
+    # Trailing on purpose (task-19866).
+    assert db.get_schema_version() == 4
 
 
 def test_v6_migrate_then_rollback_round_trips_to_v5(tmp_path):
@@ -445,7 +457,6 @@ def test_v6_migrate_then_rollback_round_trips_to_v5(tmp_path):
 
     rollback(db)
 
-    assert db.get_schema_version() == 5
     with closing(db._get_connection()) as conn:
         tables = {
             row[0]
@@ -454,6 +465,8 @@ def test_v6_migrate_then_rollback_round_trips_to_v5(tmp_path):
     assert "task_incidents" not in tables
     # The v5 table the rollback must NOT have touched.
     assert "scheduled_task_runs" in tables
+    # Trailing on purpose (task-19866).
+    assert db.get_schema_version() == 5
 
 
 class _FailingStampConnection:

@@ -6,6 +6,7 @@ import json
 
 from loguru import logger
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.local_reasoning import REASONING_HISTORY_OPTIONS
 from tldw_chatbook.Utils.reasoning_config import REASONING_HISTORY_MODES
@@ -18,7 +19,7 @@ def _write_console_config(path, body: str) -> None:
 def test_raw_bootstrap_migrates_legacy_replay_opt_out(tmp_path, monkeypatch) -> None:
     config_path = tmp_path / "config.toml"
     _write_console_config(config_path, "replay_thinking = false\n")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     bootstrap = config_module.load_cli_config_and_ensure_existence(force_reload=True)
     settings = config_module.load_settings(force_reload=True)
@@ -35,7 +36,7 @@ def test_raw_bootstrap_preserves_explicit_mode_over_legacy_opt_out(
         config_path,
         'replay_thinking = false\nreasoning_history = "current"\n',
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     bootstrap = config_module.load_cli_config_and_ensure_existence(force_reload=True)
 
@@ -50,7 +51,7 @@ def test_reasoning_environment_values_override_toml(tmp_path, monkeypatch) -> No
         'reasoning_history_overrides = { saved = "off" }\n'
         "reasoning_native_tool_overrides = { saved = false }\n",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     monkeypatch.setenv("TLDW_CONSOLE_REASONING_HISTORY", "all")
     monkeypatch.setenv(
         "TLDW_CONSOLE_REASONING_HISTORY_OVERRIDES",
@@ -73,7 +74,7 @@ def test_blank_reasoning_environment_values_leave_toml_in_effect(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_console_config(config_path, 'reasoning_history = "off"\n')
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     monkeypatch.setenv("TLDW_CONSOLE_REASONING_HISTORY", "")
 
     console = config_module.load_settings(force_reload=True)["console"]
@@ -91,7 +92,7 @@ def test_malformed_override_reports_only_sanitized_field_name(
         f'reasoning_history = "current"\n'
         f'reasoning_history_overrides = "{private_canary}"\n',
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     messages: list[str] = []
     sink = logger.add(messages.append, level="WARNING", format="{message}")
     try:
@@ -114,7 +115,7 @@ def test_invalid_environment_map_is_diagnostic_and_does_not_use_toml_map(
         config_path,
         'reasoning_history_overrides = { saved = "all" }\n',
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     monkeypatch.setenv(
         "TLDW_CONSOLE_REASONING_HISTORY_OVERRIDES",
         '{"private.invalid":',
@@ -137,7 +138,7 @@ def test_nested_override_values_are_strictly_validated(tmp_path, monkeypatch) ->
         'reasoning_history_overrides = { target = "sideways" }\n'
         'reasoning_native_tool_overrides = { target = "true" }\n',
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     messages: list[str] = []
     sink = logger.add(messages.append, level="WARNING", format="{message}")
     try:

@@ -55,6 +55,7 @@ async def _open(host, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -161,6 +162,7 @@ async def test_annotation_drafts_survive_disclosures_modes_and_capture_return(
         assert len((await scope.list_highlights(current)).items) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_highlights_follow_the_loaded_capture():
     app, scope, identities = await _seed()
@@ -185,6 +187,7 @@ async def test_highlights_follow_the_loaded_capture():
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -254,6 +257,7 @@ async def test_archive_in_saved_scope_loads_successor_and_undo_conflict_is_visib
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delayed_saved_highlight_refresh_does_not_replace_another_capture(
     monkeypatch,
@@ -303,6 +307,7 @@ async def test_delayed_saved_highlight_refresh_does_not_replace_another_capture(
             await pending
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("newer_draft", [False, True])
 async def test_saved_highlight_survives_failed_refresh_without_resubmitting_draft(

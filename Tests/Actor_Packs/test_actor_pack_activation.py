@@ -32,16 +32,15 @@ from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
-from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
-from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 from tldw_chatbook.Character_Chat.visual_identity import (
     SAMIRA_MANIFEST_SCHEMA_ID,
     compute_pack_content_sha256,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
+from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 
 from .conftest import PNG_1X1
-
 
 FIXTURES = Path(__file__).parent / "fixtures" / "export-golden"
 PORTABLE_UUID = "123e4567-e89b-42d3-a456-426614174000"
@@ -231,6 +230,48 @@ def test_create_new_persona_preserves_incoming_uuid(activation_components) -> No
         "persona", result.local_actor_id, source="local"
     )
     assert snapshot.portrait_bytes == PNG_1X1
+
+
+def test_persona_policy_rules_roundtrip_without_local_authority(
+    activation_components, tmp_path: Path
+) -> None:
+    activation, importer, repository, local_service, db = activation_components
+    initial = importer.inspect_archive(
+        (FIXTURES / "minimal-persona.tldw-actor-pack").resolve()
+    )
+    result = activation.activate(initial, "create_new")
+    rules = [
+        {
+            "rule_kind": "mcp_tool",
+            "rule_name": "fs_*",
+            "allowed": False,
+            "require_confirmation": True,
+            "max_calls_per_turn": 2,
+        }
+    ]
+    local_service.update_persona_profile(result.local_actor_id, {"policy_rules": rules})
+    exporter = ActorPackExportService(db, local_service, repository)
+    snapshot = exporter.capture_snapshot(
+        "persona", result.local_actor_id, source="local"
+    )
+    payload = json.loads(snapshot.actor_payload)
+    assert payload["data"]["policy_rules"] == rules
+    assert "character_card_id" not in payload["data"]
+    archive = tmp_path / "persona-policy.tldw-actor-pack"
+    with archive.open("wb+") as sink:
+        write_actor_pack_archive(snapshot, sink)
+    review = importer.inspect_archive(archive.resolve())
+    assert dict(review.actor_fields)["policy_rules"] == rules
+    copied = activation.activate(review, "create_copy")
+    assert copied.local_actor_id != result.local_actor_id
+    assert (
+        local_service.get_persona_profile(copied.local_actor_id)["policy_rules"]
+        == rules
+    )
+    reexported = exporter.capture_snapshot(
+        "persona", copied.local_actor_id, source="local"
+    )
+    assert json.loads(reexported.actor_payload)["data"]["policy_rules"] == rules
 
 
 def test_cancel_after_section_publication_removes_owned_orphans(

@@ -11,10 +11,10 @@ import pytest
 from textual.widgets import Button, Input, Static
 
 from Tests.app_module_patches import patch_app_global
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     RaisingLibraryNotesScopeService,
-    RaisingSkillsScopeService,
     RaisingWatchlistsScopeService,
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -23,7 +23,6 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
     _wait_for_library_snapshot,
     _wait_for_personas_snapshot,
-    _wait_for_skills_snapshot,
     _wait_for_wc_snapshot,
 )
 from Tests.UI.app_factory import _build_test_app
@@ -79,26 +78,13 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
-def _prepare_clean_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    for env_var, path_name in (
-        ("HOME", "home"),
-        ("XDG_CONFIG_HOME", "xdg-config"),
-        ("XDG_DATA_HOME", "xdg-data"),
-        ("XDG_CACHE_HOME", "xdg-cache"),
-    ):
-        path = tmp_path / path_name
-        path.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setenv(env_var, str(path))
-    config_path = tmp_path / "config.toml"
-    config_path.write_text(
+def _build_clean_setup_state_app(request):
+    from Tests.UI.test_settings_configuration_hub import _seed_active_config
+
+    _seed_active_config(
+        request,
         '[chat_defaults]\nprovider = "OpenAI"\nmodel = "gpt-4o"\n',
-        encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-
-
-def _build_clean_setup_state_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app()
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
@@ -137,11 +123,9 @@ async def _wait_until(
 
 
 @pytest.mark.asyncio
-async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    app = _build_clean_setup_state_app(monkeypatch, tmp_path)
+@private_profile_test
+async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(request) -> None:
+    app = _build_clean_setup_state_app(request)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
@@ -155,7 +139,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             )
 
             home_text = _screen_text(app)
-            assert "Model: Blocked" in home_text
+            assert "Model: Not set up" in home_text
             assert "Set up Console model" in home_text
             assert "Console needs a working model before live AI tasks." in home_text
 
@@ -216,6 +200,9 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             )
 
 
+# The retired Skills destination's failure and no-handoff contract is covered by
+# test_library_skills_retry_recovers_transient_list_failure on Library.
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("route", "button_selector", "expected_copy", "setup"),
     [
@@ -231,14 +218,8 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             "Watchlists services unavailable; retry Watchlists later.",
             "wc-error",
         ),
-        (
-            "skills",
-            "#skills-attach-to-console",
-            "Skills service unavailable; retry Skills later.",
-            "skills-error",
-        ),
     ],
-    ids=("library", "watchlists", "skills"),
+    ids=("library", "watchlists"),
 )
 @pytest.mark.asyncio
 async def test_service_unavailable_states_disable_false_console_handoffs(
@@ -257,9 +238,6 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         app.watchlist_scope_service = RaisingWatchlistsScopeService()
         app.collections_feeds_scope_service = StaticReadItLaterScopeService([])
         wait_for_snapshot = _wait_for_wc_snapshot
-    elif setup == "skills-error":
-        app.skills_scope_service = RaisingSkillsScopeService()
-        wait_for_snapshot = _wait_for_skills_snapshot
     else:
         raise AssertionError(f"unexpected setup: {setup}")
 
@@ -279,6 +257,7 @@ async def test_service_unavailable_states_disable_false_console_handoffs(
         assert "unavailable" in str(button.tooltip).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_personas_default_state_disables_false_console_handoff(
     monkeypatch: pytest.MonkeyPatch,
@@ -305,6 +284,7 @@ async def test_personas_default_state_disables_false_console_handoff(
         assert button.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_mode_dependency_missing_state_names_install_hint(
     monkeypatch: pytest.MonkeyPatch,

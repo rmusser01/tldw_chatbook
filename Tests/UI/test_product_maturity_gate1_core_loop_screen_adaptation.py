@@ -102,6 +102,7 @@ class ConsoleHarness(ConsolidatedCSSApp):
         await self.push_screen(ChatScreen(self.app_instance))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_home_core_loop_uses_dashboard_regions_and_selected_item_inspector():
     app = _build_test_app()
@@ -151,6 +152,7 @@ async def test_home_core_loop_uses_dashboard_regions_and_selected_item_inspector
         assert "Open Chatbook in Console" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_home_selected_item_matches_prioritized_details_control():
     app = _build_test_app()
@@ -198,6 +200,7 @@ async def test_home_selected_item_matches_prioritized_details_control():
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_core_loop_exposes_agentic_shell_regions():
     app = _build_test_app()
@@ -247,6 +250,7 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
         assert inspector_button.tooltip == "Open Inspector rail"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_session_surface_survives_screen_recompose():
     app = _build_test_app()
@@ -264,6 +268,7 @@ async def test_console_native_session_surface_survives_screen_recompose():
         assert len(console.query("#chat-window")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_core_loop_modes_are_actionable_without_leaving_library():
     # The retired 3-pane hub's mode-chip strip and #library-source-browser /

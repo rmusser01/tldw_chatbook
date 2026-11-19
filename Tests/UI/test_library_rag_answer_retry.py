@@ -25,6 +25,7 @@ from Tests.UI.test_product_maturity_gate16_library_search_rag import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -80,7 +81,7 @@ async def test_answer_failure_is_visible_beside_query_and_can_retry(
             _assert_painted(screen, widget)
         painted = " ".join(strip.text for strip in screen._compositor.render_strips())
         assert "Answer failed. Run again to retry." in painted
-        assert "To openai: question + evidence" in painted
+        assert "To openai · gpt-4.1-mini: question + evidence" in painted
         assert screen.query("#library-rag-result-card-0")
         error = str(screen.query_one("#library-rag-answer-error").render())
         assert (

@@ -1,0 +1,7 @@
+........................                                                 [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-16-safe-evidence/incoming_ci_contracts.xml -
+============================= slowest 25 durations =============================
+1.28s setup    Tests/CI/test_derived_artifacts_workflow.py::test_workflow_has_one_fast_prerequisite_and_one_required_aggregator
+
+(24 durations < 1s hidden.)
+24 passed in 2.36s

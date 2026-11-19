@@ -257,6 +257,9 @@ class MCPTools:
                     content_query=query,
                     conversation_id=result["id"],
                     limit=1,
+                    # task-34399: only `content` feeds the preview below;
+                    # skip transferring image BLOBs (task-260 pattern).
+                    include_image_data=False,
                 )
                 if matching_messages:
                     message_content = matching_messages[0].get("content") or ""

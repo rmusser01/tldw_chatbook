@@ -32,7 +32,7 @@ from tldw_chatbook.TTS.audio_cpp_artifact_dependencies import (
     AudioCppArtifactRemovalEvidence,
     AudioCppModelLibraryObservationSnapshot,
 )
-from tldw_chatbook.UI.Screens.model_browser_state import provenance_label
+from tldw_chatbook.Model_Artifacts.model_browser_state import provenance_label
 from tldw_chatbook.Widgets.ModelArtifacts import ModelInstallProgress
 
 if TYPE_CHECKING:

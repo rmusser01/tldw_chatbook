@@ -24,6 +24,7 @@ from Tests.UI.test_console_command_composer import _spy_submit_draft
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
     _configure_native_ready_console,
+    _wait_for_reply,
     _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -125,6 +126,7 @@ async def _wait_for_production_chat_screen(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bare_skills_command_lists_trusted_skills():
     app = _build_test_app()
@@ -154,6 +156,7 @@ async def test_bare_skills_command_lists_trusted_skills():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bare_skills_command_with_no_skills_shows_empty_row():
     app = _build_test_app()
@@ -175,6 +178,7 @@ async def test_bare_skills_command_with_no_skills_shows_empty_row():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_command_named_run_form_shows_dollar_hint_for_unknown_name():
     """Hard removal (Task 4): `/skills <name>` never resolves or runs a
@@ -205,6 +209,7 @@ async def test_skills_command_named_run_form_shows_dollar_hint_for_unknown_name(
         assert composer.draft_text() == "/skills unknownskill"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_name():
     """Same hint even when the typed name matches a trust-blocked skill --
@@ -234,6 +239,7 @@ async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_name(
         submit_spy.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_command_exact_trusted_name_shows_hint_and_never_runs():
     """The highest-value hard-removal regression: `/skills code-review`
@@ -267,6 +273,7 @@ async def test_skills_command_exact_trusted_name_shows_hint_and_never_runs():
         assert composer.draft_text() == "/skills code-review fix it"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_leading_dollar_skill_mention_executes_through_normal_send():
     """Hard removal (Task 4): typing `$code-review fix it` directly is no
@@ -298,7 +305,7 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
         assert session_id is not None
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
         # The raw `$`-prefixed draft is submitted verbatim -- no composer
         # command dispatch ever intercepts it.
@@ -324,6 +331,7 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
         assert _console_message_contents(console, ConsoleMessageRole.TOOL) == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_hint():
     """Hard removal (Task 4): a bare `/code-review fix it` draft -- the OLD
@@ -364,6 +372,7 @@ async def test_bare_slash_skill_name_no_longer_auto_runs_shows_unknown_command_h
         assert console._console_unknown_send_armed == "/code-review fix it"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_prefix():
     """Same static hint even when the typed name is a prefix matching only
@@ -392,6 +401,7 @@ async def test_skills_command_named_run_form_shows_dollar_hint_for_blocked_prefi
         assert len(host.screen_stack) == baseline_depth, "no picker should have opened"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bare_unknown_word_needs_review_prefix_shows_hint_not_unknown_command():
     """The blocked-hint path itself STAYS (Task 4 brief): a bare `/name`
@@ -423,6 +433,7 @@ async def test_bare_unknown_word_needs_review_prefix_shows_hint_not_unknown_comm
         assert console._console_unknown_send_armed is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skills_command_named_run_form_shows_dollar_hint_for_ambiguous_prefix():
     """Same static hint even when the typed name is an ambiguous prefix

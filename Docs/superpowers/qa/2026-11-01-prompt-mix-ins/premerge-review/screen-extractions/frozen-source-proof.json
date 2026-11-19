@@ -1,0 +1,39 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py",
+    "sha256": "7235d29b0bde74739ebf04584aeb598840daeb57a3a2cee8ba0fa1947c7146e8",
+    "lines": 281
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "sha256": "4a9d1e181d38389cbb1c34fcbdbc35f844a8a51acd911c70877c24158ea3b8a2",
+    "lines": 38177,
+    "methods": 1373
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "sha256": "4872ae6e12b298f4423248afca852612685e2587aef6590cb78bd7ac5d0a4ab8",
+    "lines": 24590,
+    "methods": 741
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/screen_helpers.py",
+    "sha256": "a27dc9b3ceacb8b0c6b3a4611db1ad084d9d6816a825915fd0cfd20ae052bcea",
+    "lines": 401
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+    "sha256": "2f34cf636715500bbc85c142f834b9d5b083c8cdfcb0945f36a053dce4eb9480",
+    "lines": 322
+  },
+  {
+    "path": "Tests/UI/test_screen_derivation_helpers.py",
+    "sha256": "12712acf05709d917278fabf0d879a66ccf94c323ceac1cc14a47adc035fc805",
+    "lines": 163
+  },
+  {
+    "path": "Tests/UI/test_library_prompt_browse_controller.py",
+    "sha256": "cca4c7709ddb1d3a77d7e71ff31a2914353c750ac59dc8511bdf8be15306afce",
+    "lines": 670
+  }
+]

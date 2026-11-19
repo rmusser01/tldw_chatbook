@@ -30,9 +30,7 @@ _LESSON_SEARCH_TOOL = "library_search_notes"
 _LESSON_GET_TOOL = "library_get_note"
 _REPOSITORY_WRITE_TOOL = "fs_write"
 
-MANAGED_SKILL_PROMOTION_APPROVAL_REQUIRED = (
-    "A fresh exact managed-skill proposal approval is required; no proposal was created."
-)
+MANAGED_SKILL_PROMOTION_APPROVAL_REQUIRED = "A fresh exact managed-skill proposal approval is required; no proposal was created."
 MANAGED_SKILL_PROMOTION_FOREGROUND_REQUIRED = (
     "Managed-skill promotion proposals require the foreground primary."
 )
@@ -65,9 +63,7 @@ def build_agent_lesson_promotion_guidance(
     repository_available = bool(
         repository_target_enabled and _REPOSITORY_WRITE_TOOL in names
     )
-    managed_skill_available = (
-        PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME in names
-    )
+    managed_skill_available = PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME in names
     if not repository_available and not managed_skill_available:
         return ""
 
@@ -440,9 +436,7 @@ class ManagedSkillProposalGate:
             return None
         try:
             request = _parse_managed_skill_request(args)
-            call_digest = _canonical_digest(
-                {"name": name, "arguments": args}
-            )
+            call_digest = _canonical_digest({"name": name, "arguments": args})
         except (TypeError, ValueError, UnicodeEncodeError):
             return None
         return MCPPendingCall(

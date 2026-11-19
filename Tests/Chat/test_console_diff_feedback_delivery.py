@@ -585,7 +585,7 @@ def test_pending_notes_participate_in_first_request_fit(tmp_path, monkeypatch):
             return 8_000
         return 8_500 if "find_tools" in rendered else 9_000
 
-    monkeypatch.setattr(agent_service, "_count_model_messages", count_messages)
+    monkeypatch.setattr(agent_service, "count_model_messages", count_messages)
     captured: dict = {}
 
     with patch.object(AgentService, "run_turn", _spy_run_turn(captured)):

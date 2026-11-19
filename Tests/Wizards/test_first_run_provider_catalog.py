@@ -47,9 +47,9 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     ProviderChoiceList,
     ProviderStep,
     SetupWizardContainer,
-    _provider_group_option_id,
     _SettlingGuardedConfirmationDialog,
 )
+from tldw_chatbook.UI.Wizards.first_run_provider_step import _provider_group_option_id
 
 _SIZE = (235, 52)
 
@@ -143,11 +143,20 @@ def _provider_list(step: ProviderStep) -> ProviderChoiceList:
 
 
 def _listed_provider_keys(step: ProviderStep) -> list[str]:
+    """Every provider row, legacy ones revealed (TASK-34100.6 provider-12).
+
+    Only the normal groups' rows count: a 'Ready on this machine' row repeats
+    a provider that is also listed in its own group.
+    """
+    if not step._show_legacy:
+        step._show_legacy = True  # what 'Show legacy entries (N)' does
+        step._rebuild_provider_list()
     choices = _provider_list(step)
     keys = []
     for index in range(choices.option_count):
-        key = getattr(choices.get_option_at_index(index), "provider_key", None)
-        if key is not None:
+        option = choices.get_option_at_index(index)
+        key = getattr(option, "provider_key", None)
+        if key is not None and str(option.id).startswith("provider-"):
             keys.append(key)
     return keys
 
@@ -160,8 +169,16 @@ async def _arrow_to(pilot, choices: ProviderChoiceList, provider: str) -> None:
     key press, which is the path that raised before the fix.
     """
     rows = [
-        (index, getattr(choices.get_option_at_index(index), "provider_key", None))
-        for index in range(choices.option_count)
+        (
+            index,
+            getattr(option, "provider_key", None)
+            if str(option.id).startswith("provider-")
+            else None,
+        )
+        for index, option in (
+            (index, choices.get_option_at_index(index))
+            for index in range(choices.option_count)
+        )
     ]
     enabled = [index for index, key in rows if key is not None]
     target = next(index for index, key in rows if key == provider)
@@ -243,15 +260,21 @@ async def test_every_listed_provider_can_be_highlighted_and_selected(provider):
         assert choices.highlighted_option.provider_key == provider
         assert step.selected_provider_key == provider
         _assert_step_is_live(app, wizard, step)
-        assert app.focused is choices
+        # TASK-34100.6 AC#26: an explicit pick of a keyed row that still needs
+        # a key lands in its key field; any other pick keeps the list.
+        focused = app.focused
+        key_field = step.query_one("#setup-provider-api-key", Input)
+        readiness = step._current_provider_readiness()
+        needs_key = readiness.requires_api_key and not readiness.ready
+        assert focused is (key_field if needs_key and key_field.display else choices)
         # The body shows the provider's controls, not a blank page.
         assert step.query_one("#setup-provider-auth-toggle").display
         assert _pinned_error(wizard) == ""
 
-        # The keyboard still drives the step: Tab leaves the list.
+        # The keyboard still drives the step: Tab moves on.
         await pilot.press("tab")
         await pilot.pause()
-        assert app.focused is not choices
+        assert app.focused is not focused
         assert app.focused is not None and app.focused.is_attached
 
 
@@ -558,10 +581,13 @@ async def test_a_provider_pick_that_succeeds_clears_the_failed_switch_line(
         await pilot.pause()
         assert "Couldn't switch to Anthropic" in _pinned_error(wizard)
         step.show_step_error("A refused Next says why here.")
-        await pilot.press("up")  # OpenAI works
+        # Back to the row that stayed selected: a no-op pick, so the guard
+        # clears only its own line (TASK-34100.6: a provider CHANGE clears a
+        # stale refusal too, so this returns to the kept row instead).
+        await pilot.press("down")
         await pilot.pause()
-        assert step.selected_provider_key == "openai"
-        assert _pinned_error(wizard) == "A refused Next says why here."
+        assert step.selected_provider_key == after
+        assert _pinned_error(wizard) == "✗ A refused Next says why here."
         assert app.is_running and app._exception is None
 
 
@@ -1096,13 +1122,15 @@ async def test_fresh_quick_setup_arrows_into_cloud_then_back_and_next_stay_open(
         await _wait_for_step(pilot, wizard, STEP_PROVIDER)
         _assert_step_is_live(app, wizard, step)
 
-        # Next with no key: the step explains, the app stays.
+        # Next with no key skips (TASK-34100.6 AC#3); Back keeps the choice.
         await pilot.press("ctrl+n")
-        await pilot.pause(0.3)
+        await _wait_for_step(pilot, wizard, STEP_MODEL)
         assert app.is_running and app._exception is None
+        await pilot.press("ctrl+b")
+        await _wait_for_step(pilot, wizard, STEP_PROVIDER)
         _container, current = _current_step(wizard)
         assert current is step
-        assert "API key required" in _pinned_error(wizard)
+        assert step.selected_provider_key == first_cloud
 
         # Then on through every remaining row, one press per row.
         choices.focus()

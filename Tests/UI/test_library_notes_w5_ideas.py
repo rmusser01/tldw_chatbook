@@ -73,6 +73,7 @@ async def _open_info(screen, pilot) -> None:
 # --- task-32642 AC#1/#4: one row per property, nothing dropped -------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_info_gives_every_property_its_own_row_at_235x52():
     """task-32642 AC#1/AC#4.
 
@@ -106,6 +107,7 @@ async def test_info_gives_every_property_its_own_row_at_235x52():
         assert rows[3].endswith("words"), rows
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_compact_property_block_keeps_one_column_and_no_truncation():
     """task-32642 AC#2.
 
@@ -180,6 +182,7 @@ def test_the_property_block_falls_back_to_the_joined_line_without_pairs():
 # --- task-32642 AC#3: keywords without opening Info ------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", (WIDE, COMPACT, NARROW))
 async def test_keywords_are_reachable_and_editable_from_the_editor(size):
     """task-32642 AC#3, at all three critique sizes.
@@ -264,6 +267,7 @@ def _location_row(screen) -> Static:
     return screen.query_one("#library-note-location", Static)
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_database_only_note_says_so_and_claims_no_file():
     """task-32640 AC#1/AC#2, the unbound world.
 
@@ -299,6 +303,7 @@ async def test_a_database_only_note_says_so_and_claims_no_file():
             assert str(_location_row(screen).renderable) == line, control
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_synced_note_names_its_file_and_when_it_was_written(tmp_path):
     """task-32640 AC#2/AC#4: the path from the live binding, the time from
     the FILE -- not from the note record, which knows neither.
@@ -585,6 +590,7 @@ def test_a_folder_inside_a_sync_root_is_already_synced(tmp_path):
     assert owner.folder_is_sync_root(elsewhere) is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_picking_a_vault_folder_recognises_it_on_the_real_screen(tmp_path):
     """task-32641 AC#1/AC#4 through the screen, not the controller alone.
 
@@ -669,3 +675,31 @@ async def test_the_recognition_asks_the_shared_vault_predicate(tmp_path, monkeyp
     await controller.recognise_selected_folder(already_synced=False)
 
     assert controller.presentation_snapshot.vault_recognition == ""
+
+
+def test_the_location_line_says_a_held_sync_folder_needs_attention():
+    """TASK-34000.2 AC#4 (review finding N-02): the held state is never shortened.
+
+    A note in a wedged sync folder read "In a synced folder · …quotes.md ·
+    file written …" while nothing typed reached the file. The held state is
+    stated right after the world, in full, at every width; the path and the
+    write time give way as before. Healthy copy is untouched when the folder
+    is not held, and a note with no file keeps its database-only wording.
+    """
+    path = "/Users/someone/Documents/Vaults/Power vault/People/Samantha Reed.md"
+    held = "In a synced folder · ⚠ Sync needs attention · "
+    wide = library_note_location_line(path, "2026-09-15 08:06", 160, attention=True)
+    assert wide.startswith(held), wide
+    assert path in wide
+    assert wide.endswith("· file written 2026-09-15 08:06")
+
+    narrow = library_note_location_line(path, "2026-09-15 08:06", 72, attention=True)
+    assert narrow.startswith(held), narrow
+    assert "Samantha Reed.md" in narrow, narrow
+    assert "file written" not in narrow, narrow
+
+    assert library_note_location_line(path, "", 0, attention=True) == f"{held}{path}"
+    assert "needs attention" not in library_note_location_line(path, "", 0)
+    assert library_note_location_line("", "", 120, attention=True) == (
+        "In the Library database only — no file on disk"
+    )

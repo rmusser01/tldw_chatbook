@@ -11,6 +11,7 @@ import tomllib
 import pytest
 import toml
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config as config_module
 from tldw_chatbook.TTS.provider_ids import BUILT_IN_TTS_PROVIDER_IDS
 from tldw_chatbook.TTS.studio_preferences import (
@@ -28,27 +29,19 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
 
 
 def _write_config(path: Path, values: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.write_text(toml.dumps(values), encoding="utf-8")
+    path.chmod(0o600)
 
 
 def _saved_config(path: Path) -> dict[str, object]:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-@pytest.fixture(autouse=True)
-def _isolated_config_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(config_module, "_CONFIG_CACHE", None)
-    monkeypatch.setattr(config_module, "_CONFIG_CACHE_SOURCE", None)
-    monkeypatch.setattr(config_module, "_SETTINGS_CACHE", None)
-    monkeypatch.setattr(config_module, "_SETTINGS_CACHE_SOURCE", None)
-    monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 0)
-
-
 def _store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw: dict[str, object]):
     config_path = tmp_path / "config.toml"
     _write_config(config_path, raw)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, config_path, globals())
     return StudioTTSPreferenceStore(), config_path
 
 
@@ -624,15 +617,19 @@ def test_migration_is_idempotent_and_default_only_legacy_values_do_not_write(
             }
         },
     )
-    real_write = config_module.atomic_private_write_text
     writes = 0
 
-    def counted_write(*args: object, **kwargs: object):
-        nonlocal writes
-        writes += 1
-        return real_write(*args, **kwargs)
+    def count_writes() -> None:
+        real_write = config_module.atomic_private_write_text
 
-    monkeypatch.setattr(config_module, "atomic_private_write_text", counted_write)
+        def counted_write(*args: object, **kwargs: object):
+            nonlocal writes
+            writes += 1
+            return real_write(*args, **kwargs)
+
+        monkeypatch.setattr(config_module, "atomic_private_write_text", counted_write)
+
+    count_writes()
 
     first = store.load()
     second = store.load()
@@ -653,6 +650,7 @@ def test_migration_is_idempotent_and_default_only_legacy_values_do_not_write(
             }
         },
     )
+    count_writes()
     no_op_original = no_op_path.read_bytes()
     assert no_op_store.load().state is StudioTTSLoadState.MISSING
     assert no_op_path.read_bytes() == no_op_original

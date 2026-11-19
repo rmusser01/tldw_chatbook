@@ -377,6 +377,68 @@ def test_standalone_credential_shapes_are_replaced_wholly(raw: str) -> None:
     assert sanitize_string(raw) == "***REDACTED***"
 
 
+#: TASK-39061: a 40-character body, the length the filed probe used.
+_UNDERSCORE_KEY_BODY = "DONOTUSEEXAMPLEONLY" + "a1B2c3D4e5" * 2 + "xyz"
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        # Split at the prefix, as `_synthetic` explains.
+        _synthetic("sk", "_live_"),
+        _synthetic("sk", "_test_"),
+        _synthetic("rk", "_live_"),
+        _synthetic("rk", "_test_"),
+    ],
+    ids=("sk-live", "sk-test", "rk-live", "rk-test"),
+)
+@pytest.mark.parametrize(
+    "template",
+    [
+        "payment retry failed with {key} for job 7",
+        # The forwarder's line for a bound `exception_type` (TASK-38989).
+        "persona_buddy_preferences_save_failed: {key}",
+        "persona_buddy_preferences_save_failed exception_type={key}",
+    ],
+    ids=("prose", "forwarder-suffix", "exception-type-field"),
+)
+def test_bare_underscore_live_and_test_keys_are_masked(prefix, template) -> None:
+    """TASK-39061: no standalone rule knew the `sk_`/`rk_` underscore forms."""
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    key = prefix + _UNDERSCORE_KEY_BODY
+    line = template.format(key=key)
+    expected = template.format(key="***REDACTED***")
+    assert redact_log_line(line) == expected
+    assert sanitize_string(line) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "sk_live_mode is off for job 7",
+        "rk_test_ fixture loaded",
+        "flag sk_test_mode=true",
+        "sk_live_mode_enabled_for_every_customer_account",
+        # The prefix inside a longer word is not a key prefix.
+        "desk_live_" + _UNDERSCORE_KEY_BODY,
+        "SK_LIVE_" + _UNDERSCORE_KEY_BODY,
+    ],
+    ids=(
+        "short-word",
+        "bare-prefix",
+        "short-flag",
+        "underscore-identifier",
+        "prefix-inside-word",
+        "uppercase",
+    ),
+)
+def test_identifiers_that_only_share_the_key_prefix_stay_readable(raw) -> None:
+    from tldw_chatbook.Utils.log_sanitizer import redact_log_line
+
+    assert redact_log_line(raw) == raw
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -711,7 +773,8 @@ class TestSinkRedaction:
             _synthetic("AKI", "ADONOTUSEEXAMPLE1"),
             _synthetic("xox", "b-1234567890-DONOTUSEEXAMPLEONLY"),
             _synthetic(
-                "eyJ", "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+                "eyJ",
+                "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
                 ".DONOTUSEEXAMPLE1",
             ),
         ],

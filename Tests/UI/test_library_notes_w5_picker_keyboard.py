@@ -98,6 +98,7 @@ def _vault(tmp_path: Path) -> Path:
 # --- AC#1: the Folder-files door, on the real route -------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [WIDE, CRITIQUE_COMPACT])
 async def test_the_folder_files_picker_opens_with_its_path_field_focused(
     tmp_path: Path, size: tuple[int, int]
@@ -140,6 +141,7 @@ async def test_the_folder_files_picker_opens_with_its_path_field_focused(
         replica.close()
 
 
+@pytest.mark.bootstrap_profile
 async def test_folder_files_chooses_a_folder_and_edits_a_file_by_key_presses(
     tmp_path: Path,
 ) -> None:

@@ -27,6 +27,10 @@ from textual.errors import NoWidget
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.consolidated_css import (
     APP_STYLESHEETS,
     ConsolidatedCSSApp,
@@ -383,6 +387,7 @@ async def test_library_rail_skips_unchanged_matching_width_contract_writes(
         assert assignments == []
 
 
+@pytest.mark.bootstrap_profile
 def test_library_reader_settings_generation_uses_one_read_only_snapshot(
     monkeypatch,
 ) -> None:
@@ -442,6 +447,7 @@ def test_library_reader_settings_generation_uses_one_read_only_snapshot(
     assert screen._prompts_state.reader_preferences.items_open is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_reader_snapshot_reuses_routes_and_refreshes_once_per_generation(
     monkeypatch,
@@ -858,6 +864,7 @@ def _open_source_test_app() -> SimpleNamespace:
     return SimpleNamespace(app_config={})
 
 
+@pytest.mark.bootstrap_profile
 def test_library_prompt_selection_is_ephemeral_save_state() -> None:
     """Cross-search Prompt selection never enters Library restore state."""
     app = _build_test_app()
@@ -877,6 +884,7 @@ def test_library_prompt_selection_is_ephemeral_save_state() -> None:
     assert restored._prompts_state.selection == PromptSelectionBasket()
 
 
+@pytest.mark.bootstrap_profile
 def test_library_conversation_applied_scope_save_restore_excludes_transients() -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
@@ -926,6 +934,7 @@ def test_library_conversation_applied_scope_save_restore_excludes_transients() -
     assert restored._conversations_state.row_selection.count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "page",
     [True, "2", 0, -1, (2**63 - 1) // 20 + 2],
@@ -973,6 +982,54 @@ def test_library_carries_forward_line_escapes_markup_in_titles():
     )
 
     assert line == r"Carries forward: \[bold]Unsafe\[/bold] title"
+
+
+def test_library_carries_forward_line_counts_what_study_keeps_not_the_whole_sample():
+    """TASK-34000.6 (S-05) AC#4: the hand-off said "and 134 more" for a
+    137-title sample while Study, which keeps STUDY_MATERIAL_TITLES_LIMIT
+    titles, said "+7 more". Both now derive names and count from
+    ``summarize_carried_titles``."""
+    from tldw_chatbook.UI.Screens.study_scope_models import (
+        STUDY_MATERIAL_TITLES_LIMIT,
+        STUDY_MATERIAL_TITLES_NAMED_LIMIT,
+        summarize_carried_titles,
+    )
+
+    titles = [f"Title {index}" for index in range(137)]
+    line = library_screen_module._library_carries_forward_line(titles)
+    summary = summarize_carried_titles(titles)
+
+    assert summary.named == ("Title 0", "Title 1", "Title 2")
+    assert summary.remaining == STUDY_MATERIAL_TITLES_LIMIT - STUDY_MATERIAL_TITLES_NAMED_LIMIT
+    assert line == f"Carries forward: {summary.text}."
+    assert line == "Carries forward: Title 0, Title 1, Title 2 and 7 more."
+    assert "134" not in line
+
+
+def test_library_carries_forward_line_cleans_titles_with_the_same_rule_as_study():
+    """TASK-34000.6 fix round 1 (review Minor 2): Library used to feed the
+    describer raw titles while Study fed `_clean_material_text`-filtered ones,
+    so a title that cleans to empty (``<draft>``) shifted Study's third name
+    and its count by one. The describer now cleans itself: both surfaces name
+    the same titles and count the same remainder."""
+    from tldw_chatbook.UI.Screens.study_screen import StudyScreen
+    from tldw_chatbook.UI.Screens.study_scope_models import summarize_carried_titles
+
+    titles = ["<draft>", *(f"Title {index}" for index in range(11))]  # 12 raw
+    line = library_screen_module._library_carries_forward_line(titles)
+    # What Study keeps on receipt, through its own (delegating) cleaner...
+    study_kept = [
+        StudyScreen._clean_material_text(title, max_length=160) for title in titles
+    ]
+    study_kept = [title for title in study_kept if title][:10]
+    # ...described by the same describer Study's banner calls.
+    study_summary = summarize_carried_titles(study_kept)
+
+    assert "<draft>" not in line and "draft" not in line
+    assert line == "Carries forward: Title 0, Title 1, Title 2 and 7 more."
+    assert study_summary.named == ("Title 0", "Title 1", "Title 2")
+    assert study_summary.remaining == 7
+    assert line == f"Carries forward: {study_summary.text}."
 
 
 # --- task-2856: Library keyboard story --------------------------------------
@@ -1219,8 +1276,17 @@ class _LibraryEvidenceGates:
                     get_library_user_content_evidence=self._async_call(owner)
                 ),
             )
+        # task-31249: the collections capture controller's entry load reads
+        # ``scope_service.active_authority`` (``adopt_active_authority``)
+        # before anything else, so the evidence-only SimpleNamespace starved
+        # it and the entry worker died with ``AttributeError`` -- the
+        # test-double drift this task's census suspected. ``None`` is the
+        # real contract's "no active authority" (the controller then takes
+        # its capture_authority_unavailable state and the entry load stops
+        # there), which is exactly what a fresh starter profile shows.
         app.collections_capture_scope_service = SimpleNamespace(
-            get_library_user_content_evidence=self._sync_call
+            get_library_user_content_evidence=self._sync_call,
+            active_authority=None,
         )
 
     def _async_call(self, owner):
@@ -1297,6 +1363,7 @@ async def _wait_for_evidence_round(pilot, gates, index=0) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_new_profile_waits_for_all_fresh_empty_evidence(
     monkeypatch,
@@ -1350,6 +1417,7 @@ async def test_library_onboarding_new_profile_waits_for_all_fresh_empty_evidence
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_cached_zero_snapshot_cannot_declare_starter() -> None:
     gates = _LibraryEvidenceGates()
@@ -1390,6 +1458,7 @@ async def test_library_onboarding_cached_zero_snapshot_cannot_declare_starter() 
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_partial_failure_keeps_truthful_unknown_actions() -> (
     None
@@ -1422,6 +1491,7 @@ async def test_library_onboarding_partial_failure_keeps_truthful_unknown_actions
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_unknown_landing_is_truthful_and_actionable_while_loading() -> (
     None
@@ -1454,6 +1524,7 @@ async def test_library_unknown_landing_is_truthful_and_actionable_while_loading(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_starter_landing_orients_without_counts_or_search() -> None:
     gates = _LibraryEvidenceGates()
@@ -1491,6 +1562,7 @@ async def test_library_starter_landing_orients_without_counts_or_search() -> Non
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "lifecycle", [LibraryLifecycle.EXPANDED, LibraryLifecycle.GRADUATED]
@@ -1517,6 +1589,7 @@ async def test_library_full_lifecycle_landing_preserves_counts_search_and_empty_
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_partial_failure_landing_offers_one_contextual_retry() -> None:
     gates = _LibraryEvidenceGates(
@@ -1563,6 +1636,7 @@ async def test_library_partial_failure_landing_offers_one_contextual_retry() -> 
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_restored_starter_partial_failure_stays_truthful_and_retries() -> (
     None
@@ -1629,6 +1703,7 @@ async def test_library_restored_starter_partial_failure_stays_truthful_and_retri
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_fresh_usable_content_graduates_and_persists(
     monkeypatch,
@@ -1691,6 +1766,7 @@ async def test_library_onboarding_fresh_usable_content_graduates_and_persists(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_false_persistence_retries_same_lifecycle(
     monkeypatch,
@@ -1734,6 +1810,7 @@ async def test_library_onboarding_false_persistence_retries_same_lifecycle(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_note_create_refreshes_evidence_once_after_commit(
     monkeypatch,
@@ -1798,6 +1875,7 @@ async def test_library_onboarding_note_create_refreshes_evidence_once_after_comm
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_unmount_flushes_latest_lifecycle(
     monkeypatch,
@@ -1883,6 +1961,7 @@ async def test_library_onboarding_unmount_flushes_latest_lifecycle(
             await replacement
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_positive_retrieves_concurrent_loser_exceptions(
     monkeypatch,
@@ -1937,6 +2016,7 @@ async def test_library_onboarding_positive_retrieves_concurrent_loser_exceptions
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_blocked_skill_and_trash_only_do_not_graduate() -> (
     None
@@ -1963,6 +2043,7 @@ async def test_library_onboarding_blocked_skill_and_trash_only_do_not_graduate()
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_late_generation_and_unmount_cannot_apply() -> None:
     outcomes = {
@@ -2006,6 +2087,7 @@ async def test_library_onboarding_late_generation_and_unmount_cannot_apply() -> 
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_new_generation_cancels_previous_worker() -> None:
     """A replacement read promptly revokes the prior async owner calls."""
@@ -2030,6 +2112,7 @@ async def test_library_onboarding_new_generation_cancels_previous_worker() -> No
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "stored,settled",
@@ -2074,6 +2157,7 @@ async def test_library_onboarding_legacy_and_corrupt_preferences_open_expanded(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_restart_after_partial_failure_restores_unknown() -> (
     None
@@ -2105,6 +2189,7 @@ async def test_library_onboarding_restart_after_partial_failure_restores_unknown
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "lifecycle",
@@ -2142,6 +2227,7 @@ async def test_library_onboarding_restart_restores_each_settled_lifecycle(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_explore_during_read_still_allows_graduation() -> None:
     gates = _LibraryEvidenceGates(
@@ -2177,6 +2263,7 @@ async def test_library_onboarding_explore_during_read_still_allows_graduation() 
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_new_generation_revokes_back_to_starter() -> None:
     gates = _LibraryEvidenceGates(
@@ -2223,6 +2310,7 @@ async def test_library_onboarding_new_generation_revokes_back_to_starter() -> No
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_graduation_preserves_rail_focus_and_announces() -> (
     None
@@ -2266,6 +2354,7 @@ async def test_library_onboarding_graduation_preserves_rail_focus_and_announces(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_graduation_leaves_the_note_creation_canvas_intact() -> None:
     """task-32063: graduating mid-note announces by toast and disturbs nothing.
@@ -2331,6 +2420,7 @@ async def test_library_graduation_leaves_the_note_creation_canvas_intact() -> No
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_graduation_paints_no_canvas_line_across_a_notes_files_switch() -> (
     None
@@ -2382,6 +2472,7 @@ async def test_library_graduation_paints_no_canvas_line_across_a_notes_files_swi
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_graduation_paints_no_canvas_line_on_a_direct_item_open() -> None:
     """task-32063: the notice is a toast, so a direct open has nothing to clear."""
@@ -2447,6 +2538,7 @@ async def test_library_graduation_paints_no_canvas_line_on_a_direct_item_open() 
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_cancelled_source_switch_keeps_the_notes_database_source(
     monkeypatch,
@@ -2497,6 +2589,7 @@ async def test_library_cancelled_source_switch_keeps_the_notes_database_source(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_persisted_graduated_restart_has_no_transition_announcement():
     gates = _LibraryEvidenceGates()
@@ -2520,6 +2613,7 @@ async def test_library_persisted_graduated_restart_has_no_transition_announcemen
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_starter_deep_link_opens_hidden_collection_or_note_route() -> (
     None
@@ -2544,6 +2638,7 @@ async def test_library_starter_deep_link_opens_hidden_collection_or_note_route()
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_lifecycle_recompose_does_not_steal_newer_user_focus() -> None:
     """A user focus move made after settlement capture wins the focus race."""
@@ -2565,6 +2660,11 @@ async def test_library_lifecycle_recompose_does_not_steal_newer_user_focus() -> 
 
             await pilot.pause()
             assert screen.query("#library-search-input")
+            # TASK-34000.26: the hub recomposed above, so the captured button
+            # is a corpse and a focus write onto it is now refused. The user's
+            # newer target is the LIVE hub action.
+            newer_target = screen.query_one("#library-hub-action-import", Button)
+            assert newer_target.is_attached
             screen.set_focus(newer_target)
             screen._restore_library_lifecycle_focus("#library-search-input")
             assert screen.focused is newer_target
@@ -2572,6 +2672,7 @@ async def test_library_lifecycle_recompose_does_not_steal_newer_user_focus() -> 
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_starter_pending_nav_context_opens_ingest_without_explore() -> (
     None
@@ -2596,6 +2697,7 @@ async def test_library_starter_pending_nav_context_opens_ingest_without_explore(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_starter_collapse_open_restores_import_and_action_order() -> None:
     """The compact rail survives one complete collapse/open keyboard cycle."""
@@ -2637,6 +2739,7 @@ async def test_library_starter_collapse_open_restores_import_and_action_order() 
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_collapsed_starter_moves_explore_ownership_to_landing() -> None:
     gates = _LibraryEvidenceGates()
@@ -2677,6 +2780,7 @@ async def test_library_collapsed_starter_moves_explore_ownership_to_landing() ->
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_graduation_late_restore_does_not_steal_newer_user_focus(
     monkeypatch,
@@ -2733,6 +2837,7 @@ async def test_library_graduation_late_restore_does_not_steal_newer_user_focus(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((100, 30), (170, 48)))
 async def test_library_starter_production_geometry_and_focus_order(size) -> None:
@@ -2914,6 +3019,7 @@ async def test_library_real_existing_config_without_lifecycle_defaults_expanded(
     assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_starter_hidden_route_focuses_compact_rail_without_search() -> (
     None
@@ -2959,6 +3065,7 @@ async def test_library_starter_hidden_route_focuses_compact_rail_without_search(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_lifecycle_explore_persists_without_changing_sections(
     monkeypatch,
@@ -3027,6 +3134,7 @@ async def test_library_lifecycle_explore_persists_without_changing_sections(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_back_requires_fresh_empty_evidence_and_focuses_import(
     monkeypatch,
@@ -3110,6 +3218,7 @@ async def test_library_onboarding_back_requires_fresh_empty_evidence_and_focuses
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_graduated_never_offers_back_to_starter() -> None:
     """Sticky graduation denies Back even when a later read is all empty."""
@@ -3135,6 +3244,7 @@ async def test_library_onboarding_graduated_never_offers_back_to_starter() -> No
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_persistence_failure_keeps_session_and_warns(
     monkeypatch,
@@ -3182,6 +3292,7 @@ async def test_library_onboarding_persistence_failure_keeps_session_and_warns(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", ((100, 30), (170, 48)))
 @pytest.mark.parametrize(
@@ -3271,6 +3382,7 @@ async def test_library_persistence_warning_is_screen_owned_on_non_landing_routes
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_positive_wins_while_another_owner_hangs(
     monkeypatch,
@@ -3315,6 +3427,7 @@ async def test_library_onboarding_positive_wins_while_another_owner_hangs(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_onboarding_hanging_owner_times_out_to_retry(
     monkeypatch,
@@ -3413,6 +3526,7 @@ def test_library_conversation_pager_matrix_covers_both_supported_sizes():
     assert CONVERSATION_PAGER_TEST_SIZES == ((100, 30), (170, 48))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_conversation_geometry_keeps_pager_fixed_and_row_20_reachable(
@@ -3510,6 +3624,7 @@ def _assert_conversation_widget_inside_pane(screen, widget) -> None:
     assert widget.region.bottom <= pane.region.bottom
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_library_refreshes_candidates_after_runtime_start() -> None:
     """Detached runtime startup makes migrated roots visible without revisit."""
@@ -3548,6 +3663,7 @@ async def test_mounted_library_refreshes_candidates_after_runtime_start() -> Non
         await _wait_for_selector(screen, pilot, "#library-notes-manage-sync-folders")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lasting_setup_escape_abandons_review_before_restoring_notes_focus(
     tmp_path: Path,
@@ -3609,6 +3725,7 @@ async def test_lasting_setup_escape_abandons_review_before_restoring_notes_focus
         assert getattr(screen.focused, "id", None) == "library-notes-filter"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lasting_setup_escape_waits_during_checking_before_any_exit(
     tmp_path: Path,
@@ -3647,6 +3764,7 @@ async def test_lasting_setup_escape_waits_during_checking_before_any_exit(
     app = _build_test_app()
     _seed_conversations(app, [], notes=[])
     app.notes_sync_runtime_owner = _Runtime()
+    app.collections_capture_scope_service = SimpleNamespace(active_authority=None)
     host = LibraryHarness(app)
 
     async with host.run_test(size=(100, 30)) as pilot:
@@ -3661,16 +3779,19 @@ async def test_lasting_setup_escape_waits_during_checking_before_any_exit(
         controller.set_setup("display_name", "Research")
         controller.set_setup("folder", str(tmp_path))
         task = asyncio.create_task(controller.check_setup())
-        await started.wait()
+        try:
+            await wait_for_background_signal(started, task, what="lasting setup check")
+            await screen.action_library_notes_escape()
 
-        await screen.action_library_notes_escape()
-
-        assert screen._notes_state.view == "lasting_add"
-        assert controller.snapshot.phase == "checking"
-        assert screen._library_notes_footer_shortcuts() == (("wait", "current step"),)
-        assert abandoned == []
-        release.set()
-        await task
+            assert screen._notes_state.view == "lasting_add"
+            assert controller.snapshot.phase == "checking"
+            assert screen._library_notes_footer_shortcuts() == (
+                ("wait", "current step"),
+            )
+            assert abandoned == []
+        finally:
+            release.set()
+            await await_background_task(task, what="lasting setup check")
         await screen.action_library_notes_escape()
         assert abandoned == ["provisional-root"]
 
@@ -3844,11 +3965,46 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=3
     )
 
 
+async def _disclose_media_viewer_more_actions(screen, pilot) -> None:
+    """Open the media viewer's collapsed "More" actions row, if needed.
+
+    task-31249 (AC#2 root cause): since d3c4b44a9b ("organize media reader
+    modes and actions", guarded by task-31633) the "Edit metadata" button
+    (``#library-media-edit``) composes ONLY inside the viewer's "More"
+    disclosure, so it no longer mounts just because the viewer opened.
+    Callers that need the edit button (or its more-actions siblings) press
+    "More" first through this helper instead of waiting on the edit button
+    directly.
+    """
+    await _wait_for_selector(screen, pilot, "#library-media-viewer")
+    if not screen.query("#library-media-edit"):
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit")
+
+
 async def _wait_for_display(screen, pilot, selector, *, attempts=120):
     """Wait until an always-mounted stable-composition widget is visible."""
     widget = await _wait_for_selector(screen, pilot, selector, attempts=attempts)
     for _ in range(attempts):
         if widget.display:
+            await pilot.pause()
+            return widget
+        await pilot.pause(0.02)
+    raise AssertionError(
+        f"{selector} never became visible. Visible text: {_visible_text(screen)}"
+    )
+
+
+async def _wait_for_visible(screen, pilot, selector, *, attempts=120):
+    """Wait until a widget hidden by VISIBILITY (its cells stay reserved) shows.
+
+    TASK-34000.8: Discard new note is ``visible``-toggled, not
+    ``display``-toggled, so the task row keeps its Discard-shown width;
+    ``_wait_for_display`` would return at once for it.
+    """
+    widget = await _wait_for_selector(screen, pilot, selector, attempts=attempts)
+    for _ in range(attempts):
+        if widget.display and widget.visible:
             await pilot.pause()
             return widget
         await pilot.pause(0.02)
@@ -4116,6 +4272,7 @@ def _two_media_items():
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_renders_rail_sections_and_landing_canvas():
     app = _build_test_app()
@@ -4148,6 +4305,7 @@ async def test_library_shell_renders_rail_sections_and_landing_canvas():
         assert not screen.query("#library-notes-summary")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("saved_width", (24, 34, 35, 48))
 async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_route(
@@ -4302,6 +4460,7 @@ async def test_ordinary_rail_restores_custom_owner_after_collapse_and_adaptive_r
         ) == initial_declarations
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notes_compact_takeovers_restore_the_ordinary_custom_contract() -> None:
     """Notes pane takeovers yield to the restored ordinary custom owner."""
@@ -4351,6 +4510,7 @@ async def test_notes_compact_takeovers_restore_the_ordinary_custom_contract() ->
         assert rail.styles.max_width.value == 35
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ordinary_same_contract_resizes_do_no_reader_or_destination_work(
     monkeypatch,
@@ -4459,6 +4619,7 @@ async def test_ordinary_same_contract_resizes_do_no_reader_or_destination_work(
         assert style_writes == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
     app = _build_test_app()
@@ -4511,6 +4672,7 @@ async def test_library_ordinary_emergency_retains_bar_and_route_host() -> None:
         assert bar.region.height == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ordinary_emergency_route_matrix_focus_and_return() -> None:
     """Every ordinary rail destination enters one canvas stage and can recover."""
@@ -4577,6 +4739,7 @@ async def test_library_ordinary_emergency_route_matrix_focus_and_return() -> Non
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("row_id", "specific_action"),
@@ -4645,6 +4808,7 @@ def test_library_emergency_escape_binding_follows_specific_guards() -> None:
     assert emergency < actions.index("library_list_focus_rail")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("row_id", "shell_selector"),
@@ -4710,6 +4874,7 @@ async def test_adaptive_routes_never_receive_ordinary_emergency_geometry(
         assert screen.query_one("#library-canvas").styles.width.value == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_retained_prompt_editor_keeps_back_authoritative() -> None:
     """The retained editor owns Back without exposing the ordinary rail return."""
@@ -4758,6 +4923,7 @@ async def test_library_retained_prompt_editor_keeps_back_authoritative() -> None
         assert screen._library_emergency_stage is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_restore_is_defeated_by_newer_return_interaction() -> (
     None
@@ -4816,6 +4982,7 @@ async def test_library_emergency_restore_is_defeated_by_newer_return_interaction
         assert getattr(screen.focused, "id", None) != "library-rag-query-input"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("row_id", "scroll_id", "focus_id"),
@@ -4864,6 +5031,7 @@ async def test_library_emergency_restores_real_route_scroll_owner(
         assert getattr(screen.focused, "id", None) == focus_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_canvas_entry_defeats_an_older_emergency_receipt() -> None:
     app = _build_test_app()
@@ -4894,6 +5062,7 @@ async def test_library_canvas_entry_defeats_an_older_emergency_receipt() -> None
         assert getattr(screen.focused, "id", None) != "library-rag-query-input"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_user_click_defeats_an_older_restore_receipt() -> None:
     app = _build_test_app()
@@ -4931,6 +5100,7 @@ async def test_library_emergency_user_click_defeats_an_older_restore_receipt() -
         assert getattr(screen.focused, "id", None) == "library-rag-query-input"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_programmatic_canvas_focus_keeps_restore_receipt() -> (
     None
@@ -4963,6 +5133,7 @@ async def test_library_emergency_programmatic_canvas_focus_keeps_restore_receipt
         assert screen._library_stage_interaction_generation == receipt.generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_tab_entry_uses_post_navigation_focus() -> None:
     """A real Tab into the ordinary canvas defeats an older receipt."""
@@ -4996,6 +5167,7 @@ async def test_library_emergency_tab_entry_uses_post_navigation_focus() -> None:
         assert screen._library_stage_interaction_generation > receipt.generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_import_keyboard_reaches_and_activates_return() -> None:
     """Import's pinned return is reachable by pane cycle and reverse Tab."""
@@ -5057,6 +5229,7 @@ def test_library_keeps_f6_owned_by_the_app_global_binding() -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_stalled_tab_does_not_arm_later_focus(
     monkeypatch,
@@ -5099,6 +5272,7 @@ async def test_library_emergency_stalled_tab_does_not_arm_later_focus(
         assert screen._library_stage_interaction_generation == receipt.generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_real_wheel_uses_widget_under_pointer() -> None:
     """Wheel target, not unrelated keyboard focus, owns user intent."""
@@ -5130,6 +5304,7 @@ async def test_library_emergency_real_wheel_uses_widget_under_pointer() -> None:
         assert screen._library_stage_interaction_generation > receipt.generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_no_widget_pointer_does_not_invalidate(
     monkeypatch,
@@ -5162,6 +5337,7 @@ async def test_library_emergency_no_widget_pointer_does_not_invalidate(
         assert screen._library_stage_interaction_generation == receipt.generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_ingest_consent_syncs_return_truth(
     monkeypatch, tmp_path
@@ -5232,6 +5408,7 @@ async def test_library_emergency_ingest_consent_syncs_return_truth(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_notes_compact_interaction_defeats_an_older_receipt() -> None:
     app = _build_test_app()
@@ -5260,6 +5437,7 @@ async def test_library_notes_compact_interaction_defeats_an_older_receipt() -> N
         assert screen.focused is focused
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_63_64_width_only_transition_does_no_non_layout_work(
     monkeypatch,
@@ -5339,6 +5517,7 @@ async def test_library_63_64_width_only_transition_does_no_non_layout_work(
             assert recomposes == [], key
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("guard_kind", ("cancel", "running"))
 async def test_library_emergency_real_guards_keep_specific_action_authoritative(
@@ -5407,6 +5586,7 @@ async def test_library_emergency_real_guards_keep_specific_action_authoritative(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_retained_prompt_conflict_keeps_specific_action_authoritative() -> (
     None
@@ -5459,6 +5639,7 @@ async def test_library_retained_prompt_conflict_keeps_specific_action_authoritat
         assert screen._library_emergency_stage is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_emergency_modal_owns_escape_and_hides_rail_guidance() -> None:
     app = _build_test_app()
@@ -5496,6 +5677,7 @@ async def test_library_emergency_modal_owns_escape_and_hides_rail_guidance() -> 
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_route_matrix_keeps_default_ordinary_rail_edge_stable() -> None:
     """Every ordinary destination uses one bounded declaration and rail edge."""
@@ -5605,6 +5787,7 @@ def _assert_task6_production_bounds(screen: LibraryScreen, *panes) -> None:
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("terminal_width", "expected_rail_width"),
@@ -5652,6 +5835,7 @@ async def test_library_production_width_matrix_graduated_startup_landing(
         _assert_task6_production_bounds(screen, rail, canvas)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("terminal_width", "expected_content_width", "expected_rail_width"),
@@ -5697,6 +5881,7 @@ async def test_library_production_width_matrix_ordinary(
         _assert_task6_production_bounds(screen, rail, canvas)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
@@ -5759,6 +5944,7 @@ async def test_library_production_width_matrix_adaptive_work_owned(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("raw_width", "expected_width"),
     ((1, 24), (99, 48), ("wide", 31), (None, 31)),
@@ -5807,6 +5993,7 @@ def test_library_production_width_matrix_normalizes_persisted_custom_widths(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
@@ -6040,6 +6227,7 @@ def _task6_track_style_writes(patcher, *widgets) -> list[str]:
     return writes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "sync_name",
     (
@@ -6069,6 +6257,7 @@ def test_library_resize_geometry_rejects_transient_without_polling(
     retry.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
     monkeypatch,
@@ -6209,6 +6398,7 @@ async def test_library_resize_geometry_high_frequency_does_no_non_layout_work(
         assert adaptive_app.app_config["library"]["reader"]["library_width"] == 48
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_landing_hub_shows_the_error_instead_of_false_zero_counts():
     """PR #1318 review: a failed snapshot must not render
@@ -6286,6 +6476,7 @@ async def test_ingest_cta_uses_one_canonical_label_everywhere():
         assert header == INGEST_HEADER_COPY == "Import media"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hub_recents_render_as_clickable_rows_that_open_the_item():
     """task-2238 (R2): the hub's recents are one quiet clickable row per
@@ -6330,6 +6521,7 @@ async def test_hub_recents_render_as_clickable_rows_that_open_the_item():
         assert screen._library_selected_row_id == "browse-notes"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hub_recents_rows_absent_on_an_empty_library():
     """task-2238 (R2): no content -> no recents rows (and no stale
@@ -6353,6 +6545,7 @@ def test_hub_recents_one_line_helpers_are_removed():
         assert not hasattr(LibraryScreen, name), name
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_landing_hub_shows_next_actions_counts_and_recents():
     """F-010: the landing canvas is the wired hub, not a one-line void --
@@ -6387,6 +6580,7 @@ async def test_library_landing_hub_shows_next_actions_counts_and_recents():
             assert button.region.width > 0 and button.region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("button_id", "marker"),
     [
@@ -6486,6 +6680,7 @@ def test_library_dead_inspector_copy_is_removed():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_rows_are_one_line_including_the_handoff_rows():
     """F-011: rail rows are one terminal line -- the blanket "in Library"
@@ -6524,6 +6719,7 @@ async def test_rail_rows_are_one_line_including_the_handoff_rows():
             assert row.styles.height.value == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_apply_selection_preserves_canonical_row_metadata():
     """Selection-only updates retain canonical count, gloss, and handoff copy."""
@@ -6567,6 +6763,7 @@ async def test_rail_apply_selection_preserves_canonical_row_metadata():
             previous_row_id = row_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_create_section_and_details_reachable_at_100x30():
     """F-011: the regression the stutter caused -- at 100x30 the Create
@@ -6617,6 +6814,7 @@ async def test_rail_create_section_and_details_reachable_at_100x30():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
     """F-013: jargon rows gloss themselves with a dim em-dash subtitle on
@@ -6652,6 +6850,7 @@ async def test_jargon_rail_rows_render_a_dim_subtitle_on_the_same_line():
         assert not [s for s in plain_row.label.spans if "dim" in str(s.style)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_subtitles_drop_cleanly_instead_of_partial_noise_at_100x30():
     """task-2236 (R2): when the full gloss does not fit, the row drops it
@@ -6707,6 +6906,7 @@ async def _wait_for_details_db_sizes(screen, pilot, needle: str) -> str:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_details_recomputes_db_sizes_on_open():
     """F-014 relocation + task-4023 AC#3 (RC-09): the rail's Details
@@ -6789,6 +6989,7 @@ async def test_details_recomputes_db_sizes_on_open():
         assert "Prompts 3.0KB" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_lookup_error_hides_row_counts_instead_of_zeroing_them():
     """F-014: a failed snapshot must not dress up as an empty Library --
@@ -6811,6 +7012,7 @@ async def test_lookup_error_hides_row_counts_instead_of_zeroing_them():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
     """F-015/LIB-18: at 100x30 every visible rail row fits its width with
@@ -6853,6 +7055,7 @@ async def test_rail_counts_never_clip_and_titles_shrink_first_at_100x30():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_search_placeholder_fits_and_input_reads_as_a_field_at_100x30():
     """F-015/F-016: the full 'Search Library…' placeholder fits the box at
@@ -6879,6 +7082,7 @@ async def test_search_placeholder_fits_and_input_reads_as_a_field_at_100x30():
         assert top_color.hex.lower() == "#2d2d2d"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_shows_a_visible_scrollbar_when_content_overflows():
     """F-020: at 100x30 the rail's content overflows and its scrollbar
@@ -6912,6 +7116,7 @@ async def test_rail_shows_a_visible_scrollbar_when_content_overflows():
     assert "scrollbar-color: $ds-text-muted;" in rail_block.group(1)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_landing_footer_advertises_the_landing_keyboard_story():
     """task-2237 (R2): the landing footer advertises every key that works
@@ -6930,7 +7135,7 @@ async def test_landing_footer_advertises_the_landing_keyboard_story():
 
         footer = screen.query_one(AppFooterStatus)
         # (task-3022, coordinating with task-2860) The always-present-globals
-        # contract (ADR-031) means F1/Ctrl+P/Ctrl+Q still trail the screen's
+        # contract (ADR-299) means F1/Ctrl+P/Ctrl+Q still trail the screen's
         # own hints even though the screen's own "F6 next pane" copy now
         # covers F6 and excludes "F6 panes" from that trailing cluster --
         # see Tests/UI/test_screen_footer_hints.py for the identical,
@@ -6944,6 +7149,7 @@ async def test_landing_footer_advertises_the_landing_keyboard_story():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_focuses_the_rail_search_box_from_landing():
     """F-012: `/` jumps straight into the rail search box from the landing
@@ -6963,6 +7169,7 @@ async def test_slash_focuses_the_rail_search_box_from_landing():
         assert search.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_types_literally_when_another_input_has_focus():
     """F-012: `/` must never steal focus out of a text field the user is
@@ -6987,6 +7194,7 @@ async def test_slash_types_literally_when_another_input_has_focus():
         assert filter_input.value == "/"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_on_the_focused_rail_search_rearms_selection():
     """F-012: a second `/` on the already-focused rail search re-arms the
@@ -7013,6 +7221,7 @@ async def test_slash_on_the_focused_rail_search_rearms_selection():
         assert search.selection == (0, 3)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)])
 async def test_slash_focuses_the_media_filter_not_the_rail_search(size):
@@ -7049,6 +7258,7 @@ async def test_slash_focuses_the_media_filter_not_the_rail_search(size):
         assert not rail_search.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
     """task-32085 AC#2: task-32046 routed `/` to the own-canvas filter for
@@ -7098,6 +7308,7 @@ async def test_slash_focuses_the_prompts_filter_not_the_rail_search(tmp_path):
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)])
 async def test_media_list_arrow_keys_move_the_cursor_at_every_width(size):
@@ -7138,6 +7349,7 @@ async def test_media_list_arrow_keys_move_the_cursor_at_every_width(size):
         assert screen.focused.has_class("library-media-row")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_search_deep_link_registers_the_use_in_console_footer_hint():
     """F-012: the `u` hint must be visible whenever `u` works. Only the
@@ -7161,6 +7373,7 @@ async def test_search_deep_link_registers_the_use_in_console_footer_hint():
         assert "/ focus search" in footer.shortcut_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hub_accelerators_open_their_canvases_from_the_landing():
     """task-2237 (R2): `i` opens the ingest canvas and `n` the new-note
@@ -7190,6 +7403,7 @@ async def test_hub_accelerators_open_their_canvases_from_the_landing():
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hub_accelerators_never_fire_in_text_fields_or_off_landing():
     """task-2237 (R2): the accelerators type literally in an Input and do
@@ -7220,6 +7434,7 @@ async def test_hub_accelerators_never_fire_in_text_fields_or_off_landing():
         assert screen._library_selected_row_id == "browse-conversations"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f6_focuses_the_rail_search_box_from_the_landing():
     """task-2237 (R2): F6 (the app's pane-cycle key) reaches the Library
@@ -7239,6 +7454,7 @@ async def test_f6_focuses_the_rail_search_box_from_the_landing():
         assert screen.query_one("#library-search-input", Input).has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_browse_conversations_renders_canvas():
     app = _build_test_app()
@@ -7264,6 +7480,7 @@ async def test_library_shell_browse_conversations_renders_canvas():
         assert screen.query_one("#library-conversation-open-console")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_conversation_row_switches_selection():
     app = _build_test_app()
@@ -7309,6 +7526,7 @@ async def test_library_shell_conversation_row_switches_selection():
         assert "Design review notes" in preview_after
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_open_in_console_triggers_handoff():
     app = _build_test_app()
@@ -7348,6 +7566,7 @@ async def test_library_shell_open_in_console_triggers_handoff():
     assert payload.source_id == "chat-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_flashcards_row_renders_handoff_canvas():
     """Create > Flashcards is a "handoff" rail row (L3b Task 8, not the
@@ -7409,8 +7628,13 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
         )
 
         # D2: ready state is a plain line, no warning-callout classes.
+        # TASK-34000.6 (S-05): in local mode (the factory app's runtime) the
+        # line no longer promises a generation only a server can run.
         recovery = screen.query_one("#library-study-handoff-recovery", Static)
-        assert str(recovery.renderable) == "Source snapshot is ready."
+        assert str(recovery.renderable) == (
+            "Generating a pack from sources needs a tldw server; "
+            "you can still make cards by hand in Study."
+        )
         assert not recovery.has_class("ds-recovery-callout")
         assert not recovery.has_class("is-blocked")
 
@@ -7420,6 +7644,7 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
         assert open_button.has_class("console-action-primary")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_handoff_canvas_button_reads_continue_in_study():
     """UX wave L2: the handoff canvas action button reads as a verb
@@ -7454,6 +7679,7 @@ async def test_library_shell_handoff_canvas_button_reads_continue_in_study():
             assert str(button.label) == "Continue in Study"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_row_renders_first_class_canvas():
     """Browse ▸ Search/RAG is a first-class canvas row now, not a legacy
@@ -7479,6 +7705,7 @@ async def test_library_shell_search_row_renders_first_class_canvas():
         assert not screen.query("#library-active-mode-title")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rag_open_import_export_switches_canvas_and_selection():
     app = _build_test_app()
@@ -7608,6 +7835,7 @@ async def _wait_for_library_rag_query_ready(screen, pilot, query, *, attempts=15
     raise AssertionError(f"Library Search/RAG query never became ready: {query!r}")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_stale_mirror_events_do_not_replenish_changed_traffic(
     monkeypatch,
@@ -7669,6 +7897,7 @@ async def test_library_shell_stale_mirror_events_do_not_replenish_changed_traffi
         assert screen._rag_search_state.query == "B"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_gated_search_keeps_heartbeat_and_navigation_live():
     app = _build_test_app()
@@ -7726,6 +7955,7 @@ async def test_library_shell_gated_search_keeps_heartbeat_and_navigation_live():
             await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_repeated_supersession_serializes_underlying_retrieval(
     monkeypatch,
@@ -7877,6 +8107,7 @@ async def test_library_shell_repeated_supersession_serializes_underlying_retriev
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_reused_screen_reentry_serializes_draining_retrieval(
     monkeypatch,
@@ -8038,6 +8269,7 @@ async def test_library_shell_reused_screen_reentry_serializes_draining_retrieval
     assert second._rag_search_state.retrieval_status == "ready"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_restore_normalizes_transient_rag_searching_state():
     app = _build_test_app()
@@ -8067,6 +8299,7 @@ async def test_library_shell_restore_normalizes_transient_rag_searching_state():
         assert not screen.query("#library-rag-searching-line")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_mode_toggle_cycles_mode():
     """Pressing the mode-cycle button flips Search <-> RAG Answer, and the
@@ -8126,6 +8359,7 @@ async def test_library_shell_search_mode_toggle_cycles_mode():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime(
     monkeypatch,
@@ -8194,6 +8428,7 @@ async def test_library_shell_search_rag_mode_keeps_run_enabled_without_runtime(
         assert "Select a provider/model" not in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider(
     monkeypatch,
@@ -8236,6 +8471,7 @@ async def test_library_shell_search_rag_mode_blocks_run_without_a_ready_provider
         assert "No analysis provider is configured" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_credential_missing(
     monkeypatch,
@@ -8315,6 +8551,7 @@ async def test_library_shell_search_rag_mode_blocks_run_when_endpoint_named_but_
         assert "api_settings.openai" in recovery
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_rag_snippet_shares_the_title_rows_left_padding():
     """task-2859 item 10: the evidence snippet used to sit flush against
@@ -8372,6 +8609,7 @@ async def test_library_shell_search_rag_snippet_shares_the_title_rows_left_paddi
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_history_records_submitted_queries():
     """Running a query records it into the Recent searches collapsible and
@@ -8415,6 +8653,7 @@ async def test_library_shell_search_history_records_submitted_queries():
         assert app.app_config["library"]["search"]["history"] == ["beta", "alpha"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_history_loads_from_cli_config_fallback(monkeypatch):
     """Issue: a restarted app always showed empty Search/RAG history even
@@ -8457,6 +8696,7 @@ async def test_library_shell_search_history_loads_from_cli_config_fallback(monke
         assert str(screen.query_one("#library-rag-history-1", Button).label) == "bravo"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_history_prefers_app_config_over_cli_config(
     monkeypatch,
@@ -8497,6 +8737,7 @@ async def test_library_shell_search_history_prefers_app_config_over_cli_config(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_preferences_loads_from_cli_config_fallback(
     monkeypatch,
@@ -8541,6 +8782,7 @@ async def test_library_shell_rail_preferences_loads_from_cli_config_fallback(
         assert calls, "get_cli_setting fallback was never consulted"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_preferences_prefers_app_config_over_cli_config(
     monkeypatch,
@@ -8585,6 +8827,7 @@ async def test_library_shell_rail_preferences_prefers_app_config_over_cli_config
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_history_row_reruns_query():
     """Clicking a history row re-runs that prior query against the service."""
@@ -8691,6 +8934,7 @@ async def test_library_shell_search_history_row_reruns_query():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_history_row_survives_bracketed_query():
     """C1: a history entry containing bracket-like text must not crash the
@@ -8753,6 +8997,7 @@ async def test_library_shell_search_history_row_survives_bracketed_query():
         assert service.calls[-1]["query"] == query
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_searching_line_shows_while_gated():
     """The searching status line renders the selected source scope while a
@@ -8788,6 +9033,7 @@ async def test_library_shell_search_searching_line_shows_while_gated():
             service.release_event.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_outcome_resolves_status_after_leaving_canvas():
     """I1(b): an outcome that lands while the user has left the Search
@@ -8854,6 +9100,7 @@ async def test_library_shell_search_outcome_resolves_status_after_leaving_canvas
         assert not screen.query("#library-rag-searching-line")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_search_submit_renders_every_result_row():
     """RED regression pilot: a rail-top search that matches multiple
@@ -8991,6 +9238,7 @@ async def test_library_shell_rail_search_submit_renders_every_result_row():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rag_results_arrival_scrolls_evidence_heading_into_view():
     """(C2) Results landing -- and ONLY results landing -- must scroll the
@@ -9048,6 +9296,7 @@ async def test_library_shell_rag_results_arrival_scrolls_evidence_heading_into_v
         assert kwargs.get("animate") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_search_submit_renders_every_result_row_post_mount():
     """Variation: force the outcome to land AFTER the Search canvas has
@@ -9138,6 +9387,7 @@ async def test_library_shell_rail_search_submit_renders_every_result_row_post_mo
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_run_button_renders_every_result_row():
     """Variation: use the in-panel Run button (no rail recompose at all) so
@@ -9212,6 +9462,7 @@ async def test_library_shell_search_run_button_renders_every_result_row():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
     """I1(a): a rail-top search submit while a dirty note sits in an
@@ -9288,6 +9539,7 @@ async def test_library_shell_rail_search_submit_aborts_on_note_conflict():
         assert screen._notes_state.autosave_state == "conflict"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_mode_toggle_mid_flight_discards_wrong_mode_outcome():
     """I2: toggling Search <-> RAG Answer mode while a query is still in
@@ -9341,6 +9593,7 @@ async def test_library_shell_search_mode_toggle_mid_flight_discards_wrong_mode_o
         assert screen._rag_search_state.retrieval_status == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_row_selects_canvas_without_navigating():
     """Browse ▸ Media is a canvas row now, not a screen-route shortcut.
@@ -9368,6 +9621,7 @@ async def test_library_shell_media_row_selects_canvas_without_navigating():
         assert screen.query_one("#library-media-canvas")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_browse_media_renders_canvas_with_rows_and_preview():
     app = _build_test_app()
@@ -9425,6 +9679,7 @@ async def _pick_media_type(screen, pilot, value: str) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_type_filter_narrows_list():
     """Picking a type from the chooser strip narrows the list (task-14902:
@@ -9462,6 +9717,7 @@ async def test_library_shell_media_type_filter_narrows_list():
         assert "Product Demo Video" in str(rows[0].label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_row_switches_selection():
     """Selecting a different media row updates ``_media_state.selected_media_id``.
@@ -9497,6 +9753,7 @@ async def test_library_shell_media_row_switches_selection():
         assert app.media_reading_scope_service.detail_calls[-1]["media_id"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_row_opens_full_viewer_with_content():
     """Pressing a media row opens the retained reader with full content.
@@ -9543,6 +9800,7 @@ async def test_library_shell_media_row_opens_full_viewer_with_content():
         assert "Author: Jordan Lee" in meta_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_uses_destination_honest_labels():
     """The retained reader names its Console and manager destinations."""
@@ -9568,6 +9826,7 @@ async def test_library_shell_media_viewer_uses_destination_honest_labels():
         assert str(open_manager.label) == "Open manager"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_analysis_button_reads_add_when_no_analysis():
     """UX wave L1: the analysis toggle reads "Add analysis" when the viewer
@@ -9598,6 +9857,7 @@ async def test_library_shell_media_analysis_button_reads_add_when_no_analysis():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_use_in_chat_triggers_handoff():
     """``#library-media-use-in-chat`` stages the open media item as Console context.
@@ -9641,6 +9901,7 @@ async def test_library_shell_media_use_in_chat_triggers_handoff():
     assert "Full transcript: the interview recording" in payload.body
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_use_in_chat_without_open_item_notifies():
     """No handoff fires when no media item is currently loaded in the viewer.
@@ -9670,6 +9931,7 @@ async def test_library_shell_media_use_in_chat_without_open_item_notifies():
     assert "Open a media item" in message
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_back_returns_to_list():
     """Back returns control to Items while retaining the loaded Reader."""
@@ -9700,14 +9962,21 @@ async def test_library_shell_media_back_returns_to_list():
         assert getattr(screen.focused, "id", None) == "library-media-row-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_library_shell_media_rail_reentry_resets_to_list():
-    """Re-entering Browse Media from the rail must show the list, not a stale viewer.
+async def test_library_shell_media_rail_reentry_restores_the_open_item_and_back_lists():
+    """Re-entering Browse Media from the rail restores the open Reader; ‹ Back
+    is the way to the list (TASK-34000.25, review finding S-02).
 
-    A rail-row press is always a fresh entry into a content type. If the
-    media viewer was left open on a previous visit, navigating away via
-    another rail row and then pressing "Browse Media" again must land on
-    the media list -- not resume the previously opened item's viewer.
+    This pin used to say the opposite ("a rail-row press is always a fresh
+    entry ... must land on the media list, not resume the previously opened
+    item's viewer"). That rule cost the researcher's note-taking loop the
+    item, its tab and its scroll on every rail switch, and left the Items
+    row marked ``loaded`` beside an empty Reader (L-16). The new contract:
+    a settled local item survives the round trip beside its ``loaded`` row,
+    and the explicit exit -- ``‹ Back`` / Escape, one seam
+    (``_exit_library_media_viewer``) -- still returns to the list, after
+    which a rail round trip is a fresh entry again.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -9722,6 +9991,14 @@ async def test_library_shell_media_rail_reentry_resets_to_list():
 
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._media_state.reader_session.pending_request is None
+                and screen._media_state.reader_session.loaded_id == "local:media:1"
+            ),
+            message="the Reader never settled on the first item",
+        )
 
         screen.query_one("#library-row-browse-conversations").press()
         await pilot.pause()
@@ -9732,9 +10009,35 @@ async def test_library_shell_media_rail_reentry_resets_to_list():
         await pilot.pause()
 
         assert screen.query_one("#library-media-list")
-        assert not screen.query("#library-media-viewer-title")
+        assert screen.query("#library-media-viewer-title"), (
+            "the Reader lost the open item on re-entry"
+        )
+        assert screen._media_state.view == "viewer"
+        assert screen._media_state.reader_session.loaded_id == "local:media:1"
+        loaded_rows = [
+            row.id
+            for row in screen.query(".library-media-row").results(Button)
+            if " · loaded" in str(row.label)
+        ]
+        assert loaded_rows == ["library-media-row-1"]
+
+        # ‹ Back (compact-only at this size -- the same seam the button and
+        # Escape share) returns to the list; the next round trip is fresh.
+        screen._exit_library_media_viewer()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._media_state.view == "list"
+        screen.query_one("#library-row-browse-conversations").press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._media_state.view == "list"
+        assert screen.query_one("#library-media-list")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_shows_loading_before_detail_loads(
     monkeypatch,
@@ -9779,6 +10082,7 @@ async def _media_detail_never_loads(
     """
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_summary_open_in_viewer_stays_in_library():
     """(task-186) The browse summary's "Open in viewer" action opens the
@@ -9813,6 +10117,7 @@ async def _open_library_media_reader_more(screen, pilot) -> None:
     await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_open_posts_navigate_to_screen():
     """``#library-media-open`` inside the full viewer also hands off to Media."""
@@ -9838,6 +10143,7 @@ async def test_library_shell_media_viewer_open_posts_navigate_to_screen():
     assert seen[-1] == "media"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_edit_shows_prefilled_form():
     """Pressing ``Edit`` swaps the metadata block for prefilled edit inputs."""
@@ -9875,6 +10181,7 @@ async def test_library_shell_media_edit_shows_prefilled_form():
         assert screen.query_one("#library-media-edit-cancel")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
     """Saving the edit form calls ``update_media_item`` and refreshes the viewer."""
@@ -9932,6 +10239,7 @@ async def test_library_shell_media_edit_save_persists_and_exits_edit_mode():
         assert title == "Interview Recording (Revised)"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> None:
     app = _build_test_app()
@@ -10014,6 +10322,7 @@ async def _open_media_edit_and_save_title(screen, pilot, new_title):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_edit_save_refreshes_authoritative_page():
     """A saved edit refreshes the exact page instead of forging its envelope."""
@@ -10040,6 +10349,7 @@ async def test_library_shell_media_edit_save_refreshes_authoritative_page():
         assert "Renamed In List" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_edit_save_sanitizes_user_input():
     """User-entered edit fields are sanitized at the UI boundary, so HTML/script
@@ -10066,6 +10376,7 @@ async def test_library_shell_media_edit_save_sanitizes_user_input():
         assert "Title" in sent_title
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_detail_race_discards_stale_fetch():
     """A detail fetch that completes for a no-longer-selected media id must be
@@ -10100,6 +10411,7 @@ async def test_library_shell_media_detail_race_discards_stale_fetch():
         assert str(detail.get("id")) == "media-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_open_deleted_media_shows_recoverable_reader_error():
     """A stale Media result keeps Reader mounted with an explicit retry state."""
@@ -10138,6 +10450,7 @@ async def test_library_shell_open_deleted_media_shows_recoverable_reader_error()
         assert screen.query("#library-media-canvas")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> None:
     app = _build_test_app()
@@ -10186,6 +10499,7 @@ async def test_library_media_deep_link_back_loads_exact_page_and_facets() -> Non
         assert screen.query("#library-media-canvas")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_broad_snapshot_updates_other_consumers_only():
     """A broad snapshot updates rail consumers, not the dedicated page."""
@@ -10218,6 +10532,7 @@ async def test_library_conversation_broad_snapshot_updates_other_consumers_only(
         assert screen._local_source_records["notes"][0]["id"] == "note-late"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_edit_cancel_discards():
     """Cancelling the edit form discards changes without calling the service."""
@@ -10255,6 +10570,7 @@ async def test_library_shell_media_edit_cancel_discards():
         assert service.update_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_delete_shows_inline_confirm_without_deleting():
     """Pressing ``Delete`` shows the inline confirm affordance, not an immediate delete."""
@@ -10283,6 +10599,7 @@ async def test_library_shell_media_delete_shows_inline_confirm_without_deleting(
         assert screen._media_state.view == "viewer"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_delete_confirm_uses_raw_backing_id():
     """Confirming a canonical viewer row sends its raw local backing id."""
@@ -10325,6 +10642,7 @@ async def test_library_shell_media_delete_confirm_uses_raw_backing_id():
         assert title == "Product Demo Video"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_delete_escape_is_inert_during_durable_write() -> None:
     app = _build_test_app()
@@ -10360,6 +10678,7 @@ async def test_library_media_delete_escape_is_inert_during_durable_write() -> No
         service.delete_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_delete_cancel_leaves_item_intact():
     """Cancelling the inline confirm discards it without calling the service."""
@@ -10394,6 +10713,7 @@ async def test_library_shell_media_delete_cancel_leaves_item_intact():
         assert service.delete_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_renders_seeded_highlight():
     """A seeded highlight's quote renders in the viewer's highlights section."""
@@ -10430,6 +10750,7 @@ async def test_library_shell_media_viewer_renders_seeded_highlight():
         assert screen.query_one("#library-media-highlight-delete-0")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_highlight_non_rich_color_does_not_crash_render():
     """A Textual-valid but Rich-invalid color (e.g. 'transparent') must not crash.
@@ -10468,6 +10789,7 @@ async def test_library_shell_media_highlight_non_rich_color_does_not_crash_rende
         assert "transparent" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_highlight_add_creates_and_renders_new_highlight():
     """Filling the quote input and pressing Add calls ``create_highlight`` and renders it."""
@@ -10524,6 +10846,7 @@ async def test_library_shell_media_highlight_add_creates_and_renders_new_highlig
         assert "New highlight quote" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_highlight_delete_removes_it():
     """Pressing a highlight's delete button calls ``delete_highlight`` and removes the row."""
@@ -10568,6 +10891,7 @@ async def test_library_shell_media_highlight_delete_removes_it():
         assert not screen.query(".library-media-highlight-delete")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_read_later_saves_and_flips_button_label():
     """Pressing Read later calls save_to_read_it_later and flips the label."""
@@ -10614,6 +10938,7 @@ async def test_library_shell_media_read_later_saves_and_flips_button_label():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_read_later_removes_when_already_saved():
     """Pressing the toggle on an already-saved item calls remove_from_read_it_later."""
@@ -10662,6 +10987,7 @@ async def test_library_shell_media_read_later_removes_when_already_saved():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_shows_analysis_from_latest_version():
     """Analysis text from the newest DocumentVersions row renders in the viewer.
@@ -10698,6 +11024,7 @@ async def test_library_shell_media_viewer_shows_analysis_from_latest_version():
         assert analysis_text == "Roadmap analysis"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_analysis_edit_shows_prefilled_textarea():
     """Pressing "Edit analysis" swaps the analysis text for a prefilled TextArea."""
@@ -10730,6 +11057,7 @@ async def test_library_shell_media_analysis_edit_shows_prefilled_textarea():
         assert screen.query_one("#library-media-analysis-cancel")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
     """Saving the analysis edit form calls save_analysis_version and refreshes the viewer."""
@@ -10791,6 +11119,7 @@ async def test_library_shell_media_analysis_save_persists_and_exits_edit_mode():
         assert analysis_text == "Revised analysis"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_analysis_cancel_discards():
     """Cancelling the analysis edit form discards changes without calling the service."""
@@ -10837,6 +11166,7 @@ async def test_library_shell_media_analysis_cancel_discards():
         assert service.analysis_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_generate_analysis_dispatches_and_persists():
     """task-28006: Generate resolves the provider, dispatches, and saves the result."""
@@ -10909,6 +11239,7 @@ async def test_library_media_generate_analysis_dispatches_and_persists():
         assert screen._media_state.generating_analysis is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_generate_analysis_without_provider_notifies_and_skips():
     """task-28006: with no ready provider, Generate warns and never dispatches or saves."""
@@ -11108,6 +11439,7 @@ def _row_is_painted_focused(host, row) -> bool:
     return bool(cells) and all(style.underline for _text, style in cells)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_sort_chooser_applies_the_selected_order():
     """task-28013: the media sort chooser re-fetches page one under the new order."""
@@ -11156,6 +11488,7 @@ async def test_library_media_sort_chooser_applies_the_selected_order():
         assert last.get("page", 1) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_sort_and_type_choosers_are_mutually_exclusive():
     """task-28013: opening one chooser closes the other; Escape closes the strip."""
@@ -11216,6 +11549,7 @@ async def _open_media_viewer_and_submit_content_search(screen, pilot, query):
     await _submit_content_search_query(screen, pilot, query)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_no_query_hides_status_and_nav():
     """With no active search, only the search box renders -- no orphaned status/prev/next."""
@@ -11244,6 +11578,7 @@ async def test_library_shell_media_content_search_no_query_hides_status_and_nav(
         assert not screen.query_one("#library-media-content-search-nav").display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_shows_match_count():
     """Submitting a query shows the match count and starts at the first match."""
@@ -11267,6 +11602,7 @@ async def test_library_shell_media_content_search_shows_match_count():
         assert screen._media_state.content_match_index == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_enter_advances_to_next_match():
     """task-28011: re-pressing Enter on the same query walks to the next match."""
@@ -11299,6 +11635,7 @@ async def test_library_shell_media_content_search_enter_advances_to_next_match()
         assert screen._media_state.content_match_index == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_highlights_matches_in_body():
     """While searching, each query occurrence in the content body is styled."""
@@ -11324,6 +11661,7 @@ async def test_library_shell_media_content_search_highlights_matches_in_body():
         assert all(part.lower() == "budget" for part in highlighted)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_one_mark_per_matching_line():
     """A line with two hits is one match and gets one mark (count == visible marks)."""
@@ -11353,6 +11691,7 @@ async def test_library_shell_media_content_search_one_mark_per_matching_line():
         assert marks[0] == "budget"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_no_matches_shows_status():
     """A query with no hits in the content shows a "No matches" status."""
@@ -11376,6 +11715,7 @@ async def test_library_shell_media_content_search_no_matches_shows_status():
         assert status == "No matches"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_empty_query_hides_status_and_nav():
     """Submitting a blank query clears the query and hides the status/prev/next row."""
@@ -11403,6 +11743,7 @@ async def test_library_shell_media_content_search_empty_query_hides_status_and_n
         assert screen._media_state.content_query == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_next_prev_advances_match_index():
     """Next/Prev cycle the match index (wrapping) and update the status line."""
@@ -11452,6 +11793,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         assert status == "Match 2 of 2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_search_preserves_identity_focus_and_parse_count(
     monkeypatch,
@@ -11474,12 +11816,24 @@ async def test_library_shell_media_viewer_inplace_search_preserves_identity_focu
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
 
+        # task-31249: the Find bar composes only while open (task-31237's
+        # collapsed-until-open bar), so OPENING it legitimately recomposes
+        # the viewer once to mount the search controls. The identity
+        # promise this test pins starts AFTER the bar is up: submitting a
+        # query and walking matches must not rebuild the viewer, the body,
+        # or the controls, and must not re-parse the Markdown.
+        await _open_media_find(screen, pilot)
         screen_before = screen
         viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
         markdown_before = screen.query_one(
             "#library-media-viewer-content-markdown", Markdown
         )
-        await _submit_content_search_query(screen, pilot, "setup")
+        search_input = screen.query_one("#library-media-content-search", Input)
+        search_input.value = "setup"
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
         parse_count_before_navigation = len(markdown_updates)
         next_button = screen.query_one("#library-media-content-search-next", Button)
         previous_button = screen.query_one("#library-media-content-search-prev", Button)
@@ -11499,6 +11853,7 @@ async def test_library_shell_media_viewer_inplace_search_preserves_identity_focu
         assert len(markdown_updates) == parse_count_before_navigation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_search_applies_only_on_enter():
     """Catch Input.Changed applying the Library query before Enter is submitted."""
@@ -11522,6 +11877,7 @@ async def test_library_shell_media_viewer_inplace_search_applies_only_on_enter()
         assert not screen.query_one("#library-media-content-search-status").display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_errors():
     """Catch mounted-viewer coordinators leaking child teardown query failures."""
@@ -11558,6 +11914,7 @@ async def test_library_shell_media_viewer_inplace_teardown_contains_child_query_
         await screen._set_library_media_content_mode("raw")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_scroll_waits_for_refresh_boundary(
     monkeypatch,
@@ -11610,6 +11967,7 @@ async def test_library_shell_media_viewer_inplace_scroll_waits_for_refresh_bound
         assert scroll_calls == [(3, False)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_large_document_latency_and_parse_proxy(
     monkeypatch,
@@ -11696,6 +12054,7 @@ async def test_library_shell_media_viewer_inplace_large_document_latency_and_par
         assert markdown_updates == [id(markdown_before)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_detail_arrival_does_not_reparse_rendered_detail(
     monkeypatch,
@@ -11757,6 +12116,7 @@ async def test_library_shell_media_viewer_detail_arrival_does_not_reparse_render
         assert "Fresh detail" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_navigation_holds_at_compact_size(
     monkeypatch,
@@ -11819,6 +12179,7 @@ def _painted_rows(screen) -> list[str]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", ((100, 30), (170, 48)))
 @pytest.mark.parametrize(
     (
@@ -11970,6 +12331,7 @@ async def test_library_paged_empty_recovery_is_painted_and_keyboard_reachable(
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size():
     """Catch search status and Prev/Next sitting below the fold at 80x24.
@@ -12036,6 +12398,7 @@ async def test_library_shell_media_viewer_search_chrome_paints_at_compact_size()
         assert "Next ▶" in painted_after_navigation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_active():
     """The search chrome appears on submit without relocating the bar.
@@ -12113,6 +12476,7 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
         assert cleared.region.y == inactive_y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_content(
     monkeypatch,
@@ -12136,10 +12500,15 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
+
+        # task-31249: the Find bar composes only while open (task-31237), so
+        # the submit helper's Find press legitimately recomposes the viewer
+        # ONCE to mount the search controls. The identity promise starts
+        # AFTER that: the layout baseline and the post-navigation identity
+        # assertions below both capture from the bar-mounted state.
+        await _submit_content_search_query(screen, pilot, "budget")
         viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
         markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
-
-        await _submit_content_search_query(screen, pilot, "budget")
         controls = screen.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
@@ -12211,6 +12580,7 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         assert body.scroller.scroll_y > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_resets_on_back():
     """Returning to the media list clears the in-content search state."""
@@ -12290,6 +12660,7 @@ def _raw_view_highlighted_occurrences(raw: VirtualizedRawContent) -> list[str]:
     return occurrences
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_defaults_markdown_item_to_rendered():
     """A markdown-typed item with real markdown syntax opens straight into
@@ -12322,6 +12693,7 @@ async def test_library_shell_media_viewer_defaults_markdown_item_to_rendered():
         assert "(selected)" not in str(raw_button.label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_rendered_content_is_keyboard_focusable_for_scroll():
     """task-28003 (Qodo #2307): rendered-Markdown content is F6-reachable.
@@ -12362,6 +12734,7 @@ async def test_library_media_rendered_content_is_keyboard_focusable_for_scroll()
         assert resolved.get("library-media-viewer") is body
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_content_mode_toggle_buttons_have_onscreen_geometry():
     """Rendered-geometry check (the P1 arc's lesson: a widget can exist in
@@ -12392,6 +12765,7 @@ async def test_library_shell_media_viewer_content_mode_toggle_buttons_have_onscr
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_raw_toggle_restores_literal_markdown():
     """Pressing "Raw" swaps back to the plain ``Static`` showing the
@@ -12438,6 +12812,7 @@ async def test_library_shell_media_viewer_raw_toggle_restores_literal_markdown()
         assert not raw.display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_rendered_search_primes_raw_highlight():
     """Catch Rendered search state being lost when Raw mounts lazily afterward."""
@@ -12471,6 +12846,7 @@ async def test_library_shell_media_viewer_inplace_rendered_search_primes_raw_hig
         assert selected == ["Setup"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_non_markdown_item_never_shows_toggle():
     """A non-markdown item (LIB-13's non-goal: no regression) never shows
@@ -12493,6 +12869,7 @@ async def test_library_shell_media_viewer_non_markdown_item_never_shows_toggle()
         assert not screen.query("#library-media-viewer-content-markdown")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_plaintext_without_markdown_syntax_defaults_raw():
     """A ``media_type="plaintext"`` item WITHOUT real markdown syntax (a
@@ -12515,6 +12892,7 @@ async def test_library_shell_media_viewer_plaintext_without_markdown_syntax_defa
         assert not screen.query("#library-media-content-mode-strip")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_content_search_placeholder_states_raw_text_for_markdown_item():
     """LIB-13's content-search decision: the search always matches the raw
@@ -12538,6 +12916,7 @@ async def test_library_shell_media_content_search_placeholder_states_raw_text_fo
         assert search_input.placeholder == "Search content (raw text)…"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_open():
     """Leaving the viewer and reopening a DIFFERENT (non-markdown) item
@@ -12568,6 +12947,7 @@ async def test_library_shell_media_viewer_content_mode_resets_on_back_and_next_o
         assert not screen.query("#library-media-content-mode-strip")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_exact_page_ignores_gated_failing_broad_snapshot(
     monkeypatch,
@@ -12629,6 +13009,7 @@ async def test_library_media_exact_page_ignores_gated_failing_broad_snapshot(
         release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_exact_page_owns_rows_not_broad_snapshot() -> None:
     app = _build_test_app()
@@ -12663,6 +13044,7 @@ async def test_library_media_exact_page_owns_rows_not_broad_snapshot() -> None:
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", ((100, 30), (170, 48)))
 @pytest.mark.asyncio
 async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) -> None:
@@ -12786,6 +13168,7 @@ async def test_library_media_pager_is_exact_pinned_and_controller_owned(size) ->
         assert str(next_page.tooltip) == controller.pager.next_reason
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> None:
     app = _build_test_app()
@@ -12846,6 +13229,7 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
         assert getattr(screen.focused, "id", None) == "library-media-type-filter"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("commit_phase", "requested_type"),
     (("loading", "All"), ("error", "ALL"), ("error", "all")),
@@ -12946,6 +13330,7 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
         service.page_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls() -> (
     None
@@ -13014,6 +13399,7 @@ async def test_library_media_page_error_retains_rows_and_gates_unsafe_controls()
         service.page_two_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_stale_page_disables_actions_across_recompose() -> None:
     media = [
@@ -13117,6 +13503,7 @@ async def test_library_media_stale_page_disables_actions_across_recompose() -> N
         assert not screen.query_one("#library-media-row-0", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("refresh_fails", [False, True])
 async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
@@ -13266,6 +13653,7 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
         service.delete_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_restore_refresh_makes_reappearing_facet_visible() -> None:
     media = [
@@ -13313,6 +13701,7 @@ async def test_library_media_restore_refresh_makes_reappearing_facet_visible() -
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_newer_page_and_facet_generations_win() -> None:
     app = _build_test_app()
@@ -13359,6 +13748,7 @@ async def test_library_media_newer_page_and_facet_generations_win() -> None:
         service.facet_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_unmount_fences_gated_reads_before_await() -> None:
     app = _build_test_app()
@@ -13396,6 +13786,7 @@ async def test_library_media_unmount_fences_gated_reads_before_await() -> None:
         service.facet_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_mutation_completion_after_unmount_only_reconciles() -> (
     None
@@ -13458,6 +13849,7 @@ async def test_library_media_mutation_completion_after_unmount_only_reconciles()
         service.delete_release.set()
 
 
+@pytest.mark.bootstrap_profile
 def test_library_media_applied_scope_restore_is_strict_and_transient_free() -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
@@ -13493,6 +13885,7 @@ def test_library_media_applied_scope_restore_is_strict_and_transient_free() -> N
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "page",
     (True, 0, -1, (2**63 - 1) // 20 + 2),
@@ -13519,6 +13912,7 @@ def test_library_media_restore_normalizes_only_invalid_page(page: object) -> Non
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_library_media_scope_change_clears_page_selection_with_notice() -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
@@ -13534,6 +13928,7 @@ def test_library_media_scope_change_clears_page_selection_with_notice() -> None:
     assert screen._media_state.selection_notice == "Selection cleared."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_mounted_type_change_clears_page_selection() -> None:
     app = _build_test_app()
@@ -13569,6 +13964,7 @@ async def test_library_media_mounted_type_change_clears_page_selection() -> None
         assert "Selection cleared." in notified
 
 
+@pytest.mark.bootstrap_profile
 def test_library_media_canonical_identity_resolves_raw_backing_detail_id() -> None:
     screen = LibraryScreen(_build_test_app())
 
@@ -13578,6 +13974,7 @@ def test_library_media_canonical_identity_resolves_raw_backing_detail_id() -> No
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("choice", "initial"),
     [(None, "video"), ("All", None)],
@@ -13604,6 +14001,7 @@ def test_library_media_type_handler_preserves_none_and_literal_all(
     assert requested == [choice]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_conversations_filter_filters_canvas():
     """The in-canvas filter searches the complete conversation service."""
@@ -13631,6 +14029,7 @@ async def test_library_shell_conversations_filter_filters_canvas():
         assert len(rows) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_applied_scope_restore_refetches_saved_page():
     app = _build_test_app()
@@ -13667,6 +14066,7 @@ async def test_library_conversation_applied_scope_restore_refetches_saved_page()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_warm_restore_invalidates_page_before_dispatch():
     app = _build_test_app()
@@ -13733,6 +14133,7 @@ async def test_library_conversation_warm_restore_invalidates_page_before_dispatc
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_filter_focus_and_value_survive_submit():
     """Submitting a filter recomposes the shell; the box must keep the value.
@@ -13765,6 +14166,7 @@ async def test_library_conversation_filter_focus_and_value_survive_submit():
         assert recomposed_input.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversations_next_loads_second_service_page():
     app = _build_test_app()
@@ -13803,6 +14205,7 @@ async def test_library_conversations_next_loads_second_service_page():
         ) == ("21-40 of 45 · Page 2 of 3")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversations_filter_searches_beyond_first_page_and_resets_page():
     app = _build_test_app()
@@ -13840,6 +14243,7 @@ async def test_library_conversations_filter_searches_beyond_first_page_and_reset
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversations_reentry_preserves_applied_page_and_query():
     app = _build_test_app()
@@ -13916,6 +14320,7 @@ async def test_library_conversations_reentry_preserves_applied_page_and_query():
         assert screen.query_one("#library-conversations-next", Button).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversations_reentry_does_not_load_when_dirty_editor_vetoes():
     app = _build_test_app()
@@ -13964,6 +14369,7 @@ async def test_library_conversations_reentry_does_not_load_when_dirty_editor_vet
         assert mounted_body.text == "unsaved text that must survive"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_retry_preserves_applied_scope_until_success():
     app = _build_test_app()
@@ -14040,6 +14446,7 @@ async def test_library_conversation_retry_preserves_applied_scope_until_success(
         ] == ["needle-result"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_broad_initial_snapshot_is_never_page_authority():
     screen = LibraryScreen(_build_test_app())
@@ -14059,6 +14466,7 @@ async def test_library_conversation_broad_initial_snapshot_is_never_page_authori
     assert screen._conversations_state.page_loaded is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_default_scope_entry_starts_validated_loading():
     app = _build_test_app()
@@ -14115,6 +14523,7 @@ async def test_library_conversation_default_scope_entry_starts_validated_loading
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_conversation_retry_is_source_owned_and_tracks_pager_state(size):
@@ -14242,6 +14651,7 @@ async def test_library_conversation_retry_is_source_owned_and_tracks_pager_state
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_malformed_initial_envelope_fails_closed():
     app = _build_test_app()
@@ -14286,6 +14696,7 @@ async def test_library_conversation_malformed_initial_envelope_fails_closed():
         assert state.pager.retry_visible is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_retry_first_failure_has_no_applied_metadata():
     app = _build_test_app()
@@ -14358,6 +14769,7 @@ async def test_library_conversation_retry_first_failure_has_no_applied_metadata(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_conversation_pager_disabled_reason_and_focus_fallback(size):
@@ -14440,6 +14852,7 @@ async def test_library_conversation_pager_disabled_reason_and_focus_fallback(siz
             _assert_conversation_widget_inside_pane(screen, widget)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_conversation_canvas_sync_preserves_intrinsic_action_gates(size):
@@ -14549,6 +14962,7 @@ async def test_library_conversation_canvas_sync_preserves_intrinsic_action_gates
             assert controls and all(control.disabled for control in controls)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_conversation_disabled_reason_stale_actions_and_notice(size):
@@ -14678,6 +15092,7 @@ async def test_library_conversation_disabled_reason_stale_actions_and_notice(siz
         _assert_conversation_widget_inside_pane(screen, export_selected)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_initial_failure_keeps_filter_for_retry():
     app = _build_test_app()
@@ -14727,6 +15142,7 @@ async def test_library_conversation_initial_failure_keeps_filter_for_retry():
         assert len(active.query(".library-conversation-row")) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", CONVERSATION_PAGER_TEST_SIZES)
 @pytest.mark.asyncio
 async def test_library_conversation_page_failure_keeps_last_successful_rows(size):
@@ -14768,6 +15184,7 @@ async def test_library_conversation_page_failure_keeps_last_successful_rows(size
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_page_reloads_new_final_page_when_total_shrinks():
     app = _build_test_app()
@@ -14792,6 +15209,7 @@ async def test_library_conversation_page_reloads_new_final_page_when_total_shrin
         assert screen._conversations_state.has_more is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_second_shrink_stops_after_one_clamp_and_stales():
     app = _build_test_app()
@@ -14869,6 +15287,7 @@ async def test_library_conversation_second_shrink_stops_after_one_clamp_and_stal
                 await request
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_conversation_page_response_cannot_replace_newer_filter():
     app = _build_test_app()
@@ -14922,6 +15341,7 @@ async def test_stale_conversation_page_response_cannot_replace_newer_filter():
         assert [record["id"] for record in screen._conversation_records()] == ["new"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_unmount_fence_rejects_late_completion():
     app = _build_test_app()
@@ -15036,12 +15456,17 @@ async def test_library_conversation_unmount_fence_rejects_late_completion():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_shell_rail_search_submit_runs_search_canvas_query():
     """Submitting the rail-top search box feeds the promoted Search canvas
     (single query truth = ``_rag_search_state.query``): it selects the Search
     row, runs the fast ``search`` mode query against the recording fake
     service, and returns focus to the rail box (which remains mounted --
     it is not torn down when leaving the conversations canvas).
+
+    TASK-15512: enrolled in bootstrap_profile -- the real-app mount reads
+    config through the guarded loader, which trips the config-participant
+    admission under the per-test sandbox (TASK-32873 per-node enrollment).
     """
     app = _build_test_app()
     _seed_conversations(
@@ -15105,6 +15530,7 @@ async def test_library_shell_rail_search_submit_runs_search_canvas_query():
         assert recomposed_input.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_search_placeholder_is_unconditional():
     """The rail placeholder always reads "Search Library..." now -- it no
@@ -15133,6 +15559,7 @@ async def test_library_shell_rail_search_placeholder_is_unconditional():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_search_empty_submit_selects_without_service_call():
     """An empty rail-top submit still selects the Search canvas (so the user
@@ -15161,6 +15588,7 @@ async def test_library_shell_rail_search_empty_submit_selects_without_service_ca
         assert service.calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_scope_toggle_deselect_sends_only_selected_types():
     """B2: deselecting a scope toggle removes that source type from the
@@ -15445,6 +15873,7 @@ def test_library_rag_panel_state_scope_hides_a_row_whose_source_count_drops_to_z
     assert after_delete_state.use_in_console_action.enabled is False
 
 
+@pytest.mark.bootstrap_profile
 def test_library_rag_panel_state_keeps_restored_rows_while_counts_are_unloaded():
     """PR-T1 C2: restored evidence must survive the pre-snapshot window.
 
@@ -15529,6 +15958,7 @@ def test_library_rag_panel_state_keeps_restored_rows_while_counts_are_unloaded()
     assert [row.title for row in post_snapshot.results] == ["Note Evidence"]
 
 
+@pytest.mark.bootstrap_profile
 def test_library_rag_panel_state_keeps_restored_rows_after_snapshot_timeout():
     """PR-T1 fix-wave re-review: the C2 gate above reads `_library_loaded`
     alone, but `_apply_source_snapshot_timeout` sets `_library_loaded =
@@ -15619,6 +16049,7 @@ def test_library_rag_panel_state_keeps_restored_rows_after_snapshot_timeout():
     assert [row.title for row in post_snapshot.results] == ["Note Evidence"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_index_alignment():
     """D4 (task-5) end-to-end: toggling a source off after retrieval landed
@@ -15752,6 +16183,7 @@ async def test_library_shell_scope_toggle_off_hides_rendered_rows_and_keeps_inde
         assert "Media Evidence" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_scope_strip_refresh_path_uses_shared_copy():
     """Both scope-strip builders read LIBRARY_RAG_SCOPE_ALL_LOCAL_COPY.
@@ -15808,6 +16240,7 @@ async def test_library_shell_search_scope_strip_refresh_path_uses_shared_copy():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_run_button_shows_searching_while_gated():
     """C2: while a query is in flight, the Run button itself carries the
@@ -15863,6 +16296,7 @@ async def test_library_shell_search_run_button_shows_searching_while_gated():
             raise AssertionError("Run button never returned to the enabled Run label.")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_history_clear_button_empties_history():
     """D1: `Clear history` empties both in-memory and persisted history, and
@@ -15909,6 +16343,7 @@ async def test_library_shell_history_clear_button_empties_history():
         assert app.app_config["library"]["search"]["history"] == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_history_manual_expand_survives_unrelated_refresh():
     """D1: a manual expand of `Recent searches` must survive an unrelated
@@ -15955,6 +16390,7 @@ async def test_library_shell_history_manual_expand_survives_unrelated_refresh():
         assert not collapsible.has_class("-collapsed")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_history_manual_expand_survives_scope_toggle_recompose():
     """D1: a manual expand of `Recent searches` must survive a scope-toggle
@@ -16030,6 +16466,7 @@ def _never_loads(self) -> None:
     return None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_shows_loading_state_before_snapshot_loads(monkeypatch):
     """Before the local source snapshot loads, the canvas must show a loading
@@ -16058,6 +16495,7 @@ async def test_library_shell_shows_loading_state_before_snapshot_loads(monkeypat
         assert "Conversations (0)" not in visible
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
     """A dedicated Conversation lookup error stays in its recoverable canvas."""
@@ -16106,6 +16544,7 @@ async def test_library_shell_shows_lookup_error_in_canvas(monkeypatch):
 # --- 166: app-scoped snapshot cache for instant repeat visits --------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_repeat_visit_renders_cached_snapshot_before_refresh_resolves(
     monkeypatch,
@@ -16182,6 +16621,7 @@ async def test_library_shell_repeat_visit_renders_cached_snapshot_before_refresh
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_expired_cache_does_not_apply_stale_snapshot(monkeypatch):
     """The instant-apply is bounded to ``LIBRARY_SNAPSHOT_CACHE_TTL_SECONDS``:
@@ -16247,6 +16687,7 @@ def _error_source_snapshot():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_snapshot_cache_is_isolated_from_live_record_mutation():
     """The app-scoped snapshot cache must detach nested records from the
@@ -16276,6 +16717,7 @@ async def test_library_shell_snapshot_cache_is_isolated_from_live_record_mutatio
         assert cached_conversation["title"] != "sentinel mutation"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_error_snapshot_is_not_cached_for_instant_apply(
     monkeypatch,
@@ -16377,6 +16819,7 @@ def _library_source_failure_app(notes_service):
     return app
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_source_snapshot_timeout_paints_a_warning_callout_with_its_own_retry(
     monkeypatch,
@@ -16431,6 +16874,7 @@ async def test_source_snapshot_timeout_paints_a_warning_callout_with_its_own_ret
         assert "Notes (0)" not in hub_counts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_source_snapshot_timeout_logs_one_warning_with_a_deadline_marker(
     monkeypatch,
@@ -16472,6 +16916,7 @@ async def test_source_snapshot_timeout_logs_one_warning_with_a_deadline_marker(
     assert "waited 0.05 s" in matches[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_source_snapshot_hard_failure_paints_an_error_callout_with_a_reason():
     """task-31632 AC#2/#3: a hard failure is tinted as an error and carries a
@@ -16515,6 +16960,7 @@ async def test_source_snapshot_hard_failure_paints_an_error_callout_with_a_reaso
         assert "private-snapshot-failure" not in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_source_snapshot_repeated_identical_failure_still_repaints():
     """task-31632 final review I-1: ``_apply_local_source_snapshot``'s
@@ -16571,6 +17017,7 @@ class _FlakyLibraryNotesScopeService:
         return {"items": []}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_browse_row_error_callout_carries_its_own_retry():
     """task-31948 AC#1/#2/#3: the BROWSE canvas's failed-source surface.
@@ -16712,6 +17159,7 @@ class _FailingThenDeniedLibraryNotesScopeService:
         raise RuntimeError("private-snapshot-failure")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_browse_row_error_callout_keeps_the_right_tint_across_a_retry(
     monkeypatch,
@@ -16782,6 +17230,7 @@ async def test_browse_row_error_callout_keeps_the_right_tint_across_a_retry(
         assert len(builds) == builds_after_mount
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_browse_row_error_callout_remounts_when_the_failure_shape_changes():
     """PR M carry M3/M4: a failure a Retry cannot clear paints a BARE
@@ -16829,6 +17278,7 @@ async def test_browse_row_error_callout_remounts_when_the_failure_shape_changes(
         assert "Capability disabled" in _painted_text(host, node.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_reentry_auto_retries_a_timeout_but_not_a_hard_failure(
     monkeypatch,
@@ -16884,6 +17334,7 @@ async def test_library_reentry_auto_retries_a_timeout_but_not_a_hard_failure(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_repeat_visit_composes_exactly_once_when_data_is_unchanged(
     monkeypatch,
@@ -17000,6 +17451,7 @@ async def test_library_shell_repeat_visit_composes_exactly_once_when_data_is_unc
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_init_seeds_local_source_snapshot_from_cache():
     """task-15459: ``__init__`` alone (before any mount, before
@@ -17029,6 +17481,7 @@ async def test_library_shell_init_seeds_local_source_snapshot_from_cache():
         assert conversation_ids == {"chat-1", "chat-2"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_restore_state_seeds_local_source_snapshot_from_cache():
     """task-15459: ``restore_state`` seeds from the app-scoped cache too --
@@ -17078,6 +17531,7 @@ async def test_library_shell_restore_state_seeds_local_source_snapshot_from_cach
     assert conversation_ids == ["chat-1", "chat-2"]
 
 
+@pytest.mark.bootstrap_profile
 def test_library_snapshot_carry_preserves_selection_without_exceeding_page_size():
     app = _build_test_app()
     screen = LibraryScreen(app)
@@ -17122,6 +17576,7 @@ class _FlappingStudyScopeService:
         return None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_decorative_count_flap_patches_rail_in_place_without_recompose(
     monkeypatch,
@@ -17261,6 +17716,7 @@ async def test_library_shell_decorative_count_flap_patches_rail_in_place_without
         assert "Study decks" in decks_label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_details_toggle_persists():
     app = _build_test_app()
@@ -17370,6 +17826,7 @@ def test_library_open_source_context_rejects_invalid_values_without_replacing_pe
         assert screen._pending_library_source_open == ("notes", "pending-exact")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_open_source_context_calls_existing_opener_once_when_mounted(
     monkeypatch: pytest.MonkeyPatch,
@@ -17400,6 +17857,7 @@ async def test_library_open_source_context_calls_existing_opener_once_when_mount
         opener.assert_awaited_once_with("media", "media-exact", entry_origin=True)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_open_source_context_defers_before_mount_and_opens_once(
     monkeypatch: pytest.MonkeyPatch,
@@ -17433,6 +17891,7 @@ async def test_library_open_source_context_defers_before_mount_and_opens_once(
         assert screen._pending_library_source_open is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_id_context_opens_off_page_conversation() -> None:
     """Persona's legacy route opens the target's deterministic owning page."""
@@ -17489,6 +17948,7 @@ async def test_library_conversation_id_context_opens_off_page_conversation() -> 
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_real_memory_scope_load_and_locator_stay_on_owner_thread():
     app = _build_test_app()
@@ -17533,6 +17993,7 @@ async def test_library_conversation_real_memory_scope_load_and_locator_stay_on_o
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversation_locator_retry_reuses_failed_target():
     app = _build_test_app()
@@ -17596,6 +18057,7 @@ async def test_library_conversation_locator_retry_reuses_failed_target():
         assert screen._pending_library_source_open is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "newer_scope_succeeds_first",
@@ -17710,6 +18172,7 @@ async def test_library_conversation_new_scope_supersedes_locator_retry_intent(
         assert screen._conversations_state.query == retry_query
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "warm_page",
@@ -17822,6 +18285,7 @@ async def test_library_conversation_non_entry_locator_is_fenced_by_rail_navigati
                 await open_task
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "malformation",
@@ -17898,6 +18362,7 @@ async def test_library_conversation_context_locator_malformed_fails_closed(
         assert state.pager is not None and state.pager.retry_visible is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("veto", [False, True])
 async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
@@ -17957,6 +18422,7 @@ async def test_library_open_source_context_uses_dirty_note_flush_and_veto(
             opener.assert_awaited_once_with("notes", "note-exact", entry_origin=True)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_create_deeplink_lands_on_create_view():
     """The retired Notes tab's "new note" deep link now re-points into
@@ -17986,6 +18452,7 @@ async def test_library_shell_notes_create_deeplink_lands_on_create_view():
         assert screen.query_one("#library-notes-create-blank")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_create_deeplink_reentry_resets_stale_editor_state():
     """(A4) A cached ``LibraryScreen`` re-entered via the ``notes_create``
@@ -18032,6 +18499,7 @@ async def test_library_shell_notes_create_deeplink_reentry_resets_stale_editor_s
         assert screen._notes_state.autosave_state == "idle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_id_deeplink_opens_note_editor():
     """The retired Notes tab's chat-sidebar deep link now re-points into
@@ -18058,6 +18526,7 @@ async def test_library_shell_note_id_deeplink_opens_note_editor():
         assert title.value == "Q3 retro"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_nav_context_deeplink_lands_on_ingest_canvas():
     """Home's ingest-jobs ``Open details`` control re-points here (L3b Task
@@ -18089,6 +18558,7 @@ async def test_library_shell_ingest_nav_context_deeplink_lands_on_ingest_canvas(
         assert screen.query_one("#library-ingest-path")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_form():
     """(Minor, L3b Task 6 fix wave) A cached ``LibraryScreen`` re-entered via
@@ -18162,6 +18632,7 @@ async def test_library_shell_ingest_nav_context_deeplink_reentry_resets_stale_fo
         assert path_input.value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_unknown_nav_context_mode_degrades_quietly():
     """A retired/unknown navigation-context ``mode`` (e.g. the removed
@@ -18184,6 +18655,7 @@ async def test_library_shell_unknown_nav_context_mode_degrades_quietly():
         assert screen._library_selected_row_id == selected_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_workspaces_body_lives_under_details():
     app = _build_test_app()
@@ -18298,6 +18770,7 @@ def test_library_rail_css_scrolls_vertically_with_scrollbar_styling():
         assert "scrollbar-color: $ds-text-muted" in body, css_path
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_rail_scrolls_to_reveal_workspace_actions():
     app = _build_test_app()
@@ -18334,6 +18807,7 @@ async def test_library_shell_rail_scrolls_to_reveal_workspace_actions():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_details_body_has_no_duplicate_collapse_control():
     """The moved Workspaces body must not carry its own collapse affordance.
@@ -18364,6 +18838,7 @@ async def test_library_shell_details_body_has_no_duplicate_collapse_control():
             assert "Collapse Details" not in tooltip
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_use_in_chat_body_truncated_for_long_content():
     """``body_truncated`` is True when media content exceeds 500 chars.
@@ -18420,6 +18895,7 @@ async def test_library_shell_media_use_in_chat_body_truncated_for_long_content()
     assert len(content_part) < len(long_content)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_use_in_chat_body_not_truncated_for_short_content():
     """``body_truncated`` is False when media content is <= 500 chars.
@@ -18530,6 +19006,7 @@ class _CountSeamLibraryNotesScopeService(StaticLibraryNotesListScopeService):
         return len(self.notes)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_rail_badge_shows_exact_count_via_count_seam():
     """The rail badge renders an exact ``(2)`` -- no "+" sample-cap suffix
@@ -18551,6 +19028,7 @@ async def test_library_shell_notes_rail_badge_shows_exact_count_via_count_seam()
     assert app.notes_scope_service.count_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_rail_badge_degrades_without_count_seam():
     """When the local notes service exposes no ``count_notes`` seam (the
@@ -18587,6 +19065,7 @@ class _FakePromptScopeService:
         return self._count
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_prompts_rail_row_shows_exact_count():
     """The Browse rail renders a ``Prompts (2)`` row -- id
@@ -18723,6 +19202,7 @@ class _FakeSkillsScopeService:
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_skills_rail_row_shows_exact_count():
     """The Browse rail renders a ``Skills (2)`` row -- id
@@ -18803,6 +19283,7 @@ class _FakeQuizScopeService:
         return self._quizzes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_rail_shows_study_and_quiz_counts():
     """The Create rail renders exact live counts once the study/quiz
@@ -18835,6 +19316,7 @@ async def test_library_shell_create_rail_shows_study_and_quiz_counts():
     assert app.study_quiz_scope_service.count_quizzes_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_rail_flashcards_due_zero_renders_dim():
     """Zero due flashcards still renders the exact "due: 0" copy, but with
@@ -18855,6 +19337,7 @@ async def test_library_shell_create_rail_flashcards_due_zero_renders_dim():
         assert not flashcards_button.has_class("library-rail-row-due-bright")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_rail_degrades_without_study_count_seams():
     """When the study/quiz services expose neither count seam (mirroring a
@@ -18886,6 +19369,7 @@ async def test_library_shell_create_rail_degrades_without_study_count_seams():
         assert screen._library_lookup_error is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_rail_flashcards_due_count_reads_in_memory_db():
     """F4a (PR #590 review, Qodo): study/quiz counts must not be forced onto
@@ -18940,6 +19424,7 @@ async def test_library_shell_create_rail_flashcards_due_count_reads_in_memory_db
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_row_opens_notes_list_canvas():
     app = _build_test_app()
@@ -18962,6 +19447,7 @@ async def test_library_shell_notes_row_opens_notes_list_canvas():
         assert screen.query_one("#library-notes-new")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
     """Navigator actions stay grouped without overlapping the note list.
@@ -19018,6 +19504,7 @@ async def test_library_shell_notes_list_actions_use_two_named_horizontal_rows():
         assert row.region.y > transfer_y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_list_renders_bracketed_titles_verbatim():
     """(task-184) A note titled "[draft] Q3 plan [wip]" renders its bracket
@@ -19078,6 +19565,7 @@ async def test_library_shell_notes_list_renders_bracketed_titles_verbatim():
         assert titles == {"[draft] Q3 plan [wip]", "[/wip] closing tag title"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_sort_opens_direct_choices_and_applies_one_value():
     app = _build_test_app()
@@ -19113,6 +19601,7 @@ async def test_library_shell_notes_sort_opens_direct_choices_and_applies_one_val
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_navigator_has_named_action_groups_and_filter_label():
     app = _build_test_app()
@@ -19147,6 +19636,7 @@ async def test_library_shell_notes_navigator_has_named_action_groups_and_filter_
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_empty_source_keeps_new_action_visible():
     app = _build_test_app()
@@ -19163,6 +19653,7 @@ async def test_library_shell_notes_empty_source_keeps_new_action_visible():
         assert screen.query_one("#library-notes-new", Button).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_filtered_empty_keeps_clear_and_source_truth():
     app = _build_test_app()
@@ -19180,7 +19671,8 @@ async def test_library_shell_notes_filtered_empty_keeps_clear_and_source_truth()
         empty = await _wait_for_selector(screen, pilot, "#library-notes-empty")
 
         assert str(empty.renderable) == (
-            "No notes match “no such note”. Clear the filter."
+            "No notes match “no such note” in titles, bodies or keywords. "
+            "Try fewer words, or clear the filter."
         )
         assert "No notes yet" not in _visible_text(screen)
         screen.query_one("#library-notes-filter-clear", Button).press()
@@ -19188,6 +19680,7 @@ async def test_library_shell_notes_filtered_empty_keeps_clear_and_source_truth()
         assert screen._notes_state.filter == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_multiselect_replaces_normal_action_groups():
     app = _build_test_app()
@@ -19215,6 +19708,7 @@ async def test_library_shell_notes_multiselect_replaces_normal_action_groups():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_filter_queries_search_seam():
     app = _build_test_app()
@@ -19267,6 +19761,7 @@ class _GatedSearchLibraryNotesScopeService(StaticLibraryNotesScopeService):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_filter_clears_before_stale_response_lands():
     """Clearing the filter while a slower ``search_notes`` call is still in
@@ -19327,6 +19822,7 @@ async def test_library_shell_notes_filter_clears_before_stale_response_lands():
         assert header == "Notes (2)"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_row_opens_editor_with_detail():
     """Pressing a note row fetches the full detail and renders the in-canvas
@@ -19600,6 +20096,7 @@ class _GatedConflictRefreshNotesService(StaticLibraryNotesScopeService):
         return await super().get_note_detail(**kwargs)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_coordinator_pending_detail_keeps_back_action():
     app = _build_test_app()
@@ -19629,6 +20126,7 @@ async def test_library_note_coordinator_pending_detail_keeps_back_action():
         assert screen._library_note_session.snapshot is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_coordinator_pending_load_keeps_back_and_discards_late_reply():
     app = _build_test_app()
@@ -19662,6 +20160,7 @@ async def test_library_note_coordinator_pending_load_keeps_back_and_discards_lat
         assert screen._library_note_session.snapshot is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_coordinator_new_open_wins_during_keyword_enrichment():
     app = _build_test_app()
@@ -19705,6 +20204,7 @@ async def test_library_note_coordinator_new_open_wins_during_keyword_enrichment(
         assert snapshot.keywords_text == "new"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_coordinator_load_failure_keeps_back_and_retry():
     app = _build_test_app()
@@ -19726,6 +20226,7 @@ async def test_library_note_coordinator_load_failure_keeps_back_and_retry():
         assert screen._notes_state.selected_note_id == "n-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_coordinator_retry_recovers_transient_load_failure():
     app = _build_test_app()
@@ -19750,6 +20251,7 @@ async def test_library_note_coordinator_retry_recovers_transient_load_failure():
         assert screen._notes_state.load_state == "loaded"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_coordinator_validation_veto_keeps_raw_title_and_focus():
     app = _build_test_app()
@@ -19784,11 +20286,21 @@ async def test_library_note_coordinator_validation_veto_keeps_raw_title_and_focu
         assert "shorten it to save" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_keyword_validation_routes_to_wide_info_control(
     monkeypatch,
 ):
-    """A wide Info autosave veto keeps focus on its visible keywords field."""
+    """An explicit Save's keyword veto routes to the visible Info keywords
+    field; the autosave's veto before it marks the field and moves nothing.
+
+    TASK-34000.10 (review N-07): this pin used to wait for the 0.05 s
+    AUTOSAVE to focus the Info keywords control -- the very routing that
+    sent a typing user's next keys into the wrong field. A vetoed autosave
+    now never moves focus or switches the pane, wherever focus is; the
+    explicit Save still does (AC#3), so the routing half is driven by the
+    Save button here.
+    """
     monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.05)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -19801,10 +20313,26 @@ async def test_library_note_keyword_validation_routes_to_wide_info_control(
 
         screen.query_one("#library-note-context").press()
         await _wait_for_display(screen, pilot, "#library-note-context-region")
-        screen.query_one(
-            "#library-note-context-keywords", Input
-        ).value = "duplicate, Duplicate"
+        focused_before = screen.focused
+        keywords = screen.query_one("#library-note-context-keywords", Input)
+        keywords.value = "duplicate, Duplicate"
 
+        # The autosave's veto: in place. Nothing moves, the field is marked.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.autosave_state == "validation",
+            message="The autosave's keyword veto never landed.",
+        )
+        await pilot.pause()
+        await pilot.pause(0.3)  # the old routing focused after a refresh
+        assert screen.focused is focused_before, (
+            f"a vetoed autosave moved focus to {getattr(screen.focused, 'id', None)!r}"
+        )
+        assert screen._notes_state.validation_field == "keywords"
+        assert keywords.has_class("library-note-field-invalid")
+
+        # The explicit Save's veto: routes to the visible keywords control.
+        screen.query_one("#library-note-save").press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -19812,12 +20340,13 @@ async def test_library_note_keyword_validation_routes_to_wide_info_control(
                 and getattr(screen.focused, "id", None)
                 == "library-note-context-keywords"
             ),
-            message="Wide keyword veto did not focus the Info keyword control.",
+            message="Save's keyword veto did not focus the Info keyword control.",
         )
         assert screen.query_one("#library-note-context-region").display is True
         assert screen.query_one("#library-note-wide-utilities").display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_keyword_validation_routes_to_compact_context():
     """A compact keyword veto reopens Context and focuses its only editor."""
@@ -19855,6 +20384,7 @@ async def test_library_note_keyword_validation_routes_to_compact_context():
         assert screen.query_one("#library-note-wide-utilities").display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_saved_outcome_does_not_mask_a_newer_dirty_revision():
     """Late host presentation must not relabel a newer coordinator draft saved."""
@@ -19880,6 +20410,7 @@ async def test_library_note_saved_outcome_does_not_mask_a_newer_dirty_revision()
     assert screen._notes_state.autosave_state == "idle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_editor_shows_enriched_keywords():
     """``notes_scope_service.get_note_detail``'s local-scope shape is the
@@ -19914,6 +20445,7 @@ async def test_library_shell_note_editor_shows_enriched_keywords():
         assert app.notes_service.calls[-1]["note_id"] == "n-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_editor_refuses_unknown_keywords_without_service():
     """Unknown keywords must not be normalized to empty and erased on save."""
@@ -19956,6 +20488,7 @@ async def test_library_note_adapter_accepts_authoritative_detail_keywords():
     assert reply.detail.keywords == ("kept", "exact tag")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_navigation_propagates_typed_flush_veto(monkeypatch):
     """A clean-looking snapshot cannot bypass a coordinator BLOCKED outcome."""
@@ -19978,6 +20511,7 @@ async def test_library_note_navigation_propagates_typed_flush_veto(monkeypatch):
     assert await screen.flush_pending_work() is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_export_canvas_propagates_non_conflict_flush_veto(monkeypatch):
     """Validation/failure flush outcomes must retain the editor route too."""
@@ -19999,6 +20533,63 @@ async def test_library_export_canvas_propagates_non_conflict_flush_veto(monkeypa
     assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
 
 
+@pytest.mark.asyncio
+async def test_library_export_projection_skips_when_destination_moved_on():
+    """The deferred Export projection must not replace a later selection's canvas."""
+    apply_surface = AsyncMock()
+    start_counts = Mock()
+    screen = SimpleNamespace(
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        _apply_library_open_item_surface=apply_surface,
+        _start_library_export_counts_worker=start_counts,
+    )
+
+    await LibraryScreen._project_library_export_canvas(screen)
+
+    apply_surface.assert_not_awaited()
+    start_counts.assert_not_called()
+
+    screen._library_selected_row_id = LIBRARY_ROW_INGEST_EXPORT
+    await LibraryScreen._project_library_export_canvas(screen)
+
+    apply_surface.assert_awaited_once()
+    start_counts.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_library_export_repeat_press_keeps_the_first_origin():
+    """A second "Export…" press before the deferred projection lands must not
+    record Export as its own origin (Escape could then never leave it)."""
+    from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+        LibraryExportController,
+    )
+
+    controller = SimpleNamespace(
+        _library_prompts_mutation_in_flight=False,
+        _library_export_is_server_mode=lambda: False,
+        _flush_library_note_save=AsyncMock(
+            return_value=NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+        ),
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        _library_export_origin_row_id="",
+        _reset_library_export_transient_state=Mock(),
+        _project_library_export_canvas=Mock(),
+        call_after_refresh=Mock(),
+    )
+    controller._set_library_destination_with_conversation_fence = lambda row_id: (
+        setattr(controller, "_library_selected_row_id", row_id)
+    )
+
+    for _ in range(2):
+        await LibraryExportController._open_library_export_canvas(
+            controller, ExportScope(kind="media")
+        )
+
+    assert controller._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+    assert controller._library_export_origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
+
+
+@pytest.mark.bootstrap_profile
 def test_library_conflict_handlers_do_not_cancel_the_token_owner(monkeypatch):
     """Duplicate conflict actions must not create exclusive cancelling workers."""
     screen = LibraryScreen(_build_test_app())
@@ -20018,6 +20609,7 @@ def test_library_conflict_handlers_do_not_cancel_the_token_owner(monkeypatch):
     assert {call["group"] for call in calls} == {"library_note_conflict"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_conflict_opposite_button_cannot_cancel_active_owner():
     app = _build_test_app()
@@ -20067,6 +20659,7 @@ async def test_library_note_conflict_opposite_button_cannot_cancel_active_owner(
         assert screen.query_one("#library-note-conflict-region").display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_back_returns_to_list():
     """The editor's Back action returns to the notes list and clears the
@@ -20093,6 +20686,7 @@ async def test_library_shell_note_back_returns_to_list():
         assert not screen.query("#library-note-title")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_reader_reentry_retains_editor_but_resets_work_session():
     """Reader cycling retains a clean editor but ends its work-first session."""
@@ -20126,6 +20720,7 @@ async def test_library_shell_notes_reader_reentry_retains_editor_but_resets_work
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_detail_race_discards_stale_fetch():
     """A detail fetch that completes for a no-longer-selected note id must be
@@ -20375,6 +20970,7 @@ def _remove_note_externally(service, note_id: str) -> None:
     service.notes = tuple(note for note in service.notes if note.get("id") != note_id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_explicit_save_calls_seam_and_bumps_version():
     """Pressing Save calls the seam with exact validated fields/keywords,
@@ -20428,6 +21024,7 @@ async def test_library_shell_note_explicit_save_calls_seam_and_bumps_version():
         assert "Saved" in status
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_save_survives_stable_delete_confirmation():
     """Delete confirmation preserves the coordinator-backed saved draft."""
@@ -20483,6 +21080,7 @@ class _TouchingNotesScopeService(StaticLibraryNotesScopeService):
         return result
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_save_then_back_refreshes_list_title_and_age():
     """(task-184) After an in-canvas edit persists, returning to the list
@@ -20569,6 +21167,7 @@ async def test_library_shell_note_save_then_back_refreshes_list_title_and_age():
         assert first_label.split(" · ")[0] == "Reading list (edited)"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_autosave_fires_after_debounce(monkeypatch):
     """Editing the body (no Save press) arms the autosave debounce; once it
@@ -20611,6 +21210,7 @@ async def test_library_shell_note_autosave_fires_after_debounce(monkeypatch):
         assert "Saved" in str(status_widget.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_flush_pending_work_saves_dirty_note_and_reports_conflicts():
     """``flush_pending_work`` (the app's nav-away hook) must persist a dirty
@@ -20656,6 +21256,7 @@ async def test_library_flush_pending_work_saves_dirty_note_and_reports_conflicts
         assert screen._library_note_dirty is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "transition",
@@ -20761,6 +21362,7 @@ async def test_library_destructive_transitions_abort_when_failed_save_leaves_not
     ) == preserved_state
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_flush_on_back_saves_before_view_switches():
     """Editing the body then immediately pressing Back must flush (await)
@@ -20809,6 +21411,7 @@ async def test_library_shell_note_flush_on_back_saves_before_view_switches():
         assert service.save_calls[-1]["content"] == "alpha budget line, flushed"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_dirty_note_reader_switch_parks_without_saving():
     """Reader cycling parks the dirty Notes session without hidden persistence.
@@ -20852,6 +21455,7 @@ async def test_library_shell_dirty_note_reader_switch_parks_without_saving():
         assert service.save_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_switching():
     """A ``notes_create`` deep link arriving on an already-mounted Library
@@ -20916,6 +21520,7 @@ async def test_library_shell_note_flush_on_notes_create_deeplink_saves_before_sw
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
     """Back's exit-flush must wait for an in-flight autosave save instead of
@@ -21009,6 +21614,7 @@ async def test_library_shell_flush_waits_for_inflight_autosave(monkeypatch):
         assert service.save_calls[0]["version"] == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_save_result_after_switch_is_discarded():
     """A save started for note A that only resolves after the user has
@@ -21109,6 +21715,7 @@ async def test_library_shell_note_save_result_after_switch_is_discarded():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user_text():
     """A version conflict (the seam returns ``False``) stops the autosave
@@ -21158,6 +21765,7 @@ async def test_library_shell_note_conflict_shows_overwrite_reload_and_keeps_user
         assert conflict_body.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_preview_toggle_never_bumps_version_or_autosaves(
     monkeypatch,
@@ -21207,6 +21815,7 @@ async def test_library_shell_note_preview_toggle_never_bumps_version_or_autosave
         assert screen._library_note_version == version_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_conflict_during_preview_reads_live_text():
     """Conflict resolution after Preview must save the coordinator's live draft.
@@ -21283,6 +21892,7 @@ async def test_library_shell_note_conflict_during_preview_reads_live_text():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version():
     """Overwrite re-fetches the note silently, takes only the fresh
@@ -21353,6 +21963,7 @@ async def test_library_shell_note_conflict_overwrite_resaves_with_fresh_version(
         assert screen._library_note_version == 4
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_conflict_overwrite_failure_exits_conflict_state():
     """A rebased overwrite failure keeps the draft retryable as an error."""
@@ -21397,6 +22008,7 @@ async def test_library_shell_note_conflict_overwrite_failure_exits_conflict_stat
         await _wait_for_display(screen, pilot, "#library-note-preview-region")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_conflict_overwrite_validation_focuses_field():
     """Overwrite validation restores the exact draft and vetoed field focus."""
@@ -21434,6 +22046,7 @@ async def test_library_shell_note_conflict_overwrite_validation_focuses_field():
         assert snapshot.in_conflict is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_conflict_reload_discards_local_edits():
     """Reload discards the local edit and recomposes the editor from the
@@ -21542,6 +22155,7 @@ async def test_library_shell_note_conflict_reload_discards_local_edits():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_missing():
     """A Reload from the conflict UI whose silent re-fetch discovers the
@@ -21602,6 +22216,7 @@ async def test_library_shell_note_conflict_reload_falls_back_to_list_when_note_m
         assert not screen.query("#library-note-conflict-reload")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_conflict_overwrite_retains_draft_when_note_missing():
     """Overwrite cannot recreate a deleted target, so it retains the draft."""
@@ -21658,6 +22273,7 @@ async def test_library_shell_note_conflict_overwrite_retains_draft_when_note_mis
         assert screen.query_one("#library-note-body", TextArea).text == "kept text"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "delete_selector",
@@ -21712,6 +22328,7 @@ async def test_library_shell_note_delete_shows_inline_confirm_without_deleting(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_delete_confirm_removes_note_and_returns_to_list():
     """Confirming the delete calls the seam with the current version, drops
@@ -21755,6 +22372,7 @@ async def test_library_shell_note_delete_confirm_removes_note_and_returns_to_lis
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_delete_receipt_undo_restores_row_and_rail_count():
     """Delete leaves a persistent, named receipt whose Undo restores the row."""
@@ -21806,6 +22424,7 @@ async def test_library_shell_note_delete_receipt_undo_restores_row_and_rail_coun
         assert "(2)" in str(screen.query_one("#library-row-browse-notes").label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_delete_receipt_dismiss_keeps_note_deleted():
     """Dismiss removes only the receipt and does not invoke restoration."""
@@ -21842,6 +22461,7 @@ async def test_library_shell_note_delete_receipt_dismiss_keeps_note_deleted():
         assert "(1)" in str(screen.query_one("#library-row-browse-notes").label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_undo_blocks_concurrent_create_and_delete():
     """Undo owns the one Notes list/count/receipt mutation interlock."""
@@ -21896,6 +22516,7 @@ async def test_library_shell_note_undo_blocks_concurrent_create_and_delete():
         restore_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_delete_cancel_leaves_note_intact():
     """Cancelling the inline confirm discards it without calling the service."""
@@ -21925,6 +22546,7 @@ async def test_library_shell_note_delete_cancel_leaves_note_intact():
         assert service.delete_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_delete_confirm_does_not_arm_autosave(monkeypatch):
     """Stable delete-confirm visibility must not create a draft mutation."""
@@ -21971,6 +22593,7 @@ async def test_library_shell_note_delete_confirm_does_not_arm_autosave(monkeypat
         assert screen.query_one("#library-note-delete")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "delete_selector",
@@ -22044,6 +22667,7 @@ async def test_library_shell_note_delete_stale_version_keeps_editor_mounted(
         assert getattr(screen.focused, "id", None) == delete_selector.removeprefix("#")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_filtered_delete_refreshes_list_without_ghost():
     """Deleting a note opened from a filtered list must clear the active
@@ -22129,6 +22753,7 @@ async def test_library_shell_filtered_delete_refreshes_list_without_ghost():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_opening_missing_note_falls_back_to_list():
     """Pressing a row whose note has since vanished (a ghost row, or a note
@@ -22180,6 +22805,7 @@ async def test_library_shell_opening_missing_note_falls_back_to_list():
         assert app.notify.call_args.kwargs.get("severity") == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_preview_toggle_shows_markdown_and_restores_edit():
     """Preview toggles stable regions and preserves the current draft."""
@@ -22220,6 +22846,7 @@ async def test_library_shell_note_preview_toggle_shows_markdown_and_restores_edi
         assert not screen.query_one("#library-note-preview").has_class("is-active")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_presentation_surfaces_keep_widget_identity():
     """Presentation toggles hide stable children instead of recomposing them."""
@@ -22273,6 +22900,7 @@ async def test_library_shell_note_presentation_surfaces_keep_widget_identity():
             assert screen.query_one(selector) is original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_conflict_and_status_keep_widget_identity():
     """Save status and conflict recovery update already-mounted surfaces."""
@@ -22307,6 +22935,7 @@ async def test_library_shell_note_conflict_and_status_keep_widget_identity():
         assert screen.query_one("#library-note-body") is body
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_presentation_sync_is_idempotent_and_guarded():
     """Applying the same presentation cannot mutate or rearm the draft."""
@@ -22338,6 +22967,7 @@ async def test_library_shell_note_presentation_sync_is_idempotent_and_guarded():
         assert canvas.has_class("library-note-validation")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_hidden_preview_defers_markdown_parse_until_open():
     """Editor keystrokes do not enqueue hidden Markdown render work."""
@@ -22365,6 +22995,7 @@ async def test_library_shell_note_hidden_preview_defers_markdown_parse_until_ope
         assert preview.source == "second hidden preview revision"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_preview_focus_and_editor_position_survive_toggle():
     """Preview scroll is keyboard-owned while the hidden editor keeps position."""
@@ -22422,6 +23053,7 @@ async def test_library_shell_note_preview_focus_and_editor_position_survive_togg
         assert restored.scroll_y == scroll_y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_context_mutates_canonical_keywords():
     """The Context properties field edits the one coordinator-owned draft."""
@@ -22447,6 +23079,7 @@ async def test_library_shell_note_context_mutates_canonical_keywords():
         assert screen._notes_state.autosave_timer is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_info_utilities_remain_reachable_at_all_widths():
     """Secondary utilities stay in Info while Console remains primary."""
@@ -22495,6 +23128,7 @@ async def test_library_shell_note_info_utilities_remain_reachable_at_all_widths(
             assert screen.query_one(selector)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_save_works_while_previewing():
     """Pressing Save while Preview is on must still persist the edit.
@@ -22543,6 +23177,7 @@ async def test_library_shell_note_save_works_while_previewing():
             raise AssertionError("Save while previewing never cleared the dirty flag.")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_back_flushes_while_previewing():
     """Back must flush a pending edit even while Preview is still on.
@@ -22606,6 +23241,7 @@ async def test_library_shell_note_back_flushes_while_previewing():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("action_selector", "expected_file"),
@@ -22661,6 +23297,7 @@ async def test_library_shell_note_export_pushes_file_save_dialog(
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_write_export_file_writes_expected_content(tmp_path):
     """The export write-path (bypassing the dialog UI, which is exercised
@@ -22668,8 +23305,8 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
     produces and notifies on success -- the "pure part" the brief calls out
     as pilot-testable independent of driving the real file dialog.
 
-    ``_write_library_note_export_file`` is a plain (non-async) method --
-    it awaits nothing -- so this calls it directly rather than awaiting it.
+    ``_write_library_note_export_file`` synchronously admits a native worker.
+    Wait for its completion receipt before inspecting the published file.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -22691,9 +23328,18 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
             "n-1",
         )
 
+        await _wait_for_condition(
+            pilot,
+            lambda: str(
+                screen.query_one("#library-note-transfer-status", Static).renderable
+            )
+            == "Export complete.",
+            message="The accepted Notes export did not complete.",
+        )
+        await host.workers.wait_for_complete()
         written = destination.read_text(encoding="utf-8")
         assert "title: Q3 retro" in written
-        assert "keywords: alpha, beta" in written
+        assert "tags:\n- alpha\n- beta\n" in written
         assert "note_id: n-1" in written
         assert written.endswith("alpha budget line")
         app.notify.assert_called_once()
@@ -22704,6 +23350,7 @@ async def test_library_shell_note_write_export_file_writes_expected_content(tmp_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_write_export_file_rejects_invalid_path(
     tmp_path, monkeypatch
@@ -22748,6 +23395,7 @@ async def test_library_shell_note_write_export_file_rejects_invalid_path(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "action_selector", ("#library-note-copy", "#library-note-context-copy")
@@ -22790,6 +23438,7 @@ async def test_library_shell_note_copy_calls_clipboard_seam(action_selector):
     assert "copied to clipboard" in app.notify.call_args.args[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_copy_failure_stays_visible_with_recovery():
     app = _build_test_app()
@@ -22814,6 +23463,7 @@ async def test_library_shell_note_copy_failure_stays_visible_with_recovery():
         assert screen._notes_state.operation.running is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_use_in_console_triggers_handoff():
     """ "Use in Console" stages the open note as Console context, mirroring
@@ -22855,6 +23505,7 @@ async def test_library_shell_note_use_in_console_triggers_handoff():
     assert payload.metadata["note_version"] == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_console_failure_stays_visible_with_recovery():
     app = _build_test_app()
@@ -22885,6 +23536,7 @@ async def test_library_shell_note_console_failure_stays_visible_with_recovery():
     app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_note_use_in_console_without_open_note_notifies():
     """No handoff fires when no note is currently open in the editor."""
@@ -22950,6 +23602,7 @@ def test_library_note_css_bounds_editor_body_and_mutes_meta():
         assert "color: $ds-text-muted;" in meta_block
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_note_row_renders_blank_and_template_rows():
     """Selecting the rail's Create > New note row renders the Blank note
@@ -22973,6 +23626,7 @@ async def test_library_shell_create_note_row_renders_blank_and_template_rows():
         assert getattr(template_row, "template_key", None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_back_returns_to_notes_navigator():
     app = _build_test_app()
@@ -23009,6 +23663,7 @@ class _GatedCreateLibraryNotesScopeService(StaticLibraryNotesScopeService):
         return await super().save_note(**kwargs)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_is_single_flight_and_disables_all_choices():
     app = _build_test_app()
@@ -23099,6 +23754,7 @@ class _CreateThenFailFirstOpenLibraryNotesScopeService(StaticLibraryNotesScopeSe
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_failed_create_stays_create_with_actionable_status():
     app = _build_test_app()
@@ -23135,6 +23791,7 @@ async def test_library_shell_failed_create_stays_create_with_actionable_status()
         assert screen.query_one("#library-notes-create-blank", Button).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_persisted_create_with_open_failure_recovers_from_navigator():
     app = _build_test_app()
@@ -23183,6 +23840,7 @@ async def test_library_shell_persisted_create_with_open_failure_recovers_from_na
         assert len(service.save_calls) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_transforming_template_is_vetoed_before_create_service(
     monkeypatch,
@@ -23233,6 +23891,7 @@ async def test_library_shell_transforming_template_is_vetoed_before_create_servi
         assert screen._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("template_key", "template"),
@@ -23302,6 +23961,7 @@ async def test_library_shell_malformed_template_shapes_never_reach_create_servic
         assert "must be text" in str(status.renderable).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_blank_note_lands_in_editor():
     """Pressing Blank note calls ``save_note`` with ``note_id=None`` and
@@ -23347,7 +24007,7 @@ async def test_library_shell_create_blank_note_lands_in_editor():
             lambda: getattr(screen.focused, "id", None) == "library-note-title",
             message="Successful Create never focused the title field.",
         )
-        assert screen.query_one("#library-note-discard-new", Button).display is True
+        assert screen.query_one("#library-note-discard-new", Button).visible is True
 
         for _ in range(150):
             if screen._local_source_counts.get("notes") == 3:
@@ -23401,6 +24061,7 @@ def _real_notes_scope_service(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
     tmp_path,
@@ -23462,6 +24123,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
         assert screen._notes_state.pending_blank_gc_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash(
     tmp_path,
@@ -23574,6 +24236,7 @@ async def test_library_shell_blank_note_escape_key_returns_to_list_without_crash
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
     tmp_path,
@@ -23618,6 +24281,7 @@ async def test_library_shell_blank_note_edited_then_back_survives_in_real_db(
         assert notes[0]["content"] == "a real edit"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_db(
     tmp_path,
@@ -23696,6 +24360,7 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
         assert screen._notes_state.session_blank_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_db(
     tmp_path,
@@ -23759,6 +24424,7 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
         assert detail["content"] == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back(
     tmp_path, monkeypatch
@@ -23831,6 +24497,7 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
     tmp_path,
@@ -23893,6 +24560,7 @@ async def test_library_shell_blank_note_titled_untitled_by_hand_survives_back(
         assert detail["title"] == "Untitled"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_trip(
     tmp_path,
@@ -23940,6 +24608,7 @@ async def test_library_shell_untouched_blank_note_still_gcs_after_body_round_tri
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
     tmp_path,
@@ -23994,6 +24663,7 @@ async def test_library_shell_blank_title_save_round_trip_agrees_with_the_row(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_switch(
     tmp_path,
@@ -24049,6 +24719,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_swi
         assert screen._library_selected_row_id == "browse-media"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_screen_leave(
     tmp_path,
@@ -24095,6 +24766,7 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_screen_l
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_discard_new_note_deletes_untouched_create():
     app = _build_test_app()
@@ -24107,7 +24779,7 @@ async def test_library_shell_discard_new_note_deletes_untouched_create():
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
-        discard = await _wait_for_display(screen, pilot, "#library-note-discard-new")
+        discard = await _wait_for_visible(screen, pilot, "#library-note-discard-new")
         created_id = screen._notes_state.selected_note_id
 
         discard.press()
@@ -24127,6 +24799,7 @@ async def test_library_shell_discard_new_note_deletes_untouched_create():
         assert screen._library_note_session.snapshot is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_failed_discard_releases_destructive_admission() -> None:
     """A failed discard releases its destructive gate."""
@@ -24150,7 +24823,7 @@ async def test_library_note_failed_discard_releases_destructive_admission() -> N
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
-        discard = await _wait_for_display(screen, pilot, "#library-note-discard-new")
+        discard = await _wait_for_visible(screen, pilot, "#library-note-discard-new")
 
         discard.press()
         try:
@@ -24322,6 +24995,7 @@ async def _enter_task8_navigator_state(screen, pilot, state: str) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("state", "expected", "focused_selector"),
@@ -24415,6 +25089,7 @@ async def test_library_note_60x20_navigator_state_allocation(
             assert screen.query_one("#library-notes-browse-actions").display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_60x20_temporary_region_allocation() -> None:
     app = _build_test_app()
@@ -24489,6 +25164,7 @@ async def test_library_note_compact_labels_round_trip_without_recompose(
         assert str(control.label) == compact_label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_database_purpose_round_trips_at_breakpoint_without_recompose() -> (
     None
@@ -24525,6 +25201,7 @@ async def test_library_note_database_purpose_round_trips_at_breakpoint_without_r
         assert purpose.region.height == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_wide_preview_has_one_focusable_scroll_owner() -> None:
     app = _build_test_app()
@@ -24558,6 +25235,7 @@ async def test_library_note_wide_preview_has_one_focusable_scroll_owner() -> Non
         assert outer.scroll_y > before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_60x20_loading_allocation_keeps_back_visible() -> None:
     app = _build_test_app()
@@ -24604,6 +25282,7 @@ async def test_library_note_60x20_loading_allocation_keeps_back_visible() -> Non
             detail_service.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_60x20_untouched_new_allocation_keeps_discard_visible() -> (
     None
@@ -24641,9 +25320,10 @@ async def test_library_note_60x20_untouched_new_allocation_keeps_discard_visible
             },
             focused_selector="#library-note-discard-new",
         )
-        assert screen.query_one("#library-note-discard-new").display is True
+        assert screen.query_one("#library-note-discard-new").visible is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_60x20_long_title_header_is_plain_one_row_and_lossless() -> (
     None
@@ -24712,6 +25392,7 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("state", "expected", "focused_selector"),
@@ -24833,6 +25514,7 @@ async def test_library_note_60x20_editor_state_allocation(
         assert screen._library_note_session.snapshot is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("acknowledge", ["edit", "save"])
 async def test_library_shell_discard_new_note_disappears_after_edit_or_noop_save(
@@ -24854,11 +25536,11 @@ async def test_library_shell_discard_new_note_disappears_after_edit_or_noop_save
             pilot,
             lambda: (
                 bool(screen.query("#library-note-discard-new"))
-                and screen.query_one("#library-note-discard-new", Button).display
+                and screen.query_one("#library-note-discard-new", Button).visible
             ),
             message="Discard new note never became visible after create.",
         )
-        assert screen.query_one("#library-note-discard-new", Button).display is True
+        assert screen.query_one("#library-note-discard-new", Button).visible is True
 
         if acknowledge == "edit":
             screen.query_one("#library-note-title", Input).value = "Kept note"
@@ -24866,11 +25548,12 @@ async def test_library_shell_discard_new_note_disappears_after_edit_or_noop_save
             screen.query_one("#library-note-save", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen.query_one("#library-note-discard-new", Button).display,
+            lambda: not screen.query_one("#library-note-discard-new", Button).visible,
             message="Discard new note remained visible after keep intent.",
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_from_template_uses_template_fields():
     """Pressing a template row creates a note using that template's title/
@@ -24941,6 +25624,7 @@ def _fake_import_dialog_result(screen, selected_path):
     return calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_import_once_picker_accepts_files_or_one_folder(
     monkeypatch,
@@ -24980,6 +25664,7 @@ async def test_library_shell_import_once_picker_accepts_files_or_one_folder(
         assert dialog._offer_select_folder is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_create_view_groups_templates_without_blank_duplicate():
     """The create view separates Blank note from a "From a template" group,
@@ -25058,6 +25743,7 @@ async def _run_library_search_and_wait_for_open_result(
     await _wait_for_selector(screen, pilot, f"#library-rag-open-result-{index}")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_result_open_note_lands_in_editor():
     """Pressing Open on a note evidence result jumps straight to that note's
@@ -25107,6 +25793,7 @@ async def test_library_shell_search_result_open_note_lands_in_editor():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_result_open_media_switches_to_viewer():
     """Pressing Open on a media evidence result flips the canvas to the
@@ -25156,6 +25843,7 @@ async def test_library_shell_search_result_open_media_switches_to_viewer():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_result_open_prompt_lands_in_editor(tmp_path):
     """Pressing Open on a prompt evidence result jumps straight to that
@@ -25227,6 +25915,7 @@ async def test_library_shell_search_result_open_prompt_lands_in_editor(tmp_path)
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_result_open_conversation_locates_owning_page():
     """Search Open resolves an off-page conversation via the locator envelope."""
@@ -25291,6 +25980,7 @@ async def test_library_shell_search_result_open_conversation_locates_owning_page
         assert locator_call["conversation_id"] == target["conversation_id"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_search_result_without_provenance_has_no_open_button():
     """A Search/RAG result lacking resolvable provenance (no known source
@@ -25675,6 +26365,7 @@ async def _open_library_ingest_canvas(screen, pilot):
     await _wait_for_selector(screen, pilot, "#library-ingest-path")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
     """(a) Full happy path: a real tmp .txt through a real file-backed
@@ -25750,6 +26441,7 @@ async def test_library_shell_ingest_canvas_happy_path_open_in_library(tmp_path):
         assert "tides" in viewer_title.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_import_verb_pair_agrees_across_rail_canvas_and_toast(
     tmp_path,
@@ -25808,6 +26500,7 @@ async def test_library_shell_import_verb_pair_agrees_across_rail_canvas_and_toas
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_path_enter_submits_valid_form(tmp_path):
     """(task-186) Enter in the path field with a valid path starts the
@@ -25845,6 +26538,7 @@ async def test_library_shell_ingest_path_enter_submits_valid_form(tmp_path):
         assert screen.query_one("#library-ingest-path", Input).value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_nothing(
     tmp_path,
@@ -25877,6 +26571,7 @@ async def test_library_shell_ingest_canvas_invalid_path_notifies_and_submits_not
             assert harness.library_ingest_jobs.jobs() == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues(
     tmp_path,
@@ -25937,6 +26632,7 @@ async def test_library_shell_ingest_canvas_failed_job_renders_retry_and_requeues
         assert len(list(screen.query(".library-ingest-row"))) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_permanent_failure_has_no_retry_button(
     tmp_path,
@@ -25973,6 +26669,7 @@ async def test_library_shell_ingest_canvas_permanent_failure_has_no_retry_button
         assert harness.retry_library_ingest_job(failing_job.job_id) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_failed_row_actions_share_one_line(tmp_path):
     """(L5, fix batch F1b) Retry and Dismiss render on ONE line -- wrapped
@@ -26002,6 +26699,7 @@ async def test_library_shell_ingest_canvas_failed_row_actions_share_one_line(tmp
         assert retry_button.parent is dismiss_button.parent
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_metadata(
     tmp_path,
@@ -26041,6 +26739,7 @@ async def test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_me
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_dismiss_button_removes_failed_row(tmp_path):
     """(B2) Pressing Dismiss on a failed row removes it from the canvas AND
@@ -26076,6 +26775,7 @@ async def test_library_shell_ingest_canvas_dismiss_button_removes_failed_row(tmp
         assert screen.query_one("#library-ingest-queue-empty")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_dismiss_targets_correct_job_across_stale_render(
     tmp_path,
@@ -26165,6 +26865,7 @@ async def test_library_shell_ingest_canvas_dismiss_targets_correct_job_across_st
         assert jobs_by_id[newer_job.job_id].state == IngestJobState.QUEUED
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_failed(
     tmp_path,
@@ -26247,6 +26948,7 @@ async def test_library_shell_ingest_canvas_clear_finished_empties_done_and_faile
         assert not list(screen.query("#library-ingest-clear-finished"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(
     tmp_path,
@@ -26294,6 +26996,7 @@ async def test_library_shell_ingest_canvas_quiet_line_toggles_live_while_typing(
         assert screen.query_one("#library-ingest-start", Button).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_db_unavailable_disables_start(tmp_path):
     """(d) A missing media DB disables Start with the exact blocked copy."""
@@ -26312,6 +27015,7 @@ async def test_library_shell_ingest_canvas_db_unavailable_disables_start(tmp_pat
         assert screen.query_one("#library-ingest-start", Button).disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_type_group_panel_expand_survives_recompose(
     tmp_path: Path,
@@ -26641,6 +27345,7 @@ class _DummyReplacementScreen(Screen):
         yield Static("replacement", id="dummy-replacement-static")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_live_updates_without_manual_recompose(
     tmp_path,
@@ -26711,6 +27416,7 @@ async def test_library_shell_ingest_canvas_live_updates_without_manual_recompose
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(
     tmp_path,
@@ -26790,6 +27496,7 @@ async def test_library_shell_ingest_canvas_registry_listener_removed_on_unmount(
         assert screen not in harness.screen_stack
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_progress_tick_updates_only_reserved_line_in_place():
     """Ordinary telemetry must not remount the form, queue, row, or detail line."""
@@ -26854,6 +27561,7 @@ async def test_library_ingest_progress_tick_updates_only_reserved_line_in_place(
         assert "Â·" not in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_progress_action_change_recomposes_dynamic_regions():
     """A local-STT cancel request must replace Cancel with Force stop."""
@@ -26890,6 +27598,7 @@ async def test_library_ingest_progress_action_change_recomposes_dynamic_regions(
         assert screen.query_one(f"#library-ingest-force-stop-{job.job_id}", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_ingest_canvas_different_canvas_isolation(tmp_path):
     """(c) Completing a job while a DIFFERENT canvas (Notes) is selected
@@ -27060,6 +27769,7 @@ def _apply_continue_skill_scope(
     controller.freshness = "fresh"
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_continue_receipt_round_trips_media_scope_separately_from_route():
     app = _build_test_app()
     scope = MediaBrowseScope(
@@ -27101,6 +27811,7 @@ def test_library_landing_continue_receipt_round_trips_media_scope_separately_fro
     assert restored._media_state.selected_media_id == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("row_id", "expected_scope"),
     (
@@ -27191,6 +27902,7 @@ def test_library_landing_continue_receipt_accepts_only_authoritative_source_scop
     assert "PRIVATE" not in repr(state["library_continue_receipt"])
 
 
+@pytest.mark.bootstrap_profile
 def test_library_skills_applied_scope_round_trips_without_rows() -> None:
     app = _build_test_app()
     original = LibraryScreen(app)
@@ -27216,6 +27928,7 @@ def test_library_skills_applied_scope_round_trips_without_rows() -> None:
     assert restored._skills_state.sort == "status"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "row_id",
     (
@@ -27236,6 +27949,7 @@ def test_library_landing_continue_receipt_rejects_nonresumable_routes(
     assert screen.save_state()["library_continue_receipt"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_continue_receipt_rejects_file_notes_and_media_trash():
     app = _build_test_app()
     file_notes = LibraryScreen(app)
@@ -27252,6 +27966,7 @@ def test_library_landing_continue_receipt_rejects_file_notes_and_media_trash():
     assert media_trash.save_state()["library_continue_receipt"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_continue_receipt_uses_current_admitted_route_not_late_success():
     screen = LibraryScreen(_build_test_app())
     screen._library_selected_row_id = LIBRARY_ROW_BROWSE_MEDIA
@@ -27270,6 +27985,7 @@ def test_library_landing_continue_receipt_uses_current_admitted_route_not_late_s
     assert screen.save_state()["library_continue_receipt"] == prompt_receipt
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_continue_receipt_restore_fails_closed_and_legacy_still_routes():
     app = _build_test_app()
     malformed = LibraryScreen(app)
@@ -27292,6 +28008,7 @@ def test_library_landing_continue_receipt_restore_fails_closed_and_legacy_still_
     assert legacy._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_continue_projects_scope_without_private_query_copy() -> None:
     screen = LibraryScreen(_build_test_app())
     screen._library_lifecycle = LibraryLifecycle.GRADUATED
@@ -27321,6 +28038,7 @@ def test_library_landing_continue_projects_scope_without_private_query_copy() ->
     assert "PRIVATE NEEDLE" not in repr(compact_action)
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_attention_prefers_recoverable_import_and_never_persists() -> (
     None
 ):
@@ -27356,6 +28074,7 @@ def test_library_landing_attention_prefers_recoverable_import_and_never_persists
     assert fallback.message == "Media may be out of date."
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_attention_omits_nonrecoverable_and_unsettled_state() -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
@@ -27388,6 +28107,7 @@ def test_library_landing_attention_omits_nonrecoverable_and_unsettled_state() ->
     assert screen._library_landing_canvas_state().attention_action is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_landing_attention_tracks_failed_import_and_opens_review() -> (
     None
@@ -27452,6 +28172,7 @@ async def test_library_landing_attention_tracks_failed_import_and_opens_review()
         assert screen.query("#library-ingest-canvas")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_landing_attention_retries_stale_media_through_source_owner() -> (
     None
@@ -27484,6 +28205,7 @@ async def test_library_landing_attention_retries_stale_media_through_source_owne
         assert service.search_calls[0]["offset"] == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_from_library_uses_only_trustworthy_cached_summaries() -> None:
     screen = LibraryScreen(_build_test_app())
     screen._library_lifecycle = LibraryLifecycle.GRADUATED
@@ -27515,6 +28237,7 @@ def test_library_landing_from_library_uses_only_trustworthy_cached_summaries() -
     assert screen._library_landing_canvas_state().recent_items == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_library_landing_projection_and_retained_sync_add_no_source_io() -> None:
     app = _build_test_app()
     screen = LibraryScreen(app)
@@ -27548,6 +28271,7 @@ def test_library_landing_projection_and_retained_sync_add_no_source_io() -> None
         read.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_returning_landing_geometry_keyboard_and_compact_focus_stability() -> (
     None
@@ -27675,6 +28399,7 @@ async def test_library_returning_landing_geometry_keyboard_and_compact_focus_sta
         assert newer.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_landing_continue_dispatches_full_media_page_scope() -> None:
     app = _build_test_app()
@@ -27725,6 +28450,7 @@ async def test_library_landing_continue_dispatches_full_media_page_scope() -> No
         assert screen._media_state.view == "list"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_landing_continue_reapplies_database_notes_scope_after_admission() -> (
     None
@@ -27763,6 +28489,7 @@ async def test_library_landing_continue_reapplies_database_notes_scope_after_adm
         assert "Reading list" not in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_save_state_captures_selection_and_rag_state():
     """``save_state`` is the ``_screen_states`` producer -- assert it
@@ -27799,6 +28526,7 @@ async def test_library_shell_save_state_captures_selection_and_rag_state():
     assert "library_media_detail" not in state
 
 
+@pytest.mark.bootstrap_profile
 def test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance():
     """``restore_state`` runs on a freshly-constructed, not-yet-mounted
     instance (see app.py's ``handle_screen_navigation``): construct one
@@ -27840,6 +28568,7 @@ def test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance():
     assert state["library_rag_scope_deselected"] == {"notes"}
 
 
+@pytest.mark.bootstrap_profile
 def test_library_shell_restore_state_degrades_editor_view_without_matching_id():
     """A corrupted/foreign saved-state dict (``library_notes_view`` says
     "editor" but carries no note id) must not leave the screen pointed at a
@@ -27861,6 +28590,7 @@ def test_library_shell_restore_state_degrades_editor_view_without_matching_id():
     assert media_screen._media_state.selected_media_id == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_library_shell_restore_state_tolerates_garbage_values():
     """``restore_state`` must never crash on a saved-state dict from a
     different build/shape -- e.g. a non-dict ``library_rag_results``, or a
@@ -27896,6 +28626,7 @@ def test_library_shell_restore_state_tolerates_garbage_values():
 # restores only its saved request scope and waits for an authoritative page.
 
 
+@pytest.mark.bootstrap_profile
 def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmounted_instance():
     """Mirrors ``test_library_shell_restore_state_sets_attrs_on_fresh_unmounted_instance``
     for pane filter/sort state: round-trip through the real methods on a
@@ -27943,6 +28674,7 @@ def test_library_shell_restore_state_sets_per_pane_filter_attrs_on_fresh_unmount
     assert restored._notes_state.filter_records is None
 
 
+@pytest.mark.bootstrap_profile
 def test_library_shell_restore_state_defaults_per_pane_filters_on_garbage_values():
     """Same tolerate-garbage contract as
     ``test_library_shell_restore_state_tolerates_garbage_values``, for the
@@ -27972,6 +28704,7 @@ def test_library_shell_restore_state_defaults_per_pane_filters_on_garbage_values
     assert screen._conversations_state.query == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_library_shell_restore_state_resanitizes_conversation_query():
     """The conversations query is user text -- restore must re-run it
     through ``_safe_text`` (control-character stripping, tag removal,
@@ -27991,6 +28724,7 @@ def test_library_shell_restore_state_resanitizes_conversation_query():
     assert len(screen._conversations_state.query) <= 200
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_restored_media_type_filter_renders_on_first_paint():
     """Continue's first Media paint uses the restored type filter.
@@ -28040,6 +28774,7 @@ async def test_library_shell_restored_media_type_filter_renders_on_first_paint()
         assert len(rows) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_restored_notes_sort_and_filter_render_on_first_paint():
     """The notes canvas builder reads ``_notes_state.sort``/
@@ -28077,6 +28812,7 @@ async def test_library_shell_restored_notes_sort_and_filter_render_on_first_pain
         assert filter_box.value == "retro"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_restored_conversation_query_is_reissued_to_service():
     app = _build_test_app()
@@ -28118,6 +28854,7 @@ async def test_library_shell_restored_conversation_query_is_reissued_to_service(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_restored_conversation_query_never_flashes_unfiltered_snapshot_rows():
     app = _build_test_app()
@@ -28183,6 +28920,7 @@ async def test_restored_conversation_query_never_flashes_unfiltered_snapshot_row
         assert "Quarterly" in str(rows[0].label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_restored_media_viewer_fetches_detail_on_mount():
     """Mirrors the notes-editor nav-context deep link ``on_mount`` already
@@ -28214,6 +28952,7 @@ async def test_library_shell_restored_media_viewer_fetches_detail_on_mount():
         assert screen._media_state.view == "viewer"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mount():
     """REVIEW FIX (F4 Task 3): a cross-visit ``restore_state`` (or a tab
@@ -28286,6 +29025,7 @@ async def test_library_shell_restored_export_canvas_rekicks_counts_worker_on_mou
         assert screen.query_one("#library-export-empty-line", Static).display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_restored_media_viewer_with_deleted_item_shows_recovery():
     """Stale-id safety: the media record backing a restored viewer selection
@@ -28321,6 +29061,7 @@ async def test_library_shell_restored_media_viewer_with_deleted_item_shows_recov
         assert screen.query("#library-media-reader-retry")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_restored_notes_editor_with_deleted_note_falls_back_to_list():
     """Same stale-id contract as the media viewer above, but for notes --
@@ -28370,6 +29111,7 @@ def _wire_empty_export_prompts_db(app, client_id: str) -> PromptsDatabase:
     return prompts_db
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_land():
     """Pressing the Export rail row opens the export canvas scoped to
@@ -28419,6 +29161,7 @@ async def test_library_shell_export_rail_row_opens_everything_scope_and_counts_l
         assert submit.disabled is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_export_action_carries_type_filter_into_scope():
     """The media canvas's "Export…" action opens the export canvas
@@ -28454,6 +29197,7 @@ async def test_library_shell_media_export_action_carries_type_filter_into_scope(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_list_focuses_first_row_and_arrow_keys_move_it():
     """task-2856 AC1/AC5: entering the Media list parks DOM focus on its
@@ -28498,6 +29242,7 @@ async def test_library_media_list_focuses_first_row_and_arrow_keys_move_it():
         assert screen._media_state.view == "viewer"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_escape_unwinds_reader_then_returns_to_list_and_rail():
     """Escape unwinds the adaptive Reader without ever landing in an Input.
@@ -28550,6 +29295,7 @@ async def test_library_media_escape_unwinds_reader_then_returns_to_list_and_rail
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_tab_away_survives_a_background_recompose_within_the_settle_window():
     """task-2856 review round 2: the settle-window timer used to be the
@@ -28593,6 +29339,7 @@ async def test_library_media_tab_away_survives_a_background_recompose_within_the
         assert not rebuilt_first_row.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_entry_focus_survives_three_chained_recomposes():
     """task-2856 review round 2: an arbitrary-length chain of background
@@ -28622,6 +29369,7 @@ async def test_library_media_entry_focus_survives_three_chained_recomposes():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_notes_list_focuses_first_row_and_arrow_keys_move_it():
     """task-2856 AC1: the Notes list gets the SAME entry-focus + Up/Down
@@ -28656,6 +29404,7 @@ async def test_library_notes_list_focuses_first_row_and_arrow_keys_move_it():
         assert not first_row.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_empty_scope_disables_export_and_shows_helper():
     """An empty-everywhere scope disables Export with the exact helper copy."""
@@ -28688,6 +29437,7 @@ async def test_library_shell_export_empty_scope_disables_export_and_shows_helper
         assert empty_line == EMPTY_SCOPE_COPY
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_choose_destination_pushes_file_save_dialog_with_sanitized_name():
     """ "Choose destination…" pushes a ``FileSave`` dialog pre-filled from the
@@ -28721,6 +29471,7 @@ async def test_library_shell_export_choose_destination_pushes_file_save_dialog_w
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_destination_normalizes_missing_suffix_to_zip(
     tmp_path,
@@ -28758,6 +29509,7 @@ async def test_library_shell_export_destination_normalizes_missing_suffix_to_zip
         assert not screen.query("#library-export-overwrite-line")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_destination_existing_file_shows_overwrite_line(
     tmp_path,
@@ -28790,6 +29542,35 @@ async def test_library_shell_export_destination_existing_file_shows_overwrite_li
         assert overwrite_line == "Overwrites already-there.zip"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_library_shell_handoff_canvas_keeps_ready_line_in_server_mode():
+    """TASK-34000.6 (S-05): server mode CAN generate a study pack from the
+    snapshot, so the readiness line keeps "Source snapshot is ready."; only
+    local mode gets the needs-a-server wording (see the flashcards-row test)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(
+            active_source="server", server_configured=True, active_server_id="srv-1"
+        ),
+        persist=lambda: None,
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-flashcards").press()
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-canvas")
+
+        recovery = screen.query_one("#library-study-handoff-recovery", Static)
+        assert str(recovery.renderable) == "Source snapshot is ready."
+        assert not recovery.has_class("is-blocked")
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_row_disabled_with_tooltip_in_server_mode():
     """A server-active runtime disables the Export rail row (tooltip
@@ -28822,6 +29603,7 @@ async def test_library_shell_export_row_disabled_with_tooltip_in_server_mode():
         assert not screen.query("#library-export-header")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_section_export_action_refuses_in_server_mode():
     """The media canvas's "Export…" action bypasses the rail row's own
@@ -28860,6 +29642,7 @@ async def test_library_shell_section_export_action_refuses_in_server_mode():
         assert app.notify.call_args.args[0] == LIBRARY_EXPORT_SERVER_DISABLED_TOOLTIP
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_conversations_export_action_opens_conversations_scope():
     app = _build_test_app()
@@ -28885,6 +29668,7 @@ async def test_library_shell_conversations_export_action_opens_conversations_sco
         assert not screen.query("#library-export-quality")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_export_action_opens_notes_scope():
     app = _build_test_app()
@@ -28907,6 +29691,7 @@ async def test_library_shell_notes_export_action_opens_notes_scope():
         assert screen._export_state.scope == ExportScope(kind="notes")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_notes_selected_export_opens_exact_selection_scope():
     app = _build_test_app()
@@ -28934,6 +29719,7 @@ async def test_library_shell_notes_selected_export_opens_exact_selection_scope()
         assert screen.query_one("#library-export-status-line", Static)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_counts_worker_uses_real_thread_for_file_backed_dbs(
     tmp_path,
@@ -29031,6 +29817,7 @@ class _StaticExportCountPromptDB:
         return []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_counts_landing_preserves_input_focus_and_text():
     """REGRESSION (F4 Task 2 review): counts landing must update the form
@@ -29112,6 +29899,7 @@ async def test_library_shell_export_counts_landing_preserves_input_focus_and_tex
         assert screen.query_one("#library-export-empty-line", Static).display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_counts_landing_at_zero_reveals_empty_helper_in_place():
     """The empty-scope helper is display-toggled (not conditionally
@@ -29213,6 +30001,7 @@ class _FakeLibraryExportService:
         return {"chatbook_id": 1, **kwargs}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_submit_single_flight_and_notifies_on_success(
     monkeypatch, tmp_path
@@ -29357,6 +30146,7 @@ async def test_library_shell_export_submit_single_flight_and_notifies_on_success
         assert kwargs.get("severity") == "information"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_submit_failure_shows_escaped_error_and_reenables_form(
     tmp_path,
@@ -29461,6 +30251,7 @@ async def test_library_shell_export_submit_failure_shows_escaped_error_and_reena
         assert screen._export_state.running is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_later_visit(
     tmp_path,
@@ -29589,6 +30380,7 @@ async def test_library_shell_export_orphaned_run_completion_cannot_corrupt_a_lat
         assert screen.query_one("#library-export-error-line", Static).display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_stale_run_completion_never_clears_a_newer_runs_flags(
     tmp_path,
@@ -29682,6 +30474,7 @@ async def test_library_shell_export_stale_run_completion_never_clears_a_newer_ru
         assert screen._export_state.error == "unrelated newer error"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_export_submit_missing_service_surfaces_error_and_reenables(
     tmp_path,
@@ -29809,6 +30602,7 @@ def test_library_export_registry_failure_warns_it_wont_appear_in_artifacts(
     screen._update_library_export_canvas_after_run.assert_called_once_with()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_wait_helpers_still_fail_on_something_that_never_appears():
     """The wall-clock budget must not make the wait helpers unable to fail.
@@ -29836,6 +30630,7 @@ async def test_the_wait_helpers_still_fail_on_something_that_never_appears():
     assert elapsed < 10.0, f"took {elapsed:.1f}s -- the budget was not respected"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_condition_met_during_the_last_pause_is_not_a_timeout():
     """A pause that overshoots the deadline must not cause a false timeout.
@@ -29865,6 +30660,7 @@ async def test_a_condition_met_during_the_last_pause_is_not_a_timeout():
     assert found is not None, "an already-satisfied condition must not time out"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_stale_preflight_result_is_dropped_after_clear():
     """(task-2011) A pre-flight worker started BEFORE a submit/clear must not
@@ -29909,6 +30705,7 @@ async def test_library_ingest_stale_preflight_result_is_dropped_after_clear():
         assert screen._ingest_state.form.preflight is late_result
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_job_tick_recompose_preserves_typing_focus():
     """(task-2010) A registry notification recomposes the canvas; the path
@@ -29951,6 +30748,7 @@ async def test_library_ingest_job_tick_recompose_preserves_typing_focus():
         assert remounted.cursor_position == 4
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_restore_context_survives_vanished_widget():
     """(task-2010) Restoring focus to a widget id that no longer exists after
@@ -29972,6 +30770,7 @@ async def test_library_ingest_restore_context_survives_vanished_widget():
         await pilot.pause()  # no exception is the assertion
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_option_value_inputs_carry_visible_labels():
     """(task-2012) Populated Inputs never show their placeholder, so
@@ -30020,6 +30819,7 @@ async def test_library_ingest_option_value_inputs_carry_visible_labels():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_typing_debounce_runs_preflight_and_keeps_focus(
     tmp_path,
@@ -30061,6 +30861,7 @@ async def test_library_ingest_typing_debounce_runs_preflight_and_keeps_focus(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_batch_completion_posts_summary_toast(tmp_path):
     """(task-2015) When the queue's active jobs settle to zero, one summary
@@ -30103,6 +30904,7 @@ async def test_library_ingest_batch_completion_posts_summary_toast(tmp_path):
         assert "1 failed" in summaries[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_clear_finished_requires_second_press(tmp_path):
     """(task-2015) One unconfirmed press destroyed every receipt. The first
@@ -30159,6 +30961,7 @@ async def test_library_ingest_clear_finished_requires_second_press(tmp_path):
             raise AssertionError("second press never cleared the queue")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_ingest_intro_lines_hide_while_typing(tmp_path):
     """(task-2016) The state model already drops intro lines once a path is
@@ -30193,6 +30996,7 @@ async def test_library_ingest_intro_lines_hide_while_typing(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
     """(task-2016) The rail search box had no Input.Changed handler, so a
@@ -30231,6 +31035,7 @@ async def test_library_search_typed_text_survives_registry_recompose(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_path):
     """(RAG-27) A background ingest done-count growth while the user is on
@@ -30424,6 +31229,7 @@ async def test_library_search_rag_canvas_survives_ingest_done_count_growth(tmp_p
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_source_snapshot_timeout_then_real_snapshot_clears_recovery():
     """(task-2075 D5 fix) `_apply_source_snapshot_timeout`'s all-zeros
@@ -30499,6 +31305,7 @@ async def test_library_rag_source_snapshot_timeout_then_real_snapshot_clears_rec
         assert "(1)" in str(notes_toggle.label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_rag_scope_recovery_steady_state_snapshot_causes_no_churn():
     """(task-2075 D5 fix-review) Once the change-gated recovery mirror has
@@ -30585,6 +31392,7 @@ async def test_library_rag_scope_recovery_steady_state_snapshot_causes_no_churn(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_fences_off_in_flight_preflight_for_previous_path(tmp_path):
     """(task-2015 review) During the 0.8s debounce window an in-flight
@@ -30625,6 +31433,7 @@ async def test_typing_fences_off_in_flight_preflight_for_previous_path(tmp_path)
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_path_clears_lingering_preflight_state(tmp_path):
     """(task-2015 review) Emptying the field must not leave old errors or a
@@ -30660,6 +31469,7 @@ async def test_clearing_path_clears_lingering_preflight_state(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recompose_mount_echo_does_not_rearm_debounce(tmp_path):
     """(task-2015 review) Textual re-announces an Input's ``value=`` on
@@ -30694,6 +31504,7 @@ async def test_recompose_mount_echo_does_not_rearm_debounce(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_completion_toast_survives_mid_batch_clear(tmp_path):
     """(task-2015 review) Clearing finished rows while other jobs are still
@@ -30749,6 +31560,7 @@ async def test_completion_toast_survives_mid_batch_clear(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_path_button_empties_the_widget_for_real(tmp_path):
     """(task-2041) Live round-2 evidence: after pressing Clear, a focus
@@ -30788,6 +31600,7 @@ async def test_clear_path_button_empties_the_widget_for_real(tmp_path):
         assert screen.query_one("#library-ingest-path", Input).value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_completion_toast_reports_dedup_as_already_in_library(tmp_path):
     """(task-2041) A dedup-only batch must never claim "imported" -- the
@@ -30836,6 +31649,7 @@ async def test_completion_toast_reports_dedup_as_already_in_library(tmp_path):
         assert summaries[0] == "Import finished — 1 imported"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preflight_apply_preserves_form_widget_identity(tmp_path):
     """(task-2042) A pre-flight result landing must not remount the form
@@ -30879,6 +31693,7 @@ async def test_preflight_apply_preserves_form_widget_identity(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_registry_tick_preserves_form_identity_and_updates_queue(tmp_path):
     """(task-2042) A job tick recomposes only the queue child; the form
@@ -30913,6 +31728,7 @@ async def test_registry_tick_preserves_form_identity_and_updates_queue(tmp_path)
         assert rows, "queue child failed to render the done row"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_group_set_change_still_rebuilds_panels(tmp_path):
     """(task-2042) Structural changes (a new type group) still take the
@@ -30943,6 +31759,7 @@ async def test_group_set_change_still_rebuilds_panels(tmp_path):
         assert screen.query_one("#type-group-pdf", Collapsible)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_in_place_apply_updates_panel_scope_labels(tmp_path):
     """(task-2042 review) Per-group file counts change without the group SET
@@ -30981,6 +31798,7 @@ async def test_in_place_apply_updates_panel_scope_labels(tmp_path):
         assert screen.query_one("#library-ingest-start", Button) is start_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_switch_preserves_staged_ingest_form(tmp_path):
     """(task-2043) Looking at another rail row and coming back must not
@@ -31015,6 +31833,7 @@ async def test_rail_switch_preserves_staged_ingest_form(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_details_toggle_renders_and_hides_inline_lines(tmp_path):
     """(task-2043) Show details expands inline lines under the failed row
@@ -31057,6 +31876,7 @@ async def test_details_toggle_renders_and_hides_inline_lines(tmp_path):
             raise AssertionError("details never collapsed")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preflight_forecasts_already_ingested_text_files(tmp_path):
     """(task-2043) A byte-identical text file staged for ingest is
@@ -31100,6 +31920,7 @@ async def test_preflight_forecasts_already_ingested_text_files(tmp_path):
         await _wait_for_selector(screen, pilot, "#ingest-duplicate-summary")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_options_loader_never_calls_get_cli_setting_without_default(
     tmp_path,
@@ -31145,6 +31966,7 @@ async def test_options_loader_never_calls_get_cli_setting_without_default(
         assert form.type_options.get("generic") in (None, {})
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retry_press_updates_queue_in_place(tmp_path):
     """(task-2100) Retry's trailing full recompose yanked the viewport off
@@ -31186,6 +32008,7 @@ async def test_retry_press_updates_queue_in_place(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focused_panel_title_keeps_its_label(tmp_path):
     """(task-2100) The app-wide title-focus border consumed the height:1
@@ -31214,6 +32037,7 @@ async def test_focused_panel_title_keeps_its_label(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_path_button_responds_to_mouse_click(tmp_path):
     """(task-2100 diagnosis pin) The round-3 live report called the Clear
@@ -31249,6 +32073,7 @@ async def test_clear_path_button_responds_to_mouse_click(tmp_path):
         assert screen.app.focused is after
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_button_focus_style_is_reverse_video(tmp_path):
     """(task-2100 diagnosis pin) Focus on the canvas's compact buttons is
@@ -31272,6 +32097,7 @@ async def test_button_focus_style_is_reverse_video(tmp_path):
         assert browse.rich_style.reverse and browse.rich_style.bold
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_mode_line_requires_configured_server(tmp_path):
     """(task-2100) The seam's mere existence used to greet local-only
@@ -31325,6 +32151,7 @@ async def test_server_mode_line_requires_configured_server(tmp_path):
         assert placeholder.server_quiet_line == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expand_all_opens_mounted_panels_in_place(tmp_path):
     """(task-2100 review) Panel collapsed state is compose-time, so the
@@ -31366,6 +32193,7 @@ async def test_expand_all_opens_mounted_panels_in_place(tmp_path):
         assert screen.query_one("#library-ingest-start", Button) is start_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_option_input_edit_updates_receipt_error_and_gate(tmp_path):
     """(task-2130) Text-Input option edits skip the recompose (cursor
@@ -31421,6 +32249,7 @@ async def test_option_input_edit_updates_receipt_error_and_gate(tmp_path):
         assert screen.query_one("#library-ingest-start", Button).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reset_to_defaults_resets_text_inputs_and_persistence(tmp_path):
     """(task-2130) Reset used to wipe type_options while the state builder
@@ -31470,6 +32299,7 @@ async def test_reset_to_defaults_resets_text_inputs_and_persistence(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
     """(task-2130) A confirmed Clear finished must not erase the session's
@@ -31520,6 +32350,7 @@ async def test_clear_finished_keeps_recent_ledger_and_scrolls_confirm(tmp_path):
         assert recent, "Recent imports vanished after the clear"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_commit_summary_renders_for_text_selection_and_clears(tmp_path):
     """(task-2140) The commit-summary Static was conditionally composed, so
@@ -31568,6 +32399,7 @@ async def test_commit_summary_renders_for_text_selection_and_clears(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dismiss_preserves_failure_in_recent_ledger(tmp_path):
     """(task-2140) Dismiss was the one destructive act that erased the
@@ -31608,6 +32440,7 @@ async def test_dismiss_preserves_failure_in_recent_ledger(tmp_path):
         assert recent, "Recent imports must render the dismissed record"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_start_click_immediately_after_typing_submits(tmp_path):
     """(task-2140 pin) One live report of a dead Start click at the commit
@@ -31641,6 +32474,7 @@ async def test_start_click_immediately_after_typing_submits(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_arming_clear_finished_disturbs_nothing_and_dead_zone_holds(tmp_path):
     """(task-2160) Arming changes ONLY the button label in place: no queue
@@ -31706,6 +32540,7 @@ async def test_arming_clear_finished_disturbs_nothing_and_dead_zone_holds(tmp_pa
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_browse_offers_select_folder_action(
     tmp_path: Path,
@@ -31762,6 +32597,7 @@ async def test_ingest_browse_offers_select_folder_action(
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_folder_shortcut_hidden_when_affordance_is_off(
     tmp_path: Path,
@@ -31799,6 +32635,7 @@ async def test_folder_shortcut_hidden_when_affordance_is_off(
         await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_invalid_marker_toggles_with_the_in_place_validation(
     tmp_path: Path,
@@ -31853,6 +32690,7 @@ async def test_invalid_marker_toggles_with_the_in_place_validation(
 # TASK-1333 Task 7: compact Notes stages, portable focus, and local shortcuts.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("terminal_width", "expected_compact"), ((119, True), (120, False))
@@ -31887,6 +32725,7 @@ async def test_library_note_measured_breakpoint_is_exact_and_stable(
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("context", "selector", "expected_region", "items_visible"),
@@ -31931,6 +32770,7 @@ async def test_library_note_compact_deep_link_intent_opens_notes_stage(
         assert screen.query_one("#library-note-work-pane").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -> None:
     app = _build_test_app()
@@ -31958,6 +32798,7 @@ async def test_library_note_wide_deep_link_back_clears_future_compact_intent() -
         assert getattr(screen.focused, "row_id", None) == LIBRARY_ROW_BROWSE_NOTES
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_wide_browse_collapses_library_when_work_begins() -> None:
     """Wide browse shows Library; opening Work starts the two-pane session."""
@@ -31991,6 +32832,7 @@ async def test_library_note_wide_browse_collapses_library_when_work_begins() -> 
         assert screen.query_one("#library-note-work-pane").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_editor_back_restores_exact_wide_browse_context() -> None:
     """Editor Back returns to the same scope, row, and two scroll owners."""
@@ -32100,6 +32942,7 @@ async def test_library_note_editor_back_restores_exact_wide_browse_context() -> 
         assert screen.query_one("#library-note-work-empty").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_task_return_receipt_respects_newer_user_focus() -> None:
     """A deferred browse receipt cannot steal focus chosen after return admission."""
@@ -32140,6 +32983,7 @@ async def test_library_note_task_return_receipt_respects_newer_user_focus() -> N
         assert newer_target.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.allow_network
 async def test_library_navigation_rail_collapses_in_place_and_survives_breakpoints() -> (
@@ -32229,6 +33073,7 @@ async def test_library_navigation_rail_collapses_in_place_and_survives_breakpoin
         assert canvas.display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_compact_stage_drills_in_and_back_without_losing_origin() -> (
     None
@@ -32283,6 +33128,7 @@ async def test_library_note_compact_stage_drills_in_and_back_without_losing_orig
         assert getattr(screen.focused, "row_id", None) == LIBRARY_ROW_BROWSE_NOTES
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("initial_size", "same_side_sizes", "expected_compact"),
@@ -32347,6 +33193,7 @@ async def test_library_note_same_side_resize_does_no_presentation_work(
         assert after == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
@@ -32472,6 +33319,7 @@ async def test_library_note_compact_surplus_allocation_expands_only_named_owner(
         ] == [owner_selector]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_breakpoint_round_trip_restores_editor_focus_tuple() -> None:
     app = _build_test_app()
@@ -32522,6 +33370,7 @@ async def test_library_note_breakpoint_round_trip_restores_editor_focus_tuple() 
         assert screen.query_one("#library-note-back", Button).display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_deliberate_scroll_override_replaces_responsive_memory() -> (
     None
@@ -32596,6 +33445,7 @@ async def test_library_note_deliberate_scroll_override_replaces_responsive_memor
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_breakpoint_round_trips_restore_every_region_focus_role() -> (
     None
@@ -32737,6 +33587,7 @@ async def test_library_note_breakpoint_round_trips_restore_every_region_focus_ro
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_unsafe_session_outranks_rail_focus_on_compact_entry() -> (
     None
@@ -32767,6 +33618,7 @@ async def test_library_note_unsafe_session_outranks_rail_focus_on_compact_entry(
         assert getattr(screen.focused, "id", None) == "library-note-body"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_delete_confirmation_outranks_rail_focus_on_compact_entry() -> (
     None
@@ -32792,6 +33644,7 @@ async def test_library_note_delete_confirmation_outranks_rail_focus_on_compact_e
         assert getattr(screen.focused, "id", None) == "library-note-delete-cancel"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_load_failure_outranks_rail_focus_on_compact_entry() -> None:
     app = _build_test_app()
@@ -32820,6 +33673,7 @@ async def test_library_note_load_failure_outranks_rail_focus_on_compact_entry() 
         assert getattr(screen.focused, "id", None) == "library-note-load-retry"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_newer_selection_cancels_pending_back_focus() -> None:
     app = _build_test_app()
@@ -32869,6 +33723,7 @@ async def test_library_note_newer_selection_cancels_pending_back_focus() -> None
         assert getattr(screen.focused, "id", None) == "library-note-body"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_wide_rail_recompose_restores_rail_focus_and_scroll() -> (
     None
@@ -32914,6 +33769,7 @@ async def test_library_note_wide_rail_recompose_restores_rail_focus_and_scroll()
         assert restored.scroll_offset == before.scroll_offset
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
     """A later Tab/click intent cannot be stolen by an older restore turn."""
@@ -32971,6 +33827,7 @@ async def test_library_note_user_focus_vetoes_stale_deferred_restore() -> None:
         assert preview.scroll_y == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_whole_screen_recompose_restores_canonical_draft_and_focus() -> (
     None
@@ -33015,6 +33872,7 @@ async def test_library_note_whole_screen_recompose_restores_canonical_draft_and_
         assert screen.focused is restored
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_stale_recompose_capture_cannot_rewind_newer_presentation() -> (
     None
@@ -33052,6 +33910,7 @@ async def test_library_note_stale_recompose_capture_cannot_rewind_newer_presenta
         assert screen.query_one("#library-note-preview-region").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_recompose_captures_queued_widget_change_before_disarm() -> (
     None
@@ -33085,6 +33944,7 @@ async def test_library_note_recompose_captures_queued_widget_change_before_disar
         assert screen._notes_state.editor_armed is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("presentation", "focus_selector", "semantic_role"),
@@ -33141,6 +34001,7 @@ async def test_library_note_recompose_preserves_body_selection_off_body_focus(
         assert screen._library_notes_semantic_role(screen.focused) == semantic_role
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_local_shortcuts_are_region_scoped_and_flush_guarded() -> (
     None
@@ -33200,6 +34061,7 @@ async def test_library_note_local_shortcuts_are_region_scoped_and_flush_guarded(
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_shortcut_navigation_cannot_bypass_failed_flush() -> None:
     app = _build_test_app()
@@ -33237,6 +34099,7 @@ async def test_library_note_shortcut_navigation_cannot_bypass_failed_flush() -> 
         assert screen._library_note_session.snapshot.dirty is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_footer_tracks_editor_states_and_ancillary_contents() -> (
     None
@@ -33362,6 +34225,7 @@ async def test_library_note_footer_tracks_editor_states_and_ancillary_contents()
         assert screen._notes_state.shortcut_status == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_footer_covers_navigator_create_sync_and_exit() -> None:
     """Navigator substates and sibling Notes stages publish exact local help."""
@@ -33473,6 +34337,7 @@ def test_library_note_ctrl_s_is_unavailable_while_save_remains_explicit() -> Non
     assert callable(LibraryScreen.action_library_notes_save)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_escape_hierarchy_cannot_bypass_conflict() -> None:
     app = _build_test_app()
@@ -33556,6 +34421,7 @@ async def _scroll_task9_context_to_nonzero_offset(context, pilot):
     return context.scroll_y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_pilot_coalesces_three_edits_and_back_waits_for_chain() -> (
     None
@@ -33625,6 +34491,7 @@ async def test_library_note_pilot_coalesces_three_edits_and_back_waits_for_chain
         latest_save_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("origin", ("editor", "preview", "context"))
 async def test_library_note_pilot_conflict_can_originate_from_every_region(
@@ -33666,6 +34533,7 @@ async def test_library_note_pilot_conflict_can_originate_from_every_region(
         assert screen.query_one("#library-note-conflict-region").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_pilot_overwrite_keeps_edits_from_fetch_and_save() -> None:
     refresh_release = threading.Event()
@@ -33739,6 +34607,7 @@ async def test_library_note_pilot_overwrite_keeps_edits_from_fetch_and_save() ->
         overwrite_save_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_pilot_reload_rejects_edit_during_fetch_and_duplicates() -> (
     None
@@ -33796,6 +34665,7 @@ async def test_library_note_pilot_reload_rejects_edit_during_fetch_and_duplicate
         refresh_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_context() -> (
     None
@@ -33851,6 +34721,7 @@ async def test_library_note_pilot_delete_pending_locks_and_cancel_restores_conte
         assert context.scroll_y == origin_scroll
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_delete_captures_context_origin_before_gated_flush() -> None:
     save_release = threading.Event()
@@ -33906,6 +34777,7 @@ async def test_library_note_delete_captures_context_origin_before_gated_flush() 
         save_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("delete_succeeds", (False, True))
 async def test_library_note_pilot_delete_running_blocks_duplicate_delete_edits_and_escape(
@@ -33990,6 +34862,7 @@ async def test_library_note_pilot_delete_running_blocks_duplicate_delete_edits_a
         delete_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_pilot_stale_session_admission_cannot_reach_delete() -> None:
     service = _GatedInteractionLibraryNotesScopeService(_two_notes())
@@ -34021,6 +34894,7 @@ async def test_library_note_pilot_stale_session_admission_cannot_reach_delete() 
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_pilot_stale_version_fails_without_deleting_newer_note() -> (
     None
@@ -34055,6 +34929,7 @@ async def test_library_note_pilot_stale_version_fails_without_deleting_newer_not
         assert screen._library_note_session.snapshot is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_pilot_duplicate_discard_runs_one_delete_and_blocks_exit() -> (
     None
@@ -34080,7 +34955,7 @@ async def test_library_note_pilot_duplicate_discard_runs_one_delete_and_blocks_e
             )
             await _wait_for_condition(
                 pilot,
-                lambda: discard.display,
+                lambda: discard.visible,
                 message="Untouched create never exposed Discard.",
             )
 
@@ -34105,6 +34980,7 @@ async def test_library_note_pilot_duplicate_discard_runs_one_delete_and_blocks_e
         delete_release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_pilot_stale_create_token_blocks_discard_activation() -> (
     None
@@ -34124,7 +35000,7 @@ async def test_library_note_pilot_stale_create_token_blocks_discard_activation()
         discard = await _wait_for_selector(screen, pilot, "#library-note-discard-new")
         await _wait_for_condition(
             pilot,
-            lambda: discard.display,
+            lambda: discard.visible,
             message="Untouched create never exposed Discard.",
         )
 
@@ -34264,6 +35140,7 @@ async def _task10_open_note_utilities(screen, pilot, compact: bool) -> str:
     return "#library-note-context-"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", ((60, 20), (170, 48)))
 @pytest.mark.parametrize("capability", _TASK10_NOTE_CAPABILITIES)
@@ -34628,6 +35505,7 @@ async def test_library_note_keyboard_capability_matrix(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", ((60, 20), (170, 48)))
 async def test_library_note_keyboard_focus_order_and_persistent_labels(
@@ -34767,6 +35645,7 @@ async def test_library_note_keyboard_focus_order_and_persistent_labels(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_fifty_cycle_breakpoint_and_presentation_lifecycle() -> None:
     """Fifty breakpoint/Preview/Context cycles retain one stable workbench."""
@@ -34836,6 +35715,7 @@ async def test_library_note_fifty_cycle_breakpoint_and_presentation_lifecycle() 
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("initial_size", "sequence", "expected_compact"),
@@ -34895,6 +35775,7 @@ async def test_library_note_fifty_same_side_resize_sequences_do_zero_notes_work(
             assert body.region.height == 16
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_stage_visibility_skips_redundant_class_work() -> None:
     """An unchanged wide presentation does not re-run stylesheet matching."""
@@ -34926,6 +35807,7 @@ async def test_library_note_stage_visibility_skips_redundant_class_work() -> Non
         apply_compact.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_media_route_switch_updates_contextual_chrome() -> None:
     """Notes-only chrome follows the route while compatible swaps stay targeted."""
@@ -34968,6 +35850,7 @@ async def test_library_note_media_route_switch_updates_contextual_chrome() -> No
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
     monkeypatch,
@@ -35137,6 +36020,7 @@ async def test_library_note_recompose_and_fifty_route_cycles_return_to_baseline(
     assert canvas_lifecycle["mounted"] == canvas_lifecycle["removed"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", ((60, 20), (170, 48)))
 async def test_library_note_remount_restores_only_persistent_view_state(
@@ -35192,6 +36076,7 @@ async def test_library_note_remount_restores_only_persistent_view_state(
         assert screen2.query_one("#library-note-work-empty").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", ((60, 20), (170, 48)))
 async def test_library_note_context_toggle_lands_on_visible_scroll_focus(
@@ -35223,6 +36108,7 @@ async def test_library_note_context_toggle_lands_on_visible_scroll_focus(
         assert screen.focused is context
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_note_unmount_clears_notes_timers_and_workers() -> None:
     """Unmount releases every screen-owned Notes timer and worker reference."""
@@ -35264,6 +36150,7 @@ async def test_library_note_unmount_clears_notes_timers_and_workers() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_commit_line_stays_visible_and_synced_while_a_gate_blocks(
     tmp_path,
@@ -35344,6 +36231,7 @@ def _media_item_with_multiline_analysis():
     return items
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_analysis_tab_is_searchable():
     """task-28026: the Analysis tab has a search box that finds analysis matches."""
@@ -35392,6 +36280,7 @@ async def test_library_media_analysis_tab_is_searchable():
         # analysis text, not the (empty here) transcript.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_media_switching_tabs_clears_the_search():
     """task-28026: switching Reader tabs re-scopes -- the search does not carry over."""
@@ -35439,6 +36328,7 @@ async def test_library_media_switching_tabs_clears_the_search():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_recompose_keeps_focus_on_a_mounted_widget_conversations():
     """task-31946 AC#1/#3: the non-Media route the PR F seam never covered."""
@@ -35471,6 +36361,7 @@ async def test_background_recompose_keeps_focus_on_a_mounted_widget_conversation
         assert focused.id == "library-conversation-row-0", focused.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_recompose_keeps_focus_on_a_mounted_widget_media():
     """task-31946 AC#1: the Media route keeps PR F's behaviour, once."""
@@ -35500,6 +36391,7 @@ async def test_background_recompose_keeps_focus_on_a_mounted_widget_media():
         assert focused.id == "library-media-row-0", focused.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_recompose_focus_fallback_stays_inside_screen_content():
     """task-31946 (PR L review item 1): the fallback is never the nav bar.
@@ -35547,6 +36439,7 @@ async def test_background_recompose_focus_fallback_stays_inside_screen_content()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_recompose_restores_focus_on_an_empty_conversations_list():
     """task-31946 (PR L review item 2): the stand-down cannot strand focus.
@@ -35592,6 +36485,7 @@ async def test_background_recompose_restores_focus_on_an_empty_conversations_lis
         assert focused.is_attached, focused
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_recompose_restores_focus_on_a_filtered_empty_media_list():
     """Qodo #2483: a background recompose never leaves a dead keyboard.

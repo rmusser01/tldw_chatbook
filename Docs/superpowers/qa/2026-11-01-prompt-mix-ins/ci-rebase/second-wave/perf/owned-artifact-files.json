@@ -1,0 +1,660 @@
+{
+  "scope": "Prior perf022 diagnosis/fixes, Composer/LLM extraction, independent core review, and final perf requalification. Only concrete files; scratch profile databases and source archive directories are intentionally not evidence payloads.",
+  "files": [
+    {
+      "path": "/private/tmp/mixins-avatar-cold-red.log",
+      "bytes": 2029,
+      "sha256": "9923bb6ea386051327c840208bbc45003d0c2893c1aabcd332520d530e84c573"
+    },
+    {
+      "path": "/private/tmp/mixins-avatar-cold-red2.log",
+      "bytes": 7650,
+      "sha256": "9a5ee04e47e9ff9bbf15ff15f5377e51e46d1224117d463550e079139cc74f96"
+    },
+    {
+      "path": "/private/tmp/mixins-classkey-patch.py",
+      "bytes": 3210,
+      "sha256": "029ba42f4ec79e242a64db1a6ddba4c1a7569495db4f6fdb4177f7e95d3f3503"
+    },
+    {
+      "path": "/private/tmp/mixins-classkey.patch",
+      "bytes": 13676,
+      "sha256": "9afa22e0d78906c120dc67aa4ac4a21d32b6812d72a475494976901ace29315c"
+    },
+    {
+      "path": "/private/tmp/mixins-core-review-ast-differences.txt",
+      "bytes": 4665,
+      "sha256": "e1fa6a75ef440a7569ccf235364e0163b85ed1307ad38552620f13cbfcf8e772"
+    },
+    {
+      "path": "/private/tmp/mixins-core-review-ast.json",
+      "bytes": 21169,
+      "sha256": "c0beb888ac6d10fc58302e6100c3e22b09dad8558baa419d612d2aae8a5891b7"
+    },
+    {
+      "path": "/private/tmp/mixins-core-review-ast.py",
+      "bytes": 2745,
+      "sha256": "9360ea00970283c0a78ae17994f1ed5f83afcc143f25a27bda984a5c3e5ae97e"
+    },
+    {
+      "path": "/private/tmp/mixins-core-review-consumers.txt",
+      "bytes": 31694,
+      "sha256": "56f6a24259f1f52af21051a5fba3856e0f044bb6629496788c415791007f41a0"
+    },
+    {
+      "path": "/private/tmp/mixins-core-review-report-write.py",
+      "bytes": 4227,
+      "sha256": "d877b250ccc649764b44df381c295eab9a7f34d90439fb23abadf01e2bebf6e2"
+    },
+    {
+      "path": "/private/tmp/mixins-css-dev-fixed.log",
+      "bytes": 21903,
+      "sha256": "f96911d7c2867c1ee23b8a001a4502d8f981922768a722af74d3ba69e22f7929"
+    },
+    {
+      "path": "/private/tmp/mixins-css-dev-fixed2.log",
+      "bytes": 27749,
+      "sha256": "f8094802443295926be3d9f24a5e4e3b8eb252a7ec112dcfe3aa14ae9a675b65"
+    },
+    {
+      "path": "/private/tmp/mixins-css-style-comparison.json",
+      "bytes": 1045,
+      "sha256": "6c7296593b86ba9ce9c3ba8962a4fe5efea1d751fbb7f069860167621c4ab2c6"
+    },
+    {
+      "path": "/private/tmp/mixins-css-style-probe.py",
+      "bytes": 2062,
+      "sha256": "99b3b06d46437c1f6396722af1ad2391ba85b4c2733525344cc5baf8fcda5edf"
+    },
+    {
+      "path": "/private/tmp/mixins-css-styles-after.json",
+      "bytes": 732326,
+      "sha256": "8a2ed53914e8ee497a9e4047629be93d3c3a17c5768b6a85e6b8b86c187a4962"
+    },
+    {
+      "path": "/private/tmp/mixins-css-styles-after.log",
+      "bytes": 603,
+      "sha256": "d0589c7b810c4961a8d6a181cc0133aba4688708df268ffbd147b815dfdc3221"
+    },
+    {
+      "path": "/private/tmp/mixins-css-styles-before.json",
+      "bytes": 774560,
+      "sha256": "6bc65de3c9656e3010b7a03d0d539cd2d279a301b6148818bef984f5ce0ccf1c"
+    },
+    {
+      "path": "/private/tmp/mixins-css-styles-before.log",
+      "bytes": 603,
+      "sha256": "6d9b9b323eeea4821d34b6a2d77a0d1eba9a17bc8c891fda5b60ae731e56b674"
+    },
+    {
+      "path": "/private/tmp/mixins-empty-image-red.log",
+      "bytes": 2035,
+      "sha256": "a51e80504b5283807962ea07980b8c8299d980c64f7127a5fbd6a917be192100"
+    },
+    {
+      "path": "/private/tmp/mixins-extract-owned.patch",
+      "bytes": 34033,
+      "sha256": "a0440f14fd304a65f51fa43b3ea830e1c0bb0b948a5e57d8b5997c7b81c2cc56"
+    },
+    {
+      "path": "/private/tmp/mixins-extract-owned.py",
+      "bytes": 6321,
+      "sha256": "0fc41807ed1bc6620a05c97420d5a176370834ba1e17a276a2dcee52d47b8cac"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-ast-proof.json",
+      "bytes": 1124,
+      "sha256": "98ffec22c752147bbe2b05d906b3b5766fdc2c51048031724d23c1051387f110"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-ast-proof.py",
+      "bytes": 2844,
+      "sha256": "f77eb63538ae8bef5aae6a37271b3d1bf4a48fced5378ce738af5122cabebf6a"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-finish-audit.py",
+      "bytes": 2205,
+      "sha256": "03666457e65189af7eae71dce6ee7be0dd9693e23ccfb9bd5ae6c2ba7f79d655"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-finish-format.patch",
+      "bytes": 5210,
+      "sha256": "8412d82a0782036fc2904be9719993ca6d1305a4714b30d3581cc1cec70dcb70"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-finish-format.py",
+      "bytes": 1634,
+      "sha256": "7c55ce0d7c90c5944fc5a9d852ac98b19b83127220d8285ed141f8df62ec4071"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-format.patch",
+      "bytes": 2727,
+      "sha256": "dd23b86b770df89f8e0ad470db76403c519ba45c040690a018f4e223f66e9c46"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-format.py",
+      "bytes": 1822,
+      "sha256": "82dc69ef0b4ba420744a61c298a9612451fac62c5c20d5ac8133304f3ea74e22"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-layer.log",
+      "bytes": 292,
+      "sha256": "2f5fd7892675b520866e6367dc20cfbccd812ae4858d2b3757808e3cb88a716e"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-lint.json",
+      "bytes": 1818,
+      "sha256": "3f7a5393681e8395ad12bae03e225e101b88e08c219a8bde28a6d3b39afa3059"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-original-functions.json",
+      "bytes": 15160,
+      "sha256": "22e48ba92bf30c41fc5dc774b8466d16dd9483d76c2b0c8c0acd97015065cb4b"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-pair-current.json",
+      "bytes": 5215,
+      "sha256": "ce210fbf4a607e292dd3be7f117a44c113c5ba045b22596155f6cc5323d05073"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-pair-current.log",
+      "bytes": 18199,
+      "sha256": "16b8d909f474ba9dbf312b3205c1ac606064a729d2cdb79182a8b681c816ef38"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-pair-original.json",
+      "bytes": 4504,
+      "sha256": "901fd119daec66ad4f533be7009a78bb06c837035833f19da63d9e19371e8075"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-pair-original.log",
+      "bytes": 34603,
+      "sha256": "7f96b980b71a7d69e888ba954b5079169571c1e0ea67a9cc956e460c274bb235"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-pair.py",
+      "bytes": 2001,
+      "sha256": "dcbb8b811e5a2360ba5df4827072ea0143ad00ff1c12afdb26692b1538a2720c"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-provider-tests.py",
+      "bytes": 1119,
+      "sha256": "2082ea5e5f2744e7ef375583f6c969fb29eeede7c7c614bb4d9f6fb3f9d1db3b"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-providers.log",
+      "bytes": 40355,
+      "sha256": "9846c56ba9bfe832fc0f702d00ee617b35dd1fe980edb9aec2d11a42e3a46539"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-report-write.py",
+      "bytes": 7407,
+      "sha256": "f83964ef2dc721c48ea8db95c1579b4a1389a58e9f4488774e378b5fa48d62f9"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-style-comparison.json",
+      "bytes": 111,
+      "sha256": "367d0e8e070b590289579e3563e359e970af6c3bd5810b34bbf8396602bc7a5c"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-style-probe.py",
+      "bytes": 1852,
+      "sha256": "0a5efc15e4ac88241ad75a87d41d633faafdf320d95f506a9085e5629e238728"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-styles-after.json",
+      "bytes": 1147327,
+      "sha256": "1eea8db9f3e516b9d4999fa8c1a43bfbfd6b98f0bc1ff352e4f4faaa2b404805"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-styles-after.log",
+      "bytes": 57973,
+      "sha256": "49d27e9a05cdf2e602aa13f1ceaebc744b52b7f6c25b6e42229d5f007c659bd1"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-styles-baseline.json",
+      "bytes": 1147327,
+      "sha256": "1eea8db9f3e516b9d4999fa8c1a43bfbfd6b98f0bc1ff352e4f4faaa2b404805"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-styles-baseline.log",
+      "bytes": 22756,
+      "sha256": "a137e778a4038ecd7c5514d333f2f5f199ed523df3dd9618b4b8ad61784895ab"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-styles-before.json",
+      "bytes": 1055348,
+      "sha256": "c79ce0ecb7ac752520d104858c1e78fdd4a10b21336ea7d3b30a12859241919d"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-styles-before.log",
+      "bytes": 16085,
+      "sha256": "ab170f7b2ae166886b353d171c85ae5446b334a91596ef05f357ca72af2ddc93"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-voice-witness-red.log",
+      "bytes": 12494,
+      "sha256": "059d8be04a1926b975f34c655770f62ace8bf3a25df46bc41487ae27fc0b2daf"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-warmup-mounted.log",
+      "bytes": 339,
+      "sha256": "aaf4ca371854e46807cc911d22157be6f56e1abcac6e822eecfc8c9a09fc110f"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-warmup.log",
+      "bytes": 351,
+      "sha256": "869c806048d786a589c3df9c3bf0ce4de2eaab0d7731116f677e3dae3106b2d1"
+    },
+    {
+      "path": "/private/tmp/mixins-extraction-witness-green.log",
+      "bytes": 19636,
+      "sha256": "2910412b14153fab11e09db5a4301209ed25337acebc3f1dd218be7dcfbcd37d"
+    },
+    {
+      "path": "/private/tmp/mixins-final-avatar-signatures.json",
+      "bytes": 208,
+      "sha256": "e25baf3115161408fb8779a61a9280bc83afe5d3450976ec4ae4a60974bf61ae"
+    },
+    {
+      "path": "/private/tmp/mixins-final-cold-controls.log",
+      "bytes": 15787,
+      "sha256": "f2797a48ff60c64a4252e03574737231bc5793fedca71a9dab8ef9931aa2b792"
+    },
+    {
+      "path": "/private/tmp/mixins-final-cold-controls.py",
+      "bytes": 1675,
+      "sha256": "0f18a02cec3a343b9014386d714f52259e6391fc3e7393eb3c1080025df118cc"
+    },
+    {
+      "path": "/private/tmp/mixins-final-cold-lint-comparison.json",
+      "bytes": 590,
+      "sha256": "d7225ea672b99e0ca4e706a734541844cdc695f1895aca92a4a8342409f630d9"
+    },
+    {
+      "path": "/private/tmp/mixins-final-cold-lint.log",
+      "bytes": 153,
+      "sha256": "efbe0978d06b7d19346986865679a224dc3ae371b25a4d5c858752474f4120b4"
+    },
+    {
+      "path": "/private/tmp/mixins-final-static.py",
+      "bytes": 1791,
+      "sha256": "e8cece80d2dce104c410c0d034f5f5ee953e0c0b3e42b97a5ebe3dc46195b136"
+    },
+    {
+      "path": "/private/tmp/mixins-folder-route-profile.log",
+      "bytes": 322,
+      "sha256": "24ea30f560283d3c181c32ec2e33d46250e42b222b21ae4747738e593c70979c"
+    },
+    {
+      "path": "/private/tmp/mixins-folder-route-profile.py",
+      "bytes": 444,
+      "sha256": "1e0654ad90a6e405d3a59af8dd0e82b24c8c0611b86831d8c16b8b8672a1f95e"
+    },
+    {
+      "path": "/private/tmp/mixins-format-patch.py",
+      "bytes": 1152,
+      "sha256": "f912692067771eb90dd0812a27ce6b96a405c58a819ee45e7069e4c62c102c30"
+    },
+    {
+      "path": "/private/tmp/mixins-format.patch",
+      "bytes": 12691,
+      "sha256": "4a59c5ec54d3c4bf92b8082be90738189b2014e47929ec7cf415319d95e8ec39"
+    },
+    {
+      "path": "/private/tmp/mixins-library-perf-controls.log",
+      "bytes": 458,
+      "sha256": "9c65c6a829a08358768a671af62f4f3f37c9dedf40ee92960027b9d2354cd40b"
+    },
+    {
+      "path": "/private/tmp/mixins-library-perf-controls.py",
+      "bytes": 568,
+      "sha256": "db00b9be033943839ec75ac37b970965f3cebe3ba8d5c80f98f58d0778d667ef"
+    },
+    {
+      "path": "/private/tmp/mixins-natural-probe.json",
+      "bytes": 65968,
+      "sha256": "6c51ed1f618b3fc80b6e659cfb289fcf4ff1af2c1ab86cb98754569d9d1c05b3"
+    },
+    {
+      "path": "/private/tmp/mixins-natural-probe.log",
+      "bytes": 79090,
+      "sha256": "2d839597f8fc967fb8dabd1a990b8514e891dfe243ea6d03346c5db2109ba7d9"
+    },
+    {
+      "path": "/private/tmp/mixins-natural-probe.py",
+      "bytes": 1640,
+      "sha256": "f48c26126131e430ee3484f8b21825a48b3d596982b5248d1daaef9005214c4d"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-complete-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 6186,
+      "sha256": "4ba65f52c48f176321fb9d084ca317142f49bdbe944f3b5eedca1008749684d4"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-complete-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35062,
+      "sha256": "58f2ebaa11c68566d6c005bae6a0169f9a0643f97b2cab6038e65ff8bb2d75bc"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-complete-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 21928,
+      "sha256": "f2c6e4a527c87158f1befd61f1e4c86fd9d2ac8c739285ec5f1f2d3776b24a64"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-complete-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 49860,
+      "sha256": "52bccef0d9debee1660fd6e55c1059d1813179e9a800e4ba5dee7e9bcc24bbb6"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-complete.log",
+      "bytes": 8987,
+      "sha256": "a2c47c182532c9d37bc73b46709dbf70500af92ce37dc740b48ce19e09b30414"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-css-build.log",
+      "bytes": 3329,
+      "sha256": "c5a7d0311af0386e76c7992077c7ee005a6bf481334adbbe9a025886f23b5758"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev3412-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 6155,
+      "sha256": "f80f597a0792c8bf4bbdbb9798e43eb24e3bb1376206e013882d984a773fd2c2"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev3412-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35075,
+      "sha256": "599f160aee1bcb625aec0c66b4051fb000420d9af2382e920bfd71d04ce099fc"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev3412-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 21391,
+      "sha256": "1bcafb69de3279d67f3c03e2fef5e92b8748d4dbede5859c790316fea19fd881"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev3412-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 50016,
+      "sha256": "6fe0616e34888f8e4c3bd11cc179974c2c43ba0365d6f8839cf96ee32ea99a28"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev3412.log",
+      "bytes": 28411,
+      "sha256": "5ef607a46d8d82212c935a54282296880f50358b090ca7dd8aa14903b830eea2"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev88af-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 6279,
+      "sha256": "53a7479bd66624f5d97199028629eb8e23bde80b516e1ade52094b8110f80b3e"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev88af-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35075,
+      "sha256": "057c2785d64a9b39aaff73ca7b1cc4175066faceca9edb6202cb33026f287346"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev88af-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 25547,
+      "sha256": "9bc430e7c1070d9cebca80255a47719df0184a6b806885b741b8c1893918bb67"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev88af-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 50016,
+      "sha256": "6fe0616e34888f8e4c3bd11cc179974c2c43ba0365d6f8839cf96ee32ea99a28"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-dev88af.log",
+      "bytes": 41300,
+      "sha256": "eae875af53ab7e9d45eee962518c207ecc67176e13054f01b198a04e6dbe86a6"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final-extractions-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 5830,
+      "sha256": "4a2c89aebba3802ca859d19cc70414a7859f66c667d5d42fc111718c3eefe8af"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final-extractions-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35127,
+      "sha256": "91b0c80c0eaefe59edfffa711c4b4a6c7061d60f8549383ab9148e694e9d51c6"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final-extractions-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 24372,
+      "sha256": "d15a67ff4ab7638e412c370b43492cb3362b10a97ec6ca76e95827cfe57d7620"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final-extractions-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 49847,
+      "sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final-extractions.log",
+      "bytes": 2064,
+      "sha256": "3244af43f16a8ae5b8ca541a6f696df2aabbbe07199157b1a76e904fa66e9083"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 5654,
+      "sha256": "ad3b733a3f2eff96a477d6ba7cfa11f840d6036e1cf0497a3837bd1aa735b2af"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35062,
+      "sha256": "58f2ebaa11c68566d6c005bae6a0169f9a0643f97b2cab6038e65ff8bb2d75bc"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 21928,
+      "sha256": "f2c6e4a527c87158f1befd61f1e4c86fd9d2ac8c739285ec5f1f2d3776b24a64"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 49860,
+      "sha256": "52bccef0d9debee1660fd6e55c1059d1813179e9a800e4ba5dee7e9bcc24bbb6"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-final.log",
+      "bytes": 8188,
+      "sha256": "05cdd5906df9356d89b956ffa08fd0aa9a1aea8e4f79bc9d33516ddbaf7b0bd4"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-fixed-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 6073,
+      "sha256": "ee08cd39dcf56f4e72d688537313e731d190f08d0c6d7d2541450bcffeff9ac9"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-fixed-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35062,
+      "sha256": "c4a8e89f3a4019c23ea6a052d110d23360f1f8e4aaa338534d65f4a7d394a66f"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-fixed-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 21928,
+      "sha256": "48890834cab892755579ce20e1b5337d807aeaf536ffc1f6e4d9cd4c3e191431"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-fixed-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 49986,
+      "sha256": "ef1e27936dd43dd7fe54156cf30523f0493bc242d98212fd1d2cdd7dedc38e83"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-fixed.log",
+      "bytes": 34281,
+      "sha256": "bd9fb1958570369e0c8f5a6ec26a2ffd65cc00dc0dbb8689a1ae01e93629ca0e"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-folder-controls.log",
+      "bytes": 3086,
+      "sha256": "204263fc32d9f11ae08d346d24aaf085d2f807254e027ae806555ee2922de362"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-head022-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 6454,
+      "sha256": "349d9b0e3365992b7e05c1bf888916c80f3ad588c4ff3e4e9870d08ab62fb969"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-head022-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35075,
+      "sha256": "d379deba893a1df0a1499645387f5ed75aa3b13e8dadaae7c5d13e6c357b4d9f"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-head022-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 22524,
+      "sha256": "0f219c0ecc74f9ea6d9d84fd6391941ca41d48d687dd9a84ceefb67256098ce1"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-head022-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 50179,
+      "sha256": "8037dc7321a8adce862d4ad92811e1188838555982d9776582b79933e82bfb7b"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-head022.log",
+      "bytes": 44556,
+      "sha256": "8e374d578a78b0fb9e3666c80707d14b5118db621de2bed3ca2e205425f3f901"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-lint.json",
+      "bytes": 1938,
+      "sha256": "51eaf002cfbc36b7b69cfb04d576edd5edf1bf44d77145d17b20fe1c810ffbf1"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-lint.py",
+      "bytes": 2345,
+      "sha256": "49b7523e403e5b1191651199414aab9edd58c09bd17f6351a30dfd179f4b7343"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-owned-files.txt",
+      "bytes": 1078,
+      "sha256": "cb8cedbd454b3017451133609aa2571f9f4409948d32e62d212980741b3476fd"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-owned-targeted.log",
+      "bytes": 2840,
+      "sha256": "58ba7db81fc45159dd8d42af8afe64d60ee7e665111ea7b64edd31e4e55ee2bc"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-post-extractions-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 6674,
+      "sha256": "812370f8a62111f3ebd6c29355414e5235ef9872c666a11769862a89bd0d5262"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-post-extractions-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35062,
+      "sha256": "9d01d09966cbd879a9f2def6fac63df5412dd1221b63e003c33077be4a5b745b"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-post-extractions-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 25276,
+      "sha256": "7745ac3eab213ac45fcfe29bd1199a66296e85a2c664348be5036827f9189ab1"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-post-extractions-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 49906,
+      "sha256": "de61b4b9d9c9cb74699356ba080b07310828bed157d7ab9b3ea782676a8c8d04"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-post-extractions.log",
+      "bytes": 21015,
+      "sha256": "66e93248b7880fa0d0ed6c7ce0455c1ad28d7b4fd1779438b0900a8289c4568a"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-probe.py",
+      "bytes": 1590,
+      "sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-qualified-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 5903,
+      "sha256": "2cf910b069ccc5095a2126a37c42f2973ef03a446fbb2862022aa16f9f04be07"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-qualified-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 34994,
+      "sha256": "6317b8ffe1443d020b94bc62b22fbb8382625cf6883d850fe397da66ef182307"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-qualified-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 21928,
+      "sha256": "f2c6e4a527c87158f1befd61f1e4c86fd9d2ac8c739285ec5f1f2d3776b24a64"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-qualified-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 49860,
+      "sha256": "52bccef0d9debee1660fd6e55c1059d1813179e9a800e4ba5dee7e9bcc24bbb6"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-qualified.log",
+      "bytes": 2063,
+      "sha256": "f0887914e531674aa56ffb4b0b0a819463080c17b9684586384e6f1677a3edc9"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-regressions.log",
+      "bytes": 9625,
+      "sha256": "0bde0e2d82ec836fc1b8d01e36e9f4a2ba85bffdb34e19b9bae5242c1f5aee08"
+    },
+    {
+      "path": "/private/tmp/mixins-picker-baseline.log",
+      "bytes": 14056,
+      "sha256": "d335feffa180dbc868b301a973dabb13c4ca7f433326d541df03cb4e5f9adca6"
+    },
+    {
+      "path": "/private/tmp/mixins-picker-baseline.py",
+      "bytes": 442,
+      "sha256": "0501ae6e1b7db8b02d012520c15d3d39f656a112c98a6a5757ac795a1bf4b475"
+    },
+    {
+      "path": "/private/tmp/mixins-prompts-imports.patch",
+      "bytes": 2571,
+      "sha256": "7f452d575ab8372f9e176855062ea2b6fc0ec9ff7b197a74f680eb2b5c393ec9"
+    },
+    {
+      "path": "/private/tmp/mixins-warmup-test-edit.patch",
+      "bytes": 5188,
+      "sha256": "5ef4f7eaf12246cbed79a42f472c29a9bb11b3a923cda0bf7ea6430a189b2ad2"
+    },
+    {
+      "path": "/private/tmp/mixins-warmup-test-edit.py",
+      "bytes": 1786,
+      "sha256": "bd367beae8747737fcaa0e8285c996327eafaab392f947a4c5c83bfbcc59f157"
+    },
+    {
+      "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/composer-llm-extraction-owned.txt",
+      "bytes": 565,
+      "sha256": "46d79ae507c29cca5ea3d602e0ed895c719c5f989080825cc1283a66f2d0f529"
+    },
+    {
+      "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/composer-llm-extraction-plan.md",
+      "bytes": 4466,
+      "sha256": "87efc4afe257f01ea7e0c89d7b85a71c066bdf1af326942d262172a1d2121360"
+    },
+    {
+      "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/composer-llm-extraction-report.md",
+      "bytes": 7495,
+      "sha256": "538d5f856978180a18e8cdc76597f7972ca14663d5f0628b146796ffcf376bca"
+    },
+    {
+      "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/core-extraction-review.md",
+      "bytes": 4277,
+      "sha256": "b11422137e7c520d241e7afe308f4c98377b7216969f5efca7e8d7d178351f9c"
+    },
+    {
+      "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/final-perf-extractions-report.md",
+      "bytes": 4707,
+      "sha256": "d541863e2a9a8da34042a326253632f26a9cf391120563e2cb89dc9049d36d09"
+    },
+    {
+      "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/final-perf-source-inventory.json",
+      "bytes": 9821,
+      "sha256": "aadb347cadf95d734365d4641d7eb062fd596ce0e8ad705c02f22348491d145d"
+    },
+    {
+      "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/perf-022-diagnosis.md",
+      "bytes": 8351,
+      "sha256": "d15a9aebf58f743b7b7a75a57c952044dea22ede64a08fedb99d3a07f2e70df1"
+    },
+    {
+      "path": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/perf-022-fix-report.md",
+      "bytes": 10057,
+      "sha256": "b496e581868a981c4485e3859724813e2e9ea32710edbd7bf68ee6e4de0fb0d5"
+    }
+  ]
+}

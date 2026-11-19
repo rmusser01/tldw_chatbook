@@ -153,9 +153,13 @@ async def test_generate_buttons_present_in_compose():
     app = _CaptureApp()
     async with app.run_test():
         editor = app.query_one(PersonasCharacterEditorWidget)
-        assert editor.query_one("#personas-char-editor-avatar-generate", Button) is not None
         assert (
-            editor.query_one("#personas-char-editor-expr-generate-all", Button) is not None
+            editor.query_one("#personas-char-editor-avatar-generate", Button)
+            is not None
+        )
+        assert (
+            editor.query_one("#personas-char-editor-expr-generate-all", Button)
+            is not None
         )
         for state in EXPRESSION_STATES:
             assert (
@@ -241,8 +245,7 @@ async def test_expr_set_row_buttons_reachable_and_functional_at_width(width):
             node.press()
             await pilot.pause()
             assert len(captured) == before + 1, (
-                f"{widget_id} did not post {message_type.__name__} at "
-                f"width={width}."
+                f"{widget_id} did not post {message_type.__name__} at width={width}."
             )
 
 
@@ -269,7 +272,9 @@ async def test_expression_generate_button_posts_message_with_correct_state():
         await pilot.pause()
         for state in EXPRESSION_STATES:
             app.expr_generate.clear()
-            app.query_one(f"#personas-char-editor-expr-{state}-generate", Button).press()
+            app.query_one(
+                f"#personas-char-editor-expr-{state}-generate", Button
+            ).press()
             await pilot.pause()
             assert len(app.expr_generate) == 1
             assert app.expr_generate[0].state == state
@@ -284,7 +289,9 @@ async def test_generate_all_button_posts_generate_all_requested():
         app.query_one("#personas-char-editor-expr-generate-all", Button).press()
         await pilot.pause()
         assert len(app.expr_generate_all) == 1
-        assert isinstance(app.expr_generate_all[0], CharacterExpressionGenerateAllRequested)
+        assert isinstance(
+            app.expr_generate_all[0], CharacterExpressionGenerateAllRequested
+        )
 
 
 # ===== Mandatory assertion (b): per-state generate + generate-all are
@@ -308,9 +315,7 @@ async def test_expression_generate_buttons_disabled_for_unsaved_character():
                 is True
             )
         assert (
-            editor.query_one(
-                "#personas-char-editor-expr-generate-all", Button
-            ).disabled
+            editor.query_one("#personas-char-editor-expr-generate-all", Button).disabled
             is True
         )
 
@@ -336,9 +341,7 @@ async def test_expression_generate_buttons_enabled_after_save():
                 is False
             )
         assert (
-            editor.query_one(
-                "#personas-char-editor-expr-generate-all", Button
-            ).disabled
+            editor.query_one("#personas-char-editor-expr-generate-all", Button).disabled
             is False
         )
 
@@ -423,9 +426,7 @@ async def test_generate_worker_happy_path_applies_result(
 
     await screen._generate_expression_image_worker(char_id, "thinking")
 
-    apply_mock.assert_awaited_once_with(
-        char_id, "thinking", b"png-bytes", "image/png"
-    )
+    apply_mock.assert_awaited_once_with(char_id, "thinking", b"png-bytes", "image/png")
     assert (char_id, "thinking") not in screen._expression_generate_inflight
 
 
@@ -474,9 +475,7 @@ async def test_generate_worker_no_open_editor_session_skips_write(
     monkeypatch.setattr(
         personas_screen_module,
         "run_generation",
-        lambda request: SimpleNamespace(
-            content=b"png-bytes", content_type="image/png"
-        ),
+        lambda request: SimpleNamespace(content=b"png-bytes", content_type="image/png"),
     )
     apply_mock = AsyncMock()
     monkeypatch.setattr(screen, "_apply_expression_upload", apply_mock)
@@ -702,7 +701,9 @@ async def test_generate_worker_shows_and_clears_in_slot_generating_hint(
 
     monkeypatch.setattr(personas_screen_module, "run_generation", _run_generation)
     screen._expression_generate_inflight.add((char_id, "thinking"))
-    editor.set_expression_generating("thinking", True)  # what the handler does at dispatch
+    editor.set_expression_generating(
+        "thinking", True
+    )  # what the handler does at dispatch
 
     await screen._generate_expression_image_worker(char_id, "thinking")
 
@@ -931,7 +932,9 @@ async def test_avatar_generate_requested_unsaved_character_dispatches_worker(
     monkeypatch.setattr(screen, "run_worker", _fake_run_worker)
     notifications = _capture_notifications(app)
 
-    screen._handle_character_avatar_generate_requested(CharacterAvatarGenerateRequested())
+    screen._handle_character_avatar_generate_requested(
+        CharacterAvatarGenerateRequested()
+    )
 
     # No "save the character first" refusal - unlike the per-state handler.
     assert calls == [1]
@@ -949,7 +952,9 @@ async def test_avatar_generate_requested_empty_description_notifies_no_worker(
     monkeypatch.setattr(screen, "run_worker", lambda *a, **k: calls.append(1))
     notifications = _capture_notifications(app)
 
-    screen._handle_character_avatar_generate_requested(CharacterAvatarGenerateRequested())
+    screen._handle_character_avatar_generate_requested(
+        CharacterAvatarGenerateRequested()
+    )
 
     assert calls == []
     assert notifications
@@ -972,8 +977,12 @@ async def test_avatar_generate_requested_inflight_second_click_single_generation
     monkeypatch.setattr(screen, "run_worker", _fake_run_worker)
     notifications = _capture_notifications(app)
 
-    screen._handle_character_avatar_generate_requested(CharacterAvatarGenerateRequested())
-    screen._handle_character_avatar_generate_requested(CharacterAvatarGenerateRequested())
+    screen._handle_character_avatar_generate_requested(
+        CharacterAvatarGenerateRequested()
+    )
+    screen._handle_character_avatar_generate_requested(
+        CharacterAvatarGenerateRequested()
+    )
 
     assert calls == [1]
     assert (char_id, "avatar") in screen._expression_generate_inflight
@@ -1026,7 +1035,9 @@ async def test_avatar_generate_requested_refused_while_generate_all_in_flight(
     monkeypatch.setattr(screen, "run_worker", lambda *a, **k: calls.append(1))
     notifications = _capture_notifications(app)
 
-    screen._handle_character_avatar_generate_requested(CharacterAvatarGenerateRequested())
+    screen._handle_character_avatar_generate_requested(
+        CharacterAvatarGenerateRequested()
+    )
 
     assert calls == []
     assert notifications
@@ -1687,7 +1698,7 @@ async def test_style_pick_reset_on_new_create_session(
 
 
 async def test_style_pick_reset_on_edit_requested_reopen(
-    personas_editor_with_saved_character
+    personas_editor_with_saved_character,
 ):
     """Opening a character for edit (EditCharacterRequested - the
     "open-different-character" boundary the review flagged by name) also
@@ -1709,9 +1720,7 @@ async def test_style_pick_reset_on_edit_requested_reopen(
     assert str(readout.renderable) == "Style: Custom"
 
 
-async def test_style_pick_reset_on_cancel_edit(
-    personas_editor_with_saved_character
-):
+async def test_style_pick_reset_on_cancel_edit(personas_editor_with_saved_character):
     """Cancelling the editor (_finish_cancel_edit) also clears a
     previously-picked style - the session it belonged to just ended."""
     app, screen, db, char_id = personas_editor_with_saved_character
@@ -1828,7 +1837,9 @@ async def test_visual_identity_generate_all_uses_three_threads_one_reference_and
     assert requests[0].reference_image.content == reference_bytes
     assert len({id(request.cancel_event) for request in requests}) == 1
     assert isinstance(requests[0].cancel_event, Event)
-    assert len(screen._visual_identity_authoring.candidate.replaced_expression_keys) == 31
+    assert (
+        len(screen._visual_identity_authoring.candidate.replaced_expression_keys) == 31
+    )
 
 
 async def test_visual_identity_generate_all_cancellation_discards_candidate_and_drains(
@@ -1987,7 +1998,9 @@ async def test_visual_identity_save_publishes_once_then_invalidates_before_refre
             ),
         )
 
-    monkeypatch.setattr(personas_screen_module, "publish_visual_identity_candidate", publish)
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
     monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", invalidate)
     monkeypatch.setattr(screen, "_configure_character_visual_identity", refresh)
 
@@ -2032,9 +2045,7 @@ async def test_visual_identity_concurrent_save_attempt_publishes_exactly_once(
     monkeypatch.setattr(
         personas_screen_module, "publish_visual_identity_candidate", publish
     )
-    monkeypatch.setattr(
-        screen, "_invalidate_visual_identity_publication", AsyncMock()
-    )
+    monkeypatch.setattr(screen, "_invalidate_visual_identity_publication", AsyncMock())
     monkeypatch.setattr(screen, "_configure_character_visual_identity", AsyncMock())
 
     first = asyncio.create_task(screen._save_visual_identity_pack(browser.pack))
@@ -2379,15 +2390,15 @@ async def test_visual_identity_first_clear_admits_one_candidate_and_cancel_reach
     monkeypatch.setattr(
         personas_screen_module,
         "run_generation",
-        lambda request: provider_calls.append(request)
-        or SimpleNamespace(content=_valid_png(), content_type="image/png"),
+        lambda request: (
+            provider_calls.append(request)
+            or SimpleNamespace(content=_valid_png(), content_type="image/png")
+        ),
     )
 
     clear = asyncio.create_task(screen._stage_visual_identity_clear(asset))
     assert await asyncio.to_thread(entered.wait, 2)
-    assert browser.query_one(
-        "#personas-visual-identity-cancel", Button
-    ).display
+    assert browser.query_one("#personas-visual-identity-cancel", Button).display
     assert (
         str(browser.query_one("#personas-visual-identity-dirty", Static).renderable)
         == "Preparing reactions…"
@@ -2452,9 +2463,7 @@ async def test_visual_identity_duplicate_generation_shares_global_three_call_cei
     monkeypatch.setattr(personas_screen_module, "run_generation", generate)
     generate_all = asyncio.create_task(screen._generate_visual_identity_pack_all())
     assert await asyncio.to_thread(three_started.wait, 2)
-    duplicate = asyncio.create_task(
-        screen._generate_visual_identity_assets((asset,))
-    )
+    duplicate = asyncio.create_task(screen._generate_visual_identity_assets((asset,)))
     await asyncio.sleep(0.1)
 
     screen._request_visual_identity_generation_cancel()
@@ -2549,9 +2558,7 @@ async def test_visual_identity_mode_transition_signals_then_drains_adapter(
         return SimpleNamespace(content=_valid_png(), content_type="image/png")
 
     monkeypatch.setattr(personas_screen_module, "run_generation", generate)
-    generation = asyncio.create_task(
-        screen._generate_visual_identity_assets((asset,))
-    )
+    generation = asyncio.create_task(screen._generate_visual_identity_assets((asset,)))
     assert await asyncio.to_thread(entered.wait, 2)
     try:
         await screen._run_guarded(lambda: screen._apply_mode("personas"))
@@ -2597,7 +2604,9 @@ async def test_visual_identity_save_consumes_orphan_token_without_exposing_path(
         return True
 
     monkeypatch.setattr(personas_screen_module, "get_user_data_dir", lambda: user_root)
-    monkeypatch.setattr(personas_screen_module, "publish_visual_identity_candidate", publish)
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
     monkeypatch.setattr(
         personas_screen_module,
         "cleanup_visual_identity_publication_candidate",
@@ -2649,7 +2658,9 @@ async def test_visual_identity_orphan_cleanup_never_notifies_reloaded_editor(
     monkeypatch.setattr(
         personas_screen_module, "get_user_data_dir", lambda: tmp_path / "user-root"
     )
-    monkeypatch.setattr(personas_screen_module, "publish_visual_identity_candidate", publish)
+    monkeypatch.setattr(
+        personas_screen_module, "publish_visual_identity_candidate", publish
+    )
     monkeypatch.setattr(
         personas_screen_module,
         "cleanup_visual_identity_publication_candidate",
@@ -3055,9 +3066,7 @@ async def test_publication_invalidation_isolated_and_busy_state_always_restored(
         lambda *_args, **_kwargs: result,
     )
     reload_metadata = AsyncMock()
-    monkeypatch.setattr(
-        screen, "_configure_character_visual_identity", reload_metadata
-    )
+    monkeypatch.setattr(screen, "_configure_character_visual_identity", reload_metadata)
 
     async def invalidate(result):
         host = SimpleNamespace(app=SimpleNamespace(screen_stack=fake_screens))
@@ -3536,15 +3545,17 @@ async def test_character_save_reconciliation_never_launches_detached_reload(
 
     assert screen.character_handler.current_character_data["name"] == "After save"
     assert editor._character_data["name"] == "After save"
-    assert str(
-        card.query_one("#personas-character-card-name", Static).renderable
-    ) == "Name: After save"
+    assert (
+        str(card.query_one("#personas-character-card-name", Static).renderable)
+        == "Name: After save"
+    )
     assert rendered_character_ids == [char_id]
     screen._finish_cancel_edit()
     assert screen._edit_mode == "view"
-    assert str(
-        card.query_one("#personas-character-card-name", Static).renderable
-    ) == "Name: After save"
+    assert (
+        str(card.query_one("#personas-character-card-name", Static).renderable)
+        == "Name: After save"
+    )
     await screen._begin_create_character()
     editor._input("name").value = "New session sentinel"
     release.set()
@@ -3638,16 +3649,17 @@ async def test_generate_all_restores_missing_canonical_asset_and_direction(
     monkeypatch.setattr(
         personas_screen_module,
         "run_generation",
-        lambda request: requests.append(request)
-        or SimpleNamespace(content=_valid_png(), content_type="image/png"),
+        lambda request: (
+            requests.append(request)
+            or SimpleNamespace(content=_valid_png(), content_type="image/png")
+        ),
     )
 
     assert await screen._generate_visual_identity_pack_all()
 
     assert len(requests) == 31
     assert any(
-        "lowered gaze and accountable regret" in request.prompt
-        for request in requests
+        "lowered gaze and accountable regret" in request.prompt for request in requests
     )
     candidate = screen._visual_identity_authoring.candidate
     assert set(candidate.replaced_expression_keys) == set(

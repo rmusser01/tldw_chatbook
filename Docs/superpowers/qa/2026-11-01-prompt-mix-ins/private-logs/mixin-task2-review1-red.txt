@@ -1,0 +1,282 @@
+FFFFFFFF                                                                 [100%]
+=================================== FAILURES ===================================
+_____ test_bom_mixin_markdown_never_falls_back_or_logs_literal_data[valid] _____
+Tests/Library/test_prompt_export_roundtrip.py:583: in test_bom_mixin_markdown_never_falls_back_or_logs_literal_data
+    assert parse_markdown_prompts_from_content(markdown) == [detail]
+E   AssertionError: assert [] == [{'artifact_t...ds': [], ...}]
+E     
+E     Right contains one more item: {'artifact_type': 'mixin', 'author': None, 'details': None, 'keywords': [], ...}
+E     Use -v to get more diff
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 12:44:10.956 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-01 12:44:11.001 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-01 12:44:11.045 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-01 12:44:11.046 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 12:44:11.054 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:parse_markdown_prompts_from_content:874 - Custom MD/TXT Parser: No 'TITLE' section found or it was empty. Content snippet: ﻿# Chatbook mix-in
+
+```json
+{"artifact_type":"mixin","author":null,"details":null,"keywords":[],"name":"BOM literal","prompt_definition":"{\"kind\": \"text_mixin\", \"schema_version\": 3, \"body\": \"
+___ test_bom_mixin_markdown_never_falls_back_or_logs_literal_data[bad-json] ____
+Tests/Library/test_prompt_export_roundtrip.py:586: in test_bom_mixin_markdown_never_falls_back_or_logs_literal_data
+    with pytest.raises(PromptChatbookRecordError) as error:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'tldw_chatbook.Prompt_Management.prompt_chatbook_record.PromptChatbookRecordError'>
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 12:44:11.126 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:parse_markdown_prompts_from_content:874 - Custom MD/TXT Parser: No 'TITLE' section found or it was empty. Content snippet: ﻿# Chatbook mix-in
+
+```json
+bom_literal_body_must_not_leak invalid
+```
+
+_ test_bom_mixin_markdown_never_falls_back_or_logs_literal_data[missing-fence] _
+Tests/Library/test_prompt_export_roundtrip.py:586: in test_bom_mixin_markdown_never_falls_back_or_logs_literal_data
+    with pytest.raises(PromptChatbookRecordError) as error:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'tldw_chatbook.Prompt_Management.prompt_chatbook_record.PromptChatbookRecordError'>
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 12:44:11.163 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:parse_markdown_prompts_from_content:874 - Custom MD/TXT Parser: No 'TITLE' section found or it was empty. Content snippet: ﻿# Chatbook mix-in
+
+```json
+{"artifact_type":"mixin","author":null,"details":null,"keywords":[],"name":"BOM literal","prompt_definition":"{\"kind\": \"text_mixin\", \"schema_version\": 3, \"body\": \"
+_ test_bom_mixin_markdown_never_falls_back_or_logs_literal_data[trailing-legacy] _
+Tests/Library/test_prompt_export_roundtrip.py:586: in test_bom_mixin_markdown_never_falls_back_or_logs_literal_data
+    with pytest.raises(PromptChatbookRecordError) as error:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE <class 'tldw_chatbook.Prompt_Management.prompt_chatbook_record.PromptChatbookRecordError'>
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 12:44:11.198 | DEBUG    | tldw_chatbook.Prompt_Management.Prompts_Interop:parse_markdown_prompts_from_content:923 - Parsed custom MD/TXT prompt: Unexpected legacy Prompt
+_ test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation[valid] __
+Tests/Library/test_prompt_export_roundtrip.py:610: in test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation
+    assert len(results) == 1 and results[0]["status"] == "success"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 12:44:11.232 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:initialize_interop:123 - Initializing Prompts Interop Library. DB Path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db, Client ID: bom-import
+2026-11-01 12:44:11.232 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db [Client ID: bom-import]
+2026-11-01 12:44:11.415 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db [Client: bom-import, Thread: MainThread]
+2026-11-01 12:44:11.415 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 12:44:11.415 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 12:44:11.415 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db...
+2026-11-01 12:44:11.420 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.420 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 12:44:11.421 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 12:44:11.421 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 12:44:11.422 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.422 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db.
+2026-11-01 12:44:11.422 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 12:44:11.422 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 12:44:11.422 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 12:44:11.422 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db...
+2026-11-01 12:44:11.425 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.426 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.426 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db.
+2026-11-01 12:44:11.426 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 12:44:11.426 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db...
+2026-11-01 12:44:11.429 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.429 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.430 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 12:44:11.430 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db...
+2026-11-01 12:44:11.433 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.433 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.433 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 12:44:11.433 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 12:44:11.437 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.437 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.437 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 12:44:11.440 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.442 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.442 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 12:44:11.442 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 12:44:11.442 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db
+2026-11-01 12:44:11.442 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:initialize_interop:130 - Prompts Interop Library initialized successfully.
+2026-11-01 12:44:11.444 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1055 - Processing import file: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom-mixin.md
+2026-11-01 12:44:11.444 | DEBUG    | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1060 - Validated prompt file path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom-mixin.md
+2026-11-01 12:44:11.444 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:parse_markdown_prompts_from_content:874 - Custom MD/TXT Parser: No 'TITLE' section found or it was empty. Content snippet: ﻿# Chatbook mix-in
+
+```json
+{"artifact_type":"mixin","author":null,"details":null,"keywords":[],"name":"BOM literal","prompt_definition":"{\"kind\": \"text_mixin\", \"schema_version\": 3, \"body\": \"
+2026-11-01 12:44:11.444 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1131 - No prompts found or parsed in file: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom-mixin.md
+2026-11-01 12:44:11.444 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:shutdown_interop:172 - Shutting down Prompts Interop Library for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor0/bom.db.
+2026-11-01 12:44:11.445 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 12:44:11.445 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:shutdown_interop:183 - Prompts Interop Library shut down.
+_ test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation[bad-json] _
+Tests/Library/test_prompt_export_roundtrip.py:615: in test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation
+    assert len(results) == 1 and results[0]["status"] == "failure"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 12:44:11.484 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:initialize_interop:123 - Initializing Prompts Interop Library. DB Path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db, Client ID: bom-import
+2026-11-01 12:44:11.484 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db [Client ID: bom-import]
+2026-11-01 12:44:11.622 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db [Client: bom-import, Thread: MainThread]
+2026-11-01 12:44:11.623 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 12:44:11.623 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 12:44:11.623 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db...
+2026-11-01 12:44:11.627 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.627 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 12:44:11.628 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 12:44:11.628 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 12:44:11.628 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.628 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db.
+2026-11-01 12:44:11.628 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 12:44:11.629 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 12:44:11.629 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 12:44:11.629 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db...
+2026-11-01 12:44:11.632 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.633 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.633 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db.
+2026-11-01 12:44:11.633 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 12:44:11.633 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db...
+2026-11-01 12:44:11.636 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.636 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.636 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 12:44:11.636 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db...
+2026-11-01 12:44:11.639 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.640 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.640 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 12:44:11.640 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 12:44:11.643 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.643 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.643 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 12:44:11.646 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.648 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.648 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 12:44:11.648 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 12:44:11.648 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db
+2026-11-01 12:44:11.648 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:initialize_interop:130 - Prompts Interop Library initialized successfully.
+2026-11-01 12:44:11.650 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1055 - Processing import file: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom-mixin.md
+2026-11-01 12:44:11.650 | DEBUG    | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1060 - Validated prompt file path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom-mixin.md
+2026-11-01 12:44:11.650 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:parse_markdown_prompts_from_content:874 - Custom MD/TXT Parser: No 'TITLE' section found or it was empty. Content snippet: ﻿# Chatbook mix-in
+
+```json
+bom_literal_body_must_not_leak invalid
+```
+
+2026-11-01 12:44:11.650 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1131 - No prompts found or parsed in file: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom-mixin.md
+2026-11-01 12:44:11.650 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:shutdown_interop:172 - Shutting down Prompts Interop Library for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor1/bom.db.
+2026-11-01 12:44:11.651 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 12:44:11.651 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:shutdown_interop:183 - Prompts Interop Library shut down.
+_ test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation[missing-fence] _
+Tests/Library/test_prompt_export_roundtrip.py:615: in test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation
+    assert len(results) == 1 and results[0]["status"] == "failure"
+E   assert (0 == 1)
+E    +  where 0 = len([])
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 12:44:11.689 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:initialize_interop:123 - Initializing Prompts Interop Library. DB Path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db, Client ID: bom-import
+2026-11-01 12:44:11.689 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db [Client ID: bom-import]
+2026-11-01 12:44:11.827 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db [Client: bom-import, Thread: MainThread]
+2026-11-01 12:44:11.827 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 12:44:11.827 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 12:44:11.827 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db...
+2026-11-01 12:44:11.832 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.832 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 12:44:11.833 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 12:44:11.833 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 12:44:11.833 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.833 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db.
+2026-11-01 12:44:11.833 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 12:44:11.833 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 12:44:11.833 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 12:44:11.833 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db...
+2026-11-01 12:44:11.837 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.838 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.838 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db.
+2026-11-01 12:44:11.838 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 12:44:11.838 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db...
+2026-11-01 12:44:11.841 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.841 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.841 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 12:44:11.841 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db...
+2026-11-01 12:44:11.844 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.845 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.845 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 12:44:11.845 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 12:44:11.848 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.848 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.848 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 12:44:11.851 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:11.853 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:11.853 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 12:44:11.853 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 12:44:11.853 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db
+2026-11-01 12:44:11.853 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:initialize_interop:130 - Prompts Interop Library initialized successfully.
+2026-11-01 12:44:11.855 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1055 - Processing import file: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom-mixin.md
+2026-11-01 12:44:11.855 | DEBUG    | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1060 - Validated prompt file path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom-mixin.md
+2026-11-01 12:44:11.855 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:parse_markdown_prompts_from_content:874 - Custom MD/TXT Parser: No 'TITLE' section found or it was empty. Content snippet: ﻿# Chatbook mix-in
+
+```json
+{"artifact_type":"mixin","author":null,"details":null,"keywords":[],"name":"BOM literal","prompt_definition":"{\"kind\": \"text_mixin\", \"schema_version\": 3, \"body\": \"
+2026-11-01 12:44:11.855 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1131 - No prompts found or parsed in file: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom-mixin.md
+2026-11-01 12:44:11.855 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:shutdown_interop:172 - Shutting down Prompts Interop Library for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor2/bom.db.
+2026-11-01 12:44:11.856 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 12:44:11.856 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:shutdown_interop:183 - Prompts Interop Library shut down.
+_ test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation[trailing-legacy] _
+Tests/Library/test_prompt_export_roundtrip.py:615: in test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation
+    assert len(results) == 1 and results[0]["status"] == "failure"
+E   assert (1 == 1 and 'success' == 'failure'
+E    +  where 1 = len([{'file_path': '/private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom-mixin.md', 'message': "Prompt 'Unexpected legacy Prompt' added successfully.", 'prompt_id': 1, 'prompt_name': 'Unexpected legacy Prompt', ...}])
+E     
+E     - failure
+E     + success)
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 12:44:11.893 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:initialize_interop:123 - Initializing Prompts Interop Library. DB Path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db, Client ID: bom-import
+2026-11-01 12:44:11.893 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db [Client ID: bom-import]
+2026-11-01 12:44:12.032 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db [Client: bom-import, Thread: MainThread]
+2026-11-01 12:44:12.032 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 12:44:12.032 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 12:44:12.032 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db...
+2026-11-01 12:44:12.037 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:12.037 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 12:44:12.038 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 12:44:12.038 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 12:44:12.038 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:12.038 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db.
+2026-11-01 12:44:12.038 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 12:44:12.038 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 12:44:12.038 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 12:44:12.038 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db...
+2026-11-01 12:44:12.042 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:12.042 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:12.042 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db.
+2026-11-01 12:44:12.042 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 12:44:12.042 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db...
+2026-11-01 12:44:12.046 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:12.046 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:12.046 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 12:44:12.046 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db...
+2026-11-01 12:44:12.050 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:12.050 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:12.050 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 12:44:12.050 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 12:44:12.053 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:12.054 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:12.054 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 12:44:12.057 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:12.058 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:12.058 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 12:44:12.058 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 12:44:12.058 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db
+2026-11-01 12:44:12.058 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:initialize_interop:130 - Prompts Interop Library initialized successfully.
+2026-11-01 12:44:12.060 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1055 - Processing import file: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom-mixin.md
+2026-11-01 12:44:12.060 | DEBUG    | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1060 - Validated prompt file path: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom-mixin.md
+2026-11-01 12:44:12.060 | DEBUG    | tldw_chatbook.Prompt_Management.Prompts_Interop:parse_markdown_prompts_from_content:923 - Parsed custom MD/TXT prompt: Unexpected legacy Prompt
+2026-11-01 12:44:12.064 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 12:44:12.064 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:544 - No keyword changes prompt 1.
+2026-11-01 12:44:12.065 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 12:44:12.065 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:import_prompts_from_files:1180 - Imported prompt 'Unexpected legacy Prompt' from /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom-mixin.md: Prompt 'Unexpected legacy Prompt' added successfully.
+2026-11-01 12:44:12.065 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:shutdown_interop:172 - Shutting down Prompts Interop Library for DB: /private/tmp/mixin-task2-review1-red/test_bom_mixin_utf8_file_impor3/bom.db.
+2026-11-01 12:44:12.066 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 12:44:12.066 | INFO     | tldw_chatbook.Prompt_Management.Prompts_Interop:shutdown_interop:183 - Prompts Interop Library shut down.
+============================= slowest 25 durations =============================
+
+(24 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Library/test_prompt_export_roundtrip.py::test_bom_mixin_markdown_never_falls_back_or_logs_literal_data[valid]
+FAILED Tests/Library/test_prompt_export_roundtrip.py::test_bom_mixin_markdown_never_falls_back_or_logs_literal_data[bad-json]
+FAILED Tests/Library/test_prompt_export_roundtrip.py::test_bom_mixin_markdown_never_falls_back_or_logs_literal_data[missing-fence]
+FAILED Tests/Library/test_prompt_export_roundtrip.py::test_bom_mixin_markdown_never_falls_back_or_logs_literal_data[trailing-legacy]
+FAILED Tests/Library/test_prompt_export_roundtrip.py::test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation[valid]
+FAILED Tests/Library/test_prompt_export_roundtrip.py::test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation[bad-json]
+FAILED Tests/Library/test_prompt_export_roundtrip.py::test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation[missing-fence]
+FAILED Tests/Library/test_prompt_export_roundtrip.py::test_bom_mixin_utf8_file_import_preserves_or_refuses_before_mutation[trailing-legacy]
+8 failed in 1.42s

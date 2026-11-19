@@ -1,0 +1,79 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/mixins-97a-final/run-checks.py",
+      "sha256": "d30cb916d1f9f9599fe2488fde2653da45155f070a73343297760696ade588db",
+      "bytes": 702
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/planned-commands.json",
+      "sha256": "a8d4c56160de2fd1f00f947fc6342d5d3fe8059a0e4f54ac2716735e64457e2b",
+      "bytes": 930
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/run-final-five.py",
+      "sha256": "923d60c281964d2d4d7317d99d4843893bd9584a3828c305f5b8f4ab3e4c58b0",
+      "bytes": 2366
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/static-0.log",
+      "sha256": "590943c7bc1507838f866771a151f8964ee0ed62a52a2443b7a9820a2bbc0b3d",
+      "bytes": 1202
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/static-commands-results.json",
+      "sha256": "86b92232f3f0fc0933e8730e5a719372f7529d774106d5782cdfdcdb4f270c42",
+      "bytes": 534
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/preflights-0.log",
+      "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992",
+      "bytes": 266
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/preflights-1.log",
+      "sha256": "682b34d7ae7d0c91dbe30d0f9f446387a6be3bde6a7f65c8b62d23e79b5b7a7d",
+      "bytes": 142
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/preflights-2.log",
+      "sha256": "075805a59995a1687818af841a309653083fe8d4e126953943810d7c76dcb261",
+      "bytes": 120
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/preflights-3.log",
+      "sha256": "3437d62ea973a8936f94841d5cc603994ceeb6c29a812a972b7dd0cb54360791",
+      "bytes": 81
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/preflights-commands-results.json",
+      "sha256": "fd509b3131501e05cdfc34b7bb08d082122b8c8b0d306c66c6b2810ffae2687e",
+      "bytes": 1348
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/final-five.log",
+      "sha256": "276f474e90398bd86783e8ab8d3e4af1425949bdff385b455919c6b16dc02f3a",
+      "bytes": 2061
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/final-five-proof.json",
+      "sha256": "4b1979b3fd23b20f314bdb1b7aa542bb846aca46dd26ad111f1cfae84d93ae05",
+      "bytes": 552
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/perf-source-before.json",
+      "sha256": "7818ec844b001d1a790450b1a253672ddd563256bdbe752cd7389a1a829c6c10",
+      "bytes": 563403
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/perf-source-after.json",
+      "sha256": "e8843c0dfb7cf467595d3ae593ed8f6e5d4047f41f81502c0d99a23c27b52bfb",
+      "bytes": 563402
+    },
+    {
+      "path": "/private/tmp/mixins-97a-final/root-gates-report.json",
+      "sha256": "1eac8e4f842e59d6c816ca27ae5ffba7a78ca8e555778f8574009a208afc2761",
+      "bytes": 1480
+    }
+  ]
+}

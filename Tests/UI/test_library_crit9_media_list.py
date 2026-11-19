@@ -42,6 +42,7 @@ def _assert_painted_cursor_row(host, choices, *, expected_row: int) -> None:
     assert marked == [expected_row], lines
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_type_chooser_marks_its_cursor_with_the_house_bar():
     """task-32210: the chooser cursor is the list's ``█`` bar, not a tint.
@@ -70,6 +71,7 @@ async def test_the_type_chooser_marks_its_cursor_with_the_house_bar():
         _assert_painted_cursor_row(host, choices, expected_row=1)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_sort_chooser_marks_its_cursor_with_the_house_bar():
     """Same cue on the sort chooser — one grammar across both choosers."""
@@ -109,6 +111,7 @@ async def _apply_media_type(screen, pilot, media_type: str):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_zero_result_filter_keeps_the_type_facet_and_names_it():
     """task-32213: a filter miss must not swallow the toolbar.
@@ -181,6 +184,7 @@ async def _enter_select_mode(screen, pilot):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", ((100, 30), (60, 24)))
 @pytest.mark.asyncio
 async def test_the_shared_count_margin_never_clips_the_trash_heading(size):
@@ -216,6 +220,7 @@ async def test_the_shared_count_margin_never_clips_the_trash_heading(size):
         assert str(title.renderable) in painted, (painted, title.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", ((235, 52), (100, 30)))
 @pytest.mark.asyncio
 async def test_the_select_count_never_touches_the_first_action(size):
@@ -239,6 +244,7 @@ async def test_the_select_count_never_touches_the_first_action(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_chooser_cursor_keeps_the_active_marker_and_the_pick_payload():
     """``█`` rides in front of ``✓``; ``choice_value`` survives the rewrite."""

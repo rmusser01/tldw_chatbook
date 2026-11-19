@@ -1,6 +1,9 @@
+import pytest
+
 from tldw_chatbook.Chunking.engine import Chunker
 
 
+@pytest.mark.bootstrap_profile
 def test_code_single_line_brace_block_does_not_merge_next():
 
     ck = Chunker()
@@ -16,6 +19,7 @@ def test_code_single_line_brace_block_does_not_merge_next():
     assert chunks == ["function foo() {}", "function bar() {}"]
 
 
+@pytest.mark.bootstrap_profile
 def test_code_prefix_without_headers_does_not_duplicate_text():
     ck = Chunker()
     src = "// header comment\nconst x = 1;\nconsole.log(x)\n"
@@ -31,6 +35,7 @@ def test_code_prefix_without_headers_does_not_duplicate_text():
     assert chunks == ["// header comment\nconst x = 1;\nconsole.log(x)"]
 
 
+@pytest.mark.bootstrap_profile
 def test_code_prefix_without_headers_metadata_keeps_full_file():
     ck = Chunker()
     src = "// header comment\nconst x = 1;\nconsole.log(x)\n"

@@ -1,0 +1,111 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "profiled": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "attach_poll": true,
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-qkxw06u8",
+  "periodic_tracebacks": "python-thread-synchronous",
+  "traceback_interval_seconds": 60.0,
+  "loop_clock_resolution_seconds": 0.015625,
+  "probe_poll_seconds": 0.03125,
+  "probe_heartbeat_seconds": 0.03125,
+  "baseline_revision": "d6dffdf7270bcc9e31f8b048e86581e576cd9ae7",
+  "baseline_loaded_sources": {
+    "tldw_chatbook.UI.Console_Modules.console_spend_projection": {
+      "revision": "d6dffdf7270bcc9e31f8b048e86581e576cd9ae7",
+      "sha256": "77d008b7febd98c10bd06c5581492ed7ac74af994b47dbc3e8044299f6b2225a",
+      "path": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.tmp-memory-baseline-sources\\tldw_chatbook\\UI\\Console_Modules\\console_spend_projection.py"
+    },
+    "tldw_chatbook.UI.Screens.chat_screen": {
+      "revision": "d6dffdf7270bcc9e31f8b048e86581e576cd9ae7",
+      "sha256": "926e2b150d9aba1efe0318aa0b860320c1b6310fc84e943ae07e1d6059ef9b99",
+      "path": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.tmp-memory-baseline-sources\\tldw_chatbook\\UI\\Screens\\chat_screen.py"
+    }
+  },
+  "baseline_scope": [
+    "tldw_chatbook/UI/Screens/chat_screen.py",
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py"
+  ],
+  "import_ms": 3183.4832999738865,
+  "construct_ms": 12831.601000012597,
+  "mount_ready_ms": 21470.096500008367,
+  "startup_phases": {
+    "basic_init": 1.0817200999881607,
+    "attribute_init": 1.1299998732283711e-05,
+    "parallel_init": 5.820091499976115,
+    "total_init": 12.831059099989943
+  },
+  "console_resume": [
+    {
+      "iteration": 0,
+      "resume_to_input_ms": 185.02870001248084,
+      "resume_to_attach_ms": 829.8305000062101,
+      "input_ms": 65.28700000490062,
+      "max_loop_overshoot_ms": 88.34039999055676,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 840.3194000129588
+    },
+    {
+      "iteration": 1,
+      "resume_to_input_ms": 169.17629999807104,
+      "resume_to_attach_ms": 1675.3426999785006,
+      "input_ms": 28.41579998494126,
+      "max_loop_overshoot_ms": 109.48250000365078,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1713.659800007008
+    },
+    {
+      "iteration": 2,
+      "resume_to_input_ms": 154.69799999846146,
+      "resume_to_attach_ms": 808.2632000150625,
+      "input_ms": 25.41819997713901,
+      "max_loop_overshoot_ms": 98.00559998257086,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 848.929700005101
+    },
+    {
+      "iteration": 3,
+      "resume_to_input_ms": 181.155599973863,
+      "resume_to_attach_ms": 1020.9496999741532,
+      "input_ms": 28.540800005430356,
+      "max_loop_overshoot_ms": 121.33220001123846,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1063.4339999814983
+    },
+    {
+      "iteration": 4,
+      "resume_to_input_ms": 201.14889999968,
+      "resume_to_attach_ms": 920.1191999891307,
+      "input_ms": 32.05290000187233,
+      "max_loop_overshoot_ms": 137.85279999137856,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 958.8366999814752
+    },
+    {
+      "iteration": 5,
+      "resume_to_input_ms": 200.70359998499043,
+      "resume_to_attach_ms": 1062.5783999857958,
+      "input_ms": 50.096699997084215,
+      "max_loop_overshoot_ms": 119.34189999010414,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1110.2144999895245
+    }
+  ],
+  "final_screen": null,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0,
+  "periodic_traceback_dumps": 0
+}

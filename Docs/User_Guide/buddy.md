@@ -25,7 +25,7 @@ companion, see the [server Persona documentation](https://github.com/rmusser01/t
    model. Use the Console transcript and status to confirm the result.
 
 If you want Migu to be the character you chat with as well, select **pixel-migu**
-in **Characters** and choose **Start Chat**. Its character expressions and the
+in **Characters** and choose **Chat now**. Its character expressions and the
 floating Persona's animations are separate features.
 
 Buddy accepts a saved, active **local Persona**. A highlighted library row alone

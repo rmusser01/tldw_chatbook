@@ -1,0 +1,14 @@
+{
+  "profile": "fresh private task-local profile",
+  "model": "deepseek-flash",
+  "protocol": "native tools",
+  "scenarios": [],
+  "error": {
+    "type": "PrivatePathError",
+    "message": "The task-owned private ancestor had shared-writable permissions; this attempt stopped before any model request. Its ACL was subsequently repaired without changing product guards."
+  },
+  "user_profile_unchanged": {
+    "config_sha256_unchanged": true,
+    "user_data_file_metadata_unchanged": true
+  }
+}

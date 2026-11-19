@@ -12,9 +12,13 @@ from tldw_chatbook.Chat.console_chat_controller import (
     CapturePurgeStatus,
     ConsoleChatController,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleMessageRole,
+    ConsoleProviderSelection,
+)
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeCapture
+from tldw_chatbook.Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 
 
 def _capture(run_tag: str, detail: CaptureDetail) -> ExchangeCapture:
@@ -451,9 +455,15 @@ async def test_controller_commit_is_one_owner_loop_section_while_lease_is_held()
 
 
 @pytest.mark.asyncio
-async def test_controller_lease_rejects_new_submit_before_any_await():
+async def test_controller_lease_rejects_new_submit_before_any_await(monkeypatch):
     store, session, _message, _persistence = _store_with_captures()
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+
+    def forbidden(*_args):
+        pytest.fail("a new submit must not prepare while the purge lease is held")
+
+    monkeypatch.setattr(controller, "prompt_mixin_service", forbidden)
+    monkeypatch.setattr(controller, "_submission_hook_admission", forbidden)
     assert store.begin_capture_quiescence(session.id) is True
     try:
         submit = await controller.submit_draft(
@@ -465,6 +475,47 @@ async def test_controller_lease_rejects_new_submit_before_any_await():
     assert submit.accepted is False
     assert submit.session_id == session.id
     assert "retry" in submit.visible_copy.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_pending_hook_admission_blocks_capture_purge_then_retires(monkeypatch, cancel):
+    store, session, _message, persistence = _store_with_captures()
+    controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_hook(session_id, shared):
+        assert session_id == session.id
+        entered.set()
+        await release.wait()
+        return "test hook refused", None
+
+    monkeypatch.setattr(controller, "_submission_hook_admission", held_hook)
+    snapshot = ConsoleTurnConfigurationSnapshot.capture(
+        session_id=session.id,
+        provider_selection=ConsoleProviderSelection(provider="llama_cpp"),
+    )
+    task = asyncio.create_task(
+        controller.submit_draft("prepare", session_id=session.id, configuration=snapshot)
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        purge = await controller.purge_full_captures(session.id, 0)
+        assert purge.status is CapturePurgeStatus.BLOCKED
+        assert purge.reason_code == "preparation_active"
+        assert not persistence.deleted_conversations
+        if cancel:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            release.set()
+            result = await task
+            assert not result.accepted and result.visible_copy == "test hook refused"
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+    assert controller.capture_purge_availability(session.id).can_purge
 
 
 @pytest.mark.asyncio

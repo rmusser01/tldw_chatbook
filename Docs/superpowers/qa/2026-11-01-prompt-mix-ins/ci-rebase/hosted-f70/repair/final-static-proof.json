@@ -1,0 +1,37 @@
+{
+  "baseline": "f70eb635f5991d25b7cd5d32d789406d837be32b",
+  "production_diff_only_docstring_and_initial_if_condition": true,
+  "original_checks_unchanged": [
+    {
+      "file": "Tests/UI/library_note_links_support.py",
+      "byte_identical_to_f70": true,
+      "sha256": "27fc9262e89732e2fc93bf4564d2159a8f7da6502875ff1418e7a72d3a9a532c"
+    },
+    {
+      "file": "Tests/UI/library_quit_guard_support.py",
+      "byte_identical_to_f70": true,
+      "sha256": "abd8a5e7cdc1f2247d6b219d8a0773cbe60cd3182aded57ef0148605decefb10"
+    },
+    {
+      "file": "Tests/UI/test_library_note_links_picker_and_preview.py",
+      "byte_identical_to_f70": true,
+      "sha256": "bc1804d9b9ebff3627254dcbadef20df6441ebd6c62eaa306d85a7f069bcffd1"
+    },
+    {
+      "file": "tldw_chatbook/UI/Library_Modules/canvas_sync.py",
+      "byte_identical_to_f70": true,
+      "sha256": "cc43d84343e5f40581bede079d19fc5c64140366b2d053663423d0e6e221a341"
+    },
+    {
+      "file": "tldw_chatbook/Widgets/Library/library_canvas_sync.py",
+      "byte_identical_to_f70": true,
+      "sha256": "e013239c3071a42a550b8823a79b51b65f88f655280e9c6a6a9b6420df4d92a8"
+    }
+  ],
+  "source_lines_before": 566,
+  "source_lines_after": 571,
+  "format_check": "2 files already formatted",
+  "ruff_baseline_count": 2,
+  "ruff_current_count": 2,
+  "new_test_ruff_count": 0
+}

@@ -301,6 +301,7 @@ def test_library_disabled_contrast_rules_live_in_source_and_bundle():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_details_open_recomputes_db_sizes_and_patches_line():
     """RC-09 observed effect: the disclosure kept showing the compose-time
@@ -371,6 +372,7 @@ async def test_details_open_recomputes_db_sizes_and_patches_line():
         assert "180.0KB" in rendered and "508.0KB" in rendered
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_details_open_mounts_db_sizes_line_when_compose_had_none():
     """Recompose discipline: the compose branch renders the sizes line only
@@ -585,6 +587,11 @@ def test_notes_footer_states_use_per_key_grammar_and_never_advertise_dead_keys()
     fake._with_library_notes_focus_chip = MethodType(
         LibraryScreen._with_library_notes_focus_chip, fake
     )
+    # TASK-34000.40 (N-31): the editor and navigator tiers end in the shared
+    # typing-field transform (a no-op here: no text field has focus).
+    fake._library_typing_field_footer = MethodType(
+        LibraryScreen._library_typing_field_footer, fake
+    )
     for name in vars(LibraryScreen):
         if name.startswith("LIBRARY_NOTES_"):
             setattr(fake, name, getattr(LibraryScreen, name))
@@ -719,6 +726,7 @@ async def test_database_save_remains_visible_focusable_and_in_normal_pane_order(
     assert work_pane.preferred_focus_ids[0] == "library-note-save"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_notes_editor_footer_context_actually_displays_at_60_cols():
     """The compact tier exists for the DISPLAYED footer: at 60 cols the
@@ -890,6 +898,7 @@ def _search_canvas_harness():
     return app, LibraryHarness(app), _active_library_screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_in_either_search_input_updates_the_other_in_place():
     """RC-08: 'two search inputs are live with different values'. The STATE
@@ -923,6 +932,7 @@ async def test_typing_in_either_search_input_updates_the_other_in_place():
         assert canvas_input.value == "tide charts"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_reveals_the_evidence_region_instead_of_leaving_the_fold_intact():
     """RC-08: results landed ~30 rows below the fold behind the
@@ -987,6 +997,7 @@ async def test_run_reveals_the_evidence_region_instead_of_leaving_the_fold_intac
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_blocked_run_records_nothing_in_recent_searches():
     """RC-08: 'never-executed strings still enter Recent searches'. The

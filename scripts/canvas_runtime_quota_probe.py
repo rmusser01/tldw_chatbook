@@ -22,7 +22,6 @@ import platform
 import re
 import shutil
 import statistics
-import subprocess
 import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
@@ -32,6 +31,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 from typing import Any
+
+import psutil
 
 from tldw_chatbook.Canvas.compiler import CanvasCompileError, compile_canvas_document
 from tldw_chatbook.Canvas.limits import CanvasLimits
@@ -895,18 +896,16 @@ def _process_tree_rss_mib(browser: Any) -> float:
     pids = sorted({int(item["id"]) for item in process_info})
     if not pids:
         raise ProbeError("Chromium exposed no owned process identifiers")
-    completed = subprocess.run(
-        ["ps", "-o", "pid=,rss=", "-p", ",".join(str(pid) for pid in pids)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    rss_kib = sum(
-        int(line.split()[1]) for line in completed.stdout.splitlines() if line.split()
-    )
-    if rss_kib <= 0:
+    rss_bytes = 0
+    for pid in pids:
+        try:
+            rss_bytes += psutil.Process(pid).memory_info().rss
+        except psutil.NoSuchProcess:
+            # Chromium can retire a reported child before the RSS sample.
+            continue
+    if rss_bytes <= 0:
         raise ProbeError("Chromium process-tree RSS was unavailable")
-    return round(rss_kib / 1024, 3)
+    return round(rss_bytes / (1024 * 1024), 3)
 
 
 def _new_page(browser: Any, origin: str) -> tuple[Any, Any]:

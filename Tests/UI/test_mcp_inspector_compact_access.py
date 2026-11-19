@@ -14,6 +14,7 @@ from Tests.UI.test_tool_profile_review_lifetime import _wait
 from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.UI.MCP_Modules.mcp_inspector import MCPInspector
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
 
 def _visible(app, control):
@@ -84,17 +85,27 @@ async def test_test_form_controls_remain_reachable_through_resize(
         service.gate_state = "ask"
         app.unified_mcp_service = service
         await app.handle_screen_navigation(NavigateToScreen("mcp"))
-        await _wait(pilot, lambda: getattr(app.screen, "screen_name", None) == "mcp")
-        workbench = app.screen.workbench
         await _wait(
             pilot,
             lambda: (
-                not workbench.is_loading
+                getattr(app.screen, "screen_name", None) == "settings"
+                and app.screen.active_category == "tools"
+                and bool(app.screen.query("#settings-tools-hub #mcp-hub-workbench"))
+            ),
+        )
+        hub = app.screen.query_one("#settings-tools-hub", ToolsHubPanel)
+        workbench = hub.workbench
+        assert workbench is not None
+        hub.activate_mode("tools")
+        await _wait(
+            pilot,
+            lambda: (
+                workbench.active_mode == "tools"
+                and not workbench.is_loading
                 and not workbench._reloading
                 and bool(workbench.query("#mcp-tools-table"))
             ),
         )
-        workbench.set_mode("tools")
         await _settle(pilot)
         table = workbench.query_one("#mcp-tools-table", DataTable)
         table.focus()
@@ -144,8 +155,24 @@ async def test_test_form_controls_remain_reachable_through_resize(
         assert not run.disabled
         _visible(app, run)
         preview = inspector.query_one("#mcp-inspector-test-preview", Static)
+        clip = app.screen.find_widget(preview).clip
+        # A native one-row Up must be insufficient from the starting position.
+        rows = max(0, preview.region.y - clip.y + 2)
+        assert rows <= min(
+            inspector.max_scroll_y - inspector.scroll_offset.y, run.region.y - clip.y
+        ), "Existing Inspector range cannot stage two clipped preview rows"
+        for _ in range(rows):
+            await pilot.press("down")
+            await _settle(pilot)
+        assert preview.region.y <= app.screen.find_widget(preview).clip.y - 2
+        assert app.focused is run
+        _visible(app, run)
+
         await pilot.press("up")
         await _settle(pilot)
+        assert app.focused is run
+        assert (json.loads(field.text) if raw else {"query": field.value}) == arguments
+        assert service.test_calls == service.decision_calls == []
         _visible(app, preview)
         _visible(app, run)
         assert _compact(

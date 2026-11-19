@@ -1,8 +1,9 @@
 ---
 id: TASK-26022
 title: Anthropic subscription credential borrow
-status: In Progress
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-08-31 15:45'
 updated_date: '2026-09-02 06:35'
 labels:
@@ -53,4 +54,5 @@ AC#7 CLOSED (live verify against a real Max account, 2026-09-02) - surfaced two 
 - macOS Keychain source: Claude Code stores the credential in the login Keychain ("Claude Code-credentials"), not ~/.claude/.credentials.json. read_claude_code_credential now falls back to a read-only, darwin-gated Keychain read (_keychain_credential_raw, absolute /usr/bin/security, 5s timeout, any failure -> None); file stays authoritative, non-macOS behavior unchanged.
 - Claude Code identity gate: the OAuth token is rejected (misleading 429 rate_limit_error) unless system leads with "You are Claude Code, Anthropic's official CLI for Claude." chat_with_anthropic now prepends it as the first system block on the subscription path only (with_claude_code_identity), preserving the user's own prompt as a following block; api-key sends untouched.
 - Live evidence: end-to-end chat_with_anthropic send with auth_source="claude_subscription" + a normal note-app system prompt read from keychain:Claude Code-credentials and returned 200 with real usage (input 56 / output 4). +13 tests. Lesson in lessons-live-verification.md.
+Closed 2026-10-03. The task stayed In Progress after AC#7 closed on 2026-09-02, although #2313 and #2320 had shipped every AC. Console-path live check on the owner's Max subscription, 2026-10-03, at dev af13839740: a private test profile with `auth_source = "claude_subscription"` and no Anthropic API key configured, driven through readiness -> ConsoleProviderGateway.resolve_for_send -> stream_chat -> chat_with_anthropic -> Anthropic. Readiness reported "Ready (Claude subscription)", the gateway resolved ready, and a streamed Haiku 4.5 reply arrived ("ok"). The credential came from the login Keychain (only that subprocess got the real HOME; the scratch test HOME has no login keychain). Still config-only: there is no Settings control for auth_source.
 <!-- SECTION:NOTES:END -->

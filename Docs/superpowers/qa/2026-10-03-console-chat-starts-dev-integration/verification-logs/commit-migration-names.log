@@ -1,0 +1,5 @@
+[codex/console-chat-starts-dev 8fbec5a3a3] Retire unshipped predecessor chat-start migration names
+ 3 files changed, 265 deletions(-)
+ delete mode 100644 Tests/DB/test_chachanotes_v74_agent_chat_starts_migration.py
+ delete mode 100644 tldw_chatbook/DB/migrations/agent_runs_v18_to_v19_chat_starts.sql
+ delete mode 100644 tldw_chatbook/DB/migrations/chachanotes_v73_to_v74_agent_chat_starts.sql

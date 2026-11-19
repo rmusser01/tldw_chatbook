@@ -71,6 +71,7 @@ async def _close_production_app(app: TldwCli) -> None:
         pass
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_surfaces_study_workflow_entry_points() -> None:
     # The retired hub grouped these three entry points under a "Learning"
@@ -109,6 +110,7 @@ async def test_library_surfaces_study_workflow_entry_points() -> None:
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_study_entry_buttons_preserve_requested_section() -> None:
     app = _build_test_app()
@@ -151,6 +153,7 @@ async def test_library_study_entry_buttons_preserve_requested_section() -> None:
         app.open_study_screen.assert_called_with(initial_section="quizzes")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_screen_consumes_pending_initial_section(
     monkeypatch: pytest.MonkeyPatch,

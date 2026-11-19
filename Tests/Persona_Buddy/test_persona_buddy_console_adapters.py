@@ -69,15 +69,28 @@ def test_run_mapping_replaces_exact_generation_and_releases_terminal_states() ->
 
 @pytest.mark.unit
 def test_failed_run_maps_to_error_until_idle_or_replacement() -> None:
-    controller = PersonaBuddyController()
+    now = [0.0]
+    controller = PersonaBuddyController(clock=lambda: now[0])
     adapter = PersonaBuddyConsoleAdapter(controller)
+    adapter._clock = lambda: now[0]
 
     adapter.run_state("session-a", "validating")
     adapter.run_state("session-a", "failed")
     assert controller.snapshot().state == "error"
+    now[0] = 10.0
+    assert controller.snapshot().state == "error"
+    generation = adapter.next_voice_generation("session-a")
+    adapter.voice_state("session-a", generation, "listening")
+    adapter.release_voice("session-a", generation)
+    assert controller.snapshot().state == "error"
 
     adapter.run_state("session-a", "idle")
     assert controller.snapshot().state == "idle"
+
+    adapter.run_state("session-a", "failed")
+    assert controller.snapshot().state == "error"
+    adapter.run_state("session-a", "validating")
+    assert controller.snapshot().state == "thinking"
 
 
 @pytest.mark.unit

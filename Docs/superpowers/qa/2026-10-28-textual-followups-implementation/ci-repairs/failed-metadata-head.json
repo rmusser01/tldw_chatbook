@@ -1,0 +1,368 @@
+{
+  "head": "3e414ff824f88bf8e13a5aef1003be3525481a87",
+  "source_inputs_conserved_from_green_head": {
+    "args": [
+      "git",
+      "-c",
+      "safe.directory=C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui",
+      "-c",
+      "gc.auto=0",
+      "diff",
+      "--exit-code",
+      "7c2b8f5aab066035ed9d06f9719a93d184f8e5c3",
+      "3e414ff824f88bf8e13a5aef1003be3525481a87",
+      "--",
+      "tldw_chatbook",
+      "Tests",
+      "scripts",
+      ".github",
+      "pyproject.toml",
+      "Docs/security"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "runs": [
+    {
+      "id": 40815454377,
+      "name": "Derived Artifacts",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "attempt": 1,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40815454377",
+      "jobs": [
+        {
+          "id": 123255322383,
+          "name": "PR Fast Lane (admission-sensitive 2)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322572,
+          "name": "PR Fast Lane",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322603,
+          "name": "Dreams and Guardian boundary contracts",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322605,
+          "name": "PR Fast Lane (admission-sensitive)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322634,
+          "name": "Dreams tracking tests",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322753,
+          "name": "UI Fast Lane (6)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322759,
+          "name": "UI Fast Lane (5)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322771,
+          "name": "UI Fast Lane (27)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322775,
+          "name": "UI Fast Lane (7)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322776,
+          "name": "UI Fast Lane (4)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322785,
+          "name": "UI Fast Lane (2)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322805,
+          "name": "UI Fast Lane (9)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322815,
+          "name": "Console P0 regression gate",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322826,
+          "name": "UI Fast Lane (16)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322837,
+          "name": "UI Fast Lane (24)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322874,
+          "name": "UI Fast Lane (1)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322885,
+          "name": "UI Fast Lane (3)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322911,
+          "name": "UI Fast Lane (10)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322922,
+          "name": "UI Fast Lane (21)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322944,
+          "name": "UI Fast Lane (8)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322945,
+          "name": "UI Fast Lane (12)",
+          "status": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "id": 123255322952,
+          "name": "UI Fast Lane (14)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322963,
+          "name": "UI Fast Lane (19)",
+          "status": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "id": 123255322977,
+          "name": "UI Fast Lane (22)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255322997,
+          "name": "UI Fast Lane (23)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255323021,
+          "name": "UI Fast Lane (17)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255323023,
+          "name": "UI Fast Lane (18)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255323038,
+          "name": "UI Fast Lane (15)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255323049,
+          "name": "UI Fast Lane (20)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255323060,
+          "name": "UI Fast Lane (11)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255323102,
+          "name": "UI Fast Lane (26)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255323110,
+          "name": "UI Fast Lane (25)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255323124,
+          "name": "UI Fast Lane (13)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255324027,
+          "name": "UI Fast Lane (28)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255324086,
+          "name": "UI Fast Lane (29)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255324201,
+          "name": "UI Fast Lane (31)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255324211,
+          "name": "UI Fast Lane (30)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123255324333,
+          "name": "UI Fast Lane (32)",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "id": 123265159577,
+          "name": "Derived artifacts reproduce from their sources",
+          "status": "completed",
+          "conclusion": "failure"
+        },
+        {
+          "id": 123266521268,
+          "name": "Merge queue tick",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 40815454374,
+      "name": "TASK-19637 pinned workspace platform evidence",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "skipped",
+      "attempt": 1,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40815454374",
+      "jobs": [
+        {
+          "id": 123255322515,
+          "name": "platform-evidence",
+          "status": "completed",
+          "conclusion": "skipped"
+        }
+      ]
+    },
+    {
+      "id": 40815454444,
+      "name": "TASK-32011 one-off Linux storage evidence",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "skipped",
+      "attempt": 1,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40815454444",
+      "jobs": [
+        {
+          "id": 123255322418,
+          "name": "Linux storage - Python ${{ matrix.python }}",
+          "status": "completed",
+          "conclusion": "skipped"
+        }
+      ]
+    },
+    {
+      "id": 40815454364,
+      "name": "Perf Guard",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40815454364",
+      "jobs": [
+        {
+          "id": 123255321234,
+          "name": "UI latency guardrails",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "underlying_failures": [
+    {
+      "job": 123255322945,
+      "case": "Tests/UI/test_library_media_reader_controls_in_list_view.py::test_a_dirty_form_filtered_off_the_page_saves_to_the_reader_item_after_trash_back",
+      "assertion": "query 'roduct' never settled to1rows; applied query='t', rows=2",
+      "phase": "native filter preparation before Reader Save"
+    },
+    {
+      "job": 123255322963,
+      "case": "Tests/UI/test_library_note_links_picker_and_preview.py::test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+      "assertion": "timed out waiting for the note editor to open and arm",
+      "phase": "line245 NAVIGATION reopen after link insertion/autosave"
+    }
+  ],
+  "failed_jobs": [
+    {
+      "id": 123255322945,
+      "name": "UI Fast Lane (12)",
+      "conclusion": "failure",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40815454377/job/123255322945",
+      "retained_log_sha256": "461a7905ffb359c08413be285213cfa2c4028d6c435807175207d4958e14bf30"
+    },
+    {
+      "id": 123255322963,
+      "name": "UI Fast Lane (19)",
+      "conclusion": "failure",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40815454377/job/123255322963",
+      "retained_log_sha256": "06967f97fcb081b4887e00873f63ff32091258bca4e7c2f51a72317ca3ce1ef2"
+    },
+    {
+      "id": 123265159577,
+      "name": "Derived artifacts reproduce from their sources",
+      "conclusion": "failure",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40815454377/job/123265159577",
+      "retained_log_sha256": "2f1d76f55d38b5f14b7ab63573d9d87cf6b33112426376a4c2b863d373881b44"
+    }
+  ],
+  "qualification": "37 successful Derived jobs/3failures; two underlying UI assertions plus correctly fail-closed dependent aggregate. Perf passed; two one-off workflows intentionally skipped;0unresolved threads. Product/test/workflow/security blobs identical to previously green7c2b source. Native matching witnesses diagnose sufficient mechanisms, not directly captured historical CI interleavings. Raw CI logs remain private and available at linked GitHub jobs; no failure is relabeled green."
+}

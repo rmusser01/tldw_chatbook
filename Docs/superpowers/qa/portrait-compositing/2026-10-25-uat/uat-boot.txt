@@ -1,0 +1,8 @@
+........................                                                 [100%]
+=============================== warnings summary ===============================
+Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+  /Users/macbook-dev/.codex/worktrees/console-radio-portraits/tldw_chatbook/Tests/Performance/test_ui_ready_module_census.py:527: UserWarning: ui-ready-census: 1030/1031 modules (headroom 1); snapshot drift +20/-12
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+24 passed, 1 warning in 23.08s

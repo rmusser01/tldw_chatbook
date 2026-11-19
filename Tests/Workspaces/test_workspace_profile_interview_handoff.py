@@ -271,10 +271,10 @@ def test_build_failure_continues_when_notification_raises() -> None:
     assert calls == ["continued"]
 
 
-def test_cancelled_interview_preserves_real_created_workspace(tmp_path) -> None:
-    registry = LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspace.sqlite", client_id="profile-handoff-test")
-    )
+def test_cancelled_interview_preserves_real_created_workspace(tmp_path, request) -> None:
+    db = WorkspaceDB(tmp_path / "workspace.sqlite", client_id="profile-handoff-test")
+    request.addfinalizer(db.close)
+    registry = LocalWorkspaceRegistryService(db)
     registry.create_workspace(
         workspace_id="workspace-local-1",
         name="Workspace 1",

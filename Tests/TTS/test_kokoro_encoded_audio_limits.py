@@ -66,6 +66,7 @@ def make_backend(tmp_path, monkeypatch):
     return build
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", ["onnx", "pytorch"])
 async def test_encoded_audio_at_limit_is_complete(make_backend, engine):
@@ -82,6 +83,7 @@ async def test_encoded_audio_at_limit_is_complete(make_backend, engine):
         assert closed == ["af_heart"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", ["onnx", "pytorch"])
 async def test_encoded_audio_over_limit_stops_without_partial_file(
@@ -104,6 +106,7 @@ async def test_encoded_audio_over_limit_stops_without_partial_file(
         assert closed == ["af_heart"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", ["onnx", "pytorch"])
 async def test_pcm_above_encoded_limit_stays_incremental(make_backend, engine):
@@ -116,6 +119,7 @@ async def test_pcm_above_encoded_limit_stays_incremental(make_backend, engine):
     backend.audio_service.convert_audio.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mixed_voice_limit_stops_before_next_voice(make_backend):
     chunks = [np.zeros(24000, dtype=np.float32), np.zeros(1)]
@@ -132,6 +136,7 @@ async def test_mixed_voice_limit_stops_before_next_voice(make_backend):
     backend.audio_service.convert_audio.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mixed_voice_budget_is_output_length_and_retains_padding(make_backend):
     voices = {

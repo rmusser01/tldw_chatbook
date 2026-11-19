@@ -1,0 +1,12 @@
+.........................................                                [100%]
+============================= slowest 25 durations =============================
+2.14s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[plain-True]
+1.99s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[thinking-True]
+1.97s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[plain-False]
+1.92s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[thinking-False]
+1.23s call     Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority[refusal]
+1.10s call     Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority[cancellation]
+1.08s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unowned]
+
+(18 durations < 1s hidden.)
+41 passed in 38.47s

@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import RUN_DONE, AgentConfig, ToolCall
+from tldw_chatbook.Agents.agent_models import (
+    RUN_DONE,
+    AgentConfig,
+    FirstRequestSchemaPlan,
+    ToolCall,
+)
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
 from tldw_chatbook.Agents.run_context import use_run_id, use_tool_call_id
@@ -89,12 +94,12 @@ def _approve_once(provider: RawShellToolProvider, command: str, call_id: str) ->
         ToolCall("shell_exec", {"command": command}, call_id)
     )
     assert pending is not None
-    provider.apply_batch_decisions(
-        "run-1", {call_id: "approve_once"}, [pending]
-    )
+    provider.apply_batch_decisions("run-1", {call_id: "approve_once"}, [pending])
 
 
-@pytest.mark.parametrize("closed_gate", ["permitted", "armed", "local", "blocked", "off"])
+@pytest.mark.parametrize(
+    "closed_gate", ["permitted", "armed", "local", "blocked", "off"]
+)
 def test_stale_provider_rechecks_every_gate_before_executor_dispatch(
     tmp_path: Path, closed_gate: str
 ) -> None:
@@ -120,7 +125,9 @@ def test_stale_provider_rechecks_every_gate_before_executor_dispatch(
     assert runtime.execute_calls == []
 
 
-def test_approved_call_reuses_runtime_and_returns_bounded_success(tmp_path: Path) -> None:
+def test_approved_call_reuses_runtime_and_returns_bounded_success(
+    tmp_path: Path,
+) -> None:
     provider, runtime, _gates = _provider(tmp_path)
     runtime.stdout = "x" * 10_000
     runtime.truncated = True
@@ -135,7 +142,7 @@ def test_approved_call_reuses_runtime_and_returns_bounded_success(tmp_path: Path
     assert request.caller == "model"
     assert request.console_session_id == "console-session"
     assert request.command == "printf hello"
-    assert len(result.content) <= 4000
+    assert runtime.stdout in result.content
     assert "terminal_state: exited" in result.content
     assert "truncated: true" in result.content
     assert "cleanup_proven: true" in result.content
@@ -217,9 +224,7 @@ def test_controller_composes_raw_provider_only_while_all_live_gates_are_open(
     def progress_sink(_run_id, _call_id, _event) -> None:
         return None
 
-    controller._agent_bridge = SimpleNamespace(
-        raw_shell_progress_sink=progress_sink
-    )
+    controller._agent_bridge = SimpleNamespace(raw_shell_progress_sink=progress_sink)
     controller.app = SimpleNamespace(
         unified_mcp_service=_PermissionService(gates),
         raw_cli_runtime=runtime,
@@ -266,6 +271,7 @@ def _native_call(name: str, arguments: dict[str, object], call_id: str) -> dict:
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_service_executes_raw_shell_as_an_ordinary_tool_result(
     tmp_path: Path,
 ) -> None:
@@ -300,6 +306,14 @@ def test_agent_service_executes_raw_shell_as_an_ordinary_tool_result(
             model="test-model",
             system_prompt="You are helpful.",
             allowed_tools=("shell_exec",),
+            native_tools=False,
+        ),
+        first_request_schema_plan=FirstRequestSchemaPlan(
+            active_schemas=(provider.load_schema("shell_exec"),),
+            runtime_schemas=(),
+            offer_find_load=False,
+            log_active=False,
+            system_prompt="You are helpful.",
         ),
         api_endpoint="llama_cpp",
         should_cancel=lambda: False,
@@ -348,9 +362,7 @@ def test_duplicate_native_call_ids_keep_raw_shell_approvals_independent(
             {
                 "content": None,
                 "tool_calls": [
-                    _native_call(
-                        "shell_exec", {"command": "printf denied"}, "shared"
-                    ),
+                    _native_call("shell_exec", {"command": "printf denied"}, "shared"),
                     _native_call(
                         "shell_exec", {"command": "printf approved"}, "shared"
                     ),
@@ -383,9 +395,7 @@ def test_duplicate_native_call_ids_keep_raw_shell_approvals_independent(
     )
 
     assert outcome.status == RUN_DONE
-    assert [request.command for request in runtime.execute_calls] == [
-        "printf approved"
-    ]
+    assert [request.command for request in runtime.execute_calls] == ["printf approved"]
     assert runtime.execute_calls[0].invocation_id == "shared#1"
     assert len(approval_rows) == 2
 
@@ -451,9 +461,7 @@ def test_duplicate_native_ids_cannot_collide_with_model_supplied_suffixes(
     )
 
     assert outcome.status == RUN_DONE
-    assert [request.command for request in runtime.execute_calls] == [
-        "printf approved"
-    ]
+    assert [request.command for request in runtime.execute_calls] == ["printf approved"]
     assert runtime.execute_calls[0].invocation_id == "shared#2"
 
 
@@ -476,12 +484,8 @@ def test_provider_generated_native_id_cannot_collide_with_model_supplied_id(
             {
                 "content": None,
                 "tool_calls": [
-                    _native_call(
-                        "shell_exec", {"command": "printf denied"}, "call_1"
-                    ),
-                    _native_call(
-                        "shell_exec", {"command": "printf approved"}, ""
-                    ),
+                    _native_call("shell_exec", {"command": "printf denied"}, "call_1"),
+                    _native_call("shell_exec", {"command": "printf approved"}, ""),
                 ],
             },
             "The approved command completed.",
@@ -510,9 +514,7 @@ def test_provider_generated_native_id_cannot_collide_with_model_supplied_id(
     )
 
     assert outcome.status == RUN_DONE
-    assert [request.command for request in runtime.execute_calls] == [
-        "printf approved"
-    ]
+    assert [request.command for request in runtime.execute_calls] == ["printf approved"]
     assert runtime.execute_calls[0].invocation_id == "call_1#1"
 
 
@@ -547,13 +549,13 @@ def test_nonzero_exit_result_carries_one_labeled_hint(tmp_path: Path) -> None:
         result = provider.invoke("shell_exec", {"command": "pyest -q"})
 
     assert result.ok is False
-    assert "bash: pyest: command not found" in (result.error or ""), (
-        "original output must be intact"
-    )
-    assert (result.error or "").count("[tool hint]") == 1
-    assert (result.error or "").index("command not found") < (
+    assert "bash: pyest: command not found" in (
         result.error or ""
-    ).index("[tool hint]"), "hint is appended, never interleaved"
+    ), "original output must be intact"
+    assert (result.error or "").count("[tool hint]") == 1
+    assert (result.error or "").index("command not found") < (result.error or "").index(
+        "[tool hint]"
+    ), "hint is appended, never interleaved"
 
 
 def test_zero_exit_and_unknown_failures_get_no_hint(tmp_path: Path) -> None:

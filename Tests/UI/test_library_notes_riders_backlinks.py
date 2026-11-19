@@ -85,6 +85,7 @@ async def _wait_for_backlink_header(screen, pilot, expected: str) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_info_lists_every_note_that_links_to_the_open_note():
     host = _build_notes_host()
@@ -105,6 +106,7 @@ async def test_info_lists_every_note_that_links_to_the_open_note():
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_info_says_so_when_nothing_links_to_the_open_note():
     host = _build_notes_host()
@@ -119,6 +121,7 @@ async def test_info_says_so_when_nothing_links_to_the_open_note():
         assert not list(screen.query(".library-note-backlink"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_activating_a_backlink_opens_that_note():
     host = _build_notes_host()
@@ -142,6 +145,7 @@ async def test_activating_a_backlink_opens_that_note():
         assert screen._notes_state.selected_note_id == "review"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_late_arriving_backlinks_paint_without_a_recompose():
     """The load lands after the editor is composed, and often while the
@@ -179,6 +183,7 @@ def test_the_header_only_claims_zero_once_the_query_has_answered():
     assert library_note_backlink_header((("a", "A"),), "ready") == "Linked from (1)"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_backlink_lookup_does_not_claim_there_are_none():
     host = _build_notes_host()
@@ -196,6 +201,7 @@ async def test_a_failed_backlink_lookup_does_not_claim_there_are_none():
         assert not list(screen.query(".library-note-backlink"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backlinks_are_requested_bounded_and_for_the_open_note():
     host = _build_notes_host()
@@ -212,6 +218,7 @@ async def test_backlinks_are_requested_bounded_and_for_the_open_note():
         assert isinstance(calls[-1]["limit"], int) and calls[-1]["limit"] <= 51
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_backlink_result_landing_mid_recompose_does_not_kill_the_app():
     """The load is a worker, so an exception here takes the whole app down.

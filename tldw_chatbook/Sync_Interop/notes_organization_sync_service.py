@@ -142,7 +142,10 @@ class NotesOrganizationSyncService:
         dataset_id = str(profile.get("dataset_id") or "")
         if not dataset_id:
             raise ValueError("synchronized profile is missing dataset identity")
-        with self.notes_repository.db.transaction() as cursor:
+        # TASK-34000.28 (N-24): read-then-write, so the write lock comes first;
+        # a deferred snapshot dies with 517 when another connection's close
+        # restarts the WAL (see ``LocalNoteFolderRepository``).
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=server_profile_id,
@@ -195,7 +198,9 @@ class NotesOrganizationSyncService:
         if profile is None:
             return folder_repository.attach_manual(folder_id=folder_id, note_id=note_id)
         dataset_id = self._dataset_id(profile)
-        with self.notes_repository.db.transaction() as cursor:
+        # TASK-34000.28 (N-24): the Move note / Add to folder chain under a
+        # local-first profile -- write lock first, as in ``create_folder``.
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -245,7 +250,8 @@ class NotesOrganizationSyncService:
                 expected_version=expected_version,
             )
         dataset_id = self._dataset_id(profile)
-        with self.notes_repository.db.transaction() as cursor:
+        # TASK-34000.28 (N-24): Move note's second half -- write lock first.
+        with self.notes_repository.db.transaction(immediate=True) as cursor:
             self._require_ready(
                 cursor,
                 server_profile_id=scope["server_profile_id"],
@@ -797,11 +803,15 @@ class NotesOrganizationSyncService:
     def _agent_lessons_seed_is_unknown(
         self, *, server_profile_id: str, dataset_id: str
     ) -> bool:
-        row = self.notes_repository.db.get_connection().execute(
-            "SELECT state FROM agent_lessons_seed_state WHERE profile_id = ? "
-            "AND dataset_id = ?",
-            (server_profile_id, dataset_id),
-        ).fetchone()
+        row = (
+            self.notes_repository.db.get_connection()
+            .execute(
+                "SELECT state FROM agent_lessons_seed_state WHERE profile_id = ? "
+                "AND dataset_id = ?",
+                (server_profile_id, dataset_id),
+            )
+            .fetchone()
+        )
         return row is None or row["state"] == "unknown"
 
     async def advance_enrollment(
@@ -1082,9 +1092,13 @@ class NotesOrganizationSyncService:
 
         db = self.notes_repository.db
         counts = {"finalized": 0, "placement_review": 0, "cancelled": 0}
-        receipts = db.get_connection().execute(
-            "SELECT receipt_id FROM note_organization_receipts ORDER BY created_at, receipt_id"
-        ).fetchall()
+        receipts = (
+            db.get_connection()
+            .execute(
+                "SELECT receipt_id FROM note_organization_receipts ORDER BY created_at, receipt_id"
+            )
+            .fetchall()
+        )
         for candidate in receipts:
             with db.transaction() as cursor:
                 receipt = cursor.execute(
@@ -1122,9 +1136,8 @@ class NotesOrganizationSyncService:
                 organization = db._library_organization_for_notes(
                     cursor, [str(note["id"])]
                 )[str(note["id"])]
-                if (
-                    str(organization["organization_version"])
-                    != str(receipt["organization_version"])
+                if str(organization["organization_version"]) != str(
+                    receipt["organization_version"]
                 ):
                     continue
                 if not self._ready_for_receipt_finalization(
@@ -1202,14 +1215,17 @@ class NotesOrganizationSyncService:
             or checkpoint["error_code"] is not None
         ):
             return False
-        return cursor.execute(
-            "SELECT 1 FROM notes_organization_adoption_reviews AS review "
-            "WHERE review.server_profile_id = ? AND review.dataset_id = ? "
-            "AND review.state = 'open' AND NOT EXISTS (SELECT 1 FROM "
-            "note_organization_receipts AS receipt WHERE receipt.review_id = "
-            "review.review_id AND receipt.state = 'placement_review') LIMIT 1",
-            (server_profile_id, dataset_id),
-        ).fetchone() is None
+        return (
+            cursor.execute(
+                "SELECT 1 FROM notes_organization_adoption_reviews AS review "
+                "WHERE review.server_profile_id = ? AND review.dataset_id = ? "
+                "AND review.state = 'open' AND NOT EXISTS (SELECT 1 FROM "
+                "note_organization_receipts AS receipt WHERE receipt.review_id = "
+                "review.review_id AND receipt.state = 'placement_review') LIMIT 1",
+                (server_profile_id, dataset_id),
+            ).fetchone()
+            is None
+        )
 
     def _finalize_pending_receipt_with_cursor(
         self,
@@ -1275,9 +1291,7 @@ class NotesOrganizationSyncService:
                     payload={"keyword": str(row["keyword"])},
                     source_version=int(row["version"]),
                 )
-            if db.link_note_to_keyword(
-                str(note["id"]), int(row["id"]), cursor=cursor
-            ):
+            if db.link_note_to_keyword(str(note["id"]), int(row["id"]), cursor=cursor):
                 NotesInteropService._record_organization_link_intent(
                     repository,
                     cursor,

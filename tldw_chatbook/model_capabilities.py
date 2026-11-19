@@ -33,7 +33,11 @@ DEFAULT_MODEL_PATTERNS = {
             "context_window": 128000,
         },  # gpt-4o, gpt-40, gpt-4o-mini
         {"pattern": r"^gpt-4.*turbo", "vision": True, "context_window": 128000},
-        {"pattern": r"^gpt-4\.1", "vision": True, "context_window": 1047576},  # gpt-4.1 series
+        {
+            "pattern": r"^gpt-4\.1",
+            "vision": True,
+            "context_window": 1047576,
+        },  # gpt-4.1 series
         {
             "pattern": r"^o[34](?:-mini)?",
             "vision": True,
@@ -42,9 +46,21 @@ DEFAULT_MODEL_PATTERNS = {
         {"pattern": r"^dall-e", "vision": True, "image_generation": True},
     ],
     "Anthropic": [
-        {"pattern": r"^claude-3", "vision": True, "context_window": 200000},  # All Claude 3 models have vision
-        {"pattern": r"^claude.*opus-4", "vision": True, "context_window": 200000},  # Claude Opus 4 series
-        {"pattern": r"^claude.*sonnet-4", "vision": True, "context_window": 200000},  # Claude Sonnet 4 series
+        {
+            "pattern": r"^claude-3",
+            "vision": True,
+            "context_window": 200000,
+        },  # All Claude 3 models have vision
+        {
+            "pattern": r"^claude.*opus-4",
+            "vision": True,
+            "context_window": 200000,
+        },  # Claude Opus 4 series
+        {
+            "pattern": r"^claude.*sonnet-4",
+            "vision": True,
+            "context_window": 200000,
+        },  # Claude Sonnet 4 series
     ],
     "Google": [
         {"pattern": r"gemini.*vision", "vision": True},
@@ -88,7 +104,11 @@ DEFAULT_MODEL_CAPABILITIES = {
     # OpenAI
     "gpt-4-vision-preview": {"vision": True, "max_images": 1, "context_window": 128000},
     "gpt-4-turbo": {"vision": True, "max_images": 10, "context_window": 128000},
-    "gpt-4-turbo-2024-04-09": {"vision": True, "max_images": 10, "context_window": 128000},
+    "gpt-4-turbo-2024-04-09": {
+        "vision": True,
+        "max_images": 10,
+        "context_window": 128000,
+    },
     "gpt-4o": {"vision": True, "max_images": 10, "context_window": 128000},
     "gpt-4o-mini": {"vision": True, "max_images": 10, "context_window": 128000},
     "gpt-5.6-terra": {"vision": True, "max_images": 10},
@@ -96,14 +116,42 @@ DEFAULT_MODEL_CAPABILITIES = {
     "o4-mini-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
     "o3-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
     "o3-mini-2025-01-31": {"vision": True, "max_images": 10, "context_window": 200000},
-    "gpt-4.1-mini-2025-04-14": {"vision": True, "max_images": 10, "context_window": 1047576},
-    "gpt-4.1-nano-2025-04-14": {"vision": True, "max_images": 10, "context_window": 1047576},
+    "gpt-4.1-mini-2025-04-14": {
+        "vision": True,
+        "max_images": 10,
+        "context_window": 1047576,
+    },
+    "gpt-4.1-nano-2025-04-14": {
+        "vision": True,
+        "max_images": 10,
+        "context_window": 1047576,
+    },
     # Anthropic
-    "claude-3-opus-20240229": {"vision": True, "max_images": 5, "context_window": 200000},
-    "claude-3-sonnet-20240229": {"vision": True, "max_images": 5, "context_window": 200000},
-    "claude-3-haiku-20240307": {"vision": True, "max_images": 5, "context_window": 200000},
-    "claude-3-5-sonnet-20240620": {"vision": True, "max_images": 5, "context_window": 200000},
-    "claude-3-5-sonnet-20241022": {"vision": True, "max_images": 5, "context_window": 200000},
+    "claude-3-opus-20240229": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
+    "claude-3-sonnet-20240229": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
+    "claude-3-haiku-20240307": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
+    "claude-3-5-sonnet-20240620": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
+    "claude-3-5-sonnet-20241022": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
     "claude-sonnet-5": {"vision": True, "max_images": 5},
     # Google
     "gemini-pro-vision": {"vision": True, "max_images": 1, "context_window": 12288},
@@ -155,13 +203,16 @@ _ANTHROPIC_FAMILY_RE = re.compile(
 )
 
 # A ``None`` minor means "every minor version in this major line".
-# Verified live against api.anthropic.com on 2026-08-18: each family below
-# returns 400 for `temperature`/`top_p`/`top_k` and for
+# The non-Haiku families below were verified live against api.anthropic.com
+# on 2026-08-18: each returns 400 for `temperature`/`top_p`/`top_k` and for
 # `thinking={"type": "enabled", "budget_tokens": N}`, while Opus 4.6, Sonnet 4.5
 # and Haiku 4.5 return 200 for the same payloads.
 _ANTHROPIC_MODERN_REQUEST_FAMILIES = frozenset(
     {
         ("fable", 5, None),
+        # Haiku 5.5 migration guide: sampling and fixed budgets are unsupported.
+        # https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide
+        ("haiku", 5, 5),
         ("mythos", 5, None),
         ("opus", 5, None),
         ("opus", 4, 8),
@@ -200,7 +251,8 @@ def _anthropic_model_family(model: object) -> Optional[Tuple[str, int, Optional[
 
 
 def _anthropic_family_matches(
-    model: object, families: frozenset  # frozenset[Tuple[str, int, Optional[int]]]
+    model: object,
+    families: frozenset,  # frozenset[Tuple[str, int, Optional[int]]]
 ) -> bool:
     """Return whether ``model`` parses into one of ``families``.
 
@@ -219,6 +271,38 @@ def _anthropic_is_modern_request_family(model: object) -> bool:
     return _anthropic_family_matches(model, _ANTHROPIC_MODERN_REQUEST_FAMILIES)
 
 
+#: TASK-33620.2: the first major version of the tier-first Claude names
+#: (``claude-<tier>-<major>``) -- every one of them reads images. Verified
+#: 2026-10-27 against ``GET /v1/models`` (``capabilities.image_input``) for
+#: every Claude the API still serves, the shipped haiku-4-5 / opus-5 /
+#: fable-5 / sonnet-5 among them.
+_ANTHROPIC_VISION_MIN_MAJOR = 4
+
+
+def _anthropic_family_reads_images(provider: object, model: object) -> bool:
+    """Return whether an Anthropic-routed ``model`` is a Claude that reads images.
+
+    The capability tables are config data a user's config.toml replaces
+    outright: a file written before TASK-33620.2 carries an Anthropic pattern
+    list naming only claude-3 / opus-4 / sonnet-4, which hid haiku-4-5 (the
+    shipped Anthropic default), opus-5 and fable-5. This rule sits beneath
+    the user's own direct and pattern rows, so an explicit ``vision = false``
+    still wins, and above the unknown-model default.
+
+    Args:
+        provider: The provider name; only Anthropic itself qualifies, so a
+            local server's alias that happens to read ``claude-...`` does not.
+        model: The model identifier.
+
+    Returns:
+        True for ``claude-<tier>-<major>`` ids with major 4 or later.
+    """
+    if not isinstance(provider, str) or provider.strip().lower() != "anthropic":
+        return False
+    family = _anthropic_model_family(model)
+    return family is not None and family[1] >= _ANTHROPIC_VISION_MIN_MAJOR
+
+
 def anthropic_model_rejects_sampling_params(model: object) -> bool:
     """Return whether ``model`` rejects ``temperature``/``top_p``/``top_k``.
 
@@ -226,11 +310,9 @@ def anthropic_model_rejects_sampling_params(model: object) -> bool:
         model: An Anthropic model identifier (any prefixed or suffixed form).
 
     Returns:
-        True when sending any sampling parameter would be answered with
-        ``400 invalid_request_error: `temperature` is deprecated for this
-        model.`` -- the Fable 5, Mythos 5, Opus 5, Opus 4.8, Opus 4.7 and
-        Sonnet 5 families. False for Opus 4.6 and earlier, Sonnet 4.6/4.5 and
-        Haiku, which still accept them.
+        True for the Fable 5, Haiku 5.5, Mythos 5, Opus 5, Opus 4.8, Opus 4.7
+        and Sonnet 5 families, which reject sampling parameters. False for
+        Opus 4.6 and earlier, Sonnet 4.6/4.5 and Haiku 4.5, which accept them.
     """
     return _anthropic_is_modern_request_family(model)
 
@@ -242,10 +324,9 @@ def anthropic_model_rejects_fixed_thinking_budget(model: object) -> bool:
         model: An Anthropic model identifier (any prefixed or suffixed form).
 
     Returns:
-        True when ``thinking={"type": "enabled", "budget_tokens": N}`` would be
-        answered with ``400 invalid_request_error: "thinking.type.enabled" is
-        not supported for this model``; such a model must use adaptive thinking
-        plus ``output_config.effort`` instead.
+        True when ``thinking={"type": "enabled", "budget_tokens": N}`` is
+        unsupported; such a model must use adaptive thinking plus
+        ``output_config.effort`` instead.
 
     Note:
         This currently covers exactly the same families as
@@ -512,13 +593,13 @@ def openai_model_requires_max_completion_tokens(model: object) -> bool:
         this model. Use 'max_completion_tokens' instead.``
 
     Note:
-        This currently covers the same families as
-        :func:`openai_model_rejects_sampling_params` -- OpenAI changed both
-        rules with the reasoning generation -- but they are separate questions
-        about the request surface and are kept as separate predicates so a
-        future model can answer them differently.
+        GPT-6 Luna also rejects ``max_tokens`` (TASK-35582 diagnostic), without
+        evidence about sampling rejection. Keep these request facts separate.
     """
-    return _openai_is_modern_request_family(model)
+    return _openai_is_modern_request_family(model) or (
+        isinstance(model, str)
+        and model.strip().lower().rsplit("/", 1)[-1] == "gpt-6-luna"
+    )
 
 
 #
@@ -748,8 +829,8 @@ def zai_model_supports_reasoning_effort(model: object) -> bool:
 #
 # Same design as the Moonshot/Z.ai predicates above: a per-model fact about
 # the provider's wire behavior, deliberately outside the config-driven
-# tables. The DeepSeek handler (LLM_API_Calls.chat_with_deepseek) has no
-# reasoning-effort parameter and passes ``max_tokens`` straight through as
+# tables. The DeepSeek handler preserves the omitted-effort provider default
+# and passes ``max_tokens`` straight through as
 # the whole completion budget, reasoning-INCLUSIVE -- so a reasoning-typed
 # model handed a plain budget can spend all of it thinking and answer
 # ``finish_reason=length`` with an EMPTY completion (TASK-21515: the
@@ -775,12 +856,16 @@ def _deepseek_normalized_model(model: object) -> Optional[str]:
     return normalized or None
 
 
+def deepseek_model_supports_reasoning_effort(model: object) -> bool:
+    """Whether the documented current DeepSeek model accepts explicit effort."""
+    return model in ("deepseek-flash", "deepseek-v4-pro")
+
+
 def deepseek_model_thinks_by_default(model: object) -> bool:
     """Whether a DeepSeek model spends completion tokens on reasoning by default.
 
-    The DeepSeek handler has no reasoning-effort parameter and its
-    ``max_tokens`` budget is reasoning-inclusive, so these models need a
-    larger completion budget for the same output length (TASK-21515:
+    With effort omitted, the ``max_tokens`` budget is reasoning-inclusive,
+    so these models need a larger completion budget for the same output length (TASK-21515:
     deepseek-v4-flash exhausted ``BRIEFING_MAX_TOKENS`` on reasoning and
     returned an empty completion).
 
@@ -845,15 +930,12 @@ def resolve_deepseek_effective_model(model: Optional[str]) -> Optional[str]:
     from tldw_chatbook.config import get_runtime_config_snapshot
 
     try:
-        api_settings = get_runtime_config_snapshot().values.get(
-            "api_settings", {}
-        )
+        api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
         deepseek_config = api_settings.get("deepseek", {})
         resolved = deepseek_config.get("model", _DEEPSEEK_DEFAULT_MODEL)
     except Exception:  # noqa: BLE001 - a budget gate must never crash a call
         logger.warning(
-            "DeepSeek default model resolution failed; assuming the "
-            "documented default."
+            "DeepSeek default model resolution failed; assuming the documented default."
         )
         return _DEEPSEEK_DEFAULT_MODEL
     if isinstance(resolved, str) and resolved.strip():
@@ -1024,13 +1106,17 @@ class ModelCapabilities:
         else:
             provider_key = self._provider_key_by_lower.get((provider or "").lower())
             if provider_key is not None:
-                for pattern, pattern_capabilities in self._compiled_patterns[provider_key]:
+                for pattern, pattern_capabilities in self._compiled_patterns[
+                    provider_key
+                ]:
                     if pattern.match(model):
                         capabilities = pattern_capabilities.copy()
                         logger.debug(
                             f"Pattern matched for {provider}/{model}: {capabilities}"
                         )
                         break
+
+        user_row_matched = bool(capabilities)
 
         # 3. TASK-26023: upstream models.dev gap-fill, BENEATH the hand-
         # maintained direct/pattern entries above (AC#2). Disabled by
@@ -1039,6 +1125,13 @@ class ModelCapabilities:
             upstream = _models_dev_capabilities(provider, model)
             if upstream:
                 capabilities = upstream
+
+        # TASK-33620.2: Claude's tier-first families read images even when
+        # an older config.toml's pattern list (which replaces the shipped
+        # one) never names them. Beneath the user's rows, and layered over
+        # the models.dev row so its context window survives.
+        if not user_row_matched and _anthropic_family_reads_images(provider, model):
+            capabilities = {**capabilities, "vision": True}
 
         # 4. If still no match found, use defaults
         if not capabilities:

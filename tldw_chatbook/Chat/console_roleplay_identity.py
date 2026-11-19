@@ -15,7 +15,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
 
 CHAT_DISPLAY_NAME_MAX_CELLS = 48
@@ -103,7 +103,7 @@ def session_assistant_display_name(session: object) -> str | None:
     """Return the session's kind-appropriate assistant display name.
 
     Character sessions read ``character_name``; persona sessions read
-    ``assistant_name`` (ADR-149); anything else has no bound identity.
+    ``assistant_name`` (ADR-346); anything else has no bound identity.
     Blank values are treated as absent.
     """
     kind = getattr(session, "assistant_kind", None)
@@ -130,7 +130,7 @@ def expand_character_template(
     """Expand trusted character template aliases in one non-recursive pass.
 
     This is the identity-template expander for both character and persona
-    sessions (ADR-149); ``character_name`` carries the persona name for
+    sessions (ADR-346); ``character_name`` carries the persona name for
     persona-kind content.
     """
     def replacement(match: re.Match[str]) -> str:
@@ -263,7 +263,13 @@ def resolve_console_message_presentation(
 
     if message.role is ConsoleMessageRole.USER:
         speaker_label = sanitize_character_display_label(
-            context.user_name,
+            (
+                "Agent handoff"
+                if getattr(message.metadata, "origin", None) == "agent_chat_start"
+                else "Unverified handoff"
+                if getattr(message.metadata, "origin", None) == "untrusted"
+                else context.user_name
+            ),
             max_characters=CHAT_DISPLAY_NAME_MAX_CELLS,
         )
         speaker_tone = "user"
@@ -288,7 +294,7 @@ def resolve_console_message_presentation(
                 "console-transcript-message-roleplay-character"
                 if is_character_session
                 # Persona rows keep the standard assistant treatment:
-                # personas are not roleplay characters (ADR-149).
+                # personas are not roleplay characters (ADR-346).
                 else "console-transcript-message-role-assistant"
             )
         metadata: MessageMetadata | None = message.metadata
@@ -325,3 +331,22 @@ def resolve_console_message_presentation(
         transcript_style=transcript_style,
         revision_token=revision_token,
     )
+
+
+def configured_chat_display_name(config: dict, default: str = "User") -> str:
+    """Resolve the typed Console default, retaining the neutral invalid-name fallback."""
+    from tldw_chatbook.config import logger
+
+    chat_defaults = config.get("chat_defaults")
+    raw_value = (
+        chat_defaults.get("user_display_name", default)
+        if isinstance(chat_defaults, dict)
+        else default
+    )
+    try:
+        return normalize_chat_display_name(raw_value, blank_means_none=False) or "User"
+    except ChatDisplayNameError:
+        logger.warning(
+            "Invalid chat display name in [chat_defaults]; using the neutral default."
+        )
+        return "User"

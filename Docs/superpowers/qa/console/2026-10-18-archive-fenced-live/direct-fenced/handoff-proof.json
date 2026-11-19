@@ -1,0 +1,121 @@
+{
+  "call_id": "014f6719-db3e-4843-9566-f05b26460bf4",
+  "current_user_message": "36bf1020-b58b-4aee-8dea-5f6626df5f01",
+  "metadata": {
+    "source_session_id": "9bd0d82a-aa3d-4e16-bf0d-f009f24498e8",
+    "archive_recovery_results": [
+      {
+        "result_set_id": "TkGrVyaujx7QY54gber93_Rld3kyqRRr",
+        "items": [
+          {
+            "ordinal": 1,
+            "result_ref": "1jgHLZzJJzgK1E5Bxm7aTpWgf5g-kc4G",
+            "title": "Birch itinerary conversation",
+            "workspace_label": "Vault Trips",
+            "allowed_scopes": [
+              "chat_only",
+              "chat_and_workspace"
+            ]
+          },
+          {
+            "ordinal": 2,
+            "result_ref": "tPRoUbPZonCVTvcRq_H7meB4k-ngNZhB",
+            "title": "Linden planning conversation",
+            "workspace_label": "Atlas Research",
+            "allowed_scopes": [
+              "workspace_only"
+            ]
+          },
+          {
+            "ordinal": 3,
+            "result_ref": "H_qyUtnoWEQJ1_DOz9YkQ7T8GGdmfYRd",
+            "title": "Maple archival notes",
+            "workspace_label": "Default",
+            "allowed_scopes": [
+              "chat_only"
+            ]
+          }
+        ]
+      }
+    ],
+    "omitted_pages": 0
+  },
+  "wrapper_bytes": 1085,
+  "actual_restore_fence": {
+    "run_id": "03b7e948-9dc9-4f33-a843-fd3b423fb4e2",
+    "seq": 0,
+    "payload": {
+      "name": "request_conversation_restore",
+      "arguments": {
+        "result_ref": "tPRoUbPZonCVTvcRq_H7meB4k-ngNZhB",
+        "scope": "workspace_only"
+      }
+    }
+  },
+  "selected_steps": [
+    {
+      "run_id": "03b7e948-9dc9-4f33-a843-fd3b423fb4e2",
+      "seq": 1000004,
+      "kind": "tool_proposed",
+      "tool_name": "request_conversation_restore",
+      "call_id": "turn-1-call-0",
+      "status": "proposed",
+      "tool_outcome": null
+    },
+    {
+      "run_id": "03b7e948-9dc9-4f33-a843-fd3b423fb4e2",
+      "seq": 1000005,
+      "kind": "approval_requested",
+      "tool_name": "request_conversation_restore",
+      "call_id": "turn-1-call-0",
+      "status": "pending",
+      "tool_outcome": null
+    },
+    {
+      "run_id": "03b7e948-9dc9-4f33-a843-fd3b423fb4e2",
+      "seq": 1000006,
+      "kind": "approval_approved",
+      "tool_name": "request_conversation_restore",
+      "call_id": "turn-1-call-0",
+      "status": "approved",
+      "tool_outcome": null
+    },
+    {
+      "run_id": "03b7e948-9dc9-4f33-a843-fd3b423fb4e2",
+      "seq": 1000007,
+      "kind": "tool_execution_started",
+      "tool_name": "request_conversation_restore",
+      "call_id": "turn-1-call-0",
+      "status": "started",
+      "tool_outcome": null
+    },
+    {
+      "run_id": "03b7e948-9dc9-4f33-a843-fd3b423fb4e2",
+      "seq": 1,
+      "kind": "tool_call",
+      "tool_name": "request_conversation_restore",
+      "call_id": "turn-1-call-0",
+      "status": "",
+      "tool_outcome": null
+    },
+    {
+      "run_id": "03b7e948-9dc9-4f33-a843-fd3b423fb4e2",
+      "seq": 1000008,
+      "kind": "tool_succeeded",
+      "tool_name": "request_conversation_restore",
+      "call_id": "turn-1-call-0",
+      "status": "success",
+      "tool_outcome": "success"
+    },
+    {
+      "run_id": "03b7e948-9dc9-4f33-a843-fd3b423fb4e2",
+      "seq": 2,
+      "kind": "tool_result",
+      "tool_name": "request_conversation_restore",
+      "call_id": "turn-1-call-0",
+      "status": "",
+      "tool_outcome": "success"
+    }
+  ],
+  "read_only": true
+}

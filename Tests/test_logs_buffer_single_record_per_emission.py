@@ -56,9 +56,7 @@ def test_one_loguru_error_lands_once_in_the_logs_buffer():
         TldwCli._setup_buffered_logging(stub)
         marker = "single-record-marker-15422"
         loguru_logger.error("TTS generation failed (outcome_code={})", marker)
-        matching = [
-            record for record in stub._log_records if marker in record[2]
-        ]
+        matching = [record for record in stub._log_records if marker in record[2]]
         assert len(matching) == 1, (
             f"one emission buffered {len(matching)} times: {matching}"
         )

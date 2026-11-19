@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -128,9 +129,7 @@ def _preparation(context: ConsoleTurnExecutionContext) -> ConsoleTurnPreparation
         queue_generation=None,
         pre_send_title="Qualification",
         pre_send_conversation_id=None,
-        state=initial_preparation_state(
-            context.library_authority.policy.auto_retrieve
-        ),
+        state=initial_preparation_state(context.library_authority.policy.auto_retrieve),
         pause_kind=None,
         one_shot_bypass=False,
         ephemeral=False,
@@ -203,10 +202,18 @@ def test_four_policy_combinations_compose_only_the_authorized_provider(
     (
         (RetrievalScript.success(), ConsoleTurnPreparationState.READY, None, True),
         (RetrievalScript.zero(), ConsoleTurnPreparationState.READY, None, False),
-        (RetrievalScript.failure(), ConsoleTurnPreparationState.PAUSED,
-         ConsolePreparationPauseKind.RETRIEVAL, False),
-        (RetrievalScript.timeout(), ConsoleTurnPreparationState.PAUSED,
-         ConsolePreparationPauseKind.RETRIEVAL, False),
+        (
+            RetrievalScript.failure(),
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.RETRIEVAL,
+            False,
+        ),
+        (
+            RetrievalScript.timeout(),
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.RETRIEVAL,
+            False,
+        ),
     ),
 )
 async def test_automatic_preparation_uses_fixed_categories_and_scripted_outcomes(
@@ -245,15 +252,18 @@ async def test_automatic_preparation_uses_fixed_categories_and_scripted_outcomes
     assert "PRIVATE LIBRARY BODY" not in repr(recorder.activity_events)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bodies() -> None:
+async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bodies() -> (
+    None
+):
     tool_batch = ToolBatchScript.library_search_then_continue()
     recorder = RecordingConsoleProvider(
         stream_scripts=[StreamScript.tokens("hel", "lo")],
         model_scripts=[tool_batch],
     )
     resolution = await recorder.resolve_for_send(
-        ConsoleProviderSelection("llama_cpp", "qualification-model")
+        ConsoleProviderSelection("deepseek", "qualification-model")
     )
     store = ConsoleChatStore()
     session = store.ensure_session()
@@ -304,7 +314,10 @@ async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bo
 
     native_calls = first["choices"][0]["message"]["tool_calls"]
     assert native_calls[0]["function"]["name"] == "search_library_rag"
-    assert first.provider_continuation == tool_batch.continuation
+    assert tool_batch.continuation is not None
+    assert first.provider_continuation == replace(
+        tool_batch.continuation, schema_version=3, selected_provider="deepseek"
+    )
     assert second["choices"][0]["message"]["content"] == "hello"
     assert store.get_message(assistant.id).content == "hello"
     assert [call.metadata["tool_names"] for call in recorder.calls_of("stream")] == [
@@ -338,9 +351,7 @@ async def test_restart_recovery_requires_explicit_production_action(
             else real_get_cli_setting(section, key, default)
         ),
     )
-    db, conversation_id, repository = _database(
-        tmp_path / f"recovery-{action}.sqlite"
-    )
+    db, conversation_id, repository = _database(tmp_path / f"recovery-{action}.sqlite")
     checkpoint = _insert(db, repository, _acceptance(conversation_id))
     if started:
         _start(repository, checkpoint)

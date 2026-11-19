@@ -40,6 +40,4 @@ def normalize_rag_search_mode(value: object) -> str:
     Returns:
         ``value`` when it is a supported mode; otherwise ``"semantic"``.
     """
-    return (
-        value if isinstance(value, str) and value in RAG_SEARCH_MODES else "semantic"
-    )
+    return value if isinstance(value, str) and value in RAG_SEARCH_MODES else "semantic"

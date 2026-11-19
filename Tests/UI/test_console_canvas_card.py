@@ -126,6 +126,7 @@ async def test_unavailable_canvas_card_disables_exact_reopen_but_keeps_head_rout
         assert following.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reconciled_canvas_card_posts_its_current_render_session() -> None:
     transcript = ConsoleTranscript()

@@ -13,6 +13,7 @@ from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_base_app_screen_mounts_exactly_one_navigation_bar():
     class TestScreen(BaseAppScreen):

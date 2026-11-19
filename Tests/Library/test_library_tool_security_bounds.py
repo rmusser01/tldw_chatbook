@@ -74,7 +74,7 @@ HOSTILE_TITLES = [
     "标题 with CJK 字符 mixed in",
     "emoji 🎉🔥💥 title",
     "control\x00chars\x07in\x1fthe\u2028title",
-    'quotes "double" and \'single\' with \\ backslashes',
+    "quotes \"double\" and 'single' with \\ backslashes",
     "long-" + "t" * 300,
     "line\nbreaks\r\ninside\tthe\ttitle",
     "<script>alert('xss')</script>",
@@ -112,9 +112,7 @@ def test_hostile_media_titles_are_bounded_sanitized_and_stable(media_db):
         for brief in page["items"]:
             title = brief["title"]
             assert len(title.encode("utf-8")) <= DISPLAY_NAME_MAX_BYTES
-            assert all(
-                unicodedata.category(ch) not in ("Cc", "Cf") for ch in title
-            )
+            assert all(unicodedata.category(ch) not in ("Cc", "Cf") for ch in title)
             _raw_type, raw_id = parse_public_id(brief["id"], expected_type="media")
             seen.add(raw_id)
             briefs.append(brief)

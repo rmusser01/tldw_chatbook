@@ -1,0 +1,1382 @@
+{
+  "head": "73cff62fff16fa299aef7afd938bb5b66565ca72",
+  "run": 40610052403,
+  "complete": true,
+  "jobs": [
+    {
+      "job": 122559441878,
+      "shard": 1,
+      "conclusion": "success",
+      "seconds": 1049.0,
+      "calls": 157,
+      "log_sha256": "96f6d911966dbadb3813766148d6b72cddb13a1b133c74cd897751198aab3236",
+      "summaries": [
+        "2026-10-28T02:11:38.6504595Z ======================= 157 passed in 1002.35s (0:16:42) ======================="
+      ]
+    },
+    {
+      "job": 122559441624,
+      "shard": 2,
+      "conclusion": "success",
+      "seconds": 1149.0,
+      "calls": 200,
+      "log_sha256": "2986a55f37cf777c4166e76d0b1b142c5d1d0022ddee1cdc4bb028661b22d237",
+      "summaries": [
+        "2026-10-28T01:49:27.2971876Z ================= 200 passed, 2 warnings in 1077.26s (0:17:57) ================="
+      ]
+    },
+    {
+      "job": 122559441627,
+      "shard": 3,
+      "conclusion": "success",
+      "seconds": 856.0,
+      "calls": 183,
+      "log_sha256": "ecf278308b8deb88941403a13a4af688068391bb328c5951241aeb69fe45fabc",
+      "summaries": [
+        "2026-10-28T01:35:54.3048744Z ======================= 183 passed in 793.02s (0:13:13) ========================"
+      ]
+    },
+    {
+      "job": 122559441814,
+      "shard": 4,
+      "conclusion": "success",
+      "seconds": 786.0,
+      "calls": 148,
+      "log_sha256": "7313adb9895cc61c1da3037df0cb22b0f89cb19cf8ef5a33c52f4fce975adaab",
+      "summaries": [
+        "2026-10-28T02:04:49.4121814Z ================== 148 passed, 1 warning in 736.29s (0:12:16) =================="
+      ]
+    },
+    {
+      "job": 122559441771,
+      "shard": 5,
+      "conclusion": "success",
+      "seconds": 1144.0,
+      "calls": 239,
+      "log_sha256": "2888b183a52b4826313760be7f4364f217031f93cf22208b4557602522839ed0",
+      "summaries": [
+        "2026-10-28T02:13:32.2087743Z ================= 239 passed, 1 warning in 1069.93s (0:17:49) =================="
+      ]
+    },
+    {
+      "job": 122559441523,
+      "shard": 6,
+      "conclusion": "success",
+      "seconds": 1071.0,
+      "calls": 372,
+      "log_sha256": "f73351ec4909973011f4e2188282c5ff4344eed62b9445fb96915ad42fe090c6",
+      "summaries": [
+        "2026-10-28T01:51:40.5493768Z ======================= 372 passed in 1013.33s (0:16:53) ======================="
+      ]
+    },
+    {
+      "job": 122559441865,
+      "shard": 7,
+      "conclusion": "success",
+      "seconds": 975.0,
+      "calls": 371,
+      "log_sha256": "169a1952d307a6e7179155a19a814a267846908ee6a43e472daee38d3cafbbf4",
+      "summaries": [
+        "2026-10-28T02:18:45.8406161Z ======================= 371 passed in 912.35s (0:15:12) ========================"
+      ]
+    },
+    {
+      "job": 122559441619,
+      "shard": 8,
+      "conclusion": "success",
+      "seconds": 744.0,
+      "calls": 116,
+      "log_sha256": "5c69716c4a4eb7a98c8e06f3f3fc6e8c47ede4a87f3754c94b571998be4d1351",
+      "summaries": [
+        "2026-10-28T01:38:31.6710450Z ================= 116 passed, 2 warnings in 686.36s (0:11:26) =================="
+      ]
+    },
+    {
+      "job": 122559441918,
+      "shard": 9,
+      "conclusion": "success",
+      "seconds": 840.0,
+      "calls": 488,
+      "log_sha256": "3210a3a89a00d248bdf8e6856c2d341a9276f3aec11ac610d8c077436a8b2133",
+      "summaries": [
+        "2026-10-28T02:08:32.3157792Z ================= 488 passed, 2 warnings in 799.59s (0:13:19) =================="
+      ]
+    },
+    {
+      "job": 122559441942,
+      "shard": 10,
+      "conclusion": "success",
+      "seconds": 1024.0,
+      "calls": 235,
+      "log_sha256": "ed8833afca56468842aa81e7c7dcbd0a0bb52765e66d4c6a382d81909b4a8280",
+      "summaries": [
+        "2026-10-28T02:14:40.4446375Z ================= 235 passed, 2 warnings in 967.52s (0:16:07) =================="
+      ]
+    },
+    {
+      "job": 122559441737,
+      "shard": 11,
+      "conclusion": "success",
+      "seconds": 978.0,
+      "calls": 165,
+      "log_sha256": "9daa65177e0708d5b54e87643c243857f5dcbc6d4c803259f0e20029d0602bcb",
+      "summaries": [
+        "2026-10-28T02:09:44.1384653Z ================= 165 passed, 2 warnings in 922.04s (0:15:22) =================="
+      ]
+    },
+    {
+      "job": 122559441899,
+      "shard": 12,
+      "conclusion": "success",
+      "seconds": 787.0,
+      "calls": 282,
+      "log_sha256": "23052109028ae1106a2e4991b9f873d52861a649a06b4a20234028f4f0ab7077",
+      "summaries": [
+        "2026-10-28T02:08:52.6482179Z ================= 282 passed, 11 warnings in 734.39s (0:12:14) ================="
+      ]
+    },
+    {
+      "job": 122559441634,
+      "shard": 13,
+      "conclusion": "success",
+      "seconds": 1000.0,
+      "calls": 197,
+      "log_sha256": "37da11f067f6a0c6bfb4db3e29c6378cac4097d79375c70fcf07c3df8e74b87f",
+      "summaries": [
+        "2026-10-28T01:45:57.8232173Z ================= 197 passed, 2 warnings in 934.53s (0:15:34) =================="
+      ]
+    },
+    {
+      "job": 122559441885,
+      "shard": 14,
+      "conclusion": "success",
+      "seconds": 989.0,
+      "calls": 165,
+      "log_sha256": "447780cfe769c8b73189e3512ac21aee84a54203ca45d02f5a376063ebc17665",
+      "summaries": [
+        "2026-10-28T02:11:51.5028794Z ======================= 165 passed in 922.74s (0:15:22) ========================"
+      ]
+    },
+    {
+      "job": 122559441795,
+      "shard": 15,
+      "conclusion": "success",
+      "seconds": 1016.0,
+      "calls": 188,
+      "log_sha256": "620c7665cc179340c7a60e291438ba2c671776a1b3983e6d8844bc58ea30a91a",
+      "summaries": [
+        "2026-10-28T01:52:38.7713782Z ================= 188 passed, 2 warnings in 947.79s (0:15:47) =================="
+      ]
+    },
+    {
+      "job": 122559441667,
+      "shard": 16,
+      "conclusion": "success",
+      "seconds": 1035.0,
+      "calls": 130,
+      "log_sha256": "2c4a7a76428337ebc77c0330f3bfa567f53f5ef3c84a064a4323f99be16734d9",
+      "summaries": [
+        "2026-10-28T01:46:10.9325166Z ================== 130 passed, 1 warning in 970.39s (0:16:10) =================="
+      ]
+    },
+    {
+      "job": 122559441678,
+      "shard": 17,
+      "conclusion": "success",
+      "seconds": 1056.0,
+      "calls": 172,
+      "log_sha256": "96b385dae2f66451a92c0c6d1c12dccebeb1f2d5cccda336d7ce5bfe9faa4732",
+      "summaries": [
+        "2026-10-28T01:57:32.7771238Z ======================= 172 passed in 994.84s (0:16:34) ========================"
+      ]
+    }
+  ],
+  "task_selectors_expected": 95,
+  "covered_task_selectors": {
+    "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[server:1-toggle]": [
+      {
+        "seconds": 9.26,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[server:1-toggle]",
+        "shard": 14
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[replace]": [
+      {
+        "seconds": 20.33,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[replace]",
+        "shard": 15
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-create]": [
+      {
+        "seconds": 17.32,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-create]",
+        "shard": 16
+      }
+    ],
+    "Tests/UI/test_speech_footer_scope.py::test_footer_and_rail_actions_follow_playground_effects_return": [
+      {
+        "seconds": 10.61,
+        "node": "Tests/UI/test_speech_footer_scope.py::test_footer_and_rail_actions_follow_playground_effects_return",
+        "shard": 17
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-ordinary]": [
+      {
+        "seconds": 14.92,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-ordinary]",
+        "shard": 1
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_mixed_success_refusal_and_failure_reports_actual_count[delete]": [
+      {
+        "seconds": 12.04,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_mixed_success_refusal_and_failure_reports_actual_count[delete]",
+        "shard": 2
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-held-writer]": [
+      {
+        "seconds": 12.58,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-held-writer]",
+        "shard": 3
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_surfaces_share_fresh_local_dependency_snapshot": [
+      {
+        "seconds": 1.28,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_surfaces_share_fresh_local_dependency_snapshot",
+        "shard": 4
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[write_failure]": [
+      {
+        "seconds": 13.93,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[write_failure]",
+        "shard": 5
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[cancel]": [
+      {
+        "seconds": 15.46,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[cancel]",
+        "shard": 6
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[local-delete]": [
+      {
+        "seconds": 5.92,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[local-delete]",
+        "shard": 8
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-held-writer]": [
+      {
+        "seconds": 10.78,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-held-writer]",
+        "shard": 9
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-prompt]": [
+      {
+        "seconds": 7.84,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-prompt]",
+        "shard": 10
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-prompt]": [
+      {
+        "seconds": 5.54,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-prompt]",
+        "shard": 12
+      }
+    ],
+    "Tests/UI/test_speech_effects_placeholder.py::test_the_rail_entry_is_reachable": [
+      {
+        "seconds": 4.07,
+        "node": "Tests/UI/test_speech_effects_placeholder.py::test_the_rail_entry_is_reachable",
+        "shard": 13
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[ordinary]": [
+      {
+        "seconds": 7.11,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[ordinary]",
+        "shard": 14
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-create]": [
+      {
+        "seconds": 21.92,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-create]",
+        "shard": 15
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[acknowledged]": [
+      {
+        "seconds": 12.66,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[acknowledged]",
+        "shard": 16
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_the_playground_view_mounts_a_playground": [
+      {
+        "seconds": 2.62,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_the_playground_view_mounts_a_playground",
+        "shard": 17
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-ordinary]": [
+      {
+        "seconds": 15.63,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-ordinary]",
+        "shard": 1
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[deleted]": [
+      {
+        "seconds": 8.93,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[deleted]",
+        "shard": 3
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_saving_a_bench_deleted_elsewhere_renders_an_error_not_a_false_success": [
+      {
+        "seconds": 0.9,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_saving_a_bench_deleted_elsewhere_renders_an_error_not_a_false_success",
+        "shard": 4
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[server:1-delete]": [
+      {
+        "seconds": 10.3,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[server:1-delete]",
+        "shard": 5
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-light-size0]": [
+      {
+        "seconds": 9.9,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-light-size0]",
+        "shard": 6
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[local-toggle]": [
+      {
+        "seconds": 8.11,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[local-toggle]",
+        "shard": 7
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[during-refresh]": [
+      {
+        "seconds": 4.81,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[during-refresh]",
+        "shard": 8
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_one_time]": [
+      {
+        "seconds": 11.5,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_one_time]",
+        "shard": 9
+      }
+    ],
+    "Tests/UI/test_speech_effects_placeholder.py::test_opening_it_states_that_it_is_not_built_and_where_it_is_going": [
+      {
+        "seconds": 3.09,
+        "node": "Tests/UI/test_speech_effects_placeholder.py::test_opening_it_states_that_it_is_not_built_and_where_it_is_going",
+        "shard": 10
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_screen_level_clear_text_mirror_reaches_the_mounted_pane": [
+      {
+        "seconds": 1.61,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_screen_level_clear_text_mirror_reaches_the_mounted_pane",
+        "shard": 11
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[offline]": [
+      {
+        "seconds": 12.46,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[offline]",
+        "shard": 13
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-legacy]": [
+      {
+        "seconds": 6.74,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-legacy]",
+        "shard": 14
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_recurring]": [
+      {
+        "seconds": 15.29,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_recurring]",
+        "shard": 15
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-dark-size1]": [
+      {
+        "seconds": 7.75,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-dark-size1]",
+        "shard": 16
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-recipe]": [
+      {
+        "seconds": 8.24,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-recipe]",
+        "shard": 17
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-edit]": [
+      {
+        "seconds": 13.03,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-edit]",
+        "shard": 1
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure-pending]": [
+      {
+        "seconds": 8.58,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure-pending]",
+        "shard": 2
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-light-size1]": [
+      {
+        "seconds": 7.03,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-light-size1]",
+        "shard": 3
+      }
+    ],
+    "Tests/UI/test_on_mount_mro_convention.py::test_base_on_mount_fires_once_under_mro": [
+      {
+        "seconds": 0.03,
+        "node": "Tests/UI/test_on_mount_mro_convention.py::test_base_on_mount_fires_once_under_mro",
+        "shard": 4
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-screen]": [
+      {
+        "seconds": 4.58,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-screen]",
+        "shard": 5
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-dark-size0]": [
+      {
+        "seconds": 9.19,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-dark-size0]",
+        "shard": 6
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-recipe]": [
+      {
+        "seconds": 7.31,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-recipe]",
+        "shard": 7
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-edit]": [
+      {
+        "seconds": 10.01,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-edit]",
+        "shard": 9
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_rail_exposes_and_opens_voice_profiles": [
+      {
+        "seconds": 2.12,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_rail_exposes_and_opens_voice_profiles",
+        "shard": 10
+      }
+    ],
+    "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[211]": [
+      {
+        "seconds": 0.11,
+        "node": "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[211]",
+        "shard": 11
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[audiobook]": [
+      {
+        "seconds": 2.98,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[audiobook]",
+        "shard": 12
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[transfer]": [
+      {
+        "seconds": 10.56,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[transfer]",
+        "shard": 13
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[settings]": [
+      {
+        "seconds": 3.67,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[settings]",
+        "shard": 14
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-prompt]": [
+      {
+        "seconds": 8.6,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-prompt]",
+        "shard": 15
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_screen_mounts_rail_rows_exactly_once": [
+      {
+        "seconds": 1.94,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_screen_mounts_rail_rows_exactly_once",
+        "shard": 16
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-legacy]": [
+      {
+        "seconds": 7.82,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-legacy]",
+        "shard": 17
+      }
+    ],
+    "Tests/UI/test_speech_footer_scope.py::test_recompose_hides_cached_hints_and_rejects_old_window": [
+      {
+        "seconds": 9.15,
+        "node": "Tests/UI/test_speech_footer_scope.py::test_recompose_hides_cached_hints_and_rejects_old_window",
+        "shard": 1
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[playground]": [
+      {
+        "seconds": 3.54,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[playground]",
+        "shard": 2
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-recipe]": [
+      {
+        "seconds": 6.43,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-recipe]",
+        "shard": 3
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_reminder_form_submits_when_valid_one_time": [
+      {
+        "seconds": 0.43,
+        "node": "Tests/UI/test_reminder_form.py::test_reminder_form_submits_when_valid_one_time",
+        "shard": 4
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-legacy]": [
+      {
+        "seconds": 8.28,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-legacy]",
+        "shard": 6
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_stts_window_explains_missing_local_speech_dependencies": [
+      {
+        "seconds": 1.13,
+        "node": "Tests/UI/test_stts_capability_state.py::test_stts_window_explains_missing_local_speech_dependencies",
+        "shard": 8
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_mixed_success_refusal_and_failure_reports_actual_count[toggle]": [
+      {
+        "seconds": 7.59,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_mixed_success_refusal_and_failure_reports_actual_count[toggle]",
+        "shard": 9
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_bench_run_completion_does_not_yank_a_dirty_bench_editor": [
+      {
+        "seconds": 1.2,
+        "node": "Tests/UI/test_evals_screen.py::test_bench_run_completion_does_not_yank_a_dirty_bench_editor",
+        "shard": 10
+      }
+    ],
+    "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[100]": [
+      {
+        "seconds": 0.09,
+        "node": "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[100]",
+        "shard": 11
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_save_with_capture_continuations_toggled_on_via_the_ui_persists_the_flip": [
+      {
+        "seconds": 0.83,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_save_with_capture_continuations_toggled_on_via_the_ui_persists_the_flip",
+        "shard": 12
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[browse-list]": [
+      {
+        "seconds": 5.71,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[browse-list]",
+        "shard": 13
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_reminder_form_requires_title": [
+      {
+        "seconds": 0.47,
+        "node": "Tests/UI/test_reminder_form.py::test_reminder_form_requires_title",
+        "shard": 14
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-recipe]": [
+      {
+        "seconds": 9.31,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-recipe]",
+        "shard": 1
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_capability_summary_stays_visible_at_minimum_terminal": [
+      {
+        "seconds": 1.79,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_capability_summary_stays_visible_at_minimum_terminal",
+        "shard": 2
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-prompt]": [
+      {
+        "seconds": 6.37,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-prompt]",
+        "shard": 3
+      }
+    ],
+    "Tests/UI/test_schedules_transfer_actions.py::test_clearing_the_lifecycle_lock_restores_the_buttons": [
+      {
+        "seconds": 0.14,
+        "node": "Tests/UI/test_schedules_transfer_actions.py::test_clearing_the_lifecycle_lock_restores_the_buttons",
+        "shard": 4
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure]": [
+      {
+        "seconds": 7.52,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure]",
+        "shard": 6
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_screen_level_random_text_mirror_reaches_the_mounted_pane": [
+      {
+        "seconds": 1.54,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_screen_level_random_text_mirror_reaches_the_mounted_pane",
+        "shard": 7
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_revert_discards_unsaved_edits_and_reloads_from_storage": [
+      {
+        "seconds": 1.0,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_revert_discards_unsaved_edits_and_reloads_from_storage",
+        "shard": 8
+      }
+    ],
+    "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[30]": [
+      {
+        "seconds": 0.11,
+        "node": "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[30]",
+        "shard": 10
+      }
+    ],
+    "Tests/UI/test_speech_effects_placeholder.py::test_effects_is_no_longer_a_non_view": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_effects_placeholder.py::test_effects_is_no_longer_a_non_view",
+        "shard": 11
+      }
+    ],
+    "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[60]": [
+      {
+        "seconds": 0.07,
+        "node": "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[60]",
+        "shard": 12
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-legacy]": [
+      {
+        "seconds": 7.81,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-legacy]",
+        "shard": 13
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_bench_run_completion_does_not_yank_a_bench_editor_with_unsaved_mini_form_text": [
+      {
+        "seconds": 1.02,
+        "node": "Tests/UI/test_evals_screen.py::test_bench_run_completion_does_not_yank_a_bench_editor_with_unsaved_mini_form_text",
+        "shard": 14
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[later-input]": [
+      {
+        "seconds": 10.26,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[later-input]",
+        "shard": 15
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_the_body_owns_view_switching": [
+      {
+        "seconds": 2.67,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_the_body_owns_view_switching",
+        "shard": 16
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[dictation]": [
+      {
+        "seconds": 3.73,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[dictation]",
+        "shard": 17
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_renaming_to_a_taken_name_renders_the_conflict_callout": [
+      {
+        "seconds": 1.26,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_renaming_to_a_taken_name_renders_the_conflict_callout",
+        "shard": 2
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_every_bound_action_exists": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_every_bound_action_exists[generate_tts]",
+        "shard": 4
+      },
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_every_bound_action_exists[clear_text]",
+        "shard": 4
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_reminder_form_requires_run_at_for_one_time": [
+      {
+        "seconds": 0.46,
+        "node": "Tests/UI/test_reminder_form.py::test_reminder_form_requires_run_at_for_one_time",
+        "shard": 5
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_rail_navigation_honors_cancel_then_discard_for_dirty_studio": [
+      {
+        "seconds": 1.12,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_rail_navigation_honors_cancel_then_discard_for_dirty_studio",
+        "shard": 7
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_blank_name_save_failure_renders_the_db_rejection_callout": [
+      {
+        "seconds": 0.76,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_blank_name_save_failure_renders_the_db_rejection_callout",
+        "shard": 8
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-prompt]": [
+      {
+        "seconds": 5.43,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-prompt]",
+        "shard": 9
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_reminder_form_rejects_invalid_cron": [
+      {
+        "seconds": 0.59,
+        "node": "Tests/UI/test_reminder_form.py::test_reminder_form_rejects_invalid_cron",
+        "shard": 10
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_runs_on_is_disabled_when_editing_an_existing_task": [
+      {
+        "seconds": 0.23,
+        "node": "Tests/UI/test_reminder_form.py::test_runs_on_is_disabled_when_editing_an_existing_task",
+        "shard": 11
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_capability_detail_names_each_ready_local_capability": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_capability_detail_names_each_ready_local_capability",
+        "shard": 12
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_visible_capability_refresh_ignores_stale_stt_cache": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_stts_capability_state.py::test_visible_capability_refresh_ignores_stale_stt_cache",
+        "shard": 14
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_pressing_delete_then_confirming_in_the_real_dialog_deletes_the_bench": [
+      {
+        "seconds": 1.38,
+        "node": "Tests/UI/test_evals_screen.py::test_pressing_delete_then_confirming_in_the_real_dialog_deletes_the_bench",
+        "shard": 16
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_sample_bench_completion_does_not_yank_a_dirty_bench_editor": [
+      {
+        "seconds": 1.26,
+        "node": "Tests/UI/test_evals_screen.py::test_sample_bench_completion_does_not_yank_a_dirty_bench_editor",
+        "shard": 17
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_readiness_rows_with_several_continuations_paint_inside_the_inspector_viewport": [
+      {
+        "seconds": 0.98,
+        "node": "Tests/UI/test_evals_screen.py::test_readiness_rows_with_several_continuations_paint_inside_the_inspector_viewport",
+        "shard": 2
+      }
+    ],
+    "Tests/UI/test_schedules_transfer_actions.py::test_workbench_locks_lifecycle_for_a_transferring_row": [
+      {
+        "seconds": 1.57,
+        "node": "Tests/UI/test_schedules_transfer_actions.py::test_workbench_locks_lifecycle_for_a_transferring_row",
+        "shard": 3
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_pane_does_not_shadow_reserved_or_terminal_shortcuts": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_pane_does_not_shadow_reserved_or_terminal_shortcuts",
+        "shard": 4
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_top_k_parse_failure_renders_the_pinned_callout_and_keeps_typed_state": [
+      {
+        "seconds": 1.28,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_top_k_parse_failure_renders_the_pinned_callout_and_keeps_typed_state",
+        "shard": 5
+      }
+    ],
+    "Tests/UI/test_schedules_transfer_actions.py::test_key_bound_edit_refuses_on_a_transferring_row": [
+      {
+        "seconds": 2.03,
+        "node": "Tests/UI/test_schedules_transfer_actions.py::test_key_bound_edit_refuses_on_a_transferring_row",
+        "shard": 6
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_each_supported_pane_shortcut_is_bound": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_each_supported_pane_shortcut_is_bound[ctrl+l-clear_text]",
+        "shard": 7
+      },
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_each_supported_pane_shortcut_is_bound[ctrl+g-generate_tts]",
+        "shard": 7
+      }
+    ]
+  },
+  "settings_cases_expected": 19,
+  "covered_settings_cases": {
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees": [
+      {
+        "seconds": 16.84,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees",
+        "shard": 5
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_choice_with_no_option_reads_saved_and_names_its_value": [
+      {
+        "seconds": 11.8,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_choice_with_no_option_reads_saved_and_names_its_value",
+        "shard": 12
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_fallback_shows_the_value_and_word_a_new_chat_resolves": [
+      {
+        "seconds": 14.11,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_fallback_shows_the_value_and_word_a_new_chat_resolves",
+        "shard": 5
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_shown_negative_integer_can_be_backspaced_away": [
+      {
+        "seconds": 13.43,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_shown_negative_integer_can_be_backspaced_away",
+        "shard": 11
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_value_chat_defaults_does_not_hold_reads_built_in_like_model_defaults": [
+      {
+        "seconds": 19.29,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_value_chat_defaults_does_not_hold_reads_built_in_like_model_defaults",
+        "shard": 15
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_an_unset_streaming_fallback_can_be_pinned_on_and_reverted": [
+      {
+        "seconds": 16.12,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_an_unset_streaming_fallback_can_be_pinned_on_and_reverted",
+        "shard": 1
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[legacy-off-only]": [
+      {
+        "seconds": 14.76,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[legacy-off-only]",
+        "shard": 9
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[saved-off]": [
+      {
+        "seconds": 28.98,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[saved-off]",
+        "shard": 15
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[unset]": [
+      {
+        "seconds": 26.41,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[unset]",
+        "shard": 2
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_default_after_an_option_stops_sending_a_choice_with_no_option": [
+      {
+        "seconds": 14.44,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_default_after_an_option_stops_sending_a_choice_with_no_option",
+        "shard": 6
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_each_fallback_says_its_source_and_a_blank_says_what_it_sends": [
+      {
+        "seconds": 15.26,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_each_fallback_says_its_source_and_a_blank_says_what_it_sends",
+        "shard": 16
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[211x44]": [
+      {
+        "seconds": 13.81,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[211x44]",
+        "shard": 7
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[235x52]": [
+      {
+        "seconds": 10.37,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[235x52]",
+        "shard": 8
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_fallbacks_use_model_defaults_rows_core_first_then_closed_sampling": [
+      {
+        "seconds": 13.82,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_fallbacks_use_model_defaults_rows_core_first_then_closed_sampling",
+        "shard": 1
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_legacy_enable_streaming_is_still_read_and_shown": [
+      {
+        "seconds": 10.77,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_legacy_enable_streaming_is_still_read_and_shown",
+        "shard": 3
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_reverting_streaming_restores_the_saved_value_word_and_a_clean_draft": [
+      {
+        "seconds": 16.14,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_reverting_streaming_restores_the_saved_value_word_and_a_clean_draft",
+        "shard": 17
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_sampling_state_names_what_fits_and_counts_the_rest": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_sampling_state_names_what_fits_and_counts_the_rest",
+        "shard": 15
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults": [
+      {
+        "seconds": 21.64,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults",
+        "shard": 7
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_the_streaming_key_fact_lives_in_the_inspector_config_key_disclosure": [
+      {
+        "seconds": 13.57,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_the_streaming_key_fact_lives_in_the_inspector_config_key_disclosure",
+        "shard": 13
+      }
+    ]
+  },
+  "new_scenarios_expected": 24,
+  "new_scenarios_actual": [
+    {
+      "seconds": 15.46,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[cancel]",
+      "shard": 6
+    },
+    {
+      "seconds": 7.52,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure]",
+      "shard": 6
+    },
+    {
+      "seconds": 4.81,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[during-refresh]",
+      "shard": 8
+    },
+    {
+      "seconds": 8.58,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure-pending]",
+      "shard": 2
+    },
+    {
+      "seconds": 12.58,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-held-writer]",
+      "shard": 3
+    },
+    {
+      "seconds": 8.93,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[deleted]",
+      "shard": 3
+    },
+    {
+      "seconds": 12.46,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[offline]",
+      "shard": 13
+    },
+    {
+      "seconds": 10.56,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[transfer]",
+      "shard": 13
+    },
+    {
+      "seconds": 17.32,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-create]",
+      "shard": 16
+    },
+    {
+      "seconds": 12.66,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[acknowledged]",
+      "shard": 16
+    },
+    {
+      "seconds": 10.61,
+      "node": "Tests/UI/test_speech_footer_scope.py::test_footer_and_rail_actions_follow_playground_effects_return",
+      "shard": 17
+    },
+    {
+      "seconds": 13.93,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[write_failure]",
+      "shard": 5
+    },
+    {
+      "seconds": 21.92,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-create]",
+      "shard": 15
+    },
+    {
+      "seconds": 20.33,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[replace]",
+      "shard": 15
+    },
+    {
+      "seconds": 15.29,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_recurring]",
+      "shard": 15
+    },
+    {
+      "seconds": 10.26,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[later-input]",
+      "shard": 15
+    },
+    {
+      "seconds": 15.63,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-ordinary]",
+      "shard": 1
+    },
+    {
+      "seconds": 14.92,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-ordinary]",
+      "shard": 1
+    },
+    {
+      "seconds": 13.03,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-edit]",
+      "shard": 1
+    },
+    {
+      "seconds": 9.15,
+      "node": "Tests/UI/test_speech_footer_scope.py::test_recompose_hides_cached_hints_and_rejects_old_window",
+      "shard": 1
+    },
+    {
+      "seconds": 7.11,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[ordinary]",
+      "shard": 14
+    },
+    {
+      "seconds": 11.5,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_one_time]",
+      "shard": 9
+    },
+    {
+      "seconds": 10.78,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-held-writer]",
+      "shard": 9
+    },
+    {
+      "seconds": 10.01,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-edit]",
+      "shard": 9
+    }
+  ],
+  "note": "Only successful completed jobs qualify. Call rows are actual hosted execution evidence; no forecast or queued job is a pass.",
+  "observed_at": "2026-10-28T03:01:09.279353+00:00",
+  "prior_artifact_failure": "stale Library render-error warning pin; reviewed exact two-field repair passes locally",
+  "successor_head_hosted_ci_still_required": true,
+  "runs": [
+    {
+      "id": 40610052403,
+      "head": "73cff62fff16fa299aef7afd938bb5b66565ca72",
+      "event": "pull_request",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40610052403",
+      "observed_status": "queued",
+      "observed_conclusion": null,
+      "jobs": [
+        {
+          "id": 122559441523,
+          "name": "UI Fast Lane (6)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:33:54Z",
+          "completed_at": "2026-10-28T01:51:45Z"
+        },
+        {
+          "id": 122559441619,
+          "name": "UI Fast Lane (8)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:26:12Z",
+          "completed_at": "2026-10-28T01:38:36Z"
+        },
+        {
+          "id": 122559441624,
+          "name": "UI Fast Lane (2)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:30:23Z",
+          "completed_at": "2026-10-28T01:49:32Z"
+        },
+        {
+          "id": 122559441627,
+          "name": "UI Fast Lane (3)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:21:45Z",
+          "completed_at": "2026-10-28T01:36:01Z"
+        },
+        {
+          "id": 122559441630,
+          "name": "Console P0 regression gate",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:22:23Z",
+          "completed_at": "2026-10-28T01:33:51Z"
+        },
+        {
+          "id": 122559441634,
+          "name": "UI Fast Lane (13)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:29:24Z",
+          "completed_at": "2026-10-28T01:46:04Z"
+        },
+        {
+          "id": 122559441667,
+          "name": "UI Fast Lane (16)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:29:02Z",
+          "completed_at": "2026-10-28T01:46:17Z"
+        },
+        {
+          "id": 122559441678,
+          "name": "UI Fast Lane (17)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:40:01Z",
+          "completed_at": "2026-10-28T01:57:37Z"
+        },
+        {
+          "id": 122559441687,
+          "name": "PR Fast Lane",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:46:47Z",
+          "completed_at": "2026-10-28T02:14:58Z"
+        },
+        {
+          "id": 122559441726,
+          "name": "PR Fast Lane (admission-sensitive)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:51:29Z",
+          "completed_at": "2026-10-28T02:18:06Z"
+        },
+        {
+          "id": 122559441737,
+          "name": "UI Fast Lane (11)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:53:32Z",
+          "completed_at": "2026-10-28T02:09:50Z"
+        },
+        {
+          "id": 122559441749,
+          "name": "Dreams tracking tests",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:53:32Z",
+          "completed_at": "2026-10-28T02:00:40Z"
+        },
+        {
+          "id": 122559441771,
+          "name": "UI Fast Lane (5)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:54:34Z",
+          "completed_at": "2026-10-28T02:13:38Z"
+        },
+        {
+          "id": 122559441781,
+          "name": "PR Fast Lane (admission-sensitive 2)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:47:21Z",
+          "completed_at": "2026-10-28T01:59:30Z"
+        },
+        {
+          "id": 122559441795,
+          "name": "UI Fast Lane (15)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:35:48Z",
+          "completed_at": "2026-10-28T01:52:44Z"
+        },
+        {
+          "id": 122559441814,
+          "name": "UI Fast Lane (4)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:51:47Z",
+          "completed_at": "2026-10-28T02:04:53Z"
+        },
+        {
+          "id": 122559441865,
+          "name": "UI Fast Lane (7)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T02:02:36Z",
+          "completed_at": "2026-10-28T02:18:51Z"
+        },
+        {
+          "id": 122559441878,
+          "name": "UI Fast Lane (1)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:54:14Z",
+          "completed_at": "2026-10-28T02:11:43Z"
+        },
+        {
+          "id": 122559441885,
+          "name": "UI Fast Lane (14)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:55:29Z",
+          "completed_at": "2026-10-28T02:11:58Z"
+        },
+        {
+          "id": 122559441899,
+          "name": "UI Fast Lane (12)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:55:53Z",
+          "completed_at": "2026-10-28T02:09:00Z"
+        },
+        {
+          "id": 122559441918,
+          "name": "UI Fast Lane (9)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:54:38Z",
+          "completed_at": "2026-10-28T02:08:38Z"
+        },
+        {
+          "id": 122559441942,
+          "name": "UI Fast Lane (10)",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:57:41Z",
+          "completed_at": "2026-10-28T02:14:45Z"
+        },
+        {
+          "id": 122559442961,
+          "name": "Dreams and Guardian boundary contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T02:03:33Z",
+          "completed_at": "2026-10-28T02:08:57Z"
+        },
+        {
+          "id": 122592056687,
+          "name": "Derived artifacts reproduce from their sources",
+          "status": "completed",
+          "conclusion": "failure",
+          "started_at": "2026-10-28T02:43:35Z",
+          "completed_at": "2026-10-28T02:48:22Z"
+        },
+        {
+          "id": 122601462691,
+          "name": "Merge queue tick",
+          "status": "queued",
+          "conclusion": null,
+          "started_at": "2026-10-28T02:48:22Z",
+          "completed_at": null
+        }
+      ]
+    },
+    {
+      "id": 40609661845,
+      "head": "73cff62fff16fa299aef7afd938bb5b66565ca72",
+      "event": "pull_request",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40609661845",
+      "observed_status": "completed",
+      "observed_conclusion": "success",
+      "jobs": [
+        {
+          "id": 122557839340,
+          "name": "UI latency guardrails",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-10-28T01:15:58Z",
+          "completed_at": "2026-10-28T01:23:35Z"
+        }
+      ]
+    }
+  ],
+  "evals_uncertainty_controls": [
+    "Tests/UI/test_evals_bench_editor.py::test_save_with_capture_continuations_toggled_on_via_the_ui_persists_the_flip",
+    "Tests/UI/test_evals_screen.py::test_pressing_delete_then_confirming_in_the_real_dialog_deletes_the_bench",
+    "Tests/UI/test_evals_screen.py::test_readiness_rows_with_several_continuations_paint_inside_the_inspector_viewport"
+  ],
+  "unique_task_cases": 97,
+  "review_threads": 0,
+  "open_critical_important_findings": 0,
+  "max_ui_job_seconds": 1149.0,
+  "perf_expected_existing_limits": {
+    "optional_skips": [
+      "torch not installed",
+      "torch/transformers not installed"
+    ],
+    "strict_xfail": "TASK-36510 completed-pair history index debt"
+  },
+  "local_raw_log_directory": ".test-tmp/textual-37031-37034/first-functional-ui-logs"
+}

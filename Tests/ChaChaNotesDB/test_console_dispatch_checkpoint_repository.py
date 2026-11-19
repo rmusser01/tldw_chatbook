@@ -46,6 +46,27 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
 
+TERMINAL_RECEIPT = "44444444-4444-4444-8444-444444444444"
+TERMINAL_METADATA = json.dumps(
+    {"finish_reason": "stop", "terminal_receipt_id": TERMINAL_RECEIPT}
+)
+
+
+def _raw_semantic_corruption(db, sql, params=()):
+    """Seed corruption for read validation, restoring the real trigger guard."""
+    connection = db.get_connection()
+    authorization = db._semantic_mutation_authorization_for_coordinator(connection)
+    connection.create_function(
+        "console_semantic_mutation_authorized", 2, lambda *_args: 1
+    )
+    try:
+        return connection.execute(sql, params)
+    finally:
+        connection.create_function(
+            "console_semantic_mutation_authorized", 2, authorization._sqlite_authorized
+        )
+
+
 def _authority(*, attempt_id: str = "attempt-1") -> ConsoleTurnLibraryAuthority:
     return ConsoleTurnLibraryAuthority(
         policy=ConsoleLibraryPolicySnapshot(
@@ -88,7 +109,9 @@ def _reconstructability() -> ConsoleDispatchReconstructability:
     )
 
 
-def _acceptance(conversation_id: str, *, suffix: str = "1") -> ConsoleDurableTurnAcceptance:
+def _acceptance(
+    conversation_id: str, *, suffix: str = "1"
+) -> ConsoleDurableTurnAcceptance:
     return ConsoleDurableTurnAcceptance(
         conversation_id=conversation_id,
         user_message_id=f"user-{suffix}",
@@ -178,12 +201,8 @@ def _force_insert_corrupt_second_owner(
                 acceptance.attempt_id,
                 acceptance.origin,
                 acceptance.queue_entry_id,
-                dump_console_turn_library_authority_json(
-                    acceptance.frozen_authority
-                ),
-                dump_console_resolved_destination_json(
-                    acceptance.resolved_destination
-                ),
+                dump_console_turn_library_authority_json(acceptance.frozen_authority),
+                dump_console_resolved_destination_json(acceptance.resolved_destination),
                 dump_console_dispatch_reconstructability_json(
                     acceptance.reconstructability
                 ),
@@ -245,7 +264,7 @@ def _active_continuation_json() -> str:
                         {
                             "call_id": "call-1",
                             "name": "calculator",
-                            "arguments": "{\"expression\":\"2+2\"}",
+                            "arguments": '{"expression":"2+2"}',
                             "state": "pending",
                         }
                     ],
@@ -432,7 +451,9 @@ def test_authority_codec_rejects_fail_open_and_free_form_allowed_fields(
         dump_console_turn_library_authority_json(authority)
 
 
-def test_reconstructability_codec_requires_an_explicit_opaque_reference_format() -> None:
+def test_reconstructability_codec_requires_an_explicit_opaque_reference_format() -> (
+    None
+):
     with pytest.raises(ConsoleDispatchCheckpointValidationError):
         dump_console_dispatch_reconstructability_json(
             ConsoleDispatchReconstructability(
@@ -460,10 +481,14 @@ def test_insert_and_read_validate_roles_conversation_versions_and_state(
     assert read.status is ConsoleDispatchResultStatus.COMMITTED
     assert read.checkpoint == inserted
 
-    rows = db.get_connection().execute(
-        "SELECT id, role, assistant_generation_state, version, deleted "
-        "FROM messages ORDER BY id"
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute(
+            "SELECT id, role, assistant_generation_state, version, deleted "
+            "FROM messages ORDER BY id"
+        )
+        .fetchall()
+    )
     assert [tuple(row) for row in rows] == [
         ("assistant-1", "assistant", "accepted", 1, 0),
         ("user-1", "user", None, 1, 0),
@@ -472,11 +497,14 @@ def test_insert_and_read_validate_roles_conversation_versions_and_state(
 
 def test_acceptance_replaces_before_first_marker_atomically(tmp_path: Path) -> None:
     db, conversation_id = _db_and_conversation(tmp_path / "cursor.sqlite")
-    assert db.set_conversation_active_cursor(
-        conversation_id,
-        active_leaf_message_id=None,
-        before_message_id="old-root",
-    ) is True
+    assert (
+        db.set_conversation_active_cursor(
+            conversation_id,
+            active_leaf_message_id=None,
+            before_message_id="old-root",
+        )
+        is True
+    )
 
     inserted = _insert(
         db,
@@ -499,13 +527,14 @@ def test_read_quarantines_invalid_ownership(tmp_path: Path, corruption: str) -> 
     _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
     if corruption == "bad_role":
-        connection.execute(
-            "UPDATE messages SET role = ? WHERE id = ?", ("tool", "assistant-1")
+        _raw_semantic_corruption(
+            db, "UPDATE messages SET role = ? WHERE id = ?", ("tool", "assistant-1")
         )
     elif corruption == "cross_conversation":
         other_id = db.add_conversation({"title": "other"})
         assert other_id is not None
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET conversation_id = ? WHERE id = ?",
             (other_id, "user-1"),
         )
@@ -552,9 +581,15 @@ def test_read_considers_only_checkpoint_owners_on_the_selected_active_lineage(
         _acceptance(conversation_id, suffix="2"),
     )
 
-    db.set_conversation_active_leaf(conversation_id, first.assistant_message_id)
+    db.get_connection().execute(
+        "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
+        (first.assistant_message_id, conversation_id),
+    )
     first_read = repository.read_for_session(conversation_id)
-    db.set_conversation_active_leaf(conversation_id, second.assistant_message_id)
+    db.get_connection().execute(
+        "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
+        (second.assistant_message_id, conversation_id),
+    )
     second_read = repository.read_for_session(conversation_id)
 
     assert first_read.status is ConsoleDispatchResultStatus.COMMITTED
@@ -596,7 +631,51 @@ def test_acceptance_requires_the_checkpoint_and_frozen_authority_attempt_to_matc
     with pytest.raises(ConsoleDispatchCheckpointValidationError):
         _insert(db, repository, acceptance)
 
-    assert db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert (
+        db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    )
+
+
+def test_a_root_fork_prompt_is_saved_marked_and_refused_with_a_parent(
+    tmp_path: Path,
+) -> None:
+    """A prompt sent at a before-first cursor is saved with the root-fork marker.
+
+    The marker names a parentless branch beside existing roots, so an acceptance
+    that claims it with a parent is invalid and writes nothing.
+    """
+    db, conversation_id = _db_and_conversation(tmp_path / "root-fork.sqlite")
+    repository = ConsoleDispatchRepository(db)
+    earlier = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "earlier",
+        }
+    )
+    marked = replace(_acceptance(conversation_id), user_root_fork=True)
+
+    # A live parent in the same conversation: only the marker makes this invalid.
+    with pytest.raises(
+        ConsoleDispatchCheckpointValidationError,
+        match="Invalid durable turn acceptance",
+    ):
+        _insert(db, repository, replace(marked, parent_message_id=earlier))
+    count = db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+    assert count == 1
+
+    _insert(db, repository, marked)
+    other_conversation = db.add_conversation({"title": "unmarked"})
+    _insert(db, repository, _acceptance(other_conversation, suffix="2"))
+
+    rows = dict(
+        db.get_connection()
+        .execute("SELECT id, metadata_json FROM messages WHERE role = 'user'")
+        .fetchall()
+    )
+    assert json.loads(rows["user-1"])["root_fork"] is True
+    assert rows["user-2"] is None
 
 
 @pytest.mark.parametrize(
@@ -637,7 +716,8 @@ def test_read_quarantines_malformed_or_mismatched_checkpoint_identity(
             "UPDATE console_dispatch_checkpoints SET assistant_message_id = ?",
             (malformed_id,),
         )
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET id = ? WHERE id = ?",
             (malformed_id, inserted.assistant_message_id),
         )
@@ -658,9 +738,7 @@ def test_soft_deleted_conversation_cannot_recover_or_mutate_dispatch_ownership(
     tmp_path: Path,
     operation: str,
 ) -> None:
-    db, conversation_id = _db_and_conversation(
-        tmp_path / f"deleted-{operation}.sqlite"
-    )
+    db, conversation_id = _db_and_conversation(tmp_path / f"deleted-{operation}.sqlite")
     repository = ConsoleDispatchRepository(db)
     inserted = _insert(db, repository, _continuation_acceptance(conversation_id))
     owner = (
@@ -710,18 +788,25 @@ def test_soft_deleted_conversation_cannot_recover_or_mutate_dispatch_ownership(
         )
         assert result.status is ConsoleDispatchResultStatus.CONFLICT
 
-    assistant = db.get_connection().execute(
-        "SELECT assistant_generation_state, version, deleted FROM messages WHERE id = ?",
-        (owner.assistant_message_id,),
-    ).fetchone()
+    assistant = (
+        db.get_connection()
+        .execute(
+            "SELECT assistant_generation_state, version, deleted FROM messages WHERE id = ?",
+            (owner.assistant_message_id,),
+        )
+        .fetchone()
+    )
     assert tuple(assistant) == (
         owner.state.value,
         owner.assistant_message_version,
         0,
     )
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 1
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+        .fetchone()[0]
+        == 1
+    )
 
 
 @pytest.mark.parametrize("boundary", ["user", "assistant", "checkpoint"])
@@ -735,7 +820,7 @@ def test_insert_failure_at_each_write_boundary_rolls_back(
         connection.execute(
             f"""
             CREATE TRIGGER fail_{boundary} BEFORE INSERT ON messages
-            WHEN NEW.role = '{boundary if boundary == 'user' else 'assistant'}'
+            WHEN NEW.role = '{boundary if boundary == "user" else "assistant"}'
             BEGIN SELECT RAISE(ABORT, 'injected {boundary} failure'); END
             """
         )
@@ -752,9 +837,12 @@ def test_insert_failure_at_each_write_boundary_rolls_back(
         _insert(db, repository, _acceptance(conversation_id))
 
     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_acceptance_persists_the_full_user_attachment_set_atomically(
@@ -829,12 +917,16 @@ def test_attachment_sidecar_failure_rolls_back_the_entire_acceptance(
         _insert(db, repository, acceptance)
 
     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM message_attachments"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT COUNT(*) FROM message_attachments").fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_nonempty_attachments_cannot_claim_unreconstructable_retry_state(
@@ -860,7 +952,9 @@ def test_nonempty_attachments_cannot_claim_unreconstructable_retry_state(
     with pytest.raises(ConsoleDispatchCheckpointValidationError):
         _insert(db, repository, acceptance)
 
-    assert db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    assert (
+        db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+    )
 
 
 @pytest.mark.parametrize("boundary", ["assistant_state", "checkpoint_state"])
@@ -871,7 +965,9 @@ def test_state_cas_failure_rolls_back_both_owner_and_checkpoint(
     repository = ConsoleDispatchRepository(db)
     inserted = _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
-    table = "messages" if boundary == "assistant_state" else "console_dispatch_checkpoints"
+    table = (
+        "messages" if boundary == "assistant_state" else "console_dispatch_checkpoints"
+    )
     connection.execute(
         f"""
         CREATE TRIGGER fail_{boundary} BEFORE UPDATE ON {table}
@@ -904,7 +1000,13 @@ def test_state_cas_failure_rolls_back_both_owner_and_checkpoint(
 
 @pytest.mark.parametrize(
     "mismatch",
-    ["checkpoint_revision", "user_version", "assistant_version", "assistant_state", "deleted"],
+    [
+        "checkpoint_revision",
+        "user_version",
+        "assistant_version",
+        "assistant_state",
+        "deleted",
+    ],
 )
 def test_state_cas_requires_every_expected_owner_predicate(
     tmp_path: Path, mismatch: str
@@ -923,14 +1025,17 @@ def test_state_cas_requires_every_expected_owner_predicate(
     )
     connection = db.get_connection()
     if mismatch == "assistant_state":
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET assistant_generation_state = ? WHERE id = ?",
             ("dispatch_started", inserted.assistant_message_id),
         )
         connection.commit()
     elif mismatch == "deleted":
-        connection.execute(
-            "UPDATE messages SET deleted = 1 WHERE id = ?", (inserted.user_message_id,)
+        _raw_semantic_corruption(
+            db,
+            "UPDATE messages SET deleted = 1 WHERE id = ?",
+            (inserted.user_message_id,),
         )
         connection.commit()
 
@@ -973,20 +1078,23 @@ def test_state_cas_commits_versions_state_hash_and_sync_intent(tmp_path: Path) -
     assert result.checkpoint.assistant_message_version == 2
     assert result.committed_message_version == 2
     assert result.committed_payload_hash == expected_hash
-    assert db.read_committed_chat_sync_intent(
-        message_id=inserted.assistant_message_id,
-        message_version=2,
-        payload_hash=expected_hash,
-    ) is not None
+    assert (
+        db.read_committed_chat_sync_intent(
+            message_id=inserted.assistant_message_id,
+            message_version=2,
+            payload_hash=expected_hash,
+        )
+        is not None
+    )
 
 
-@pytest.mark.parametrize("boundary", ["terminal_content", "sync_intent", "checkpoint_delete"])
+@pytest.mark.parametrize(
+    "boundary", ["terminal_content", "sync_intent", "checkpoint_delete"]
+)
 def test_terminal_settlement_failure_at_each_write_boundary_rolls_back(
     tmp_path: Path, boundary: str
 ) -> None:
-    db, conversation_id = _db_and_conversation(
-        tmp_path / f"settle-{boundary}.sqlite"
-    )
+    db, conversation_id = _db_and_conversation(tmp_path / f"settle-{boundary}.sqlite")
     repository = ConsoleDispatchRepository(db)
     inserted = _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
@@ -1020,7 +1128,8 @@ def test_terminal_settlement_failure_at_each_write_boundary_rolls_back(
                 expected_assistant_message_version=1,
                 terminal_state="complete",
                 content="finished",
-                metadata_json='{"finish_reason":"stop"}',
+                metadata_json=TERMINAL_METADATA,
+                terminal_receipt_id=TERMINAL_RECEIPT,
             )
         )
 
@@ -1034,7 +1143,9 @@ def test_terminal_settlement_failure_at_each_write_boundary_rolls_back(
     assert repository.read_for_session(conversation_id).checkpoint == inserted
 
 
-def test_terminal_settlement_is_atomic_and_returns_committed_proof(tmp_path: Path) -> None:
+def test_terminal_settlement_is_atomic_and_returns_committed_proof(
+    tmp_path: Path,
+) -> None:
     db, conversation_id = _db_and_conversation(tmp_path / "settle.sqlite")
     repository = ConsoleDispatchRepository(db)
     inserted = _insert(db, repository, _acceptance(conversation_id))
@@ -1048,7 +1159,8 @@ def test_terminal_settlement_is_atomic_and_returns_committed_proof(tmp_path: Pat
             expected_assistant_message_version=1,
             terminal_state="complete",
             content="finished",
-            metadata_json='{"finish_reason":"stop"}',
+            metadata_json=TERMINAL_METADATA,
+            terminal_receipt_id=TERMINAL_RECEIPT,
         )
     )
 
@@ -1074,26 +1186,31 @@ def test_terminal_settlement_is_atomic_and_returns_committed_proof(tmp_path: Pat
         assistant["assistant_generation_state"],
         assistant["version"],
         assistant["deleted"],
-    ) == ("finished", '{"finish_reason":"stop"}', "complete", 2, 0)
-    assert db.read_committed_chat_sync_intent(
-        message_id=inserted.assistant_message_id,
-        message_version=2,
-        payload_hash=expected_hash,
-    ) is not None
+    ) == ("finished", TERMINAL_METADATA, "complete", 2, 0)
+    assert (
+        db.read_committed_chat_sync_intent(
+            message_id=inserted.assistant_message_id,
+            message_version=2,
+            payload_hash=expected_hash,
+        )
+        is not None
+    )
 
 
 @pytest.mark.parametrize("boundary", ["continuation_write", "handoff_delete"])
 def test_continuation_handoff_failure_rolls_back_both_owners(
     tmp_path: Path, boundary: str
 ) -> None:
-    db, conversation_id = _db_and_conversation(
-        tmp_path / f"handoff-{boundary}.sqlite"
-    )
+    db, conversation_id = _db_and_conversation(tmp_path / f"handoff-{boundary}.sqlite")
     repository = ConsoleDispatchRepository(db)
     inserted = _insert(db, repository, _continuation_acceptance(conversation_id))
     started = _start_dispatch(repository, inserted)
     connection = db.get_connection()
-    table = "messages" if boundary == "continuation_write" else "console_dispatch_checkpoints"
+    table = (
+        "messages"
+        if boundary == "continuation_write"
+        else "console_dispatch_checkpoints"
+    )
     operation = "UPDATE" if boundary == "continuation_write" else "DELETE"
     connection.execute(
         f"""
@@ -1188,8 +1305,58 @@ def test_continuation_handoff_atomically_transfers_ownership_and_sync_intent(
     assert repository.read_for_session(conversation_id).status is (
         ConsoleDispatchResultStatus.NOT_FOUND
     )
-    assert db.read_committed_chat_sync_intent(
-        message_id=inserted.assistant_message_id,
-        message_version=3,
-        payload_hash=expected_hash,
-    ) is not None
+    assert (
+        db.read_committed_chat_sync_intent(
+            message_id=inserted.assistant_message_id,
+            message_version=3,
+            payload_hash=expected_hash,
+        )
+        is not None
+    )
+
+
+def test_native_replay_rejects_added_hook_receipt_before_dedupe(tmp_path):
+    from dataclasses import replace
+    from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
+    from tldw_chatbook.Chat.message_metadata import AgentChatStartMetadata
+
+    db, conversation = _db_and_conversation(tmp_path / "native-replay.sqlite")
+    try:
+        native = replace(
+            _acceptance(conversation),
+            origin="agent_chat_start",
+            agent_chat_start_attempt_id="native-start",
+            agent_chat_start=AgentChatStartMetadata(
+                "native-start", "source-run", "source-chat"
+            ),
+            handoff_draft_revision=1,
+        )
+        repository = ConsoleDispatchRepository(db)
+        checkpoint = _insert(db, repository, native)
+        assert _insert(db, repository, native) == checkpoint
+        messages = db.get_messages_for_conversation(conversation)
+        mixed = replace(
+            native,
+            continuation_receipt=ContinuationReceipt(
+                "parent", "stop", "assistant", "scheduler", 1
+            ),
+        )
+        with pytest.raises(ConsoleDispatchCheckpointValidationError):
+            _insert(db, repository, mixed)
+        assert db.get_messages_for_conversation(conversation) == messages
+        assert len(messages) == 2
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+            .fetchone()[0]
+            == 1
+        )
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM console_hook_continuation_receipts")
+            .fetchone()[0]
+            == 0
+        )
+        assert _insert(db, repository, native) == checkpoint
+    finally:
+        db.close()

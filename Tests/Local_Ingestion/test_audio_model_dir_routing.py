@@ -2,9 +2,12 @@
 
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.Local_Ingestion.audio_processing import LocalAudioProcessor
 
 
+@pytest.mark.bootstrap_profile
 def test_audio_processor_passes_model_directory_to_transcription(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -60,6 +63,7 @@ def test_audio_processor_passes_model_directory_to_transcription(
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_audio_processor_preserves_legacy_positional_perform_chunking(
     tmp_path: Path, monkeypatch
 ) -> None:

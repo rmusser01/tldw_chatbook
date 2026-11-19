@@ -33,7 +33,7 @@ No new parser, remote range-header scanner, durable external path cache, automat
 
 ### Architecture gate
 
-ADR required: no new ADR. ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md. Reason: bounded structural observations remain within current artifact authority; retain ADR-080 estimation semantics.
+ADR required: no new ADR. ADR path: backlog/decisions/025-shared-stt-artifacts-and-runtime-routing.md. Reason: bounded structural observations remain within current artifact authority; retain ADR-327 estimation semantics.
 
 ### Affected areas
 

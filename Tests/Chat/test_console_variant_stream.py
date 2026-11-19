@@ -334,6 +334,7 @@ class _ScriptedGateway:
             yield chunk
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_regenerate_delegates_and_streams_incrementally():
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -362,6 +363,7 @@ async def test_regenerate_delegates_and_streams_incrementally():
     assert message.variants is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_regenerate_empty_stream_retains_failed_sibling_and_restores_anchor():
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -483,6 +485,7 @@ class _UsageEmittingScriptedGateway(_ScriptedGateway):
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_regenerate_new_sibling_carries_its_own_generation_usage():
     """PR1 Task 6, Step 5 finding: TASK-6 (Phase A, see module docstring)

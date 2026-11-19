@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Plugins.models import PackageInspection
     from tldw_chatbook.Plugins.runtime_owner import PluginRuntimeOwner
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 PAGE_SIZE = 50
 SELECT_INSTALLATIONS = """
 SELECT installation_id, revision_digest, activation_default
@@ -182,6 +182,24 @@ class PluginRegistry:
                 for statement in _schema_statements("004_root_users.sql"):
                     connection.execute(statement)
                 version = 4
+            if version == 4 and not self.read_only:
+                with self._reference_schema(version=4) as reference:
+                    expected_v4 = list(
+                        reference.execute(
+                            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                        )
+                    )
+                actual_v4 = [
+                    tuple(row)
+                    for row in connection.execute(
+                        "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                    )
+                ]
+                if actual_v4 != expected_v4:
+                    raise sqlite3.DatabaseError("invalid plugin migration predecessor")
+                for statement in _schema_statements("005_marketplace_sources.sql"):
+                    connection.execute(statement)
+                version = 5
             if version != SCHEMA_VERSION:
                 raise sqlite3.DatabaseError("unsupported plugin registry schema")
             # Exact DDL validation catches missing constraints/columns/triggers, not
@@ -231,6 +249,9 @@ class PluginRegistry:
                     connection.execute(statement)
             if version >= 4:
                 for statement in _schema_statements("004_root_users.sql"):
+                    connection.execute(statement)
+            if version >= 5:
+                for statement in _schema_statements("005_marketplace_sources.sql"):
                     connection.execute(statement)
             yield connection
         finally:
@@ -282,6 +303,77 @@ class PluginRegistry:
         finally:
             cursor.close()
 
+    def list_marketplace_sources(self) -> tuple[dict, ...]:
+        """Read bounded discovery metadata; no returned field is authorization."""
+        rows = self._connection.execute(
+            "SELECT CASE WHEN length(source_id)<=100 THEN source_id END AS source_id, CASE WHEN length(CAST(binding_json AS BLOB))<=32768 THEN binding_json END AS binding_json, CASE WHEN length(binding_mac)=64 THEN binding_mac END AS binding_mac, CASE WHEN length(CAST(snapshot_json AS BLOB))<=5242880 THEN snapshot_json END AS snapshot_json, snapshot_json IS NOT NULL AS snapshot_present, CASE WHEN length(refresh_error)<=100 THEN refresh_error END AS refresh_error FROM marketplace_sources ORDER BY source_id LIMIT 51"
+        ).fetchall()
+        if any(
+            row["source_id"] is None
+            or row["binding_json"] is None
+            or row["binding_mac"] is None
+            for row in rows
+        ):
+            raise ValueError("marketplace_source_storage_invalid")
+        if len(rows) > 50:
+            raise ValueError("marketplace_sources_limit")
+        return tuple(dict(row) for row in rows)
+
+    def write_marketplace_source(
+        self,
+        source_id: str,
+        binding_json: str,
+        binding_mac: str,
+        snapshot_json: str | None,
+        refresh_error: str | None,
+        *,
+        expected_binding: tuple[str, str] | None = None,
+    ) -> None:
+        """Store discovery state, conditionally updating an exact existing binding.
+
+        Args:
+            expected_binding: Previously authenticated JSON/MAC pair. When set,
+                replacement is atomic and cannot insert a removed source.
+
+        Raises:
+            ValueError: The expected source was removed or superseded.
+        """
+        with self.transaction() as cursor:
+            if expected_binding is not None:
+                cursor.execute(
+                    "UPDATE marketplace_sources SET binding_json=?, binding_mac=?, snapshot_json=?, refresh_error=? WHERE source_id=? AND binding_json=? AND binding_mac=?",
+                    (
+                        binding_json,
+                        binding_mac,
+                        snapshot_json,
+                        refresh_error,
+                        source_id,
+                        *expected_binding,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ValueError("source_changed")
+                return
+            count = cursor.execute(
+                "SELECT count(*) FROM marketplace_sources"
+            ).fetchone()[0]
+            exists = cursor.execute(
+                "SELECT 1 FROM marketplace_sources WHERE source_id=?", (source_id,)
+            ).fetchone()
+            if not exists and count >= 50:
+                raise ValueError("marketplace_sources_limit")
+            cursor.execute(
+                "INSERT INTO marketplace_sources VALUES (?, ?, ?, ?, ?) ON CONFLICT(source_id) DO UPDATE SET binding_json=excluded.binding_json, binding_mac=excluded.binding_mac, snapshot_json=excluded.snapshot_json, refresh_error=excluded.refresh_error",
+                (source_id, binding_json, binding_mac, snapshot_json, refresh_error),
+            )
+
+    def remove_marketplace_source(self, source_id: str) -> None:
+        """Delete only discovery state; installed revisions remain untouched."""
+        with self.transaction() as cursor:
+            cursor.execute(
+                "DELETE FROM marketplace_sources WHERE source_id=?", (source_id,)
+            )
+
     def list_installations(self, *, limit: int, offset: int) -> tuple[dict, ...]:
         """Return a bounded, deterministic page of untrusted installation intent."""
         validate_page(limit, offset)
@@ -290,7 +382,12 @@ class PluginRegistry:
             for row in self._connection.execute(SELECT_INSTALLATIONS, (limit, offset))
         )
 
-    def authority_projection(self, *, operation_result: dict | None) -> dict:
+    def authority_projection(
+        self,
+        *,
+        operation_result: dict | None,
+        _recorded_inspections: dict | None = None,
+    ) -> dict:
         """Read complete logical authority in one SQLite snapshot.
 
         This validates shape, not reviewed authorization. The coordinator must
@@ -354,6 +451,12 @@ class PluginRegistry:
                 )
                 if inspection.effective_digest != row["revision_digest"]:
                     raise ValueError("revision inspection identity mismatch")
+                identity = (row["installation_id"], row["revision_digest"])
+                if (
+                    _recorded_inspections is not None
+                    and identity in _recorded_inspections
+                ):
+                    _recorded_inspections[identity] = inspection
                 fields = (
                     "source_identity",
                     "dialect",
@@ -374,6 +477,16 @@ class PluginRegistry:
                         "installation_id": row["installation_id"],
                         "revision_digest": row["revision_digest"],
                         **{field: data[field] for field in fields},
+                        **(
+                            {"catalog_binding": data["catalog_binding"]}
+                            if "catalog_binding" in data
+                            else {}
+                        ),
+                        **(
+                            {"acquisition_reference": data["acquisition_reference"]}
+                            if "acquisition_reference" in data
+                            else {}
+                        ),
                         "variables_digest": sha256_hex(
                             canonical_json(
                                 parse_document(inspection.variables_json.encode())

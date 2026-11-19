@@ -63,11 +63,17 @@ def _row_state(db: PromptsDatabase, local_id: int) -> tuple[int, int]:
 
 
 def _set_next_prompt_id(db: PromptsDatabase, next_id: int) -> None:
-    db.get_connection().execute(
-        "INSERT INTO sqlite_sequence(name, seq) VALUES ('Prompts', ?)",
-        (next_id - 1,),
-    )
-    db.get_connection().commit()
+    # The v6 mix-in rebuild keeps a Prompts row even in a fresh database, and
+    # SQLite ignores a second one, so update it (TASK-38756).
+    connection = db.get_connection()
+    if not connection.execute(
+        "UPDATE sqlite_sequence SET seq = ? WHERE name = 'Prompts'", (next_id - 1,)
+    ).rowcount:
+        connection.execute(
+            "INSERT INTO sqlite_sequence(name, seq) VALUES ('Prompts', ?)",
+            (next_id - 1,),
+        )
+    connection.commit()
 
 
 def _assert_no_active_batch_rows(
@@ -1051,6 +1057,8 @@ def test_batch_success_diagnostics_are_aggregate_and_privacy_safe(db):
         keywords=["PRIVATE KEYWORD BETA"],
         body="PRIVATE BODY BETA",
     )
+    # Ids this long cannot hide inside the log's aggregate count.
+    assert (first_id, second_id) == (71_234_567, 71_234_568)
     messages: list[str] = []
     sink = logger.add(messages.append, format="{message}")
     try:
@@ -1073,15 +1081,20 @@ def test_batch_success_diagnostics_are_aggregate_and_privacy_safe(db):
         first_uuid,
         second_uuid,
     ):
-        assert forbidden not in rendered
+        # Stored keywords are lower-cased, so a leaked one is too.
+        assert forbidden.casefold() not in rendered.casefold()
 
 
 def test_batch_failure_is_bounded_and_privacy_safe(db, monkeypatch):
     _set_next_prompt_id(db, 81_234_567)
     first_id, first_uuid = _add_artifact(
-        db, name="PRIVATE FAILURE NAME", keywords=["PRIVATE FAILURE KEYWORD"]
+        db,
+        name="PRIVATE FAILURE NAME",
+        keywords=["PRIVATE FAILURE KEYWORD"],
+        body="PRIVATE FAILURE BODY",
     )
     second_id, second_uuid = _add_artifact(db, name="Second failure row")
+    assert (first_id, second_id) == (81_234_567, 81_234_568)
     private_exception = (
         f"PRIVATE EXCEPTION {first_id} {second_id} {first_uuid} {second_uuid}"
     )
@@ -1108,10 +1121,12 @@ def test_batch_failure_is_bounded_and_privacy_safe(db, monkeypatch):
     for forbidden in (
         "PRIVATE FAILURE NAME",
         "PRIVATE FAILURE KEYWORD",
+        "PRIVATE FAILURE BODY",
         private_exception,
         str(first_id),
         str(second_id),
         first_uuid,
         second_uuid,
     ):
-        assert forbidden not in rendered
+        # Stored keywords are lower-cased, so a leaked one is too.
+        assert forbidden.casefold() not in rendered.casefold()

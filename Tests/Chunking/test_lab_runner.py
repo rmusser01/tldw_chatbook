@@ -36,6 +36,7 @@ def request_for(text="one two three", body=None):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_sample_limit_reports_failure_without_clipping():
     module = api()
     request = request_for()
@@ -48,6 +49,7 @@ async def test_sample_limit_reports_failure_without_clipping():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_real_worker_returns_exact_input_and_complete_report():
     module = api()
     runner = module.LocalPreviewRunner(module.PreviewLimits())
@@ -80,6 +82,7 @@ async def wait_pid(path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["timeout", "cancel", "close", "task_cancel"])
+@pytest.mark.bootstrap_profile
 async def test_noncooperative_child_is_killed_and_reaped(monkeypatch, tmp_path, action):
     module = api()
     pidfile = noncooperative(monkeypatch, tmp_path, module)
@@ -105,6 +108,7 @@ async def test_noncooperative_child_is_killed_and_reaped(monkeypatch, tmp_path, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_concurrent_run_rejected_until_physical_child_stops(
     monkeypatch, tmp_path
 ):
@@ -121,6 +125,7 @@ async def test_concurrent_run_rejected_until_physical_child_stops(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "body,text,code",
     [
@@ -188,6 +193,7 @@ async def test_amplification_refused_before_launch(monkeypatch, body, text, code
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_serialized_limit_includes_captured_request():
     module = api()
     request = request_for("z" * 5000)
@@ -202,10 +208,13 @@ async def test_serialized_limit_includes_captured_request():
 @pytest.mark.parametrize(
     "body",
     [
-        {
-            "chunking": {"method": "words"},
-            "preprocessing": [{"operation": "detect_language"}] * 17,
-        },
+        pytest.param(
+            {
+                "chunking": {"method": "words"},
+                "preprocessing": [{"operation": "detect_language"}] * 17,
+            },
+            marks=pytest.mark.bootstrap_profile,
+        ),
         {"chunking": {"method": "words"}, "metadata": {"large": "x" * 2097152}},
     ],
 )
@@ -222,6 +231,7 @@ def test_shared_preflight_refuses_static_resource_excess(body):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["oversize", "bad_json", "wrong_member", "exit"])
+@pytest.mark.bootstrap_profile
 async def test_worker_protocol_refuses_untrusted_or_incomplete_results(
     monkeypatch, mode
 ):
@@ -248,6 +258,7 @@ async def test_worker_protocol_refuses_untrusted_or_incomplete_results(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_changed_runtime_refuses_without_substituting_new_assets():
     module = api()
     request = request_for()
@@ -278,6 +289,7 @@ async def test_changed_runtime_refuses_without_substituting_new_assets():
     ],
     ids=["too-many-matches", "overlapping-captures"],
 )
+@pytest.mark.bootstrap_profile
 async def test_extract_prescan_bounds_matches_and_cumulative_capture_bytes(
     pattern, text, code
 ):
@@ -299,6 +311,7 @@ async def test_extract_prescan_bounds_matches_and_cumulative_capture_bytes(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "case",
     ["sample", "tokens", "format", "overlap", "merge", "sections", "stage-count"],
@@ -410,6 +423,7 @@ print("fresh-mounted-ok")
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_peak_rss_comes_from_reaped_child_not_early_self_report(monkeypatch):
     module = api()
     from tldw_chatbook.Chunking.lab_models import ExecutionReport, RunResult
@@ -439,6 +453,7 @@ async def test_peak_rss_comes_from_reaped_child_not_early_self_report(monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_delayed_kill_reap_keeps_ownership_until_wait_succeeds(
     monkeypatch, tmp_path
 ):
@@ -479,6 +494,7 @@ async def test_delayed_kill_reap_keeps_ownership_until_wait_succeeds(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_normalizer_temporary_replacement_is_counted_before_execution(
     monkeypatch,
 ):
@@ -507,6 +523,7 @@ async def test_normalizer_temporary_replacement_is_counted_before_execution(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_expired_admission_deadline_does_not_start_a_child(monkeypatch):
     module = api()
     request = request_for()

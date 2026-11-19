@@ -4,6 +4,8 @@ from pathlib import Path
 import threading
 from typing import Any
 
+import pytest
+
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.builtin_tool_gate import user_denial_refusal
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
@@ -151,6 +153,7 @@ def _controller_provider_hook(
     return controller, provider, hook
 
 
+@pytest.mark.bootstrap_profile
 def test_disarm_denies_only_pending_raw_shell_approval_rounds(
     tmp_path: Path,
 ) -> None:
@@ -224,6 +227,7 @@ def test_disarm_denies_only_pending_raw_shell_approval_rounds(
     assert executor.calls == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_disarm_clears_returned_approval_stamp_before_provider_invoke(
     tmp_path: Path,
 ) -> None:
@@ -245,6 +249,7 @@ def test_disarm_clears_returned_approval_stamp_before_provider_invoke(
     assert result.outcome == "blocked"
 
 
+@pytest.mark.bootstrap_profile
 def test_quick_rearm_cannot_restore_a_pre_disarm_approval(
     tmp_path: Path,
 ) -> None:
@@ -270,6 +275,7 @@ def test_quick_rearm_cannot_restore_a_pre_disarm_approval(
         assert provider._pop_stamp("raw-run", "shell_exec") is None
 
 
+@pytest.mark.bootstrap_profile
 def test_disarm_invalidates_an_approval_hidden_by_nested_run_scope(
     tmp_path: Path,
 ) -> None:
@@ -335,6 +341,7 @@ def test_late_disarm_cannot_replace_a_settled_exit(tmp_path: Path) -> None:
     assert result.cleanup_proven is True
 
 
+@pytest.mark.bootstrap_profile
 def test_saved_unlock_off_disarms_and_removes_later_schema(tmp_path: Path) -> None:
     saved = {"permitted": True}
     runtime = RawCliRuntime(lambda: saved["permitted"], executor=_UnexpectedExecutor())

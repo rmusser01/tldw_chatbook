@@ -65,6 +65,7 @@ class LocalOnlyBundledCSSTestApp(LocalOnlyTestApp):
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_button_exists_and_opens_choice_chooser():
     """Redesign PR-2, Task 3: `Create ▾` (relabeled from `+ New`) still
@@ -86,6 +87,7 @@ async def test_new_button_exists_and_opens_choice_chooser():
         assert pushed and isinstance(pushed[0], NewTaskChoiceModal)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_button_chooser_reminder_choice_opens_reminder_form():
     """Picking "Reminder…" in the chooser opens the reminder form directly."""
@@ -105,6 +107,7 @@ async def test_new_button_chooser_reminder_choice_opens_reminder_form():
         assert isinstance(pilot.app.screen, ReminderForm)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_button_chooser_recurring_choice_opens_automation_form():
     """Picking "Recurring question…" opens the automation-definition form
@@ -126,6 +129,7 @@ async def test_new_button_chooser_recurring_choice_opens_automation_form():
         assert isinstance(pilot.app.screen, AutomationDefinitionForm)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_button_row_flattens_to_one_line_in_compact_mode():
     """Compact mode (see on_resize) reclaims the header's ROWS, not its

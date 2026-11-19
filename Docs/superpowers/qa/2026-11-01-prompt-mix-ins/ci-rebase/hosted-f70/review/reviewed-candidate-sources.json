@@ -1,0 +1,27 @@
+[
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_entry_canvases.py",
+    "sha256": "01dbbc0878d70bfb2ea6eac16c255c8a4f6176461ae2349a4758e6d015a66d35",
+    "lines": 571
+  },
+  {
+    "path": "Tests/UI/test_library_landing_recompose_publication.py",
+    "sha256": "1df458ff1671866b57e7a1530170850d81d13805fc5f93215a0d6efb75d166a1",
+    "lines": 89
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Library/library_canvas_sync.py",
+    "sha256": "e013239c3071a42a550b8823a79b51b65f88f655280e9c6a6a9b6420df4d92a8",
+    "lines": 247
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/canvas_sync.py",
+    "sha256": "cc43d84343e5f40581bede079d19fc5c64140366b2d053663423d0e6e221a341",
+    "lines": 1314
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "sha256": "6d16398620b71765d1aaf49a35dedf3d61e8f275fb3f15c0db67ccaf8ede9eb4",
+    "lines": 38177
+  }
+]

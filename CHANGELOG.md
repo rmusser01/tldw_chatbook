@@ -7,6 +7,56 @@ and this project adheres to Some kind of Versioning
     
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-08
+
+### Fixed
+- Include the complete served web and mobile assets, device/passkey scripts and
+  vendored notice in application distributions. Installed commands continue to
+  treat package assets as immutable.
+- Restore access to Raw TOML Revert on narrow Settings layouts.
+- Honor saved splash duration and effects in both startup and Settings.
+- Keep Console capture purge and send preparation from overlapping, including
+  received and queued turns.
+
+### Changed
+- Console replies now stream by default for every provider, including
+  OpenAI, Anthropic and the Custom OpenAI-compatible slots: the shipped
+  `[chat_defaults] streaming = true` outranks each `[api_settings.<provider>]
+  streaming` value, and applies to an existing `config.toml` that does not
+  set `[chat_defaults] streaming` (or the older `enable_streaming`) itself.
+  A self-hosted server or Custom OpenAI-compatible slot (Custom, Custom 2)
+  that cannot stream (it refuses a streamed request with a client error such
+  as HTTP 400, or sends no text) is asked once more without streaming, as
+  llama.cpp already was, and the reply arrives whole; a Custom slot pointed
+  at a paid service is asked again too. To skip that extra request, turn
+  Streaming off for that model ("Save as model default" in Chat settings) or
+  provider (`[console.provider_defaults.<provider>] streaming = false`). A
+  cloud provider is never retried this way, nor for now is a named
+  OpenAI-compatible custom endpoint; when one refuses a streamed request
+  before any text, the failure now says how to turn Streaming off. OpenAI
+  is the exception for now: its refused streamed request is still sent up
+  to three times and fails as a general provider error (HTTP 502) without
+  OpenAI's message or that advice.
+- Hosted provider presets (Together, Fireworks, Databricks and the other
+  engine presets) now choose their API key the way the readiness check does.
+  When the configuration records no key source (for example, a key written
+  into config.toml by hand), the saved key now wins over the provider's
+  environment variable; previously the variable won. A recorded key source
+  is now honoured too: a provider whose key was cleared sends no key and
+  reports "API key is required" instead of quietly spending the variable, and
+  a provider set to its saved key no longer spends the variable instead. To
+  use the variable, remove the saved key in Settings ▸ Providers & Models and
+  name the variable in the Env var field.
+- Defer Lightning Whisper MLX public availability for 0.2.4. Saved canonical and
+  legacy selections remain unchanged and report unavailable before runtime work;
+  supported replacement requires an explicit user choice.
+- Synchronize application and native companion source versions for the app-only
+  release. Ordinary recording support remains available; speculative duplex
+  voice stays unqualified and unavailable. No hardware qualification is claimed.
+- Show listening, waiting, and speaking states in Buddy for hands-free turns.
+  Errors remain visible until the next idle state or replacement.
+- Require an explicitly selected config profile for the source voice demo.
+
 ## [0.2.3] - 2026-10-02
 
 Includes committed development changes since 0.2.2 and retains the evaluation
@@ -304,7 +354,7 @@ First minor release cut from eight weeks of dev work since 0.1.8.x. Highlights:
 - Rejected, unreachable dictation-history implementations removed:
   `Audio/transcription_history.py`, `Widgets/transcription_history_viewer.py`,
   and `UI/Dictation_Window.py`.
-- Legacy navigation chrome retired (ADR-014, as amended on rebase): the permanently
+- Legacy navigation chrome retired (ADR-290, as amended on rebase): the permanently
   occluded `TitleBar` and the `TabBar`/`TabLinks`/`TabDropdown` legacy nav widgets are
   deleted, along with the dead `general.use_dropdown_navigation` /
   `general.use_link_navigation` config switches. Users who set those options lose nothing
@@ -368,7 +418,7 @@ First minor release cut from eight weeks of dev work since 0.1.8.x. Highlights:
   create/update validates the template body (stored-invalid rows stay listed
   with a flag and editable, but are refused at apply with a named error).
   **Once a media DB has been migrated to v7, downgrade is impossible** — v7
-  voids ADR-073's revert net for the chunking store. Back up the media DB
+  voids ADR-318's revert net for the chunking store. Back up the media DB
   before updating if you may need to return to an older build.
 - **Chunking templates govern local ingestion (chunking-template-parity).**
   A resolved template's chunk-stage options now take precedence over the

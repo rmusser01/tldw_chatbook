@@ -70,6 +70,7 @@ async def _open_first_note_in_info(screen, pilot):
 # --- task-32131: "/" focuses the filter without typing into it -------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_focuses_the_notes_filter_without_inserting_itself():
     host = _build_notes_host()
@@ -96,6 +97,7 @@ async def test_slash_focuses_the_notes_filter_without_inserting_itself():
         assert filter_input.value == "Reading"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_types_normally_once_the_notes_filter_is_focused():
     """Fix round 1 Important 4 (controller ruling): "/" only ever acts as
@@ -126,6 +128,7 @@ async def test_slash_types_normally_once_the_notes_filter_is_focused():
 # Tab is trapped ---------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_confirmation_renders_in_info_without_changing_mode():
     """AC#1: pressing Delete in Info must not snap the pane back to Edit."""
@@ -151,6 +154,7 @@ async def test_delete_confirmation_renders_in_info_without_changing_mode():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_confirmation_footer_follows_the_focused_button():
     """AC#2: the footer names the FOCUSED button's own Enter action."""
@@ -181,6 +185,7 @@ async def test_delete_confirmation_footer_follows_the_focused_button():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_confirmation_traps_tab_between_cancel_and_delete():
     """AC#3: Tab/Shift+Tab cycle only Cancel<->Delete while the prompt is open.
@@ -230,6 +235,7 @@ async def test_delete_confirmation_traps_tab_between_cancel_and_delete():
         assert screen.focused is confirm_button
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_confirmation_disables_the_other_info_buttons():
     """Fix round 1 Important 5: Info's Danger/Reuse & Export buttons stay
@@ -274,6 +280,7 @@ async def test_delete_confirmation_disables_the_other_info_buttons():
         ), "The delete admission was dropped by the (no-op) press"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_confirmation_disables_the_context_back_button():
     """PR #2547 review (Qodo finding 4): Back was left out of the disabled
@@ -309,6 +316,7 @@ async def test_delete_confirmation_disables_the_context_back_button():
 # --- task-32133: refused Escape notifies; a blank note reads as a draft ----
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refused_escape_notifies_why_and_what_to_do():
     """AC#1: a veto (e.g. a whitespace-padded title) must not be silent."""
@@ -339,6 +347,7 @@ async def test_refused_escape_notifies_why_and_what_to_do():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_back_button_notifies_on_a_non_validation_veto_kind():
     """Fix round 1 Important 1/2: the notify lives in the SHARED seam
@@ -426,6 +435,7 @@ def test_exit_veto_message_covers_every_non_permitted_outcome_kind(kind, expecte
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
     """AC#2: a blank note must not claim 'Saved' before anything is typed."""
@@ -457,6 +467,7 @@ async def test_fresh_blank_note_reads_as_a_draft_until_first_save():
         assert str(status.renderable) != "Empty note — type to keep it"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyword_only_edit_through_info_clears_the_draft_status():
     """PR #2547 review (Qodo finding 5): the main keywords field's handler
@@ -496,6 +507,7 @@ async def test_keyword_only_edit_through_info_clears_the_draft_status():
 # --- task-32138: ctrl+n and n both work on the landing and inside Notes ----
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_n_makes_a_note_from_the_landing():
     """AC#1: ctrl+n was inert on the landing; it must now make a new note.
@@ -515,6 +527,7 @@ async def test_ctrl_n_makes_a_note_from_the_landing():
         await _wait_for_selector(screen, pilot, "#library-note-body")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bare_n_still_makes_a_note_from_the_landing():
     """Regression guard: the existing bare-`n` landing accelerator survives."""
@@ -527,6 +540,7 @@ async def test_bare_n_still_makes_a_note_from_the_landing():
         await _wait_for_selector(screen, pilot, "#library-note-body")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bare_n_also_makes_a_note_from_inside_notes():
     """AC#1: `n` was landing-only; it must now also work inside Notes,
@@ -551,6 +565,7 @@ async def test_bare_n_also_makes_a_note_from_inside_notes():
 # --- task-32139: one back-cue wording, sized by compact ---------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_back_cue_reads_the_same_in_edit_and_info_at_wide_sizes():
     """AC#1: Edit's "‹ Notes" and Info's "‹ Note" must read identically."""
@@ -575,6 +590,7 @@ async def test_back_cue_reads_the_same_in_edit_and_info_at_wide_sizes():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_back_cue_reads_back_to_list_when_compact():
     """AC#1/guide: the compact editor must read '‹ Back to list', not
@@ -596,6 +612,7 @@ async def test_back_cue_reads_back_to_list_when_compact():
 # --- task-32142: Preview title, one Saved, absolute timestamp, receipts ----
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_shows_the_title_above_the_rendered_body():
     """AC#1: Preview must show the note's own title, not just the body."""
@@ -645,6 +662,7 @@ def test_preview_title_css_class_is_no_longer_dead():
     ) in css_source
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_info_shows_saved_only_once():
     """AC#2: Info must not print the same status text twice.
@@ -674,6 +692,7 @@ async def test_info_shows_saved_only_once():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_info_properties_show_an_absolute_timestamp_beside_the_relative_one():
     """AC#3: the relative age alone ("Created 3m") decays into a guess."""
@@ -719,6 +738,7 @@ async def test_info_properties_show_an_absolute_timestamp_beside_the_relative_on
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_receipt_is_dismissed_leaving_the_list_for_add_from_files():
     """AC#4: a stale delete receipt must not survive into another workflow."""
@@ -747,6 +767,7 @@ async def test_delete_receipt_is_dismissed_leaving_the_list_for_add_from_files()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delete_receipt_is_dismissed_leaving_the_list_for_folder_files():
     """AC#4, the other named workflow: Folder files."""
@@ -791,6 +812,7 @@ async def _open_first_note(screen, pilot):
 # --- task-32246: Tab out of the body stays in the editor -------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_out_of_the_body_lands_on_an_editor_control():
     """AC#1: Tab from the body must not leave the note editor.
@@ -828,6 +850,7 @@ async def test_tab_out_of_the_body_lands_on_an_editor_control():
         assert landed.id == "library-note-back"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_after_a_tab_out_of_the_body_is_named_by_the_footer():
     """AC#2: the characters must land visibly, or the footer must say where
@@ -854,6 +877,7 @@ async def test_typing_after_a_tab_out_of_the_body_is_named_by_the_footer():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shift_tab_from_the_first_editor_control_returns_to_the_body():
     """The cycle closes both ways: Shift+Tab off the first editor control
@@ -888,6 +912,7 @@ def test_every_ctrl_end_encoding_resolves_to_one_key_name():
     assert Keys.ControlEnd.value == "ctrl+end"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_end_moves_the_caret_to_the_end_of_a_long_note():
     """AC#1/#3: on a 1200-line body, Ctrl+End must land at the document end.
@@ -924,6 +949,7 @@ async def test_ctrl_end_moves_the_caret_to_the_end_of_a_long_note():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_editor_footer_advertises_the_document_end_key():
     """AC#2: the key has to be on the footer beside the other editor keys."""
@@ -937,6 +963,7 @@ async def test_the_editor_footer_advertises_the_document_end_key():
         assert shortcuts.get("ctrl+end") == "end of note", shortcuts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_end_drops_off_the_footer_once_focus_leaves_the_body():
     """task-32623: the chip named a key that did nothing off the body.
@@ -971,6 +998,7 @@ async def test_ctrl_end_drops_off_the_footer_once_focus_leaves_the_body():
 # --- task-32253: Shift+Tab into the Title must not select it ---------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shift_tab_into_the_title_keeps_the_title():
     """AC#1/#3: Shift+Tab into the Title then one character must leave the
@@ -1023,6 +1051,7 @@ async def test_shift_tab_into_the_title_keeps_the_title():
 # --- task-32252: "/" from a canvas with nothing focused --------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_from_an_unfocused_notes_canvas_leaves_the_filter_empty():
     """AC#1/#3, reproducing the live STARTING STATE the sibling green test
@@ -1064,6 +1093,7 @@ async def test_slash_from_an_unfocused_notes_canvas_leaves_the_filter_empty():
 # --- task-32267: one Escape leaves Info ------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [LIBRARY_TEST_SIZE, (100, 30)])
 async def test_one_escape_from_info_returns_to_the_editor(size):
@@ -1091,6 +1121,7 @@ async def test_one_escape_from_info_returns_to_the_editor(size):
         assert screen._notes_state.view == "editor"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_one_escape_returns_from_info_opened_by_keyboard():
     """AC#1, fix round 1 (review, 32267 gap): the KEYBOARD route in.
@@ -1145,6 +1176,7 @@ async def test_one_escape_returns_from_info_opened_by_keyboard():
 # --- task-32268: the delete prompt sits with the control that raised it ----
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_delete_prompt_renders_inside_info_beside_delete():
     """AC#1/#3: the prompt must render inside the Info border, adjacent to
@@ -1184,6 +1216,7 @@ async def test_the_delete_prompt_renders_inside_info_beside_delete():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("reach", "expected_enter"),

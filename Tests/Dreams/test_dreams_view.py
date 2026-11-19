@@ -5,12 +5,21 @@ Real ``DreamsDB`` on ``tmp_path`` (no fakes): pins the R2 contract -- every
 ``label``/``collection_date`` shaping fields, kept-first ordering within a
 collection, and the synthetic row that keeps a failed cycle visible even
 when it produced no stories.
+
+Phase 2 Task 5 adds the tracked-updates read (``list_tracked_updates``)
+and the ``tracked`` flag on story rows whose id is an ACTIVE tracked
+origin (the modal badges them).
 """
 
 import pytest
 
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
-from tldw_chatbook.Dreams.dreams_view import format_dream_row, list_recent_dreams
+from tldw_chatbook.Dreams.dreams_view import (
+    format_dream_row,
+    format_tracked_row,
+    list_recent_dreams,
+    list_tracked_updates,
+)
 
 
 @pytest.fixture()
@@ -131,3 +140,104 @@ def test_format_dream_row_matches_report_row_idiom():
         )
         == "> Dream: Cycle 2026-09-21: failed"
     )
+
+
+# --- Tracked updates (Phase 2 Task 5) ------------------------------------------
+
+
+def test_tracked_updates_empty_when_no_items(db):
+    assert list_tracked_updates(db) == []
+
+
+def test_tracked_updates_changed_run_first_then_event_date_then_none(db):
+    changed_id = db.create_tracked_item(
+        mechanism="question", intent="deal",
+        query_template="flights to {region}", event_date="2026-12-01",
+        cadence_seconds=3600)
+    early_id = db.create_tracked_item(
+        mechanism="question", intent="topic",
+        query_template="japan rail pass price", event_date="2026-10-01",
+        cadence_seconds=3600)
+    page_id = db.create_tracked_item(
+        mechanism="page", intent="event", event_date="2026-10-05",
+        cadence_seconds=3600)
+    db.insert_track_run(changed_id, status="baseline", digest_hash="d0")
+    db.insert_track_run(changed_id, status="changed", digest_hash="d1")
+    db.insert_track_run(early_id, status="unchanged", digest_hash="d2")
+    db.touch_tracked_checked(changed_id, "2026-09-22T00:00:00+00:00")
+
+    rows = list_tracked_updates(db)
+
+    assert [row["id"] for row in rows] == [changed_id, early_id, page_id]
+    changed, early, page = rows
+    # A changed latest run leads the list even with the latest event date.
+    assert changed["last_run_status"] == "changed"
+    assert changed["label"] == "Tracking: flights to {region}"
+    assert "Watchlists" not in changed["label"], (
+        "question alerts dispatch directly; only page rows carry the pointer"
+    )
+    assert changed["mechanism"] == "question"
+    assert changed["intent"] == "deal"
+    assert changed["status"] == "active"
+    assert changed["event_date"] == "2026-12-01"
+    assert changed["last_checked"] == "2026-09-22T00:00:00+00:00"
+    assert changed["synthetic"] is False
+    assert early["last_run_status"] == "unchanged"
+    # Page items: their dispositions live in the Subscriptions DB and
+    # surface through the Watchlists notifications pane, so the row says so.
+    assert page["last_run_status"] is None
+    assert page["label"] == "Tracking: page (alerts → Watchlists)"
+    assert page["synthetic"] is False
+
+
+def test_tracked_updates_limit_slices_after_sorting(db):
+    for index in range(3):
+        item_id = db.create_tracked_item(
+            mechanism="question", intent="topic",
+            query_template=f"q{index}", cadence_seconds=3600)
+        db.insert_track_run(item_id, status="unchanged", digest_hash="d")
+
+    rows = list_tracked_updates(db, limit=2)
+
+    # Equal sort keys keep list_tracked_items' newest-first order.
+    assert [row["id"] for row in rows] == [3, 2]
+
+
+def test_format_tracked_row_shows_label_and_run_status():
+    assert (
+        format_tracked_row(
+            {"label": "Tracking: page (alerts → Watchlists)",
+             "last_run_status": None}
+        )
+        == "> Tracked: Tracking: page (alerts → Watchlists)"
+    )
+    assert (
+        format_tracked_row({"label": "Tracking: q", "last_run_status": "changed"})
+        == "> Tracked: Tracking: q · changed"
+    )
+
+
+# --- tracked badge on story rows (Phase 2 Task 5) -------------------------------
+
+
+def test_story_rows_gain_tracked_flag_from_active_origins(db):
+    collection = db.create_collection("2026-09-22", "scheduled", "digest")
+    tracked_id = _insert_story(db, collection, title="Tracked", url="https://x/t")
+    retired_id = _insert_story(db, collection, title="Retired", url="https://x/r")
+    plain_id = _insert_story(db, collection, title="Plain", url="https://x/p")
+    db.create_tracked_item(
+        mechanism="page", intent="deal", origin_story_id=tracked_id,
+        cadence_seconds=3600)
+    retired_item = db.create_tracked_item(
+        mechanism="page", intent="deal", origin_story_id=retired_id,
+        cadence_seconds=3600)
+    db.set_tracked_status(retired_item, "retired", retired_reason="manual")
+
+    rows = list_recent_dreams(db)
+    by_id = {row["id"]: row for row in rows}
+
+    assert by_id[tracked_id]["tracked"] is True
+    assert by_id[retired_id]["tracked"] is False, (
+        "only ACTIVE tracked origins badge the story"
+    )
+    assert by_id[plain_id]["tracked"] is False

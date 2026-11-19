@@ -260,10 +260,7 @@ async def test_event_loop_stays_responsive_during_large_paste_chapter_detection(
 
         # Diagnostic evidence (task-15478 review round 3, item 3's "prove
         # it" ask): visible with `pytest -s`, harmless otherwise.
-        print(
-            f"[heartbeat-seam] sync={sync_heartbeats} "
-            f"threaded={threaded_heartbeats}"
-        )
+        print(f"[heartbeat-seam] sync={sync_heartbeats} threaded={threaded_heartbeats}")
 
         assert widget.detected_chapters
         assert sync_heartbeats == 0, (
@@ -461,9 +458,9 @@ async def test_a_slower_superseded_detection_never_overwrites_a_faster_one(
             if widget.detected_chapters and widget.detected_chapters[0].number == 1:
                 break
             await asyncio.sleep(0.01)
-        assert (
-            widget.detected_chapters and widget.detected_chapters[0].number == 1
-        ), "B's (fast, newer) result never applied"
+        assert widget.detected_chapters and widget.detected_chapters[0].number == 1, (
+            "B's (fast, newer) result never applied"
+        )
 
         # Release A. Its thread resumes, computes its STALE result, and
         # attempts to marshal it back -- this must be dropped.

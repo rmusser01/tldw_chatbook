@@ -241,6 +241,7 @@ async def test_both_transcript_compose_paths_are_borderless_at_runtime(
         assert all(edge[0] in {"", "none"} for edge in border)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_region_composes_its_ids_in_the_documented_nesting():
     host = _ready_console_host()
@@ -265,6 +266,7 @@ async def test_transcript_region_composes_its_ids_in_the_documented_nesting():
         assert transcript_region.has_class("console-region")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_region_keeps_inline_sizing_without_owning_frame_edges():
     host = _ready_console_host()
@@ -297,6 +299,7 @@ async def test_transcript_region_keeps_inline_sizing_without_owning_frame_edges(
         assert transcript_region.has_class("console-frame-solid")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_reading_state_captures_and_restores_scroll_and_selection():
     host = _ready_console_host()
@@ -326,6 +329,7 @@ async def test_manual_reading_state_captures_and_restores_scroll_and_selection()
         assert _tail_is_anchored(transcript) is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_anchored_reading_state_restores_tail_follow():
     host = _ready_console_host()
@@ -351,6 +355,7 @@ async def test_anchored_reading_state_restores_tail_follow():
         assert transcript.selected_message_id == selected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_restoring_a_missing_reading_state_is_inert():
     host = _ready_console_host()
@@ -365,6 +370,7 @@ async def test_restoring_a_missing_reading_state_is_inert():
         assert transcript.selected_message_id == selected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_message_selection_clears_the_mounted_transcript():
     host = _ready_console_host()
@@ -380,6 +386,7 @@ async def test_clear_message_selection_clears_the_mounted_transcript():
         assert transcript.selected_message_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_note_follow_intent_stamps_the_mounted_transcript():
     host = _ready_console_host()
@@ -457,7 +464,9 @@ async def test_message_header_tracks_speech_lifecycle_without_recreating_row():
 
         assert transcript.set_speech_state("speech-a", "playing") is False
         await pilot.pause()
-        assert app.query_one("#console-message-speech-action-speech-a", Button) is action
+        assert (
+            app.query_one("#console-message-speech-action-speech-a", Button) is action
+        )
         assert _speech_status(transcript, "speech-a") == "Stopped"
 
 

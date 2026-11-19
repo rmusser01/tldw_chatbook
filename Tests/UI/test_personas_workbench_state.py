@@ -270,6 +270,7 @@ def _seed_preview_turns(screen) -> "PersonasPreviewPane":
 class TestWorkbenchSelectionRestore:
     """AC#1: selection, mode, and center view survive the round-trip."""
 
+    @pytest.mark.bootstrap_profile
     async def test_save_restore_preserves_character_selection_and_center(
         self, mock_app_instance, stub_characters
     ):
@@ -312,6 +313,7 @@ class TestWorkbenchSelectionRestore:
 class TestPreviewRestore:
     """AC#2: the preview conversation (greeting + turns) survives the round-trip."""
 
+    @pytest.mark.bootstrap_profile
     async def test_delayed_character_load_keeps_user_label_neutral(
         self, mock_app_instance, stub_characters
     ):
@@ -333,10 +335,9 @@ class TestPreviewRestore:
             )
             pane.append_user("hi")
             await pilot.pause()
-            assert pane.transcript_text() == (
-                "Elara: Greetings, traveller.\nUser: hi"
-            )
+            assert pane.transcript_text() == ("Elara: Greetings, traveller.\nUser: hi")
 
+    @pytest.mark.bootstrap_profile
     async def test_restore_refreshes_provider_readout_without_character_load(
         self, mock_app_instance, stub_characters
     ):
@@ -375,6 +376,7 @@ class TestPreviewRestore:
             )
             assert screen2.preview._readout_nav_provider == "anthropic"
 
+    @pytest.mark.bootstrap_profile
     async def test_save_restore_preserves_preview_greeting_and_turns(
         self, mock_app_instance, stub_characters
     ):
@@ -388,9 +390,7 @@ class TestPreviewRestore:
             pane.append_user("hi")
             screen.preview.history.append({"role": "user", "content": "hi"})
             pane.append_reply("well met")
-            screen.preview.history.append(
-                {"role": "assistant", "content": "well met"}
-            )
+            screen.preview.history.append({"role": "assistant", "content": "well met"})
             expected_transcript = (
                 "Elara: Greetings, traveller.\nUser: hi\nElara: well met"
             )
@@ -416,6 +416,7 @@ class TestPreviewRestore:
             assert pane2.transcript_text() == expected_transcript
             assert screen2.preview.history == saved["personas_preview"]["history"]
 
+    @pytest.mark.bootstrap_profile
     async def test_late_character_loaded_worker_does_not_erase_restored_turns(
         self, mock_app_instance, stub_characters
     ):
@@ -438,9 +439,7 @@ class TestPreviewRestore:
             pane.append_user("hi")
             screen.preview.history.append({"role": "user", "content": "hi"})
             pane.append_reply("well met")
-            screen.preview.history.append(
-                {"role": "assistant", "content": "well met"}
-            )
+            screen.preview.history.append({"role": "assistant", "content": "well met"})
             saved = screen.save_state()
 
         app2 = _RestoringPersonasTestApp(mock_app_instance, saved)
@@ -557,9 +556,7 @@ class TestNonCharacterModeRestore:
             assert screen2.state.selected_entity_kind == "dictionary"
             assert screen2.state.selected_entity_name == "Some Dictionary"
             assert screen2._pending_restore is None
-            assert (
-                screen2.query_one("#personas-dictionary-detail").display is True
-            )
+            assert screen2.query_one("#personas-dictionary-detail").display is True
             assert not list(screen2.query("#ccp-character-editor-view"))
             assert not list(screen2.query("#ccp-persona-editor-view"))
             assert not list(screen2.query("#personas-lore-detail"))

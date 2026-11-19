@@ -1,0 +1,18 @@
+{
+  "tldw_chatbook/Chat/archive_recovery/runtime.py": {
+    "raw": "0231456068d8b8d243ab8cee2fad54897b3622c0dd51e77ed3ca245b33265b1f",
+    "normalized_lf": "ab4f04220137bc05174bd186776b33af7d35bb616c9b98d18c6033fac104c7a8"
+  },
+  "tldw_chatbook/UI/Console_Modules/archive_recovery.py": {
+    "raw": "3ecb7a062307adc27fd6493bc8abede30b6bd258490612b2c1724e9d4d9c411d",
+    "normalized_lf": "952060a486eb55e41d6629a9e0df3e3c058f788f4aafb17c1a987b0e06eedca6"
+  },
+  "Tests/Chat/test_archive_recovery_coordinator.py": {
+    "raw": "488e7ca348f5f036d0fa83f8c72fcadce3edf54f5277a94ff1aea4b4d73fac1a",
+    "normalized_lf": "d634019138cfbf555157b01377b8219763c5f98a7269b75dcd6bb0acff3b60de"
+  },
+  "Tests/UI/test_console_archive_recovery_cards.py": {
+    "raw": "a512e9956828c2bc74c4a8bb4606d801fdbd00787f9b44a214c7dcc182946d8d",
+    "normalized_lf": "4a640928c400d64489b69768e6aef20d2a824e99932f89a985cd0052968d530c"
+  }
+}

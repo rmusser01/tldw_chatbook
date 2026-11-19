@@ -1,0 +1,1110 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="13" skipped="0" tests="30" time="54.173" timestamp="2026-10-03T21:21:25.983585-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[direct-False]" time="5.821"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x111f38ba0&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x111ed8e60 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_stop_during_dispatch_cas_0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11093c290&gt;
+after_commit = False, execution_path = 'direct'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x111174b40&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[direct-True]" time="5.604"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11d2a3140&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x11d2b10a0 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_stop_during_dispatch_cas_1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110e56540&gt;
+after_commit = True, execution_path = 'direct'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x11d2edf80&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[agent-False]" time="5.598"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11d2cc900&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x11d214410 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_stop_during_dispatch_cas_2')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11093d4f0&gt;
+after_commit = False, execution_path = 'agent'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x11d3f41c0&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[agent-True]" time="5.521"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11d2cd9a0&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x11d2bc4d0 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_stop_during_dispatch_cas_3')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x111f6fd70&gt;
+after_commit = True, execution_path = 'agent'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x11d3157c0&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[sync-False]" time="5.519"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11d2cc900&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x11d2057c0 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_stop_during_dispatch_cas_4')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11d2b1250&gt;
+after_commit = False, execution_path = 'sync'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x11d3381c0&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_stop_during_dispatch_cas_settles_before_returning[sync-True]" time="5.508"><failure message="TimeoutError">fut = &lt;coroutine object Event.wait at 0x11d2cfa00&gt;, timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;asyncio.locks.Event object at 0x11d2400b0 [unset]&gt;
+
+    async def wait(self):
+        """Block until the internal flag is true.
+    
+        If the internal flag is true on entry, return True
+        immediately.  Otherwise, block until another coroutine calls
+        set() to set the flag to true, then return True.
+        """
+        if self._value:
+            return True
+    
+        fut = self._get_loop().create_future()
+        self._waiters.append(fut)
+        try:
+&gt;           await fut
+E           asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/locks.py:212: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_stop_during_dispatch_cas_5')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11d214e00&gt;
+after_commit = True, execution_path = 'sync'
+
+    @pytest.mark.parametrize("after_commit", [False, True])
+    @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+    async def test_stop_during_dispatch_cas_settles_before_returning(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        after_commit: bool,
+        execution_path: str,
+    ) -&gt; None:
+        """Stop must drain the actual SQLite handoff before terminal settlement."""
+        db, store, controller, gateway = _controller(tmp_path)
+        store.create_session(session_id="session-2", title="Background")
+        background_entered = asyncio.Event()
+        background_release = asyncio.Event()
+        original_stream = gateway.stream_chat
+    
+        async def background_stream(*args, **kwargs):
+            async for chunk in original_stream(*args, **kwargs):
+                yield chunk
+            background_entered.set()
+            await background_release.wait()
+    
+        monkeypatch.setattr(gateway, "stream_chat", background_stream)
+        background = asyncio.create_task(
+            controller.submit_draft("keep running", session_id="session-2")
+        )
+&gt;       await asyncio.wait_for(background_entered.wait(), 5)
+
+Tests/Chat/test_console_durable_commit_offload.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x11d334ac0&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_send_does_not_stall_event_loop_while_write_lock_is_held" time="2.563"><failure message="AssertionError: send finished in 0.103s; the 2s lock holder never contended&#10;assert 0.10299029195448384 &gt;= (2.0 * 0.5)">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_send_does_not_stall_event0')
+
+    async def test_send_does_not_stall_event_loop_while_write_lock_is_held(
+        tmp_path: Path,
+    ) -&gt; None:
+        """Probe (a): loop stays responsive while the durable commit waits."""
+    
+        db, store, controller, gateway = _controller(tmp_path)
+        db_path = str(tmp_path / "controller.sqlite")
+        hold_seconds = 2.0
+    
+        acquired = threading.Event()
+        blocker = threading.Thread(
+            target=_hold_write_lock,
+            args=(db_path, hold_seconds, acquired),
+            daemon=True,
+        )
+        blocker.start()
+        assert acquired.wait(timeout=5)
+    
+        stalls: list[float] = []
+        stop = asyncio.Event()
+    
+        async def heartbeat() -&gt; None:
+            last = time.monotonic()
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+                now = time.monotonic()
+                stalls.append(now - last)
+                last = now
+    
+        monitor = asyncio.create_task(heartbeat())
+        # Let the heartbeat actually start ticking BEFORE the send: a task that
+        # has not reached its first ``await`` yet cannot observe a stall.
+        await asyncio.sleep(0.05)
+        assert stalls, "heartbeat must be running before the send starts"
+        started = time.monotonic()
+        result = await controller.submit_draft("stall probe", session_id="session-1")
+        elapsed = time.monotonic() - started
+        stop.set()
+        await monitor
+        blocker.join(timeout=5)
+    
+        max_stall = max(stalls) if stalls else 0.0
+        # The send itself must have waited for the artificial lock holder --
+        # otherwise the probe proved nothing about contention.
+&gt;       assert elapsed &gt;= hold_seconds * 0.5, (
+            f"send finished in {elapsed:.3f}s; the 2s lock holder never contended"
+        )
+E       AssertionError: send finished in 0.103s; the 2s lock holder never contended
+E       assert 0.10299029195448384 &gt;= (2.0 * 0.5)
+
+Tests/Chat/test_console_durable_commit_offload.py:266: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_dispatch_begins_only_after_commit_is_durably_visible" time="0.728"><failure message="AssertionError: assert False is True&#10; +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_dispatch_begins_only_afte0')
+
+    async def test_dispatch_begins_only_after_commit_is_durably_visible(
+        tmp_path: Path,
+    ) -&gt; None:
+        """Probe (b): the provider stream starts only after the durable commit.
+    
+        Visibility is checked from an INDEPENDENT connection, so only committed
+        data counts. This is the ordering barrier's regression guard: under the
+        mutation "dispatch no longer waits for the commit" it must fail.
+        """
+    
+        db = CharactersRAGDB(tmp_path / "controller.sqlite", client_id="task14-test")
+        from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+        from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        store.create_session(session_id="session-1", title="Chat 1")
+        gateway = _CommitVisibilityGateway(db, str(tmp_path / "controller.sqlite"))
+        controller = ConsoleChatController(
+            store=store,
+            provider_gateway=gateway,
+            provider="llama_cpp",
+            model="test-model",
+        )
+    
+        result = await controller.submit_draft(
+            "ordering probe draft", session_id="session-1"
+        )
+    
+&gt;       assert result.accepted is True
+E       AssertionError: assert False is True
+E        +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+
+Tests/Chat/test_console_durable_commit_offload.py:308: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_cancel_during_offloaded_commit_leaves_consistent_state" time="5.546"><failure message="AssertionError: the durable commit never started; the probe cancelled too early&#10;assert {}&#10; +  where {} = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x11d243260&gt;._durable_commit_in_flight">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_cancel_during_offloaded_c0')
+
+    async def test_cancel_during_offloaded_commit_leaves_consistent_state(
+        tmp_path: Path,
+    ) -&gt; None:
+        """Shutdown-path walk: cancelling a send mid-commit corrupts nothing.
+    
+        ``asyncio.to_thread`` survives task cancellation, so the commit thread
+        runs its single transaction to completion. The DB must end atomically
+        consistent (the whole turn, or nothing), the provider must never have
+        been called, no unretrieved-exception noise may leak, and the restore
+        reconcile must recognize the committed checkpoint — the same
+        crash-window recovery the checkpoint machinery already owns.
+        """
+    
+        import gc
+    
+        db, store, controller, gateway = _controller(tmp_path)
+        db_path = str(tmp_path / "controller.sqlite")
+    
+        acquired = threading.Event()
+        release = threading.Event()
+    
+        def hold() -&gt; None:
+            connection = sqlite3.connect(db_path, timeout=5)
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                acquired.set()
+                release.wait(timeout=10)
+                connection.commit()
+            finally:
+                connection.close()
+    
+        blocker = threading.Thread(target=hold, daemon=True)
+        blocker.start()
+        assert acquired.wait(timeout=5)
+    
+        loop = asyncio.get_running_loop()
+        unhandled: list[dict[str, Any]] = []
+        loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+        try:
+            task = asyncio.create_task(
+                controller.submit_draft("cancelled mid-commit", session_id="session-1")
+            )
+            # Wait until the durable commit is genuinely in flight (reservation
+            # registered; the worker thread is blocked on the held write lock)
+            # so the cancellation deterministically lands mid-commit.
+            deadline = time.monotonic() + 5
+            while time.monotonic() &lt; deadline and not store._durable_commit_in_flight:
+                await asyncio.sleep(0.01)
+&gt;           assert store._durable_commit_in_flight, (
+                "the durable commit never started; the probe cancelled too early"
+            )
+E           AssertionError: the durable commit never started; the probe cancelled too early
+E           assert {}
+E            +  where {} = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x11d243260&gt;._durable_commit_in_flight
+
+Tests/Chat/test_console_durable_commit_offload.py:366: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_clean_restore_reconcile_takes_no_write_lock" time="0.527" /><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_valid_checkpoint_reconcile_takes_no_write_lock" time="0.583" /><testcase classname="Tests.Chat.test_console_durable_commit_offload" name="test_terminal_checkpoint_reconcile_still_deletes_under_write_lock" time="0.575" /><testcase classname="Tests.Chat.test_console_durable_commit_diagnostics" name="test_a_failed_durable_commit_records_the_exception_type" time="0.151"><failure message="assert &quot;Couldn't save the prepared turn&quot; in (('Hooks unavailable; review or disable hooks before sending.'))&#10; +  where 'Hooks unavailable; review or disable hooks before sending.' = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').visible_copy">@pytest.mark.asyncio
+    async def test_a_failed_durable_commit_records_the_exception_type() -&gt; None:
+        """The refusal is attributable from logs alone, with no product edit."""
+        controller, _store = _controller_with_failing_commit()
+    
+        with CapturedLines() as captured:
+            result = await controller.submit_draft("capital of Japan?")
+    
+        assert result.accepted is False
+&gt;       assert "Couldn't save the prepared turn" in (result.visible_copy or "")
+E       assert "Couldn't save the prepared turn" in (('Hooks unavailable; review or disable hooks before sending.'))
+E        +  where 'Hooks unavailable; review or disable hooks before sending.' = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').visible_copy
+
+Tests/Chat/test_console_durable_commit_diagnostics.py:106: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_durable_commit_diagnostics" name="test_the_failure_log_does_not_leak_the_exception_message" time="0.152" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_releasing_a_claim_after_the_session_closed_does_not_raise" time="0.652" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_retirement_has_already_released_the_in_flight_claim" time="0.533" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_a_changed_fingerprint_still_raises" time="0.504" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_a_retired_preparation_reports_retirement_not_a_changed_fingerprint" time="0.507" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_an_effect_that_fails_while_the_chat_closes_reports_its_own_cause" time="0.509" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_closing_the_chat_during_a_successful_effect_does_not_raise" time="0.497" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_a_failing_release_never_replaces_the_original_failure" time="0.517" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_resume_after_the_chat_was_closed_does_not_raise" time="0.652"><failure message="AssertionError: harness precondition: the turn was accepted&#10;assert False is True&#10; +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_resume_after_the_chat_was0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11d4a95e0&gt;
+
+    @pytest.mark.asyncio
+    async def test_resume_after_the_chat_was_closed_does_not_raise(
+        tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -&gt; None:
+        """AC1 on the path production actually takes.
+    
+        A postcommit step fails, leaving a continuation to resume. The user closes
+        the chat before it resumes -- so the whole sequence now runs against a
+        retired preparation.
+        """
+    
+        _db, store, controller, _gateway = _controller(tmp_path)
+        original = store.publish_durable_turn_identity
+        calls = 0
+    
+        def fail_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("injected identity publication")
+            return original(*args, **kwargs)
+    
+        monkeypatch.setattr(store, "publish_durable_turn_identity", fail_once)
+        first = await controller.submit_draft(
+            "draft the user abandoned", session_id="session-1"
+        )
+&gt;       assert first.accepted is True, "harness precondition: the turn was accepted"
+E       AssertionError: harness precondition: the turn was accepted
+E       assert False is True
+E        +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+
+Tests/Chat/test_console_close_during_durable_postcommit.py:265: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_resume_after_close_leaves_no_dangling_continuation" time="0.656"><failure message="AssertionError: assert False is True&#10; +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_resume_after_close_leaves0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11d4a9ac0&gt;
+
+    @pytest.mark.asyncio
+    async def test_resume_after_close_leaves_no_dangling_continuation(
+        tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -&gt; None:
+        """Closing must not strand the continuation the resume was meant to clear.
+    
+        Without this, "does not raise" could be satisfied by bailing out early and
+        leaking the very state the sequence exists to release.
+        """
+    
+        _db, store, controller, _gateway = _controller(tmp_path)
+        original = store.publish_durable_turn_identity
+        calls = 0
+    
+        def fail_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("injected identity publication")
+            return original(*args, **kwargs)
+    
+        monkeypatch.setattr(store, "publish_durable_turn_identity", fail_once)
+        first = await controller.submit_draft("another draft", session_id="session-1")
+&gt;       assert first.accepted is True
+E       AssertionError: assert False is True
+E        +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+
+Tests/Chat/test_console_close_during_durable_postcommit.py:297: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_closing_midway_through_the_effect_sequence_does_not_raise" time="0.654"><failure message="AssertionError: harness precondition: the turn was accepted&#10;assert False is True&#10; +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted">tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-commit-owner-repair-green-profile-3o5em2_q/pytest/test_closing_midway_through_th0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11d2172f0&gt;
+
+    @pytest.mark.asyncio
+    async def test_closing_midway_through_the_effect_sequence_does_not_raise(
+        tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -&gt; None:
+        """Close DURING the sequence -- Qodo's finding #2 on #2123.
+    
+        Closing before the resume is caught by the early lookup. Closing while the
+        sequence runs is the harder case: the effect that notices retirement
+        completes benignly, and then the NEXT fingerprint-validated effect raises.
+        Suppressing retirement per-effect only moved the raise one effect along, so
+        this is the test that distinguishes the two.
+    
+        The close happens inside effect #1 of eight, leaving the remaining seven to
+        cope with a preparation that no longer exists.
+        """
+    
+        _db, store, controller, _gateway = _controller(tmp_path)
+        original = store.publish_durable_turn_identity
+        calls = 0
+    
+        def fail_then_close(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                # Leaves a continuation for `resume_durable_postcommit` to pick up.
+                raise RuntimeError("injected identity publication")
+            # Second call is effect #1 of the resumed sequence: the user closes the
+            # chat right here, mid-flight.
+            result = original(*args, **kwargs)
+            store.close_session("session-1")
+            return result
+    
+        monkeypatch.setattr(store, "publish_durable_turn_identity", fail_then_close)
+        first = await controller.submit_draft("mid-sequence draft", session_id="session-1")
+&gt;       assert first.accepted is True, "harness precondition: the turn was accepted"
+E       AssertionError: harness precondition: the turn was accepted
+E       assert False is True
+E        +  where False = ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Hooks unavailable; review or disable hooks...ual'&gt;, queue_entry_id=None, committed_context_epoch=None, preparation_id=None, provider_started=False, queue_notice='').accepted
+
+Tests/Chat/test_console_close_during_durable_postcommit.py:341: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_retiring_an_already_retired_acceptance_is_a_no_op" time="0.819" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_a_different_acceptance_on_a_retired_id_still_raises" time="0.569" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_completed_effects_survive_the_close_that_retired_them" time="0.553" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_retirement_proof_survives_a_flood_of_unrelated_closes" time="0.591" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_protecting_tombstones_still_honours_the_cap" time="0.555" /><testcase classname="Tests.Chat.test_console_close_during_durable_postcommit" name="test_releasing_activity_lets_the_tombstone_be_evicted_again" time="0.618" /></testsuite></testsuites>

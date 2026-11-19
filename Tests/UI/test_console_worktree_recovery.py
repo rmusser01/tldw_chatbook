@@ -556,6 +556,7 @@ async def test_controller_bridge_turn_child_write_visible_confirmation(
         store.persistence.db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", [True, False])
 @pytest.mark.parametrize("inbox_state", ["unopened", "empty", "queued"])

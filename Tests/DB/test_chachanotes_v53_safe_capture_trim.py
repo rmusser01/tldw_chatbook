@@ -12,6 +12,7 @@ interrupt-safe (real-SIGKILL form, per
 ``Tests/DB/test_chachanotes_v47_messages_fts_backfill.py``), integrity_check
 clean, and value-identical content for everything not deliberately trimmed.
 """
+
 from __future__ import annotations
 
 import json
@@ -95,11 +96,17 @@ def _legacy_safe_blob(rows: int, *, seq: int = 0) -> bytes:
     )
     return capture_to_blob(
         ExchangeCapture(
-            run_tag="legacy-run", seq=seq, created_at="2026-08-01T00:00:00Z",
-            provider="openai", model="gpt-4.1", endpoint=None,
+            run_tag="legacy-run",
+            seq=seq,
+            created_at="2026-08-01T00:00:00Z",
+            provider="openai",
+            model="gpt-4.1",
+            endpoint=None,
             request=request,
             response={"content": "pong", "tool_calls": [], "synthetic_fallback": False},
-            status="complete", usage_json='{"input": 9}', omitted_keys=omitted,
+            status="complete",
+            usage_json='{"input": 9}',
+            omitted_keys=omitted,
             capture_detail=CaptureDetail.SAFE,
         )
     )
@@ -108,8 +115,12 @@ def _legacy_safe_blob(rows: int, *, seq: int = 0) -> bytes:
 def _legacy_wire_blob(rows: int) -> bytes:
     return capture_to_blob(
         ExchangeCapture(
-            run_tag="legacy-wire", seq=0, created_at="2026-08-01T00:00:00Z",
-            provider="llama_cpp", model="m", endpoint=None,
+            run_tag="legacy-wire",
+            seq=0,
+            created_at="2026-08-01T00:00:00Z",
+            provider="llama_cpp",
+            model="m",
+            endpoint=None,
             request={
                 "model": "m",
                 "wire_payload": {
@@ -119,8 +130,11 @@ def _legacy_wire_blob(rows: int) -> bytes:
                 },
                 "truncation_inventory": (),
             },
-            response={"content": "ok"}, status="complete", usage_json=None,
-            omitted_keys=(), capture_detail=CaptureDetail.SAFE,
+            response={"content": "ok"},
+            status="complete",
+            usage_json=None,
+            omitted_keys=(),
+            capture_detail=CaptureDetail.SAFE,
         )
     )
 
@@ -132,10 +146,18 @@ def _full_blob(rows: int) -> bytes:
     )
     return capture_to_blob(
         ExchangeCapture(
-            run_tag="full-run", seq=0, created_at="2026-08-01T00:00:00Z",
-            provider="openai", model="m", endpoint=None, request=request,
-            response={"content": "pong"}, status="complete", usage_json=None,
-            omitted_keys=omitted, capture_detail=CaptureDetail.FULL,
+            run_tag="full-run",
+            seq=0,
+            created_at="2026-08-01T00:00:00Z",
+            provider="openai",
+            model="m",
+            endpoint=None,
+            request=request,
+            response={"content": "pong"},
+            status="complete",
+            usage_json=None,
+            omitted_keys=omitted,
+            capture_detail=CaptureDetail.FULL,
         )
     )
 
@@ -163,7 +185,9 @@ def _seed_v52(db_path: Path) -> str:
         db.append_message_exchanges_local(
             message_id,
             [
-                _exchange_row("oversized-safe", 0, "safe", _legacy_safe_blob(_TAIL + 12)),
+                _exchange_row(
+                    "oversized-safe", 0, "safe", _legacy_safe_blob(_TAIL + 12)
+                ),
                 _exchange_row("small-safe", 0, "safe", _legacy_safe_blob(_TAIL)),
                 _exchange_row("wire-safe", 0, "safe", _legacy_wire_blob(_TAIL + 6)),
                 _exchange_row("full-verbatim", 0, "full", _full_blob(_TAIL + 12)),
@@ -214,9 +238,7 @@ def test_v53_trims_safe_blobs_and_leaves_everything_else_value_identical(
         assert restored.run_tag == original.run_tag
         assert {
             k: v for k, v in restored.request.items() if k != "messages_payload"
-        } == {
-            k: v for k, v in original.request.items() if k != "messages_payload"
-        }
+        } == {k: v for k, v in original.request.items() if k != "messages_payload"}
         assert set(original.omitted_keys).issubset(set(restored.omitted_keys))
         assert "messages_payload.history" in restored.omitted_keys
 
@@ -298,9 +320,7 @@ def test_v53_failure_mid_walk_rolls_back_blobs_and_version_together(
         after = _blobs_by_run_tag(recovered, message_id)
         assert after["oversized-safe"] != before["oversized-safe"]
         assert tuple(
-            recovered.get_connection()
-            .execute("PRAGMA integrity_check")
-            .fetchone()
+            recovered.get_connection().execute("PRAGMA integrity_check").fetchone()
         ) == ("ok",)
     finally:
         recovered.close_connection()
@@ -319,7 +339,9 @@ def test_v53_survives_sigkill_mid_migration(tmp_path: Path) -> None:
         db52.append_message_exchanges_local(
             message_id,
             [
-                _exchange_row(f"widen-{i}", i, "safe", _legacy_safe_blob(_TAIL + 12, seq=i))
+                _exchange_row(
+                    f"widen-{i}", i, "safe", _legacy_safe_blob(_TAIL + 12, seq=i)
+                )
                 for i in range(6)
             ],
         )
@@ -332,7 +354,9 @@ def test_v53_survives_sigkill_mid_migration(tmp_path: Path) -> None:
         dbc.append_message_exchanges_local(
             control_message_id,
             [
-                _exchange_row(f"widen-{i}", i, "safe", _legacy_safe_blob(_TAIL + 12, seq=i))
+                _exchange_row(
+                    f"widen-{i}", i, "safe", _legacy_safe_blob(_TAIL + 12, seq=i)
+                )
                 for i in range(6)
             ],
         )

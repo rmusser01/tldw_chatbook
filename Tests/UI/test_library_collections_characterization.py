@@ -139,6 +139,7 @@ async def _open_collections(screen, pilot) -> None:
     await _wait_for_selector(screen, pilot, "#library-collections-reader-shell")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_capture_filters_toggle_apply_clear_sort_and_free_text_reach_the_scope_service() -> None:
     """Characterization (pre-extraction): pins toggle/apply/clear filters,
@@ -248,6 +249,7 @@ async def test_capture_filters_toggle_apply_clear_sort_and_free_text_reach_the_s
         assert controller.state.requested_scope.page == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_item_row_press_and_scope_row_press_reach_the_capture_controller() -> None:
     """Characterization (pre-extraction): pins select_library_collection_
@@ -304,6 +306,7 @@ async def test_item_row_press_and_scope_row_press_reach_the_capture_controller()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_page_and_detail_retry_buttons_recover_after_a_transient_failure() -> None:
     """Characterization (pre-extraction): pins retry_library_collection_
@@ -414,6 +417,7 @@ async def test_page_and_detail_retry_buttons_recover_after_a_transient_failure()
         assert detail_calls == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_delete_and_note_unlink(
     monkeypatch,
@@ -577,6 +581,7 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_close(
     monkeypatch,

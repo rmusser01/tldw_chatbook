@@ -55,6 +55,20 @@ def temp_db_dir():
     shutil.rmtree(dir_path)
 
 
+@pytest.fixture
+def make_notes_state_store(tmp_path: Path, request: pytest.FixtureRequest):
+    """Close test-owned stores before the temporary directory is retired."""
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    def make_store(path: Path) -> NotesDeviceStateStore:
+        assert path.is_relative_to(tmp_path)
+        store = NotesDeviceStateStore(path)
+        request.addfinalizer(store.close)
+        return store
+
+    return make_store
+
+
 #
 # End of Notes conftest.py
 ########################################################################################################################

@@ -148,6 +148,7 @@ async def test_selection_scoped_folder_verbs_need_a_selected_row(
 # --- task-32218 -------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_notes_paints_one_noun_for_its_own_source():
     """AC#1, database side: `Library notes`, and nothing else."""
@@ -164,6 +165,7 @@ async def test_library_notes_paints_one_noun_for_its_own_source():
         _assert_no_retired_source_words(painted, "Library notes")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_folder_files_paints_one_noun_for_the_on_disk_source():
     """AC#1, files side: `Folder files`, and an Escape chip naming where it goes."""
@@ -194,6 +196,7 @@ async def test_folder_files_paints_one_noun_for_the_on_disk_source():
 # --- task-32217 AC#2, the note-editor clause --------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_note_editor_body_takes_the_height_its_pane_has_spare():
     """The Body is this pane's primary content box, so it fills it.
@@ -225,6 +228,7 @@ async def test_the_note_editor_body_takes_the_height_its_pane_has_spare():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_note_preview_takes_the_same_height_the_body_does():
     """Preview replaces the Body one-for-one, so it fills the pane too.

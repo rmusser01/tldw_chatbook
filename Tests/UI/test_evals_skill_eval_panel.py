@@ -8,8 +8,8 @@ so its harness is a bare ``App`` hosting one ``SkillEvalPanel`` -- no
 panel tests, unlike ``test_evals_character_bench_editor.py``'s editor tests.
 What IS reused from that module's shape is the pilot pattern itself: a real
 mounted app, real widget interaction (options picked through the Select's
-own dropdown overlay, buttons pressed via ``pilot.click``), and messages
-captured by a handler appending to a plain list.
+own dropdown overlay, buttons pressed through ``Button.press()``), and
+messages captured by a handler appending to a plain list.
 """
 
 from __future__ import annotations
@@ -80,16 +80,65 @@ class _PanelHarness(App):
         self.close_requested.append(event)
 
 
+async def _wait_for(pilot, predicate, what: str) -> None:
+    """Poll ``predicate`` for up to 6 s: one pause can end before the
+    message the caller is waiting on has been handled."""
+    for _ in range(300):
+        if predicate():
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"{what}: condition never became true")
+
+
+async def _press(pilot, button_id: str, until, what: str) -> None:
+    """Press a panel button on the real widget -- ``Button.press()``, the
+    call a click and Enter both end in -- then wait for ``until``.
+
+    TASK-36524: a coordinate click within 0.2 s of the button's previous
+    press hits ``Button._on_click``'s ``-active`` guard and presses nothing,
+    so a "posts nothing" assertion after a click could pass with no press at
+    all. Callers that assert nothing was posted wait for the Run guard's
+    toast, which proves the press was handled.
+    """
+    from textual.widgets import Button
+
+    pilot.app.screen.query_one(f"#{button_id}", Button).press()
+    await _wait_for(pilot, until, what)
+
+
+def _toasts(app) -> list[str]:
+    return [str(n.message) for n in app._notifications]
+
+
 async def _pick_via_overlay(pilot, select_id: str, downs: int) -> None:
-    """Selects an option through the Select's own dropdown, the way a user
-    does: click to expand, arrow to the option, enter to pick. One ``down``
-    is consumed by the NULL padding option Textual prepends when
-    ``allow_blank`` is on, so ``downs=2`` reaches the first real option,
-    ``downs=3`` the second."""
-    await pilot.click(f"#{select_id}")
-    await pilot.pause()
-    await pilot.press(*(["down"] * downs), "enter")
-    await pilot.pause()
+    """Selects an option through the Select's own dropdown, the way a
+    keyboard user does: focus it, open it, arrow to the option, enter to
+    pick. One ``down`` is consumed by the NULL padding option Textual
+    prepends when ``allow_blank`` is on, so ``downs=2`` reaches the first
+    real option, ``downs=3`` the second.
+
+    Each step waits for the state the next one needs (TASK-36382): a
+    coordinate click could land before layout settled and open nothing, and
+    ``focus()`` (the Select's, then the overlay's) lands a turn after the call.
+    """
+    from textual.widgets import Select
+
+    async def wait_for(predicate) -> None:
+        await _wait_for(pilot, predicate, select_id)
+
+    select = pilot.app.screen.query_one(f"#{select_id}", Select)
+    overlay = select.query_one("SelectOverlay")
+    select.focus()
+    await wait_for(lambda: select.has_focus)
+    # Space opens both Select and SetSelect (SetSelect's Enter only opens
+    # while unset).
+    await pilot.press("space")
+    await wait_for(lambda: select.expanded and overlay.has_focus)
+    # A keyboard open highlights the first row (the NULL padding) where a
+    # click highlighted nothing; Home makes the start row explicit, so
+    # ``downs`` keeps its documented meaning.
+    await pilot.press("home", *(["down"] * (downs - 1)), "enter")
+    await wait_for(lambda: not select.expanded)
 
 
 def test_estimate_label_matches_depth():
@@ -118,8 +167,7 @@ async def test_panel_mounts_and_posts_run_requested():
         estimate = str(app.screen.query_one("#skill-eval-estimate").render())
         assert "16" in estimate
 
-        await pilot.click("#skill-eval-run")
-        await pilot.pause()
+        await _press(pilot, "skill-eval-run", lambda: app.run_requested, "RunRequested")
 
         assert len(app.run_requested) == 1
         msg = app.run_requested[0]
@@ -136,12 +184,15 @@ async def test_run_without_both_models_picks_posts_nothing():
     app = _PanelHarness()
     async with app.run_test(size=_REALISTIC_SIZE) as pilot:
         panel = app.screen.query_one(SkillEvalPanel)
+        # A subject, so the press reaches the model guard rather than the
+        # subject guard that runs first.
+        panel.set_subject("csv-cleaner", "store")
         panel.set_targets(_TARGETS)
         await pilot.pause()
 
-        await pilot.click("#skill-eval-run")
-        await pilot.pause()
+        await _press(pilot, "skill-eval-run", lambda: _toasts(app), "Run guard toast")
 
+        assert "Pick generator and judge models first." in _toasts(app)
         assert app.run_requested == []
 
 
@@ -158,20 +209,21 @@ async def test_run_without_subject_posts_nothing():
 
         await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
         await _pick_via_overlay(pilot, "skill-eval-judge", downs=2)
-        await pilot.click("#skill-eval-run")
-        await pilot.pause()
+        no_subject = "Pick a subject skill or type a directory path first."
+        await _press(pilot, "skill-eval-run", lambda: _toasts(app), "subject guard")
+        assert _toasts(app) == [no_subject]
         assert app.run_requested == []
 
         # The screen's remount sentinel must NOT count as a subject.
+        app.clear_notifications()
         panel.set_subject("(no subject set)", "store")
-        await pilot.click("#skill-eval-run")
-        await pilot.pause()
+        await _press(pilot, "skill-eval-run", lambda: _toasts(app), "subject guard")
+        assert _toasts(app) == [no_subject]
         assert app.run_requested == []
 
         # A persisted subject remount makes Run dispatchable again.
         panel.set_subject("csv-cleaner", "store")
-        await pilot.click("#skill-eval-run")
-        await pilot.pause()
+        await _press(pilot, "skill-eval-run", lambda: app.run_requested, "RunRequested")
         assert len(app.run_requested) == 1
 
 
@@ -196,24 +248,22 @@ async def test_directory_path_subject_enables_run(tmp_path):
         await pilot.pause()
         await _pick_via_overlay(pilot, "skill-eval-generator", downs=2)
         await _pick_via_overlay(pilot, "skill-eval-judge", downs=2)
-        await pilot.click("#skill-eval-run")
-        await pilot.pause()
+        await _press(pilot, "skill-eval-run", lambda: _toasts(app), "subject guard")
+        assert "Pick a subject skill or type a directory path first." in _toasts(app)
         assert app.run_requested == []
-        # The guard's warning toast renders over the button for ~5s and
-        # would swallow the second Run click -- clear it first.
-        app.clear_notifications()
-        await pilot.pause()
         directory.value = ""
         await pilot.pause()
 
         directory.value = str(skill_dir)
-        await pilot.pause()
-        # Models were picked during the invalid-path phase above and are
-        # still held (a set Select's Enter no longer re-opens -- re-picking
-        # through the overlay here would strand an open overlay that
-        # swallows the Run click).
-        await pilot.click("#skill-eval-run")
-        await pilot.pause()
+        # The valid path reaches the guard through Input.Changed; wait for
+        # it before pressing. Models were picked during the invalid-path
+        # phase above and are still held.
+        await _wait_for(
+            pilot,
+            lambda: [m.subject_ref for m in app.subject_changed] == [str(skill_dir)],
+            "directory subject",
+        )
+        await _press(pilot, "skill-eval-run", lambda: app.run_requested, "RunRequested")
         assert len(app.run_requested) == 1
 
 
@@ -229,14 +279,15 @@ async def test_stop_run_button_posts_cancel_requested_only_when_enabled():
         stop = app.screen.query_one("#skill-eval-cancel", Button)
         assert stop.disabled
         assert "Stop run" in str(stop.label)
-        await pilot.click("#skill-eval-cancel")
+        stop.press()
         await pilot.pause()
         assert app.cancel_requested == []
 
         # Enabled by the screen while a run is in flight: press stops it.
         stop.disabled = False
-        await pilot.click("#skill-eval-cancel")
-        await pilot.pause()
+        await _press(
+            pilot, "skill-eval-cancel", lambda: app.cancel_requested, "CancelRequested"
+        )
         assert len(app.cancel_requested) == 1
 
 
@@ -597,9 +648,8 @@ async def test_run_guard_toast_teaches_the_fix_when_no_models_exist():
         panel.set_targets([])
         await pilot.pause()
 
-        await pilot.click("#skill-eval-run")
-        await pilot.pause()
-        messages = [n.message for n in app._notifications]
+        await _press(pilot, "skill-eval-run", lambda: _toasts(app), "Run guard toast")
+        messages = _toasts(app)
         assert any("No eval models" in m and "target" in m for m in messages), messages
 
 
@@ -615,9 +665,8 @@ async def test_run_guard_toast_stays_plain_when_models_exist():
         panel.set_targets(_TARGETS)
         await pilot.pause()
 
-        await pilot.click("#skill-eval-run")
-        await pilot.pause()
-        messages = [n.message for n in app._notifications]
+        await _press(pilot, "skill-eval-run", lambda: _toasts(app), "Run guard toast")
+        messages = _toasts(app)
         assert any("Pick generator and judge models first" in m for m in messages)
         assert not any("No eval models" in m for m in messages)
 

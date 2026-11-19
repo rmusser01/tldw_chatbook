@@ -1,0 +1,4 @@
+{
+  "sha256": "3253e39c251e9392f42efbd5cc14e7660c2f5c892b206650c0a3a7f2dc2b4314",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"2\" time=\"5.990\" timestamp=\"2026-11-02T05:51:20.881596-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\"><testcase classname=\"Tests.Chat.test_console_light_surface_context_meter\" name=\"test_a_window_too_small_for_the_light_set_counts_what_the_plan_sends\" time=\"2.076\" /><testcase classname=\"Tests.Chat.test_console_light_surface_context_meter\" name=\"test_a_local_reasoning_resolution_still_counts_the_light_set\" time=\"1.585\" /></testsuite></testsuites>"
+}

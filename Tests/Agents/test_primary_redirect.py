@@ -184,7 +184,21 @@ def test_mid_continuation_calls_suppress_the_stream_cut():
         ),
     )
 
-    call_model([{"role": "user", "content": "x"}], (), checkpoint)
+    # The loop always sends an active checkpoint with its newest native batch
+    # echoed in history (live: the turn's assistant_message; restore:
+    # project_provider_continuation), and make_call_model anchors on it.
+    echo = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "c1",
+                "type": "function",
+                "function": {"name": "calculator", "arguments": "{}"},
+            }
+        ],
+    }
+    call_model([{"role": "user", "content": "x"}, echo], (), checkpoint)
     assert probe_during_call["value"] is False, (
         "the stream cut was live during a mid-continuation call"
     )

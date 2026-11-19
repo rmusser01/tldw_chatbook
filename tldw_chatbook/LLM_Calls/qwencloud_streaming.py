@@ -6,19 +6,21 @@ import hashlib
 import json
 import math
 from collections import deque
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
+from threading import Lock
 from typing import TYPE_CHECKING, Any, Never, cast
 
 import requests
 
-from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+from tldw_chatbook.Provider_Contract import ChatProviderError
 from tldw_chatbook.Utils.input_validation import (
     StrictJSONError,
     strict_json_loads,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecordDecoder
+from tldw_chatbook.LLM_Calls.recovery_review import ProviderReconnectRequired
 
 if TYPE_CHECKING:
     from tldw_chatbook.LLM_Calls.qwencloud import QwenCloudAPIMode
@@ -904,18 +906,125 @@ class _ChatCompletionsStreamTranslator:
         return result
 
 
+class _OwnedQwenTransport:
+    """Keep one streaming invocation's actual retirement with its source."""
+
+    def __init__(self, session: requests.Session) -> None:
+        self.session = session
+        self._lock = Lock()
+        self._response: requests.Response | None = None
+        self._native_response_close: Callable[[], None] | None = None
+        self._track_response_close = False
+        self._response_close_started = False
+        self._session_close_started = False
+        self._abort_requested = False
+        self._failed = False
+        self._retired = False
+
+    def own_response(self, response: requests.Response, *, track_close: bool = False) -> None:
+        with self._lock:
+            if self._response is response:
+                return
+            if self._response is not None or self._session_close_started:
+                raise ProviderReconnectRequired()
+            self._response = response
+            self._native_response_close = response.close
+            self._track_response_close = track_close
+            self._response_close_started = False
+            self._abort_requested = False
+            if track_close:
+                response.close = lambda: self.finish_response(response)
+
+    def capture_response(self, response: requests.Response, *_args, **_kwargs) -> requests.Response:
+        """Capture before Requests follows redirects or returns to Qwen."""
+        self.own_response(response, track_close=True)
+        return response
+
+    def request_read_abort(self) -> None:
+        with self._lock:
+            if self._response is None or self._abort_requested:
+                return
+            shutdown = getattr(getattr(self._response, "raw", None), "shutdown", None)
+            if not callable(shutdown):
+                return
+            self._abort_requested = True
+            try:
+                shutdown()
+            except Exception:  # noqa: BLE001 - deferred retirement remains the owner
+                return
+
+    def finish_response(self, expected: requests.Response | None = None) -> None:
+        with self._lock:
+            response = self._response
+            if response is None or (expected is not None and response is not expected):
+                return
+            if self._response_close_started:
+                raise ProviderReconnectRequired()
+            close = self._native_response_close
+            assert close is not None
+            self._response_close_started = True
+        try:
+            close()
+        except BaseException as error:
+            with self._lock:
+                self._failed = True
+            if isinstance(error, Exception):
+                raise ProviderReconnectRequired() from None
+            raise
+        with self._lock:
+            if self._track_response_close:
+                response.close = close
+            self._response = None
+            self._native_response_close = None
+
+    def close(self) -> None:
+        with self._lock:
+            if self._retired:
+                return
+            if self._session_close_started:
+                raise ProviderReconnectRequired()
+            self._session_close_started = True
+        try:
+            try:
+                self.finish_response()
+            except ProviderReconnectRequired:
+                pass  # Still attempt the private Session's close.
+        finally:
+            try:
+                self.session.close()
+            except BaseException as error:
+                with self._lock:
+                    self._failed = True
+                if isinstance(error, Exception):
+                    raise ProviderReconnectRequired() from None
+                raise
+        with self._lock:
+            if self._failed or self._response is not None:
+                raise ProviderReconnectRequired()
+            self._retired = True
+
+
 class QwenCloudStream(Iterator[dict[str, Any]]):
-    """Own and normalize one live QwenCloud streaming response."""
+    """Own and normalize one live QwenCloud streaming response.
+
+    ADR-222 (TASK-34418): ``session`` is optional. Provider calls draw
+    their session from the per-thread registry, which owns its lifecycle;
+    those callers pass ``session=None`` and the stream closes only its
+    response. Passing a session keeps the pre-ADR-222 behaviour of closing
+    both (used by tests and any dedicated-session caller).
+    """
 
     def __init__(
         self,
         *,
         response: requests.Response,
-        session: requests.Session,
+        session: requests.Session | None = None,
         api_mode: QwenCloudAPIMode,
+        _owned_transport: _OwnedQwenTransport | None = None,
     ) -> None:
         self._response = response
         self._session = session
+        self._owned_transport = _owned_transport
         self._api_mode = api_mode
         self._records = iter_sse_data_records(response.iter_content(chunk_size=8192))
         self._translator = (
@@ -1008,12 +1117,20 @@ class QwenCloudStream(Iterator[dict[str, Any]]):
             return _STREAM_READ_FAILED
 
     def close(self) -> None:
-        """Close the response and its dedicated session exactly once."""
+        """Close the response (and its dedicated session, if any) exactly once."""
         if self._closed:
             return
         self._closed = True
+        if self._owned_transport is not None:
+            _best_effort_close(self._owned_transport)
+            return
         _best_effort_close(self._response)
-        _best_effort_close(self._session)
+        if self._session is not None:
+            _best_effort_close(self._session)
+
+    def _request_owned_read_abort(self) -> None:
+        if self._owned_transport is not None:
+            self._owned_transport.request_read_abort()
 
     @staticmethod
     def _decode_event(record: str) -> Mapping[str, Any]:

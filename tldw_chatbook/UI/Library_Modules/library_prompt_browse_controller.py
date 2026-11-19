@@ -129,11 +129,6 @@ class LibraryPromptBrowseController:
         self.error_copy = ""
         self.stale_copy = stale_copy.strip()
 
-    @property
-    def _run_worker(self) -> Callable[..., Any]:
-        """Live-read Textual's worker starter so replacement remains visible."""
-        return self._screen.run_worker
-
     def _next_request_token(self) -> int:
         self._request_counter += 1
         return self._request_counter
@@ -163,7 +158,7 @@ class LibraryPromptBrowseController:
         ):
             return None
         self._sync_view()(current, focus_identity)
-        return self._run_worker(
+        return self._screen.run_worker(
             self._load(
                 scope,
                 request_token=request_token,
@@ -214,6 +209,11 @@ class LibraryPromptBrowseController:
                         browse_prompts,
                         mode="local",
                         query=scope.query,
+                        **(
+                            {"artifact_type": scope.artifact_type}
+                            if scope.artifact_type is not None
+                            else {}
+                        ),
                         collection_id=scope.collection_id,
                         sort_by=scope.sort_by,
                         sort_order=scope.sort_order,

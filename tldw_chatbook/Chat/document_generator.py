@@ -47,7 +47,7 @@ from ..LLM_Calls.LLM_API_Calls_Local import (
 )
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..Internal_Prompts import get_internal_prompt
-from .Chat_Deps import ChatAPIError
+from ..Provider_Contract import ChatAPIError
 from .assistant_generation_state import render_exported_assistant_content
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 

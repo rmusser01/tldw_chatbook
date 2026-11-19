@@ -140,6 +140,7 @@ async def test_mount_loads_studio_storage_off_the_message_pump() -> None:
     assert store.load_threads[0] != test_thread
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_speech_window_loads_before_mounting_an_editable_view() -> None:
     store = _Store()

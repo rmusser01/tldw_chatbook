@@ -59,7 +59,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_console_messages_tokens,
     count_provider_continuation_tokens,
 )
-from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
+from tldw_chatbook.Provider_Contract.provider_continuation import ContinuationOwnerGroup
 from .agent_models import FENCE_TOOL_RESULT_PREFIX, SEARCH_RUN_LOG_TOOL_NAME
 
 #: `[agents]` config key (see `run_log._setting`'s env-var/TOML/default

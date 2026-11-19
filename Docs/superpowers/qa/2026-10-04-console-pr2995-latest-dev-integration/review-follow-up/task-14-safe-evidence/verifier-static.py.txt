@@ -1,0 +1,21 @@
+from common import *
+import ast,difflib
+pre=json.loads((S/'task-14-latest-dev-preflight-selection.json').read_text());paths=[r['path'] for r in pre['overlay_map'] if r['path'].endswith('.py')]+['Tests/UI/test_console_runtime_ownership.py']
+assert run('fatal-ruff',[R,'check','--select','E9,F63,F7,F82',*paths])==0
+rows={};clean=[]
+for p in paths:
+ versions={}
+ for label,ref in [('reviewed',BASE),('incoming',NEW),('final',None)]:
+  if ref and subprocess.run(['git','cat-file','-e',ref+':'+p],cwd=W,capture_output=True).returncode:continue
+  raw=blob(ref,p) if ref else (W/p).read_bytes();a=[R,'format','--stdin-filename',str(W/p),'-'];r=subprocess.run(a,input=raw,cwd=W,capture_output=True);assert r.returncode==0
+  l=raw.decode().splitlines(keepends=True);f=r.stdout.decode().splitlines(keepends=True);ops=[{'old':''.join(l[i:j]),'new':''.join(f[k:m])} for tag,i,j,k,m in difflib.SequenceMatcher(a=l,b=f,autojunk=False).get_opcodes() if tag!='equal']
+  identical=ast.dump(ast.parse(raw),include_attributes=False)==ast.dump(ast.parse(r.stdout),include_attributes=False);assert identical
+  versions[label]={'sha256':sha(raw),'formatted_sha256':sha(r.stdout),'lines':len(l),'formatted_lines':len(f),'ast_identical':identical,'edits':ops,'argv':a}
+ unknown=[e for e in versions['final']['edits'] if e not in versions['reviewed']['edits']+versions['incoming']['edits']];assert not unknown,(p,unknown)
+ rows[p]={'versions':versions,'unattributed_final_edits':unknown}
+ if not versions['final']['edits']:clean.append(p)
+dump('formatter-inheritance.json',rows)
+if clean:assert run('changed-format',[R,'format','--check',*clean])==0
+else:dump('changed-format-result.json',{'exit':0,'all_whole_owner_debt_inherited':True,'no_new_formatting_edits':True})
+assert run('source-whitespace',['git','diff','--check',BASE,'--',*paths,'backlog/docs/lessons-backlog-hygiene.md'])==0
+print('Formatter debt exactly inherited; clean files',len(clean))

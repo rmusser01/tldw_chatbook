@@ -140,6 +140,7 @@ async def collect_language(backend, language, text):
     return b"".join([chunk async for chunk in backend.generate_speech_stream(request)])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["ja", "zh"])
 @pytest.mark.parametrize("stage", ["construction", "invocation"])
@@ -176,6 +177,7 @@ async def test_concurrent_onnx_frontend_construction_and_use_are_serialized(
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["ja", "zh"])
 @pytest.mark.parametrize("stage", ["construction", "invocation"])
@@ -253,6 +255,7 @@ async def test_queued_onnx_frontend_stop_skips_work_and_joins_active_owner(
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["pcm", "wav", "timestamps"])
 async def test_language_frontend_reaches_onnx_in_every_output_path(
@@ -296,6 +299,7 @@ async def test_language_frontend_reaches_onnx_in_every_output_path(
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_joins_frontend_without_starting_inference(tmp_path, monkeypatch):
     from tldw_chatbook.TTS import kokoro_languages
@@ -333,6 +337,7 @@ async def test_stop_joins_frontend_without_starting_inference(tmp_path, monkeypa
             await task
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_explicit_onnx_phonemes_bypass_text_frontend(tmp_path, monkeypatch):
     from tldw_chatbook.TTS import kokoro_languages
@@ -362,6 +367,7 @@ async def test_explicit_onnx_phonemes_bypass_text_frontend(tmp_path, monkeypatch
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_direct_phoneme_failure_is_structured_and_retryable(tmp_path):
     def native(*args, **kwargs):
@@ -378,6 +384,7 @@ async def test_direct_phoneme_failure_is_structured_and_retryable(tmp_path):
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["pcm", "wav", "mixed", "timestamps"])
 async def test_cancel_and_close_wait_for_native_inference(tmp_path, mode):
@@ -422,6 +429,7 @@ async def test_cancel_and_close_wait_for_native_inference(tmp_path, mode):
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_onnx_producer_cancellation_keeps_its_native_worker_owned(tmp_path):
     # Characterize the actual optional dependency, replacing only model setup
@@ -463,6 +471,7 @@ async def test_real_onnx_producer_cancellation_keeps_its_native_worker_owned(tmp
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_abandoning_pcm_stream_joins_prefetched_work(tmp_path):
     entered, release, finished = (threading.Event() for _ in range(3))
@@ -505,6 +514,7 @@ async def test_abandoning_pcm_stream_joins_prefetched_work(tmp_path):
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["pcm", "wav", "mixed", "timestamps"])
 async def test_native_failure_is_retryable_instead_of_error_text_audio(tmp_path, mode):
@@ -523,6 +533,7 @@ async def test_native_failure_is_retryable_instead_of_error_text_audio(tmp_path,
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["pcm", "wav", "mixed", "timestamps"])
 async def test_close_alone_cancels_request_after_joining_native_work(tmp_path, mode):
@@ -553,6 +564,7 @@ async def test_close_alone_cancels_request_after_joining_native_work(tmp_path, m
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_loading_is_responsive_and_retained_through_cancel_and_close(tmp_path):
     entered, release, finished = (threading.Event() for _ in range(3))
@@ -599,6 +611,7 @@ async def test_loading_is_responsive_and_retained_through_cancel_and_close(tmp_p
         await backend.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("asset", ["model", "voices"])
 async def test_cancelled_asset_download_joins_writer_and_removes_temporary_file(

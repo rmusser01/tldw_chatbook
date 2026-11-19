@@ -178,6 +178,8 @@ async def test_local_llm_provider_catalog_service_discovers_configured_openai_co
             "api_key": "sk-test",
         }
     ]
+
+
 @pytest.mark.asyncio
 async def test_local_llm_provider_catalog_service_staged_endpoint_and_key_win_for_discovery():
     discovery_calls = []

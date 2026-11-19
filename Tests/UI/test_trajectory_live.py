@@ -10,7 +10,7 @@ Three seams, per the task brief:
    callables -- the exact callables the Console launcher passes -- and the
    poll/worker/follow state machine is driven deterministically.
 3. **Launch binding registration** (unit, non-async): ChatScreen binds a
-   single-letter ADR-031-legal key that pushes the trajectory screen.
+   single-letter ADR-299-legal key that pushes the trajectory screen.
 
 Full-app construction is deliberately avoided (the Console workbench pilot
 is far heavier than this feature needs); the seam callables are the real
@@ -41,6 +41,7 @@ from tldw_chatbook.UI.Console_Modules.review_selection import (
     _build_trajectory_snapshot,
 )
 from tldw_chatbook.UI.Console_Modules.wiring import _present_console_trajectory
+from tldw_chatbook.UI.Console_Modules.composer_run_controls import TRANSCRIPT_KEYS_FOOTER
 from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUTS, ChatScreen
 from tldw_chatbook.UI.Screens.trajectory_screen import TrajectoryScreen
 
@@ -299,7 +300,7 @@ def test_follow_binding_registered_and_hints_stay_one_to_one():
     """`f` is bound with an implemented action; class-level hints stay 1:1.
 
     The rendered hint drops on non-live screens (``_refresh_hints`` filter);
-    class-level equality is what the ADR-031 governance suite asserts.
+    class-level equality is what the ADR-299 governance suite asserts.
     """
     binding_keys = {
         binding.key for binding in TrajectoryScreen.BINDINGS if binding.key != "escape"
@@ -311,19 +312,22 @@ def test_follow_binding_registered_and_hints_stay_one_to_one():
 
 
 # ---------------------------------------------------------------------------
-# 3. Launch binding registration (ADR-031 governance, non-async)
+# 3. Launch binding registration (ADR-299 governance, non-async)
 # ---------------------------------------------------------------------------
 
 
 def test_console_binds_single_letter_trajectory_launch():
     bindings = {b.key: b.action for b in ChatScreen.BINDINGS}
     assert bindings.get("y") == "open_trajectory_view"
-    assert ("Y", "trace") in CONSOLE_WORKBENCH_SHORTCUTS
+    # TASK-33622.3: 'y' acts only from the transcript (the announced list
+    # mode), so only the transcript's footer variant advertises it.
+    assert ("Y", "trace") in TRANSCRIPT_KEYS_FOOTER
+    assert ("Y", "trace") not in CONSOLE_WORKBENCH_SHORTCUTS
     assert hasattr(ChatScreen, "action_open_trajectory_view")
     # 'j' stays owned by the focused transcript (next-message selection in
     # console_transcript.on_key); the launch key must not collide with it.
     assert "j" not in bindings
-    # ADR-031: single-letter htop-style key, no terminal-convention chord.
+    # ADR-299: single-letter htop-style key, no terminal-convention chord.
     assert len("y") == 1
 
 

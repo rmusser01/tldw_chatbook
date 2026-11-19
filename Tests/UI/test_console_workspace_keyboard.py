@@ -12,6 +12,7 @@ from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Widgets.Console import ConsoleWorkspaceSwitcherModal
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_w_opens_workspace_switcher() -> None:
     """The switcher must be reachable without the mouse."""
@@ -28,6 +29,7 @@ async def test_alt_w_opens_workspace_switcher() -> None:
         assert not isinstance(host.screen_stack[-1], ConsoleWorkspaceSwitcherModal)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_palette_exposes_workspace_commands() -> None:
     """Command palette parity: switch + create must be listed for Console."""
@@ -45,6 +47,7 @@ async def test_palette_exposes_workspace_commands() -> None:
         assert any("New workspace" in label for label in labels), labels
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switcher_modal_is_keyboard_operable() -> None:
     """With a second workspace present: open via key, pick via key only."""

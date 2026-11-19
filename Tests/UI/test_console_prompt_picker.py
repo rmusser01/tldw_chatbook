@@ -596,3 +596,24 @@ def test_prompt_picker_css_blocks_pinned_in_source_and_bundle() -> None:
 
         filter_focus_block = _css_block(text, f"#{FILTER_INPUT_ID}:focus {{")
         assert "border: tall $ds-input-focus-accent;" in filter_focus_block
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [MODE_INSERT, MODE_APPLY_SYSTEM])
+async def test_mixin_never_enters_or_dismisses_prompt_picker(mode: str) -> None:
+    app = ModalHarness()
+    mixin = _record(
+        local_id=14, name="Mixin", artifact_type="mixin", system_prompt="stale"
+    )
+    fake_search = FakePromptSearch([mixin])
+    async with app.run_test(size=(100, 40)) as pilot:
+        picker = ConsolePromptPickerModal(
+            mode=mode, initial_query="", prompt_search=fake_search
+        )
+        await app.push_screen(picker, callback=app.capture)
+        await pilot.pause()
+        await _wait_for_search(pilot)
+        assert len(app.screen.query(f".{ROW_CLASS}")) == 0
+        picker._select_record(mixin)
+        await pilot.pause()
+        assert app.dismissed_with == "not-called"

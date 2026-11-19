@@ -1,6 +1,9 @@
+import pytest
+
 from tldw_chatbook.Chunking.engine import Chunker
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_rewrite_method_offsets_disabled():
     text = "First sentence, with punctuation. Second sentence; with clauses."
     chunker = Chunker()

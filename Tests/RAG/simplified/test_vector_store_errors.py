@@ -109,12 +109,15 @@ class TestChromaVectorStoreErrors:
         assert store._collection is None
 
     def test_chroma_connection_failure(self):
-        """Test handling of ChromaDB connection failures."""
+        """Propagate a connection failure while creating a missing collection."""
+        from chromadb.errors import NotFoundError
+
         with tempfile.TemporaryDirectory() as temp_dir:
             store = ChromaVectorStore(persist_directory=temp_dir)
 
             # Mock ChromaDB client to simulate connection failure
             with patch.object(store, "_client") as mock_client:
+                mock_client.get_collection.side_effect = NotFoundError("Missing collection")
                 mock_client.get_or_create_collection.side_effect = Exception(
                     "Connection failed"
                 )
@@ -127,6 +130,8 @@ class TestChromaVectorStoreErrors:
                         embeddings=[[0.1] * 128],
                         metadata=[{"source": "test"}],
                     )
+                mock_client.get_collection.assert_called_once_with(store.collection_name)
+                mock_client.get_or_create_collection.assert_called_once()
 
     def test_persist_directory_permissions(self):
         """Test handling of permission errors for persist directory."""

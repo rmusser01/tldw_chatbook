@@ -394,7 +394,7 @@ def test_f4_eviction_keeps_the_newest_frame_even_if_it_alone_exceeds_the_cap():
     )
     tap.start()
 
-    factory.instance.callback(b"AA")        # 2 bytes: fits exactly
+    factory.instance.callback(b"AA")  # 2 bytes: fits exactly
     factory.instance.callback(b"OVERSIZE")  # 8 bytes: alone exceeds the cap
 
     tap.mark_ready()

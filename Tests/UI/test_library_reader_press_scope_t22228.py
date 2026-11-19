@@ -62,6 +62,7 @@ async def _open_reader_with_more_actions(screen, pilot):
     await _wait_for_selector(screen, pilot, "#library-media-edit")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_substate_presses_are_viewer_scoped() -> None:
     """All six sub-state presses rebuild the viewer, never the whole screen."""
@@ -114,6 +115,7 @@ async def test_reader_substate_presses_are_viewer_scoped() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resize_off_the_media_route_does_not_resolve_the_media_layout() -> None:
     """A Conversations resize frame never looks for the Media reader shell."""
@@ -143,6 +145,7 @@ async def test_resize_off_the_media_route_does_not_resolve_the_media_layout() ->
         assert calls["count"] == 0, calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resize_on_the_media_route_still_carries_the_focus_intent() -> None:
     """Control arm: the guard scopes the leg, it does not retire it.

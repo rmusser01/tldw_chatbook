@@ -3,6 +3,7 @@ import json
 import pytest
 
 
+@pytest.mark.bootstrap_profile
 def test_json_single_metadata_reference_list_mode():
 
     from tldw_chatbook.Chunking.engine.strategies.json_xml import (
@@ -48,6 +49,7 @@ def test_json_single_metadata_reference_list_mode():
         assert "title" not in c and "source" not in c
 
 
+@pytest.mark.bootstrap_profile
 def test_json_single_metadata_reference_dict_mode():
 
     from tldw_chatbook.Chunking.engine.strategies.json_xml import (
@@ -107,7 +109,9 @@ def test_json_single_metadata_reference_via_config(monkeypatch):
     cp.set("Chunking", "json_metadata_reference_key", "ref_id")
 
     # Patch the loader used by the strategy helpers
-    monkeypatch.setattr("tldw_chatbook.Chunking._shims.config.load_comprehensive_config", lambda: cp)
+    monkeypatch.setattr(
+        "tldw_chatbook.Chunking._shims.config.load_comprehensive_config", lambda: cp
+    )
 
     strategy = JSONChunkingStrategy()
     payload = {

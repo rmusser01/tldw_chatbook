@@ -21,6 +21,7 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(80, 24), (128, 24), (160, 45)])
 async def test_waiting_send_does_not_repaint_unchanged_status(
     monkeypatch, tmp_path, size

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import unicodedata
 
 import pytest
 
@@ -94,6 +95,33 @@ def test_duplicate_casefold_rejected(registry, binding):
         registry.add_binding_exclusion("ws-excl", binding, "Secrets/")
 
 
+_SPELLINGS = [("NFC", "NFD"), ("NFD", "NFC")]
+
+
+@pytest.mark.parametrize(("stored_form", "other_form"), _SPELLINGS)
+def test_duplicate_other_normalization_rejected(
+    registry, binding, stored_form, other_form
+):
+    """An exclusion in the other Unicode spelling is the same path (TASK-37655)."""
+    registry.add_binding_exclusion(
+        "ws-excl", binding, unicodedata.normalize(stored_form, "Donn\u00e9es")
+    )
+    with pytest.raises(WorkspaceRegistryServiceError):
+        registry.add_binding_exclusion(
+            "ws-excl", binding, unicodedata.normalize(other_form, "Donn\u00e9es")
+        )
+
+
+@pytest.mark.parametrize(("stored_form", "other_form"), _SPELLINGS)
+def test_remove_matches_other_normalization(registry, binding, stored_form, other_form):
+    registry.add_binding_exclusion(
+        "ws-excl", binding, unicodedata.normalize(stored_form, "Donn\u00e9es")
+    )
+    registry.remove_binding_exclusion(
+        "ws-excl", binding, unicodedata.normalize(other_form, "Donn\u00e9es")
+    )
+    assert registry.list_binding_exclusions(binding) == ()
+
 def test_cap_enforced(registry, binding):
     for i in range(200):
         registry.add_binding_exclusion("ws-excl", binding, f"e{i}")
@@ -128,6 +156,8 @@ def test_concurrent_adds_do_not_lose_exclusions(registry, binding):
             registry.add_binding_exclusion("ws-excl", binding, path)
         except Exception as exc:  # noqa: BLE001 -- reported via assertion below
             failures.append(exc)
+        finally:
+            registry.db.close()
 
     threads = [threading.Thread(target=add, args=(p,)) for p in paths]
     for thread in threads:

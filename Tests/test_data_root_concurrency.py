@@ -16,42 +16,45 @@ def test_concurrent_first_starts_agree_when_ancestor_permissions_change(tmp_path
     shared.mkdir(parents=True)
     shared.chmod(0o775)
     script = """
-import os
 from pathlib import Path
 import sys
 import time
 import portalocker
-from tldw_chatbook import config
+from tldw_chatbook.Utils import private_paths
 
 root, role = Path(sys.argv[1]), sys.argv[2]
 home = root / 'home'
-os.environ['HOME'] = str(home)
-config.get_user_folder_name = lambda: 'alice'
-config.get_cli_setting = lambda section, key, default=None: default
-real_secure = config.secure_private_directory
+real_secure = private_paths.secure_private_directory
 real_lock = portalocker.lock
+
+def wait_for_release(name):
+    deadline = time.monotonic() + 30
+    while not (root / name).exists():
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f'timed out waiting for {name}')
+        time.sleep(0.01)
 
 def paused_secure(path, **kwargs):
     if role == 'a' and Path(path) == home / '.tldw_cli-data':
         (root / 'a-ready').touch()
-        deadline = time.monotonic() + 30
-        while not (root / 'release-a').exists():
-            if time.monotonic() >= deadline:
-                raise RuntimeError('timed out waiting to resume root creation')
-            time.sleep(0.01)
+        wait_for_release('release-a')
     return real_secure(path, **kwargs)
 
 def observed_lock(stream, flags):
     try:
-        return real_lock(stream, flags | portalocker.LockFlags.NON_BLOCKING)
-    except portalocker.exceptions.LockException:
+        return real_lock(stream, flags)
+    except portalocker.exceptions.AlreadyLocked:
         # Signal actual OS lock contention, not a guessed sleep interval.
         (root / 'b-blocked').touch()
-        return real_lock(stream, flags)
+        raise
 
-config.secure_private_directory = paused_secure
-if role == 'b':
+# Settings load resolves the data root during the first config import.
+if role == 'a':
+    private_paths.secure_private_directory = paused_secure
+else:
     portalocker.lock = observed_lock
+from tldw_chatbook import config
+
 selected = config.get_user_data_dir()
 (root / (role + '-result')).write_text(str(selected))
 """
@@ -60,10 +63,12 @@ selected = config.get_user_data_dir()
     def start(role):
         bootstrap = tmp_path / f"bootstrap-{role}"
         config_path = bootstrap / "config/config.toml"
-        config_path.parent.mkdir(parents=True)
+        config_path.parent.mkdir(mode=0o700, parents=True)
+        config_path.write_text('[general]\nusers_name = "alice"\n', encoding="utf-8")
+        config_path.chmod(0o600)
         env = dict(
             os.environ,
-            HOME=str(bootstrap),
+            HOME=str(home),
             TLDW_CONFIG_PATH=str(config_path),
         )
         process = subprocess.Popen(
@@ -90,6 +95,7 @@ selected = config.get_user_data_dir()
     try:
         start("a")
         wait_for_signal("a-ready")
+        assert not (home / ".tldw_cli-data").exists()
         shared.chmod(0o755)
         start("b")
         # Without coordination, B creates the conventional root and finishes;

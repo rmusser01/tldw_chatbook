@@ -7,6 +7,8 @@ import pytest
 from Tests.Chat.test_automatic_wake_budget import close_rig, queue_result, result_for
 from Tests.Chat.test_console_fleet_wake import _controller_rig, _settle
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def rig(tmp_path):
@@ -136,15 +138,30 @@ async def test_waiting_conversation_precedes_a_busy_producers_next_wake(rig):
     try:
         first_child = pending_result(rig, "first")
         pending_result(second, "second")
-        pending_result(third, "third")
+        waiting_child = pending_result(third, "third")
         assert await _settle(lambda: len(gateway.payloads) == 2)
         chain = rig[2].get_run(first_child)["work_chain_id"]
         hot_child = result_for(rig, chain)
         queue_result(rig, hot_child)
         gate.set()
         assert await _settle(lambda: len(gateway.payloads) == 4)
-        assert hot_child not in gateway.payloads[2][-1]["content"]
-        assert hot_child in gateway.payloads[3][-1]["content"]
+        notices = [payload[-1]["content"] for payload in gateway.payloads]
+        assert sum(waiting_child in notice for notice in notices) == 1
+        assert sum(hot_child in notice for notice in notices) == 1
+        # Async provider preparation can arrive in a different order. Fairness
+        # reserves and accepts the waiting conversation before the busy one.
+        with rig[2].connection() as conn:
+            accepted = {
+                row["run_id"]: row["accepted_at"]
+                for row in conn.execute(
+                    "SELECT claim.run_id, attempt.accepted_at "
+                    "FROM automatic_wake_claims claim "
+                    "JOIN automatic_wake_attempts attempt ON attempt.id=claim.attempt_id "
+                    "WHERE claim.run_id IN (?, ?)",
+                    (waiting_child, hot_child),
+                )
+            }
+        assert accepted[waiting_child] < accepted[hot_child]
     finally:
         gate.set()
         await close_rig(rig)

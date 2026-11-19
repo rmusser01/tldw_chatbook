@@ -1,7 +1,6 @@
 """Mounted tests for the Roleplay Dictionaries mode (P1a)."""
 
 import copy
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -9,10 +8,18 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
+from textual.widgets import Button, DataTable, Input, Static, Switch, TextArea
 
-from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from Tests.UI.roleplay_frame_harness import (
+    PersonasTestApp,
+    StyledPersonasTestApp,
+    first_list_item,
+    item_at,
+    list_state,
+    painted_text,
+    select_roleplay_item,
+    start_new,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryAddRequested,
     DictionarySettingsSaveRequested,
@@ -687,47 +694,6 @@ def stub_characters(monkeypatch):
     patch_character_paging(monkeypatch)
 
 
-class PersonasTestApp(ConsolidatedCSSApp):
-    """Same harness as test_personas_workbench.py (delegating App)."""
-
-    def __init__(self, mock_app_instance):
-        super().__init__()
-        self._mock = mock_app_instance
-        self.character_persona_scope_service = (
-            mock_app_instance.character_persona_scope_service
-        )
-
-    _NON_DELEGATED_PREFIXES = (
-        "_",
-        "watch_",
-        "compute_",
-        "validate_",
-        "action_",
-        "key_",
-        "on_",
-    )
-
-    def __getattr__(self, name):
-        if name.startswith(self._NON_DELEGATED_PREFIXES):
-            raise AttributeError(name)
-        return getattr(self.__dict__["_mock"], name)
-
-    def compose(self):
-        yield AppFooterStatus(id="app-footer-status")
-
-    def on_mount(self) -> None:
-        self.push_screen(PersonasScreen(self))
-
-
-class StyledPersonasTestApp(PersonasTestApp):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
-
-
 async def _mounted(pilot):
     await pilot.pause()
     return pilot.app.screen
@@ -748,20 +714,19 @@ async def _select_first(pilot, screen):
     Shared by TestDictionaryAttachmentsTab and TestDictionaryAttachFlow
     (both P1e-added), which previously each defined an identical method.
     """
-    rows = screen.query_one("#personas-library-rows", ListView)
-    rows.index = 0
-    rows.action_select_cursor()
+    await select_roleplay_item(pilot, screen, index=0)
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()
 
 
 class TestLibraryMetaRows:
+    @pytest.mark.bootstrap_profile
     async def test_meta_row_renders_two_lines(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
-        app = PersonasTestApp(mock_app_instance)
-        async with app.run_test() as pilot:
+        app = StyledPersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(220, 55)) as pilot:
             screen = await _mounted(pilot)
             pane = screen.query_one(PersonasLibraryPane)
             await pane.update_rows(
@@ -770,20 +735,22 @@ class TestLibraryMetaRows:
                         item_id="1",
                         kind="dictionary",
                         name="Medical Abbrev",
-                        meta="2 entries · on",
+                        meta="2 rules",
+                        state="on",
                     ),
                 ),
                 total=1,
-                noun="dictionaries",
             )
             await pilot.pause()
-            row = screen.query_one("#personas-library-rows", ListView).children[0]
-            statics = row.query(Static).results()
-            texts = [str(s.renderable) for s in statics]
-            assert texts == ["Medical Abbrev", "2 entries · on"]
-            meta = row.query_one(".personas-library-row-meta", Static)
-            assert meta is not None
+            item_list = screen.query_one("#personas-library-rows")
+            # SEMANTIC (D14-A): one kind item in a list at least 40 cells wide
+            # gets 2-line rows (spec 1.5.2); line 2 is a dim span of the prompt.
+            assert item_list.density == 2
+            assert item_at(screen, 0).lines == ("Medical Abbrev · on", "2 rules")
+            prompt = item_list.get_option_at_index(0).prompt
+            assert any(str(span.style) == "dim" for span in prompt.spans)
 
+    @pytest.mark.bootstrap_profile
     async def test_metaless_rows_stay_single_line(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -794,18 +761,18 @@ class TestLibraryMetaRows:
             await pane.update_rows(
                 (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
                 total=1,
-                noun="characters",
             )
             await pilot.pause()
-            row = screen.query_one("#personas-library-rows", ListView).children[0]
-            assert len(list(row.query(Static).results())) == 1
+            item = item_at(screen, 0)
+            assert item.meta is None and len(item.lines) == 1
 
+    @pytest.mark.bootstrap_profile
     async def test_meta_row_geometry_not_clipped(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
         """Geometry pilot: the meta line must actually render (rail CSS pins height:1)."""
         app = StyledPersonasTestApp(mock_app_instance)
-        async with app.run_test(size=(160, 48)) as pilot:
+        async with app.run_test(size=(220, 55)) as pilot:
             screen = await _mounted(pilot)
             pane = screen.query_one(PersonasLibraryPane)
             await pane.update_rows(
@@ -814,36 +781,38 @@ class TestLibraryMetaRows:
                         item_id="1",
                         kind="dictionary",
                         name="Medical Abbrev",
-                        meta="2 entries · on",
+                        meta="2 rules",
+                        state="on",
                     ),
                 ),
                 total=1,
-                noun="dictionaries",
             )
             await pilot.pause()
-            row = screen.query_one("#personas-library-rows", ListView).children[0]
-            assert row.region.height >= 2
-            meta = row.query_one(".personas-library-row-meta", Static)
-            assert meta.region.height >= 1
+            # SEMANTIC (D14-A): rows are option lines, so the geometry check
+            # reads the painted option region instead of a row widget's.
+            painted = first_list_item(screen).region
+            assert painted.height == 2
+            assert "2 rules" in painted_text(screen, painted)
 
 
 class TestDictionariesList:
+    @pytest.mark.bootstrap_profile
     async def test_mode_lists_dictionaries_with_meta(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
-            rows = screen.query_one("#personas-library-rows", ListView).children
-            texts = [str(s.renderable) for r in rows for s in r.query(Static).results()]
-            assert "Medical Abbrev" in texts and "2 entries · on" in texts
+            rows = {(i.name, i.state, i.meta) for i in list_state(screen).items}
+            assert ("Medical Abbrev", "on", "2 rules") in rows
             # Disabled dictionaries must still be listed (include_inactive=True).
-            assert "Chat-Speak" in texts and "0 entries · off" in texts
+            assert ("Chat-Speak", "off", "0 rules") in rows
             # No placeholder: the mode is live.
             assert (
                 screen.query_one("#personas-mode-placeholder", Static).display is False
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_list_requests_inactive_records(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -853,6 +822,7 @@ class TestDictionariesList:
             list_calls = [c for c in fake_dict_service.calls if c[0] == "list"]
             assert list_calls and list_calls[-1][1].get("include_inactive") is True
 
+    @pytest.mark.bootstrap_profile
     async def test_search_filters_by_name(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -862,10 +832,10 @@ class TestDictionariesList:
             search = screen.query_one("#personas-library-search", Input)
             search.value = "medic"
             await pilot.pause(0.4)  # debounce
-            rows = screen.query_one("#personas-library-rows", ListView).children
-            names = [str(r.query(Static).first().renderable) for r in rows]
+            names = [item.name for item in list_state(screen).items]
             assert names == ["Medical Abbrev"]
 
+    @pytest.mark.bootstrap_profile
     async def test_dictionaries_chip_no_longer_coming_soon(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -875,6 +845,7 @@ class TestDictionariesList:
             chip = screen.query_one("#personas-mode-dictionaries", Button)
             assert "soon" not in str(chip.label).lower()
 
+    @pytest.mark.bootstrap_profile
     async def test_empty_state_prompts_create(self, mock_app_instance, stub_characters):
         service = FakeDictScopeService([])
         mock_app_instance.chat_dictionary_scope_service = service
@@ -882,7 +853,8 @@ class TestDictionariesList:
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
             empty = screen.query_one("#personas-library-empty", Static)
-            assert "No dictionaries yet" in str(empty.renderable)
+            # The canonical noun (frame slice B2b); dev said "No dictionaries yet".
+            assert "No chat dictionaries yet" in str(empty.renderable)
 
 
 class DetailHarnessApp(ConsolidatedCSSApp):
@@ -1039,6 +1011,7 @@ class TestDictionaryDetailWidget:
 
 
 class TestDictionarySelection:
+    @pytest.mark.bootstrap_profile
     async def test_select_shows_detail_and_inspector(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1053,9 +1026,7 @@ class TestDictionarySelection:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
-            rows = screen.query_one("#personas-library-rows", ListView)
-            rows.index = 0
-            rows.action_select_cursor()
+            await select_roleplay_item(pilot, screen, index=0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -1087,6 +1058,7 @@ class TestDictionarySelection:
                 == "attach arrives in a later update"
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_mode_switch_clears_detail(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1097,9 +1069,7 @@ class TestDictionarySelection:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
-            rows = screen.query_one("#personas-library-rows", ListView)
-            rows.index = 0
-            rows.action_select_cursor()
+            await select_roleplay_item(pilot, screen, index=0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.click("#personas-mode-characters")
@@ -1109,13 +1079,12 @@ class TestDictionarySelection:
 
 class TestDictionaryEntries:
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_add_entry_roundtrip(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1139,14 +1108,10 @@ class TestDictionaryEntries:
             table = screen.query_one("#personas-dict-entries-table", DataTable)
             assert table.row_count == 3
             # Row meta refreshed too.
-            rows = screen.query_one("#personas-library-rows", ListView).children
-            metas = [
-                str(s.renderable)
-                for r in rows
-                for s in r.query(".personas-library-row-meta").results()
-            ]
-            assert "3 entries · on" in metas
+            metas = [item.meta for item in list_state(screen).items]
+            assert "3 rules" in metas
 
+    @pytest.mark.bootstrap_profile
     async def test_delete_entry_reindexes(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1170,6 +1135,7 @@ class TestDictionaryEntries:
             detail = screen.query_one("#personas-dictionary-detail")
             assert detail.entry_ids_in_order() == ["local:chat_dictionary_entry:1:0"]
 
+    @pytest.mark.bootstrap_profile
     async def test_update_entry_persists(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1194,6 +1160,7 @@ class TestDictionaryEntries:
             await pilot.pause()
             assert fake_dict_service.records[1]["entries"][1]["pattern"] == "HRV"
 
+    @pytest.mark.bootstrap_profile
     async def test_arrow_key_highlight_syncs_form_before_update(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1223,6 +1190,7 @@ class TestDictionaryEntries:
             assert fake_dict_service.records[1]["entries"][1]["pattern"] == "HR"
             assert fake_dict_service.records[1]["entries"][0]["pattern"] == "BP"
 
+    @pytest.mark.bootstrap_profile
     async def test_move_down_sends_full_order_and_reorders(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1252,6 +1220,7 @@ class TestDictionaryEntries:
             ]
             assert str(table.get_cell_at((0, 0))) == "HR"
 
+    @pytest.mark.bootstrap_profile
     async def test_form_roundtrips_new_fields(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1279,6 +1248,7 @@ class TestDictionaryEntries:
                 5,
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_priority_input_validates_integer(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1298,13 +1268,12 @@ class TestDictionaryEntries:
 
 class TestDictionarySettings:
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_save_persists_and_refreshes_row(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1331,8 +1300,7 @@ class TestDictionarySettings:
             await pilot.pause()
             assert fake_dict_service.records[1]["name"] == "Medical Terms"
             assert screen.state.has_unsaved_changes is False
-            rows = screen.query_one("#personas-library-rows", ListView).children
-            names = [str(r.query(Static).first().renderable) for r in rows]
+            names = [item.name for item in list_state(screen).items]
             assert "Medical Terms" in names
             # Inspector must re-drive with the new name too, not just the row.
             inspector = screen.query_one(PersonasInspectorPane)
@@ -1340,6 +1308,7 @@ class TestDictionarySettings:
                 inspector.query_one("#personas-selected-name", Static).renderable
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_settings_edit_marks_dirty_and_guards_navigation(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1355,11 +1324,10 @@ class TestDictionarySettings:
             screen.query_one("#personas-dict-name", Input).value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            subtitle = screen.query_one(
-                "#personas-header #workbench-header-subtitle", Static
-            )
-            assert "- unsaved" in str(subtitle.renderable)
+            # Roleplay frame B1: the header's unsaved chip (spec R24).
+            assert screen.query_one("#personas-header-unsaved").display is True
 
+    @pytest.mark.bootstrap_profile
     async def test_reverting_edit_clears_dirty_flag(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1379,18 +1347,14 @@ class TestDictionarySettings:
             name_input.value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            subtitle = screen.query_one(
-                "#personas-header #workbench-header-subtitle", Static
-            )
-            assert "- unsaved" in str(subtitle.renderable)
+            chip = screen.query_one("#personas-header-unsaved")
+            assert chip.display is True
             name_input.value = original
             await pilot.pause()
             assert screen.state.has_unsaved_changes is False
-            subtitle = screen.query_one(
-                "#personas-header #workbench-header-subtitle", Static
-            )
-            assert "- unsaved" not in str(subtitle.renderable)
+            assert chip.display is False
 
+    @pytest.mark.bootstrap_profile
     async def test_conflict_surfaces_status_not_crash(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1417,20 +1381,19 @@ class TestDictionarySettings:
 
 class TestDictionaryNewDuplicate:
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_new_creates_disambiguated_and_selects(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -1438,13 +1401,14 @@ class TestDictionaryNewDuplicate:
             assert "Untitled dictionary" in names
             assert screen.state.selected_entity_name == "Untitled dictionary"
             # Second New must disambiguate against the first.
-            await pilot.click("#personas-library-new")
+            await start_new(pilot)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Untitled dictionary 2" in names
 
+    @pytest.mark.bootstrap_profile
     async def test_duplicate_copies_entries_and_strategy(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1456,7 +1420,7 @@ class TestDictionaryNewDuplicate:
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
             await self._select_first(pilot, screen)
-            await pilot.click("#personas-library-duplicate")
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -1485,24 +1449,30 @@ class TestDictionaryNewDuplicate:
             ):
                 assert dup.get(field) == src.get(field), field
 
+    @pytest.mark.bootstrap_profile
     async def test_duplicate_button_hidden_only_for_personas(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
         """Task-443: Duplicate now also applies to characters (parity fix) -
-        only the Personas mode (profiles have no duplicate seam yet) hides
-        it."""
+        only personas (profiles have no duplicate seam yet) never show it.
+
+        Frame slice B2b (spec 5.3, interim until B5b-2): Duplicate is the
+        Inspector's button for the open item, so it follows the open item's
+        kind, not the mode. This fixture has no characters or personas; those
+        legs are test_roleplay_item_list_app.py's
+        test_the_inspector_duplicate_copies_the_loaded_item[characters] and
+        test_personas_have_no_duplicate.
+        """
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
-            screen = await _mounted(pilot)
-            dup = screen.query_one("#personas-library-duplicate", Button)
-            assert dup.display is True  # characters mode (task-443)
-            await pilot.click("#personas-mode-personas")
-            await pilot.pause()
-            assert dup.display is False
-            await pilot.click("#personas-mode-dictionaries")
-            await pilot.pause()
+            screen = await _enter_dictionaries(pilot)
+            await self._select_first(pilot, screen)
+            assert screen.query_one("#personas-inspector-actions").display
+            dup = screen.query_one("#personas-duplicate", Button)
             assert dup.display is True
+            assert dup.disabled is False
 
+    @pytest.mark.bootstrap_profile
     async def test_duplicate_survives_failed_strategy_copy(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1526,7 +1496,7 @@ class TestDictionaryNewDuplicate:
             fake_dict_service.update_dictionary = _failing_update
 
             # Click duplicate
-            await pilot.click("#personas-library-duplicate")
+            await pilot.click("#personas-duplicate")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -1560,34 +1530,29 @@ class TestDictionaryNewDuplicate:
 
 class TestDictionaryToggleDelete:
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_space_toggles_enabled_and_meta(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
-            rows = screen.query_one("#personas-library-rows", ListView)
-            rows.focus()
-            rows.index = 0
+            screen.query_one("#personas-library-rows").focus()
+            await select_roleplay_item(pilot, screen, index=0, load=False)
             await pilot.press("space")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert fake_dict_service.records[1]["enabled"] is False
-            metas = [
-                str(s.renderable)
-                for r in screen.query_one("#personas-library-rows", ListView).children
-                for s in r.query(".personas-library-row-meta").results()
-            ]
-            assert "2 entries · off" in metas
+            rows = {(i.name, i.state, i.meta) for i in list_state(screen).items}
+            assert ("Medical Abbrev", "off", "2 rules") in rows
 
+    @pytest.mark.bootstrap_profile
     async def test_delete_confirms_then_removes(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
@@ -1612,6 +1577,7 @@ class TestDictionaryToggleDelete:
             assert screen.query_one(PersonasDictionaryDetailWidget).display is False
             assert screen.state.selected_entity_id is None
 
+    @pytest.mark.bootstrap_profile
     async def test_delete_cancelled_keeps_record(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
@@ -1630,23 +1596,52 @@ class TestDictionaryToggleDelete:
             await pilot.pause()
             assert 1 in fake_dict_service.records
 
+    @pytest.mark.bootstrap_profile
+    async def test_space_turning_a_dictionary_off_toasts_the_undo_string(
+        self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
+    ):
+        """R33's one undo string; turning one back on toasts nothing."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test() as pilot:
+            screen = await _enter_dictionaries(pilot)
+            notices: list[str] = []
+            monkeypatch.setattr(
+                screen, "_notify", lambda message, *a, **k: notices.append(message)
+            )
+            screen.query_one("#personas-library-rows").focus()
+            await select_roleplay_item(pilot, screen, index=0, load=False)
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert notices == ["Medical Abbrev turned off · space to undo"]
+            await pilot.press("space")
+            await pilot.pause()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            assert fake_dict_service.records[1]["enabled"] is True
+            assert notices == ["Medical Abbrev turned off · space to undo"]
+
+    @pytest.mark.bootstrap_profile
     async def test_space_toggle_keeps_cursor_on_unselected_row(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test() as pilot:
             screen = await _enter_dictionaries(pilot)
-            rows = screen.query_one("#personas-library-rows", ListView)
-            rows.focus()
-            rows.index = 1  # Chat-Speak - not selected
+            screen.query_one("#personas-library-rows").focus()
+            # Chat-Speak - not selected
+            await select_roleplay_item(pilot, screen, index=1, load=False)
             await pilot.press("space")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert fake_dict_service.records[2]["enabled"] is True
-            assert rows.index is not None
-            row = rows.children[rows.index]
-            assert str(row.query(Static).first().renderable) == "Chat-Speak"
+            state = list_state(screen)
+            assert state.highlighted is not None
+            assert [
+                i.name for i in state.items if i.option_id == state.highlighted
+            ] == ["Chat-Speak"]
 
             await pilot.press("space")
             await pilot.pause()
@@ -1654,6 +1649,7 @@ class TestDictionaryToggleDelete:
             await pilot.pause()
             assert fake_dict_service.records[2]["enabled"] is False
 
+    @pytest.mark.bootstrap_profile
     async def test_space_toggle_on_selected_preserves_unsaved_edits(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1669,9 +1665,8 @@ class TestDictionaryToggleDelete:
             screen.query_one("#personas-dict-name", Input).value = "Half-renamed"
             await pilot.pause()
 
-            rows = screen.query_one("#personas-library-rows", ListView)
-            rows.focus()
-            rows.index = 0
+            screen.query_one("#personas-library-rows").focus()
+            await select_roleplay_item(pilot, screen, index=0, load=False)
             await pilot.press("space")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
@@ -1687,9 +1682,7 @@ class TestDictionaryToggleDelete:
 
 class TestDictionaryTryIt:
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
@@ -1712,6 +1705,7 @@ class TestDictionaryTryIt:
         original, processed = word_diff("same text", "same text")
         assert not original.spans and not processed.spans
 
+    @pytest.mark.bootstrap_profile
     async def test_run_renders_diff(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1742,6 +1736,7 @@ class TestDictionaryTryIt:
             run_calls = [c for c in fake_dict_service.calls if c[0] == "process"]
             assert run_calls
 
+    @pytest.mark.bootstrap_profile
     async def test_no_differences_state(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1761,6 +1756,7 @@ class TestDictionaryTryIt:
             status = screen.query_one("#personas-dict-tryit-status", Static)
             assert "No differences" in str(status.renderable)
 
+    @pytest.mark.bootstrap_profile
     async def test_preview_pane_swapped_by_mode(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1785,6 +1781,7 @@ class TestDictionaryTryIt:
             assert screen.query_one(PersonasDictionaryTryItWidget).display is False
             assert screen.query_one(PersonasPreviewPane).display is True
 
+    @pytest.mark.bootstrap_profile
     async def test_tryit_renders_summary_and_fired_lines(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1811,6 +1808,7 @@ class TestDictionaryTryIt:
             )
             assert "BP" in fired and "blood pressure" in fired and "×1" in fired
 
+    @pytest.mark.bootstrap_profile
     async def test_tryit_renders_near_miss_with_reason(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1837,6 +1835,7 @@ class TestDictionaryTryIt:
             )
             assert "1 fired" in summary and "1 skipped" in summary
 
+    @pytest.mark.bootstrap_profile
     async def test_tryit_budget_flag_shows(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1863,6 +1862,7 @@ class TestDictionaryTryIt:
             )
             assert "token budget" in nearmiss
 
+    @pytest.mark.bootstrap_profile
     async def test_tryit_degrades_without_diagnostics(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1894,13 +1894,12 @@ class TestDictionaryTryIt:
 
 class TestDictionaryValidationPanel:
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_findings_listed_and_jump_moves_cursor(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1932,6 +1931,7 @@ class TestDictionaryValidationPanel:
             table = screen.query_one("#personas-dict-entries-table", DataTable)
             assert table.cursor_row == 2  # jumped to the duplicate (index 2)
 
+    @pytest.mark.bootstrap_profile
     async def test_multi_finding_entry_does_not_crash_and_jump_selects_by_index(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1973,6 +1973,7 @@ class TestDictionaryValidationPanel:
                 screen.query_one("#personas-dict-entry-probability", Input).value == "0"
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_panel_clears_on_clean_dictionary(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -1987,6 +1988,7 @@ class TestDictionaryValidationPanel:
                 == 0
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_entries_tab_scrolls_buttons_reachable_when_short(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2014,6 +2016,7 @@ class TestDictionaryValidationPanel:
             )
             assert scroll.scroll_offset.y > 0  # the scroll genuinely moved
 
+    @pytest.mark.bootstrap_profile
     async def test_clear_empties_validation_panel(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2047,6 +2050,7 @@ class TestDictionaryValidationPanel:
 
 
 class TestTryItDisabledReason:
+    @pytest.mark.bootstrap_profile
     async def test_disabled_entry_renders_reason(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2056,9 +2060,7 @@ class TestTryItDisabledReason:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            rows = screen.query_one("#personas-library-rows", ListView)
-            rows.index = 0
-            rows.action_select_cursor()
+            await select_roleplay_item(pilot, screen, index=0)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
@@ -2078,13 +2080,12 @@ class TestDictionaryMalformedProbability:
     not crash the widget - the display falls back to 100%."""
 
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_garbage_probability_does_not_crash_and_falls_back_to_100(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2119,13 +2120,12 @@ class TestDictionaryValidationMarkupSafety:
     user's own pattern must render literally."""
 
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_validation_option_renders_markup_inert(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2175,13 +2175,12 @@ class TestDictionaryValidationMarkupSafety:
 
 class TestDictionaryStatsTab:
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_stats_render_service_plus_client_enrichment(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2199,6 +2198,7 @@ class TestDictionaryStatsTab:
             assert "Priority: 0..5" in body
             assert "tokens" in body  # approximate token total line
 
+    @pytest.mark.bootstrap_profile
     async def test_selection_loads_the_record_once_and_derives_stats(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2234,6 +2234,7 @@ class TestDictionaryStatsTab:
         assert "Entries: 2" in body
         assert "Dictionary enabled: yes" in body
 
+    @pytest.mark.bootstrap_profile
     async def test_stats_refreshed_after_settings_save(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2270,13 +2271,12 @@ class TestDictionaryStatsTab:
 
 class TestDictionaryVersionsTab:
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_versions_listed_with_baseline(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2290,6 +2290,7 @@ class TestDictionaryVersionsTab:
             assert table.row_count >= 1
             assert str(table.get_cell_at((0, 1))) == "baseline"
 
+    @pytest.mark.bootstrap_profile
     async def test_view_shows_snapshot_summary(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2319,6 +2320,7 @@ class TestDictionaryVersionsTab:
                 and "sorted_evenly" in snapshot
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_revert_confirms_then_restores(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
@@ -2371,6 +2373,7 @@ class TestDictionaryVersionsTab:
                 screen.query_one("#personas-dict-name", Input).value == "Medical Abbrev"
             )  # detail reloaded
 
+    @pytest.mark.bootstrap_profile
     async def test_revert_refreshes_inspector_name(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):
@@ -2423,6 +2426,7 @@ class TestDictionaryVersionsTab:
                 == "Selected: Medical Abbrev"
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_versions_table_renders_bracketed_name_safely(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2448,13 +2452,12 @@ class TestDictionaryVersionsTab:
 
 class TestDictionaryExport:
     async def _select_first(self, pilot, screen):
-        rows = screen.query_one("#personas-library-rows", ListView)
-        rows.index = 0
-        rows.action_select_cursor()
+        await select_roleplay_item(pilot, screen, index=0)
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
 
+    @pytest.mark.bootstrap_profile
     async def test_export_json_writes_file_and_reports_path(
         self,
         mock_app_instance,
@@ -2489,6 +2492,7 @@ class TestDictionaryExport:
             status = str(screen.query_one("#personas-dict-status", Static).renderable)
             assert "Exported to" in status and str(files[0]) in status
 
+    @pytest.mark.bootstrap_profile
     async def test_markdown_export_gates_on_lossy_confirm(
         self,
         mock_app_instance,
@@ -2550,6 +2554,7 @@ class TestDictionaryImport:
         )
         return captured
 
+    @pytest.mark.bootstrap_profile
     async def test_import_button_visible_in_dictionaries_mode(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2560,6 +2565,7 @@ class TestDictionaryImport:
             assert btn.display is True
             assert "dictionary" in str(btn.tooltip).lower()
 
+    @pytest.mark.bootstrap_profile
     async def test_import_json_file_selects_new_dictionary(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2609,6 +2615,7 @@ class TestDictionaryImport:
             )
             assert imported["strategy"] == "character_lore_first"
 
+    @pytest.mark.bootstrap_profile
     async def test_import_conflict_renames_and_succeeds(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2638,6 +2645,7 @@ class TestDictionaryImport:
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Medical Abbrev (imported)" in names  # data.name mutated, retried
 
+    @pytest.mark.bootstrap_profile
     async def test_import_markdown_uses_filename_stem(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2653,6 +2661,7 @@ class TestDictionaryImport:
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "field-notes" in names
 
+    @pytest.mark.bootstrap_profile
     async def test_import_bad_json_creates_nothing(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2666,6 +2675,7 @@ class TestDictionaryImport:
             await pilot.pause()
             assert len(fake_dict_service.records) == before
 
+    @pytest.mark.bootstrap_profile
     async def test_import_non_utf8_file_notifies_no_crash(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2684,6 +2694,7 @@ class TestDictionaryImport:
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
 
+    @pytest.mark.bootstrap_profile
     async def test_import_json_array_notifies_no_crash(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2702,6 +2713,7 @@ class TestDictionaryImport:
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
 
+    @pytest.mark.bootstrap_profile
     async def test_import_json_null_data_notifies_no_crash(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2721,6 +2733,7 @@ class TestDictionaryImport:
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
 
+    @pytest.mark.bootstrap_profile
     async def test_import_oversized_file_notifies_no_crash(
         self,
         mock_app_instance,
@@ -2753,6 +2766,7 @@ class TestDictionaryImport:
                 for message, severity in notifications
             )
 
+    @pytest.mark.bootstrap_profile
     async def test_import_deeply_nested_json_notifies_no_crash(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2771,6 +2785,7 @@ class TestDictionaryImport:
             assert len(fake_dict_service.records) == before
             assert any(severity == "error" for _, severity in notifications)
 
+    @pytest.mark.bootstrap_profile
     async def test_import_completion_skipped_when_mode_changed(
         self, mock_app_instance, stub_characters, fake_dict_service, tmp_path
     ):
@@ -2800,22 +2815,29 @@ class TestDictionaryImport:
         notifications = self._capture_notifications(app)
         async with app.run_test(size=(200, 60)) as pilot:
             screen = await _enter_dictionaries(pilot)
-            # Simulate the user having navigated away while the import ran.
-            screen.state.active_mode = "characters"
-            await screen._import_dictionary_from_path(str(source))
+            # The picker opened in Dictionaries (frame slice B2b: the import
+            # carries the user's intent from then), and the user navigated
+            # away while the import ran.
+            intent = screen._import_intent_now()
+            await screen._apply_mode("characters")
+            await screen._import_dictionary_from_path(str(source), intent=intent)
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             names = [r["name"] for r in fake_dict_service.records.values()]
             assert "Late Arrival" in names  # the import itself still succeeded
+            assert screen.state.active_mode == "characters"
             assert screen.state.selected_entity_kind != "dictionary"  # no yank-back
+            # The toast names where it went (dev: "open Dictionaries to see it").
             assert any(
-                "open Dictionaries" in message and severity == "information"
+                message == "Imported Late Arrival · in Chat dictionaries"
+                and severity == "information"
                 for message, severity in notifications
             )
 
 
 class TestDictionaryAttachmentsTab:
+    @pytest.mark.bootstrap_profile
     async def test_empty_state_when_unattached(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2826,6 +2848,7 @@ class TestDictionaryAttachmentsTab:
             empty = screen.query_one("#personas-dict-attachments-empty", Static)
             assert "Not attached" in str(empty.renderable)
 
+    @pytest.mark.bootstrap_profile
     async def test_load_attachments_renders_rows(
         self, mock_app_instance, stub_characters, fake_dict_service
     ):
@@ -2844,6 +2867,7 @@ class TestDictionaryAttachmentsTab:
 
 
 class TestDictionaryAttachFlow:
+    @pytest.mark.bootstrap_profile
     async def test_attach_via_picker_then_detach(
         self, mock_app_instance, stub_characters, fake_dict_service, monkeypatch
     ):

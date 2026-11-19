@@ -375,6 +375,7 @@ def test_assistant_turn_plain_export_is_ordered_bounded_and_expansion_independen
     assert "Copy" in collapsed
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_assistant_turn_nests_owned_activities_before_headerless_answer() -> None:
     """The mounted DOM, not a planner helper, proves the causal hierarchy."""
@@ -410,6 +411,7 @@ async def test_assistant_turn_nests_owned_activities_before_headerless_answer() 
         assert transcript.query_one("#console-message-orphan-tool")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_owned_activity_selection_keeps_details_collapsed_and_actions_visible() -> (
     None
@@ -439,6 +441,7 @@ async def test_owned_activity_selection_keeps_details_collapsed_and_actions_visi
         assert not disclosure.detail_stack.display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_assistant_turn_reconcile_preserves_container_and_answer_identity() -> (
     None
@@ -511,6 +514,7 @@ def test_assistant_turn_signature_ignores_unrelated_selection() -> None:
     assert after == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_disjoint_session_switch_clears_owned_activity_expansion() -> None:
     """Disclosure expansion is session-local view state."""
@@ -536,6 +540,7 @@ async def test_disjoint_session_switch_clears_owned_activity_expansion() -> None
         assert transcript._expanded_tool_output_ids == set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_activity_header_click_and_o_share_expansion_state() -> None:
     """Disclosure activation selects the original id and uses the existing seam."""
@@ -562,6 +567,7 @@ async def test_activity_header_click_and_o_share_expansion_state() -> None:
         assert "tool-turn" not in transcript._expanded_tool_output_ids
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unknown_empty_activity_uses_neutral_nonexpandable_header() -> None:
     """Legacy metadata is not guessed from content and empty detail has no toggle."""
@@ -589,6 +595,7 @@ async def test_unknown_empty_activity_uses_neutral_nonexpandable_header() -> Non
         assert "neutral-tool" not in transcript._expanded_tool_output_ids
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("detail_kind", ["full-output", "diff"])
 async def test_empty_preview_activity_advertises_detail_and_all_toggles_agree(
@@ -660,6 +667,7 @@ async def test_empty_preview_activity_advertises_detail_and_all_toggles_agree(
         assert activity_id in transcript._expanded_tool_output_ids
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_session_switch_cancels_finished_selection_in_nested_answer() -> None:
     """A detached Assistant answer cannot remain the selection-manager domain."""
@@ -683,6 +691,7 @@ async def test_session_switch_cancels_finished_selection_in_nested_answer() -> N
         assert transcript.selection_manager.state.selection is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_activity_stack_insertion_preserves_finished_nested_selection() -> None:
     """Adding earlier thinking keeps the expanded Tool detail and selection."""
@@ -714,6 +723,7 @@ async def test_activity_stack_insertion_preserves_finished_nested_selection() ->
         assert transcript.selection_manager.state.selection.row_key == detail.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adjunct_kind", ["image", "citations"])
 async def test_adjunct_only_activity_is_expandable_through_click_enter_and_o(
@@ -776,6 +786,7 @@ async def test_adjunct_only_activity_is_expandable_through_click_enter_and_o(
         assert activity.id in transcript._expanded_tool_output_ids
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_activity_keyboard_toggle_preserves_header_identity_and_focus() -> None:
     """Enter/Space reconcile same-id disclosure state without detaching focus."""
@@ -969,6 +980,7 @@ async def test_headerless_markdown_sync_updates_stream_and_footer() -> None:
         assert "report.txt" in footer.renderable.plain
 
 
+@pytest.mark.bootstrap_profile
 def test_roleplay_plain_text_uses_literal_names_and_generic_rows_gain_accents():
     transcript = ConsoleTranscript()
     transcript.set_presentation_context(_roleplay_context())
@@ -1044,6 +1056,7 @@ def test_chat_screen_transcript_fingerprint_tracks_presentation_revision():
     assert before[1] == after[1]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_plain_roleplay_identity_revision_updates_rows_in_place():
     app = MutableTranscriptHarness()
@@ -1099,6 +1112,7 @@ async def test_plain_roleplay_identity_revision_updates_rows_in_place():
         assert _speaker_label_for(transcript, "a1").renderable.plain == "Cecelia"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_roleplay_tints_and_selected_precedence_are_compositor_painted(theme):
@@ -1197,6 +1211,7 @@ async def test_roleplay_tints_and_selected_precedence_are_compositor_painted(the
         assert "Alraune" in painted_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize(
@@ -1433,6 +1448,7 @@ def test_console_transcript_renderable_uses_full_width_rules():
     assert "world" in plain
 
 
+@pytest.mark.bootstrap_profile
 def test_console_transcript_widget_rules_carry_no_dash_text():
     """task-17658: separators paint via the stylesheet hatch, not text.
 
@@ -1455,6 +1471,7 @@ def test_console_transcript_widget_rules_carry_no_dash_text():
     assert str(renderable) == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_append_preserves_existing_message_rows():
     app = MutableTranscriptHarness()
@@ -1490,6 +1507,7 @@ async def test_console_transcript_append_preserves_existing_message_rows():
     assert after_counts["assistant-turn:m-new"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_streaming_update_preserves_unrelated_message_rows():
     app = MutableTranscriptHarness()
@@ -1527,6 +1545,7 @@ async def test_console_transcript_streaming_update_preserves_unrelated_message_r
     assert "partial response" in rendered_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_selection_update_preserves_message_rows():
     app = MutableTranscriptHarness()
@@ -1567,6 +1586,7 @@ async def test_console_transcript_selection_update_preserves_message_rows():
     assert assistant_actions_mounted == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_selection_onto_turn_file_card_does_not_rebuild():
     """Turn-file-card final-review fix: a card row's signature folds in
@@ -1677,6 +1697,7 @@ async def test_console_transcript_selection_onto_turn_file_card_does_not_rebuild
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_removes_build_counts_for_stale_rows():
     app = MutableTranscriptHarness()
@@ -1702,6 +1723,7 @@ async def test_console_transcript_removes_build_counts_for_stale_rows():
     assert "assistant-turn:m-kept" in build_counts
 
 
+@pytest.mark.bootstrap_profile
 def test_console_transcript_compose_resets_build_count_bookkeeping():
     transcript = ConsoleTranscript()
     transcript._row_build_counts["message:stale"] = 3
@@ -1722,6 +1744,7 @@ def test_console_transcript_compose_resets_build_count_bookkeeping():
     assert build_counts["message:m-current"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_empty_state_accepts_setup_copy():
     app = EmptyTranscriptHarness()
@@ -1912,6 +1935,7 @@ def test_console_transcript_failed_action_row_includes_retry_without_exceeding_b
     assert len(action_row) <= 48
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_enter_selects_first_message_when_none_selected():
     app = TranscriptHarness()
@@ -1927,6 +1951,7 @@ async def test_console_transcript_enter_selects_first_message_when_none_selected
         assert "More…" in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_enter_clears_keyboard_selected_message():
     app = TranscriptHarness()
@@ -1947,6 +1972,7 @@ async def test_console_transcript_enter_clears_keyboard_selected_message():
         assert "More…" not in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_boundary_navigation_keeps_last_message_selected():
     app = TranscriptHarness()
@@ -1964,6 +1990,7 @@ async def test_console_transcript_boundary_navigation_keeps_last_message_selecte
         assert "More…" in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_enter_on_action_button_preserves_selection():
     app = TranscriptHarness()
@@ -1984,6 +2011,7 @@ async def test_console_transcript_enter_on_action_button_preserves_selection():
         assert "More…" in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_click_selects_message_and_shows_actions():
     app = TranscriptHarness()
@@ -2002,6 +2030,7 @@ async def test_console_transcript_click_selects_message_and_shows_actions():
     assert "|" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_more_menu_captures_message_and_closes_before_choice():
     app = TranscriptHarness(css_path=str(_BUNDLE))
@@ -2028,6 +2057,7 @@ async def test_console_transcript_more_menu_captures_message_and_closes_before_c
         assert transcript.selected_message_id == "m2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("dismissal", "expected_selection"),
     (
@@ -2082,6 +2112,7 @@ async def test_console_more_menu_lifecycle_dismisses_without_dispatch(
             assert transcript.selected_message_id == "m1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("click_target", "expected_selection"),
@@ -2115,6 +2146,7 @@ async def test_console_more_menu_closes_on_in_transcript_click_without_dispatch(
         assert dispatched == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_more_menu_closes_before_annotation_stops_click(monkeypatch):
     class AnnotationHarness(TranscriptHarness):
@@ -2156,6 +2188,7 @@ async def test_console_more_menu_closes_before_annotation_stops_click(monkeypatc
         assert opener.has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_real_recompose_closes_more_and_restores_opener(monkeypatch):
     app = TranscriptHarness(css_path=str(_BUNDLE))
@@ -2181,6 +2214,7 @@ async def test_console_real_recompose_closes_more_and_restores_opener(monkeypatc
         assert dispatched == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_more_choice_keeps_captured_target_after_selection_race(
     monkeypatch,
@@ -2216,6 +2250,7 @@ async def test_console_more_choice_keeps_captured_target_after_selection_race(
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_more_choice_claims_first_activation_only(monkeypatch):
     app = TranscriptHarness(css_path=str(_BUNDLE))
@@ -2242,6 +2277,7 @@ async def test_console_more_choice_claims_first_activation_only(monkeypatch):
         assert all(button.disabled for button in menu.query(Button))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_more_keyboard_traversal_skips_disabled_and_restores_opener():
     app = TranscriptHarness(css_path=str(_BUNDLE))
@@ -2270,6 +2306,7 @@ async def test_console_more_keyboard_traversal_skips_disabled_and_restores_opene
         assert app.query_one("#console-message-action-more-m2").has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_more_tab_traversal_stays_inside_menu_at_80_columns():
     app = TranscriptHarness(css_path=str(_BUNDLE))
@@ -2297,6 +2334,7 @@ async def test_console_more_tab_traversal_stays_inside_menu_at_80_columns():
         assert app.query("#console-message-more-menu")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_more_focus_falls_back_to_composer_after_row_removal():
     class ComposerFallbackHarness(ConsolidatedCSSApp):
@@ -2334,6 +2372,7 @@ async def test_console_more_focus_falls_back_to_composer_after_row_removal():
         assert app.query_one("#console-native-composer").has_focus
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", ((120, 35), (100, 30), (80, 24)))
 @pytest.mark.parametrize(
     ("message", "expected_actions"),
@@ -2402,6 +2441,7 @@ async def test_console_selected_action_rows_fit_reference_terminals(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", ((120, 35), (100, 30), (80, 24)))
 @pytest.mark.parametrize("media_kind", ("generated-image", "video"))
 @pytest.mark.asyncio
@@ -2486,6 +2526,7 @@ async def test_console_media_card_actions_fit_reference_terminals(size, media_ki
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_hidden_generation_card_keeps_view_reachable_at_80_columns():
     app = MutableTranscriptHarness(css_path=str(_BUNDLE))
@@ -2520,6 +2561,7 @@ async def test_console_hidden_generation_card_keeps_view_reachable_at_80_columns
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_generation_card_reconciles_save_eligibility_change():
     app = MutableTranscriptHarness(css_path=str(_BUNDLE))
@@ -2552,6 +2594,7 @@ async def test_console_generation_card_reconciles_save_eligibility_change():
         assert not save.disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_ineligible_fork_reason_is_visible_and_repeated_by_f(
     monkeypatch,
@@ -2582,6 +2625,7 @@ async def test_console_ineligible_fork_reason_is_visible_and_repeated_by_f(
         assert notices == [(reason, {"severity": "warning"})]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_click_selected_message_clears_selection():
     app = TranscriptHarness()
@@ -2601,6 +2645,7 @@ async def test_console_transcript_click_selected_message_clears_selection():
         assert "More…" not in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_click_background_clears_selection():
     app = TranscriptHarness()
@@ -2616,6 +2661,7 @@ async def test_console_transcript_click_background_clears_selection():
         assert "More…" not in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_click_action_button_preserves_selection():
     app = TranscriptHarness()
@@ -2630,6 +2676,7 @@ async def test_console_transcript_click_action_button_preserves_selection():
         assert "More…" in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_click_rule_separator_preserves_selection():
     app = TranscriptHarness()
@@ -2644,6 +2691,7 @@ async def test_console_transcript_click_rule_separator_preserves_selection():
         assert "More…" in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_rule_spans_full_width_on_wide_terminals():
     """task-17658: message separators reach edge to edge at any width.
@@ -2666,6 +2714,7 @@ async def test_console_transcript_rule_spans_full_width_on_wide_terminals():
         assert set(painted) == {"─"}, repr(painted[:24] + "…" + painted[-12:])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_click_scrollbar_does_not_clear_selection():
     app = MutableTranscriptHarness()
@@ -2692,6 +2741,7 @@ async def test_console_transcript_click_scrollbar_does_not_clear_selection():
         assert transcript.selected_message_id == "m15"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_click_action_row_background_preserves_selection():
     app = TranscriptHarness()
@@ -2712,6 +2762,7 @@ async def test_console_transcript_click_action_row_background_preserves_selectio
         assert "More…" in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_click_action_help_preserves_selection():
     app = TranscriptHarness()
@@ -2727,6 +2778,7 @@ async def test_console_transcript_click_action_help_preserves_selection():
         assert "More…" in _visible_text(app)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_click_empty_state_panel_preserves_selection():
     app = EmptyTranscriptHarness()
@@ -2741,6 +2793,7 @@ async def test_console_transcript_click_empty_state_panel_preserves_selection():
         assert transcript.selected_message_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_uses_class_without_inline_frame():
     app = TranscriptHarness()
@@ -2754,6 +2807,7 @@ async def test_console_selected_message_uses_class_without_inline_frame():
     assert "solid" not in repr(selected.styles.border)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_action_buttons_have_stable_ids():
     app = TranscriptHarness()
@@ -2773,6 +2827,7 @@ async def test_console_transcript_action_buttons_have_stable_ids():
     assert "|" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_generation_message_action_row_hides_keep_at_browsed_zero():
     """A generation message's mounted action row: `<`/`>` visible+gated by
@@ -2799,6 +2854,7 @@ async def test_console_transcript_generation_message_action_row_hides_keep_at_br
     assert len(keep_buttons) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_generation_message_action_row_shows_keep_when_browsed():
     """Browsed away from the canonical (position 0) variant: "keep" appears,
@@ -2821,6 +2877,7 @@ async def test_console_transcript_generation_message_action_row_shows_keep_when_
     assert next_button.disabled is True  # browsed index 2 == last of 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_single_variant_generation_message_hides_nav_and_keep():
     message = _generation_message(variant_count=1)
@@ -2842,6 +2899,7 @@ async def test_console_transcript_single_variant_generation_message_hides_nav_an
 # --- task-559 unit 2: Console TTS stop toggle in the mounted action row ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_action_row_shows_speak_when_not_speaking():
     message = ConsoleChatMessage(
@@ -2856,6 +2914,7 @@ async def test_console_transcript_action_row_shows_speak_when_not_speaking():
     assert len(stop_buttons) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_action_row_swaps_to_stop_for_speaking_message():
     message = ConsoleChatMessage(
@@ -2873,6 +2932,7 @@ async def test_console_transcript_action_row_swaps_to_stop_for_speaking_message(
     assert stop_button.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_action_row_unaffected_by_other_message_speaking():
     message = ConsoleChatMessage(
@@ -2887,6 +2947,7 @@ async def test_console_transcript_action_row_unaffected_by_other_message_speakin
     assert len(stop_buttons) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_action_tooltips_explain_compact_labels():
     app = TranscriptHarness()
@@ -2901,6 +2962,7 @@ async def test_console_transcript_action_tooltips_explain_compact_labels():
     assert "more message" in str(more_action.tooltip).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_escape_collapses_selected_action_row():
     app = TranscriptHarness()
@@ -3012,6 +3074,7 @@ async def test_save_as_modal_empty_state_names_the_temporary_chat_when_ephemeral
     assert "No Save as destinations are wired for selected messages yet." in normal_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_mounts_native_transcript_region():
     app = _build_test_app()
@@ -3025,7 +3088,9 @@ async def test_console_mounts_native_transcript_region():
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_console_sync_replaces_effective_memory_banner_without_stacking(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -3034,6 +3099,17 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
+
+        async def sync_console():
+            for _ in range(400):
+                completed = await console._sync_native_console_chat_ui()
+                if completed is True:
+                    # The fixture changes presentation without a store revision.
+                    await console._sync_native_console_transcript(force=True)
+                    return
+                await pilot.pause(0.01)
+            assert completed is True, "Console transcript sync did not complete"
+
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         messages = [
@@ -3093,10 +3169,13 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         current_effective = [range_effective]
         controller = console._ensure_console_chat_controller()
         empty_overrides = ConsoleContextPolicyOverrides()
-        assert transcript_module.derive_console_memory_banner_presentation(
-            range_effective,
-            console._message._native_console_messages(),
-        ) is not None
+        assert (
+            transcript_module.derive_console_memory_banner_presentation(
+                range_effective,
+                console._message._native_console_messages(),
+            )
+            is not None
+        )
         monkeypatch.setattr(
             type(controller),
             "context_control_inputs",
@@ -3107,7 +3186,7 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
             ),
         )
 
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         assert transcript.memory_banner_presentation is not None
         await _wait_for_selector(
@@ -3128,7 +3207,7 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         )
 
         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
         assert transcript.selected_message_id == messages[-1].id
         assert transcript.to_plain_text(width=80) == plain_before
@@ -3139,18 +3218,18 @@ async def test_mounted_console_sync_replaces_effective_memory_banner_without_sta
         )
 
         current_effective[0] = range_effective
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert len(transcript.query(".console-transcript-summary-banner")) == 1
 
         second_session = store.create_session(title="Second branch")
         current_effective[0] = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert store.active_session_id == second_session.id
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
 
         store.switch_session(session.id)
         current_effective[0] = range_effective
-        await console._sync_native_console_chat_ui()
+        await sync_console()
         assert len(transcript.query(".console-transcript-summary-banner")) == 1
 
 
@@ -3209,6 +3288,7 @@ async def test_mounted_console_repaints_when_transcript_style_changes(request):
         assert console.request_console_appearance_refresh(1) is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_tab_reaches_major_console_screen_regions():
     """Keyboard traversal reaches the major Console regions in the post-onboarding state.
@@ -3474,6 +3554,7 @@ def test_citation_notice_is_exact_and_never_claims_support(presentation, expecte
         assert forbidden not in lowered_notice
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_original_attempt_preview_is_literal_distinct_row_after_owner():
     app = MutableTranscriptHarness()
@@ -3514,6 +3595,7 @@ async def test_original_attempt_preview_is_literal_distinct_row_after_owner():
     assert message.citation_presentation.original_attempt_available is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_original_attempt_availability_updates_action_and_message_signatures():
     app = MutableTranscriptHarness()
@@ -3830,6 +3912,7 @@ def _cache_test_messages(count: int) -> list[ConsoleChatMessage]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_signature_derivation_is_o_changed_messages():
     """A changed tick re-derives only the changed message's render signature."""
@@ -3862,6 +3945,7 @@ async def test_transcript_signature_derivation_is_o_changed_messages():
         assert after[message.id] == baseline[message.id]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_signature_cache_miss_on_equal_length_edit():
     """The cache must key on content, never on content length alone."""
@@ -3882,6 +3966,7 @@ async def test_transcript_signature_cache_miss_on_equal_length_edit():
         assert transcript.message_signature_compute_counts()["m-edit"] == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_signature_cache_survives_delete():
     """Deleting a message prunes its cache entry and its mounted row."""
@@ -3913,6 +3998,7 @@ async def test_transcript_signature_cache_survives_delete():
         assert "replacement body" in _message_row_text(transcript, "m2")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_signature_cache_survives_reorder():
     """Reordering messages re-derives nothing and renders the new order."""
@@ -3947,6 +4033,7 @@ async def test_transcript_signature_cache_survives_reorder():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reconcile_rows_steady_state_issues_zero_move_child_calls():
     """A no-op refresh (same messages re-set, like the 0.2s stream tick) moves nothing."""
@@ -3973,6 +4060,7 @@ async def test_reconcile_rows_steady_state_issues_zero_move_child_calls():
         assert _rendered_message_ids(transcript) == baseline_order
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reconcile_rows_reorder_moves_widgets_and_lands_correct_order():
     """A genuine reorder still issues move_child calls and produces correct order."""
@@ -3993,6 +4081,7 @@ async def test_reconcile_rows_reorder_moves_widgets_and_lands_correct_order():
         assert _rendered_message_ids(transcript) == ["m2", "m0", "m3", "m1"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reconcile_rows_session_switch_lands_correct_order():
     """Switching to an entirely different message set (session switch) orders correctly."""
@@ -4021,6 +4110,7 @@ async def test_reconcile_rows_session_switch_lands_correct_order():
         assert _rendered_message_ids(transcript) == ["s0", "s1", "s2"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reconcile_rows_branch_navigation_replaces_suffix_in_order():
     """Branch navigation (shared prefix, swapped-in sibling suffix) orders correctly."""
@@ -4053,6 +4143,7 @@ async def test_reconcile_rows_branch_navigation_replaces_suffix_in_order():
         assert _rendered_message_ids(transcript) == ["m0", "m1", "m2b", "m3b"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_signature_cache_survives_variant_switch():
     """Switching variants re-derives only that message and shows the variant."""
@@ -4087,6 +4178,7 @@ async def test_transcript_signature_cache_survives_variant_switch():
         assert _rendered_message_ids(transcript) == ["m-plain", "m-varied"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_signature_cache_miss_on_status_change():
     """A status-only change (streaming -> complete) re-derives the row."""
@@ -4186,7 +4278,9 @@ def test_console_transcript_plans_one_banner_above_exact_anchor(
     anchor_index = next(
         index
         for index, row in enumerate(rows)
-        if row.kind == "message" and row.message is not None and row.message.id == anchor
+        if row.kind == "message"
+        and row.message is not None
+        and row.message.id == anchor
     )
 
     assert len(banner_rows) == 1
@@ -4215,12 +4309,15 @@ def test_console_transcript_missing_or_duplicate_anchor_plans_no_banner(anchor: 
         )
     )
 
-    assert [row for row in transcript._flat_transcript_rows() if row.kind == "banner"] == []
+    assert [
+        row for row in transcript._flat_transcript_rows() if row.kind == "banner"
+    ] == []
     assert "Earlier turns summarized" not in transcript.to_plain_text(width=80)
 
 
 @pytest.mark.asyncio
-async def test_console_transcript_summary_banner_mounts_and_clears():
+@private_profile_test
+async def test_console_transcript_summary_banner_mounts_and_clears(request):
     app = MutableTranscriptHarness()
     async with app.run_test(size=(100, 32)):
         transcript = app.query_one("#console-native-transcript", ConsoleTranscript)
@@ -4234,7 +4331,9 @@ async def test_console_transcript_summary_banner_mounts_and_clears():
             for message_id in message_ids_before
         }
 
-        copy = "Context uses a summary of turns #2-#2 - full transcript remains visible."
+        copy = (
+            "Context uses a summary of turns #2-#2 - full transcript remains visible."
+        )
         transcript.set_memory_banner_presentation(
             _banner_presentation(kind="range", anchor="m3", copy=copy)
         )
@@ -4242,7 +4341,9 @@ async def test_console_transcript_summary_banner_mounts_and_clears():
         banners = transcript.query(".console-transcript-summary-banner")
         assert len(banners) == 1
         assert copy == str(list(banners)[0].renderable)
-        assert tuple(message.id for message in transcript._messages) == message_ids_before
+        assert (
+            tuple(message.id for message in transcript._messages) == message_ids_before
+        )
         assert transcript.selected_message_id == "m4"
         assert transcript.to_plain_text(width=80) == plain_before
         assert all(
@@ -4255,7 +4356,9 @@ async def test_console_transcript_summary_banner_mounts_and_clears():
         transcript.set_memory_banner_presentation(None)
         await transcript.refresh_messages()
         assert len(transcript.query(".console-transcript-summary-banner")) == 0
-        assert tuple(message.id for message in transcript._messages) == message_ids_before
+        assert (
+            tuple(message.id for message in transcript._messages) == message_ids_before
+        )
         assert transcript.selected_message_id == "m4"
         assert transcript.to_plain_text(width=80) == plain_before
         assert all(
@@ -4390,7 +4493,10 @@ async def test_mounted_console_refreshes_tool_status_after_assistant_preamble():
         await pilot.click(disclosure.header)
         await pilot.pause()
         assert disclosure.expanded
-        assert "Arguments" in disclosure.query_one(".console-tool-detail", Static).content.plain
+        assert (
+            "Arguments"
+            in disclosure.query_one(".console-tool-detail", Static).content.plain
+        )
         await pilot.press("enter")
         await pilot.pause()
         assert not disclosure.expanded

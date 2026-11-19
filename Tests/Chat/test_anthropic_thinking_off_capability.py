@@ -102,6 +102,8 @@ def _sent_payload(mock_post, model, **extra):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @pytest.mark.parametrize("model", EXPLICIT_DISABLED_MODELS)
 @patch("requests.Session.post")
 def test_off_sends_explicit_disabled_thinking(mock_post, model):
@@ -117,6 +119,8 @@ def test_off_sends_explicit_disabled_thinking(mock_post, model):
     assert not any(key in sent for key in SAMPLING_KEYS)
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_opus_5_off_ignores_a_stray_thinking_budget(mock_post):
     """A leftover budget must not turn OFF into a legacy enabled config."""
@@ -135,6 +139,8 @@ def test_opus_5_off_ignores_a_stray_thinking_budget(mock_post):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @pytest.mark.parametrize(
     "model",
     ALWAYS_ON_MODELS
@@ -163,6 +169,8 @@ def test_always_on_model_off_sends_no_thinking_key(mock_post, model):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @pytest.mark.parametrize("model", OMISSION_IS_OFF_MODELS)
 @patch("requests.Session.post")
 def test_omission_is_off_family_off_sends_no_thinking_key(mock_post, model):
@@ -173,6 +181,8 @@ def test_omission_is_off_family_off_sends_no_thinking_key(mock_post, model):
     assert "output_config" not in sent
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @pytest.mark.parametrize(
     "model", ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"]
 )

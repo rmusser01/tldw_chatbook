@@ -25,15 +25,41 @@ is shown as such; Console does not invent missing history.
 
 ## Capture On, Capture Off, and temporary chats
 
-Capture is on by default. Change the global default in **F4 > Console
-Behavior**, or press **c** in a live Trace to choose **Next send**, **This
-conversation**, or **Global default**. Capture Off affects future calls and does
-not delete existing trace history.
+Capture is on by default for saved chats. Change the global default in **F4 >
+Console Behavior**, or press **c** in a live Trace to choose **Next send**,
+**This conversation**, or **Global default**. Capture Off affects future calls
+and does not delete existing trace history.
 
-A Capture On call needs a durable owner before it can contact the provider. If
-the chat is temporary, Console offers **Save & Send**. That action saves the
-current lineage and its trace ownership, then sends. You can instead make an
-explicit one-shot send with Capture Off. Temporary trace and fork state can stay
+A temporary chat records no traces. Its sends go to the provider with Capture
+Off and never stop to ask, and the status strip shows **Temporary · not saved ·
+traces off** (its tab's tooltip ends with the same words). To save the chat,
+activate that segment or choose **Save chat** in the composer **Menu**. From
+its next send the saved chat follows its own Capture
+choice (**This conversation** in Trace Privacy), or the global default when it
+has none; the sends it made while temporary keep no trace. The Menu row says
+which: it reads **Save chat (enables capture)**, with the hint "records no
+traces until saved", only when saving will turn capture on. With the global
+default Off, or Capture Off chosen for this conversation, it reads **Save chat**
+and its hint says saving keeps traces off; a saved chat with no Capture choice
+of its own still follows the global default if you change it later. A
+one-time **Next send** choice is kept when you save and decides that one send,
+so when it differs the hint says so instead: "once saved, only your next send
+is traced", or "once saved, traces start after your next send".
+
+If you turn Capture On for a chat that is still temporary, a send pauses
+before the provider, because a Capture On call needs a durable owner: every
+send while **This conversation** is On, or only the next one when you chose
+**Next send**. While a send would pause, the status strip (and the tab's
+tooltip) reads **Temporary · not saved · capture on**; it goes back to
+**traces off** when you set Capture back, or once a **Next send** choice is
+spent (**Send without capture** spends it; **Cancel send** keeps it). The
+transcript shows
+**Save chat to capture this send** with **Save & Send**, **Send without
+capture** and **Cancel send**. **Save & Send** saves the current lineage and
+its trace ownership, then sends that message; **Send without capture** sends
+that one message with Capture Off; **Cancel send** puts the message back in the
+composer with any attachments it carried. While the card is on screen, the
+queue shelf does not list the send as unsent. Temporary trace and fork state can stay
 coherent while the app is running and while you switch chats, but it is not
 restart-durable until saved.
 
@@ -41,6 +67,59 @@ If the pre-send trace reservation fails, automatic dispatch stops. Retry the
 reservation or explicitly send that one call with Capture Off. A failure after
 provider dispatch cannot discard the provider result; the Inspector reports an
 incomplete or interrupted trace boundary.
+
+A send whose trace record cannot be saved stops before the provider is
+contacted. The transcript shows a **Trace capture blocked** callout at that
+turn ("Problem: This send's trace record could not be saved." / "Impact: The
+provider was not contacted.") with **Retry capture**, **Send without capture**
+and **Cancel send**. Until you choose one, the header reads **Blocked**, the
+run chip and the Inspector's **Run** line read `Blocked — trace not saved`,
+and a message you send in the meantime is held on the shelf above the
+composer as `Not sent: Last send is blocked; resolve it first` with
+**Restore** (back to the composer) and **Discard**. Chats with a system
+prompt, a character, or a `/generate-image` result capture and send normally.
+
+When the trace record fails *after* the message was saved, the callout stays
+until that send finishes. If **Send without capture** then finds the provider
+not ready, it says so on the callout and leaves the send paused with the same
+three choices; nothing is sent twice, and your Capture Off choice still
+applies when you choose it again once the provider is ready.
+
+When the provider answers with an error such as HTTP 429 (rate limited), 500
+or 504, Console retries the call automatically. If that retry's trace record
+cannot be saved, the retry is not sent, and the callout leads with the
+provider's error instead: for example "OpenAI returned HTTP 429 (rate limit
+exceeded)", with "Impact: OpenAI was contacted; no reply arrived" and a note
+that the automatic retry was not sent. **Retry** is the first action there.
+Otherwise the Impact line says what is known about this send: "The provider
+was not contacted", "The provider was contacted earlier in this send; this
+request was not sent", or "It is not known whether the provider was
+contacted". On this callout:
+
+- **Retry** (or **Retry capture**) sends the turn again with capture on. When
+  Console cannot confirm whether the failed retry left a trace reservation
+  behind, it says so on the callout ("Trace capture could not be confirmed for
+  this send ...") and sends nothing; **Send without capture** then becomes the
+  first action, and **Cancel send** remains available.
+- **Send without capture** sends the turn once with capture off.
+- **Cancel send** ends the send, even when the trace reservation's state is
+  unknown, and puts your message back in the composer if the composer is
+  empty. Any reservation left behind is closed as not sent by Console's
+  startup trace maintenance, once it is a few minutes old. If the chat
+  database cannot be written at that moment, the callout says the
+  cancellation could not be saved and the send stays paused.
+
+When Console can prove the provider refused every earlier call of the send,
+none of these opens the "Response delivery status is unknown" panel. That panel is for a request
+that may have reached the provider without a known outcome: if the provider
+already answered an earlier call of the same send (for example a tool step)
+and a later call's trace record then fails, **Retry** or **Send without
+capture** can still lead to it, because replaying the turn could repeat work
+the provider already did.
+
+A timeout or synthetic error status is not proof of rejection. Missing HTTP
+response or retry-history evidence also keeps delivery uncertain, including
+provider adapters that discard that evidence when sanitizing their errors.
 
 If an interrupted tool run leaves a pending response after reopening the
 conversation, **Discard** retains the user message and earlier trace history.
@@ -153,10 +232,22 @@ transcript:
 
 - Editing or deleting a referenced message preserves the needed old revision
   once before changing the live message.
-- Edit & resend, regeneration, retries, failures, stops, and tool-loop calls are
-  separate call boundaries. Abandoned variants remain identifiable.
-- Context compaction and message edits append bounded replacement records; they
-  do not rewrite old trace events.
+- Retries, failures, stops, and tool-loop calls are separate call boundaries.
+  Abandoned variants remain identifiable.
+- Edit & resend and Regenerate send their reply with capture off, so that reply
+  has no trace call of its own. Your next send in the chat is captured as usual.
+  It records the edited branch as one bounded replacement of the earlier trace
+  history, and it does not ask you to choose an action.
+- After Compact now, the next captured send on the Console's default agent path
+  records the compacted history the same way: the conversation memory replaces
+  the older turns it summarized. On the plain provider path (character chats,
+  or `[console] agent_runtime = false`), a captured send still carries every
+  older turn and no memory, so there is nothing to replace (TASK-37417).
+  Old trace events are never rewritten.
+- One replacement covers at most 256 recorded trace rows. If the history being
+  replaced is longer, for example Compact now in a chat of more than about 128
+  exchanges, or Edit & resend on an early message of such a chat, later
+  captured sends still stop at **Trace capture blocked** (TASK-38298).
 - A fork shares the immutable trace prefix visible at its boundary and adds only
   its own suffix. The complete inherited history remains coherent in the fork
   without copying the prefix.
@@ -184,6 +275,19 @@ default, while dual-read compatibility remains.
 Copy and export obey the active Safe or Full projection and every frozen mask.
 Full copy/export asks for confirmation. Exported files are independent copies;
 later trace deletion cannot recall them.
+
+A shared Trace export (**w** in the Trace view) checks that every parent,
+source and replacement link names an event in the trace. A link to an event
+the trace does not hold (usually one that was never recorded) is cleared and
+listed in the bundle's missing metadata with the reason
+`reference_not_recorded`, so the rest of the conversation still exports; the
+preflight counts such links as unavailable. Chats that answered from staged
+Library sources before this check stored such a link on each of those turns.
+If the bundle still fails its checks, the dialog says nothing was written and
+points you to the app log, which records the full error with the conversation
+id; include it if you report the problem. Exporting the same trace again gives
+the same result. When the last check finds something that still looks like a
+password or key after redaction, the dialog says so instead.
 
 When a trace contains token-level text, reasoning, or tool-call stream events,
 Console may store a consecutive run as one compact physical row. This changes

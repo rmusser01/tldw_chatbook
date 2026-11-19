@@ -64,6 +64,7 @@ def _isolated_environment(tmp_path: Path) -> dict[str, str]:
     return environment
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("environment", "expects_handler", "expects_client"),
     [
@@ -92,6 +93,7 @@ def test_app_constructs_served_control_only_for_present_spawn_environment(
         assert app.served_canvas_control.child_id == "child-a"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "package_damage",
     [
@@ -134,6 +136,7 @@ def test_served_child_keeps_control_without_native_fallback_when_profiles_fail(
         asyncio.run(app.console_runtime.dispose())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
 async def test_unavailable_child_retains_snapshot_and_healthy_parent_refuses(
@@ -474,6 +477,7 @@ def _publish_root_canvas(
     return created, settlement
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_view_binding_builds_authority_on_first_publication_and_rebinds(
     tmp_path,
 ) -> None:
@@ -565,6 +569,7 @@ async def test_canvas_view_binding_cannot_build_authority_after_runtime_closes(
         await runtime.dispose()
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_view_rebind_registers_listener_on_rebuilt_controller() -> None:
     runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=None))
     first_store = runtime.ensure_chat_store()
@@ -597,6 +602,7 @@ def test_canvas_view_rebind_registers_listener_on_rebuilt_controller() -> None:
         asyncio.run(runtime.dispose())
 
 
+@pytest.mark.bootstrap_profile
 def test_concurrent_first_canvas_ensure_constructs_one_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

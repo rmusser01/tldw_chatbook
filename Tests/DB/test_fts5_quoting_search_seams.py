@@ -193,18 +193,18 @@ def test_conversation_title_search_binds_the_quoted_term(
     db: CharactersRAGDB,
 ) -> None:
     _seed_for_dead_store(db)
-    assert [
-        row["title"] for row in db.search_conversations_by_title("dragons")
-    ] == ["Talk about dragons"]
+    assert [row["title"] for row in db.search_conversations_by_title("dragons")] == [
+        "Talk about dragons"
+    ]
     assert db.search_conversations_by_title("dragons OR nothing") == []
     assert db.search_conversations_by_title(ORDINARY_QUOTED) == []
 
 
 def test_message_content_search_binds_the_quoted_term(db: CharactersRAGDB) -> None:
     _seed_for_dead_store(db)
-    assert [
-        row["content"] for row in db.search_messages_by_content("world")
-    ] == ["hello world"]
+    assert [row["content"] for row in db.search_messages_by_content("world")] == [
+        "hello world"
+    ]
     assert db.search_messages_by_content("world OR nothing") == []
     assert db.search_messages_by_content(ORDINARY_QUOTED) == []
 
@@ -314,9 +314,7 @@ def test_task_search_still_finds_plain_terms(evals_db: EvalsDB) -> None:
         config_format="custom",
         config_data={},
     )
-    assert [row["name"] for row in evals_db.search_tasks("math")] == [
-        "math evaluation"
-    ]
+    assert [row["name"] for row in evals_db.search_tasks("math")] == ["math evaluation"]
 
 
 # ---------------------------------------------------------------------------
@@ -561,7 +559,9 @@ def recall_corpus(db: CharactersRAGDB) -> CharactersRAGDB:
     is the entire difference, isolated.
     """
     db.add_character_card({"name": "dragon lore keeper", "description": "adjacent"})
-    db.add_character_card({"name": "lore of the dragon reversed", "description": "split"})
+    db.add_character_card(
+        {"name": "lore of the dragon reversed", "description": "split"}
+    )
     conversation = db.add_conversation(
         {"title": "dragon lore session", "character_id": 1}
     )
@@ -569,7 +569,11 @@ def recall_corpus(db: CharactersRAGDB) -> CharactersRAGDB:
         {"title": "lore about the dragon reversed", "character_id": 1}
     )
     db.add_message(
-        {"conversation_id": conversation, "sender": "user", "content": "dragon lore here"}
+        {
+            "conversation_id": conversation,
+            "sender": "user",
+            "content": "dragon lore here",
+        }
     )
     db.add_message(
         {
@@ -579,7 +583,9 @@ def recall_corpus(db: CharactersRAGDB) -> CharactersRAGDB:
         }
     )
     deck_id = db.create_deck(name="Deck R")
-    db.create_flashcard({"deck_id": deck_id, "front": "dragon lore adjacent", "back": "x"})
+    db.create_flashcard(
+        {"deck_id": deck_id, "front": "dragon lore adjacent", "back": "x"}
+    )
     db.create_flashcard(
         {"deck_id": deck_id, "front": "lore of the dragon reversed", "back": "y"}
     )
@@ -604,11 +610,21 @@ def test_multi_word_search_still_matches_non_adjacent_words(
 ) -> None:
     """The regression, per seam: both records, not just the adjacent one."""
     callers = {
-        "search_character_cards": lambda q: recall_corpus.search_character_cards(q, limit=50),
-        "search_conversations_by_title": lambda q: recall_corpus.search_conversations_by_title(q, limit=50),
-        "search_conversations_by_content": lambda q: recall_corpus.search_conversations_by_content(q, limit=50),
-        "search_messages_by_content": lambda q: recall_corpus.search_messages_by_content(q, limit=50),
-        "list_flashcards": lambda q: recall_corpus.list_flashcards(q="dragon lore", limit=50),
+        "search_character_cards": lambda q: recall_corpus.search_character_cards(
+            q, limit=50
+        ),
+        "search_conversations_by_title": lambda q: (
+            recall_corpus.search_conversations_by_title(q, limit=50)
+        ),
+        "search_conversations_by_content": lambda q: (
+            recall_corpus.search_conversations_by_content(q, limit=50)
+        ),
+        "search_messages_by_content": lambda q: (
+            recall_corpus.search_messages_by_content(q, limit=50)
+        ),
+        "list_flashcards": lambda q: recall_corpus.list_flashcards(
+            q="dragon lore", limit=50
+        ),
         "search_flashcards": lambda q: recall_corpus.search_flashcards(q),
     }
     assert len(callers[seam]("dragon lore")) == 2, (

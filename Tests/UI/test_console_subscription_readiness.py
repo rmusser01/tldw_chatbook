@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_provider_apply_defaults_flow import (
@@ -152,7 +152,13 @@ async def test_console_send_refreshes_expiry_and_renews_stale_snapshot_without_e
         await pilot.pause(0.3)
         revision = expiring_credential.cache.revision
         status = console.query_one("#console-send-disabled-reason", Static)
+        snapshot = console._console_credential_snapshot
+        console._console_sync_maintenance_close_admission()
         expiring_credential.wall = 1002
+        console._poll_console_credential_readiness()
+        assert console._console_credential_snapshot == snapshot
+        assert not send.disabled
+        console._console_sync_maintenance_resume()
         await _wait_for_status(status, "log in with Claude Code")
         assert send.disabled
         assert expiring_credential.cache.revision == revision
@@ -166,11 +172,29 @@ async def test_console_send_refreshes_expiry_and_renews_stale_snapshot_without_e
         assert all(
             reader != threading.get_ident() for reader in expiring_credential.readers
         )
+        snapshot = console._console_credential_snapshot
+        console._console_sync_maintenance_close_admission()
         expiring_credential.release.set()
+        async with asyncio.timeout(3):
+            while expiring_credential.cache.revision == snapshot[0]:
+                await asyncio.sleep(0.01)
+        console._poll_console_credential_readiness()
+        assert console._console_credential_snapshot == snapshot
+        assert send.disabled
+        console._console_sync_maintenance_resume()
         async with asyncio.timeout(3):
             while send.disabled:
                 await asyncio.sleep(0.01)
         assert "private-token" not in str(status.renderable)
+
+        from textual.screen import Screen
+
+        snapshot = console._console_credential_snapshot
+        host.add_mode("credential-owner-away", Screen)
+        await host.switch_mode("credential-owner-away")
+        assert console.is_attached and not console.is_current
+        console._poll_console_credential_readiness()
+        assert console._console_credential_snapshot == snapshot
 
 
 @pytest.mark.asyncio
@@ -232,7 +256,9 @@ async def test_streaming_control_responds_and_readiness_refreshes_after_slow_rea
             assert readers == [readers[0]]
             assert readers[0] != threading.get_ident()
             initial = modal._build_draft().streaming
-            modal.query_one("#console-settings-streaming", Button).press()
+            # TASK-33006.1: Streaming is an On/Off Select.
+            streaming = modal.query_one("#console-settings-streaming", Select)
+            streaming.value = "off" if streaming.value == "on" else "on"
             await pilot.pause()
             assert modal._build_draft().streaming is not initial
             assert not release.is_set()

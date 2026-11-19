@@ -37,9 +37,7 @@ from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request
 
 
-_DARWIN_LIBC = (
-    ctypes.CDLL(None, use_errno=True) if sys.platform == "darwin" else None
-)
+_DARWIN_LIBC = ctypes.CDLL(None, use_errno=True) if sys.platform == "darwin" else None
 ARMS = ("control", "disabled", "enabled")
 CONTROL_SHA = "5f720a40417eaa78f33619d5cbc82effc470104b"
 ORIGINAL_HARNESS_SHA = "eb8225a32f88ea43c337aff99804d360384e7668"
@@ -217,9 +215,13 @@ APPLICATION_CRITICAL_PATH_METRICS = (
     "assistant_durable_to_release_ns",
     "terminal_to_third_provider_ns",
 )
-REQUIRED_METRICS = NON_REGRESSION_METRICS + APPLICATION_CRITICAL_PATH_METRICS + (
-    "provider_total_ns",
-    "conversation_wall_ns",
+REQUIRED_METRICS = (
+    NON_REGRESSION_METRICS
+    + APPLICATION_CRITICAL_PATH_METRICS
+    + (
+        "provider_total_ns",
+        "conversation_wall_ns",
+    )
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 TARGET_MODULES = (
@@ -348,11 +350,15 @@ def canonical_artifact_hashes(
         entries = {path.name: path for path in root.iterdir()}
     except OSError as exc:
         raise RuntimeError("review_artifact_set_invalid") from exc
-    allowed_entries = set(REVIEWED_ARTIFACTS) | {
-        "reviews",
-        "confirmatory-review-receipt.json",
-        "corrections",
-    } | _ACQUISITION_NAMESPACES
+    allowed_entries = (
+        set(REVIEWED_ARTIFACTS)
+        | {
+            "reviews",
+            "confirmatory-review-receipt.json",
+            "corrections",
+        }
+        | _ACQUISITION_NAMESPACES
+    )
     if not set(entries).issubset(allowed_entries):
         raise RuntimeError("review_artifact_set_invalid")
     for name in _ACQUISITION_NAMESPACES.intersection(entries):
@@ -1380,8 +1386,7 @@ def _promote_reviewed_artifacts_locked(
             raise RuntimeError("publication_durability_uncertain") from exc
         if (
             not stat.S_ISDIR(published_metadata.st_mode)
-            or (published_metadata.st_dev, published_metadata.st_ino)
-            != stage_identity
+            or (published_metadata.st_dev, published_metadata.st_ino) != stage_identity
             or (
                 published_path_metadata.st_dev,
                 published_path_metadata.st_ino,
@@ -1405,8 +1410,7 @@ def _promote_reviewed_artifacts_locked(
                 if (
                     not stat.S_ISREG(metadata.st_mode)
                     or (metadata.st_dev, metadata.st_ino) != (device, inode)
-                    or (path_metadata.st_dev, path_metadata.st_ino)
-                    != (device, inode)
+                    or (path_metadata.st_dev, path_metadata.st_ino) != (device, inode)
                 ):
                     raise RuntimeError("publication_durability_uncertain")
         except OSError as exc:
@@ -1615,9 +1619,7 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
             {"control": 20.0, "disabled": 2.0, "enabled": 31.0},
         ]
         default_bounds = {
-            candidate: paired(
-                blocks, candidate, resamples=resamples, seed=seed
-            )
+            candidate: paired(blocks, candidate, resamples=resamples, seed=seed)
             for candidate in module.ARMS[1:]
         }
         if default_bounds["disabled"] != paired(
@@ -1686,8 +1688,7 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
             call = {
                 "candidate": candidate,
                 "blocks": [
-                    {arm: float(block[arm]) for arm in module.ARMS}
-                    for block in blocks
+                    {arm: float(block[arm]) for arm in module.ARMS} for block in blocks
                 ],
                 "resamples": resamples,
                 "seed": seed,
@@ -1718,11 +1719,7 @@ def _statistics_protocol(module: Any, *, error_code: str) -> dict[str, Any]:
             for fraction in fractions
             if all(
                 nearest(
-                    [
-                        row["metrics"][metric]
-                        for row in rows
-                        if row["arm"] == arm
-                    ],
+                    [row["metrics"][metric] for row in rows if row["arm"] == arm],
                     fraction,
                 )
                 == summary["arms"][arm]["metrics"][metric]["p95"]
@@ -1795,8 +1792,7 @@ def confirmation_protocol(
     if (
         set(revisions) != {"control", "candidate"}
         or any(
-            not isinstance(value, str)
-            or not re.fullmatch(r"[0-9a-f]{40}", value)
+            not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)
             for value in revisions.values()
         )
         or not provider_kind
@@ -1849,9 +1845,7 @@ def confirmation_protocol(
             ).hexdigest(),
             "mutation_sha256": hashlib.sha256(FIXED_MUTATION).hexdigest(),
             "workspace_content_tree_digest": workspace_content_tree_digest,
-            "tool_definition_sha256_by_arm": clone(
-                tool_definition_sha256_by_arm
-            ),
+            "tool_definition_sha256_by_arm": clone(tool_definition_sha256_by_arm),
         },
         "metric_names": sorted(REQUIRED_METRICS),
         "primary_gate_names": sorted(NON_REGRESSION_METRICS),
@@ -1865,9 +1859,7 @@ def confirmation_protocol(
             "method": statistics_protocol["resampling_method"],
             "resamples": statistics_protocol["resamples"],
             "seed": statistics_protocol["seed"],
-            "behavior_sha256": statistics_protocol[
-                "resampling_behavior_sha256"
-            ],
+            "behavior_sha256": statistics_protocol["resampling_behavior_sha256"],
         },
         "confidence_bounds": list(bounds),
         "non_regression_ceiling": NON_REGRESSION_CEILING,
@@ -1897,7 +1889,9 @@ def protocol_mismatches(
     )
 
 
-def _original_thresholds(original: Any, rows: Sequence[Mapping[str, Any]]) -> tuple[float, float]:
+def _original_thresholds(
+    original: Any, rows: Sequence[Mapping[str, Any]]
+) -> tuple[float, float]:
     """Discover decision thresholds by discriminating the pinned summary builder."""
     real_bounds = original.paired_p95_ratio_bounds
 
@@ -1967,9 +1961,9 @@ def load_original_protocol(
             row
             for row in (
                 json.loads(line)
-                for line in (
-                    evidence_root / "real-provider-three-turn.raw.jsonl"
-                ).read_text(encoding="utf-8").splitlines()
+                for line in (evidence_root / "real-provider-three-turn.raw.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
             )
             if row.get("event") == "sample"
         ]
@@ -2028,8 +2022,7 @@ def load_original_protocol(
             set(metric_names) != set(machine_summary["arms"]["control"]["metrics"])
             or set(gate_names) != set(built["arms"]["disabled"]["gates"])
             or any(
-                built["arms"][arm]["metrics"]
-                != machine_summary["arms"][arm]["metrics"]
+                built["arms"][arm]["metrics"] != machine_summary["arms"][arm]["metrics"]
                 for arm in ARMS
             )
             or len(matching_fractions) != 1
@@ -2056,9 +2049,7 @@ def load_original_protocol(
             "p95": {
                 "method": statistics_protocol["p95_method"],
                 "fraction": statistics_protocol["p95_fraction"],
-                "behavior_sha256": statistics_protocol[
-                    "p95_behavior_sha256"
-                ],
+                "behavior_sha256": statistics_protocol["p95_behavior_sha256"],
             },
             "measured_blocks": len(
                 {
@@ -2071,9 +2062,7 @@ def load_original_protocol(
                 "method": statistics_protocol["resampling_method"],
                 "resamples": statistics_protocol["resamples"],
                 "seed": statistics_protocol["seed"],
-                "behavior_sha256": statistics_protocol[
-                    "resampling_behavior_sha256"
-                ],
+                "behavior_sha256": statistics_protocol["resampling_behavior_sha256"],
             },
             "confidence_bounds": list(bounds),
             "non_regression_ceiling": non_regression,
@@ -2330,12 +2319,8 @@ class TargetAdapter:
             )
 
             coordinator_type = ChangeReviewFinalizationCoordinator
-        self._wrap_method(
-            coordinator_type, "register", before("baseline_started")
-        )
-        self._wrap_method(
-            coordinator_type, "await_baseline", after("baseline_ready")
-        )
+        self._wrap_method(coordinator_type, "register", before("baseline_started"))
+        self._wrap_method(coordinator_type, "await_baseline", after("baseline_ready"))
         # Timestamp the scheduling boundary before delegating: finalize can
         # wake a worker immediately, so recording after return can invert E.
         self._wrap_method(
@@ -2509,8 +2494,7 @@ def validate_sample(row: Mapping[str, Any]) -> tuple[str, ...]:
             or usage[key] < 0
             for key in ("prompt_tokens", "completion_tokens", "total_tokens")
         )
-        or usage["total_tokens"]
-        != usage["prompt_tokens"] + usage["completion_tokens"]
+        or usage["total_tokens"] != usage["prompt_tokens"] + usage["completion_tokens"]
         for usage in provider_usage
     ):
         _append_error(errors, "provider_usage_contract")
@@ -2844,9 +2828,7 @@ def privacy_violations(value: Any, *, location: str = "$") -> tuple[str, ...]:
     return tuple(violations)
 
 
-def _require_campaign_enum(
-    value: Any, allowed: frozenset[str], error_code: str
-) -> str:
+def _require_campaign_enum(value: Any, allowed: frozenset[str], error_code: str) -> str:
     if not isinstance(value, str) or value not in allowed:
         raise RuntimeError(error_code)
     return value
@@ -2913,7 +2895,10 @@ def _validate_attempt_lineage(events: Sequence[Mapping[str, Any]]) -> None:
             if (
                 event["state"] != "running"
                 or number != current_number + 1
-                or (current_state is not None and current_state not in {"failed", "invalid"})
+                or (
+                    current_state is not None
+                    and current_state not in {"failed", "invalid"}
+                )
             ):
                 raise RuntimeError("campaign_attempt_sequence_invalid")
             current_number = number
@@ -3054,7 +3039,9 @@ def append_attempt_state(ledger: Path, event: Mapping[str, Any]) -> None:
 def next_attempt_id(events: Sequence[Mapping[str, Any]]) -> str:
     """Return the next four-digit campaign attempt identifier."""
     _validate_attempt_lineage(events)
-    number = 1 if not events else int(events[-1]["attempt_id"].removeprefix("attempt-")) + 1
+    number = (
+        1 if not events else int(events[-1]["attempt_id"].removeprefix("attempt-")) + 1
+    )
     if number > 9_999:
         raise RuntimeError("campaign_attempt_id_exhausted")
     return f"attempt-{number:04d}"
@@ -3266,9 +3253,7 @@ def _is_empty_private_directory(path: Path) -> bool:
         return False
 
 
-def _delete_exact_lock_root(
-    lock_root: Path, owner: CampaignLockOwner
-) -> None:
+def _delete_exact_lock_root(lock_root: Path, owner: CampaignLockOwner) -> None:
     if _read_lock_owner(lock_root) != owner:
         raise RuntimeError("campaign_lock_owner_mismatch")
     _unlink_namespace(lock_root / "owner.json")
@@ -3300,9 +3285,7 @@ def _cleanup_owner_stage(stage: Path) -> None:
         pass
 
 
-def _create_owner_stage(
-    campaign_root: Path, owner: CampaignLockOwner
-) -> Path:
+def _create_owner_stage(campaign_root: Path, owner: CampaignLockOwner) -> Path:
     stage = Path(tempfile.mkdtemp(prefix=".campaign-owner-", dir=campaign_root))
     try:
         _fsync_directory(campaign_root)
@@ -3448,9 +3431,7 @@ def acquire_campaign_lock(
         if lock_root.exists() or lock_root.is_symlink():
             raise RuntimeError("campaign_recovery_in_progress")
         rollback_owner = _read_lock_owner(rollback_root)
-        if _restore_marker_to_canonical(
-            campaign_root, rollback_root, rollback_owner
-        ):
+        if _restore_marker_to_canonical(campaign_root, rollback_root, rollback_owner):
             raise RuntimeError("campaign_recovery_rolled_back")
         raise RuntimeError("campaign_recovery_in_progress")
     marker_error = _campaign_marker_error(campaign_root)
@@ -3493,9 +3474,7 @@ def release_campaign_lock(campaign_root: Path, owner: CampaignLockOwner) -> None
             return
         observed_owner = _read_lock_owner(release_root)
         if observed_owner != owner:
-            _restore_marker_to_canonical(
-                campaign_root, release_root, observed_owner
-            )
+            _restore_marker_to_canonical(campaign_root, release_root, observed_owner)
             raise RuntimeError("campaign_lock_owner_mismatch")
         _delete_exact_lock_root(release_root, owner)
         return
@@ -3535,9 +3514,7 @@ def acquire_campaign_attempt(
     try:
         ledger = campaign_root / "attempts.jsonl"
         attempt_id = require_campaign_acquisition(ledger)
-        append_attempt_state(
-            ledger, {"attempt_id": attempt_id, "state": "running"}
-        )
+        append_attempt_state(ledger, {"attempt_id": attempt_id, "state": "running"})
         try:
             root = create_attempt_root(campaign_root, attempt_id)
         except BaseException as primary:
@@ -3581,9 +3558,7 @@ def release_campaign_attempt(campaign_root: Path, attempt: CampaignAttempt) -> N
     release_campaign_lock(campaign_root, attempt.owner)
 
 
-def _acquisition_pin_namespace(
-    campaign_root: Path, *, create: bool
-) -> Path | None:
+def _acquisition_pin_namespace(campaign_root: Path, *, create: bool) -> Path | None:
     campaign, _ = _strict_owned_directory(
         campaign_root, parent=None, error_code="campaign_acquisition_pin_invalid"
     )
@@ -3638,9 +3613,7 @@ def _acquisition_pin_events(pins: Path) -> tuple[dict[str, Any], ...]:
     return tuple(events)
 
 
-def read_acquisition_pin(
-    campaign_root: Path, attempt_id: str
-) -> dict[str, Any] | None:
+def read_acquisition_pin(campaign_root: Path, attempt_id: str) -> dict[str, Any] | None:
     """Read one canonical raw/verdict pin, or return ``None`` when absent."""
     if not _ATTEMPT_ID.fullmatch(attempt_id):
         raise RuntimeError("campaign_acquisition_pin_invalid")
@@ -3768,9 +3741,7 @@ def recover_interrupted_attempt(
         )
         if observed_start == owner.process_start_sha256:
             if marker == recovery_root:
-                _preserve_recovery_rollback(
-                    campaign_root, recovery_root, owner
-                )
+                _preserve_recovery_rollback(campaign_root, recovery_root, owner)
             raise RuntimeError("campaign_lock_owner_live")
         if marker == lock_root:
             try:
@@ -3809,9 +3780,13 @@ def recover_interrupted_attempt(
             release_owner = _read_lock_owner(release_root)
             _delete_exact_lock_root(release_root, release_owner)
         return pinned_event
-    if pinned_event is not None and latest == pinned_event and not any(
-        marker.exists() or marker.is_symlink()
-        for marker in (lock_root, recovery_root, release_root)
+    if (
+        pinned_event is not None
+        and latest == pinned_event
+        and not any(
+            marker.exists() or marker.is_symlink()
+            for marker in (lock_root, recovery_root, release_root)
+        )
     ):
         marker_error = _campaign_marker_error(campaign_root)
         if marker_error is not None:
@@ -3921,17 +3896,13 @@ def recover_interrupted_attempt(
             raise RuntimeError("campaign_recovery_lost") from exc
         recovered_owner = _read_lock_owner(recovery_root)
         if recovered_owner != owner:
-            _preserve_recovery_rollback(
-                campaign_root, recovery_root, recovered_owner
-            )
+            _preserve_recovery_rollback(campaign_root, recovery_root, recovered_owner)
             raise RuntimeError("campaign_lock_owner_mismatch")
         _delete_exact_lock_root(recovery_root, owner)
         return pinned_event
     if latest is not None and latest["state"] != "running" and orphan_id is None:
         if latest["state"] in BLOCKING_ATTEMPT_STATES:
-            raise RuntimeError(
-                f"campaign_recovery_state_blocked:{latest['state']}"
-            )
+            raise RuntimeError(f"campaign_recovery_state_blocked:{latest['state']}")
         raise RuntimeError("campaign_recovery_state_invalid")
     if not recovery_root.exists():
         observed_start = _probe_process_start_identity(
@@ -3945,9 +3916,7 @@ def recover_interrupted_attempt(
             raise RuntimeError("campaign_recovery_lost") from exc
         taken_owner = _read_lock_owner(recovery_root)
         if taken_owner != owner:
-            _preserve_recovery_rollback(
-                campaign_root, recovery_root, taken_owner
-            )
+            _preserve_recovery_rollback(campaign_root, recovery_root, taken_owner)
             raise RuntimeError("campaign_lock_owner_mismatch")
     event = pinned_event or (
         {
@@ -3972,9 +3941,7 @@ def recover_interrupted_attempt(
         ):
             raise RuntimeError("campaign_recovery_state_changed")
         if orphan_id is not None:
-            append_attempt_state(
-                ledger, {"attempt_id": orphan_id, "state": "running"}
-            )
+            append_attempt_state(ledger, {"attempt_id": orphan_id, "state": "running"})
             append_attempt_state(ledger, event)
         elif latest is not None:
             append_attempt_state(ledger, event)
@@ -3987,11 +3954,7 @@ def recover_interrupted_attempt(
                     if orphan_id is not None
                     else ()
                 ),
-                *(
-                    (event,)
-                    if latest is not None or orphan_id is not None
-                    else ()
-                ),
+                *((event,) if latest is not None or orphan_id is not None else ()),
             )
             appended = (
                 latest is not None or orphan_id is not None
@@ -4033,9 +3996,7 @@ def safe_error_origin(error: BaseException) -> str:
     return value if re.fullmatch(r"[A-Za-z0-9_<>.-]{1,120}", value) else "unknown"
 
 
-def acquisition_failure_event(
-    attempt_id: str, error: BaseException
-) -> dict[str, str]:
+def acquisition_failure_event(attempt_id: str, error: BaseException) -> dict[str, str]:
     """Map a pre-definitive failure to one declared retryable category."""
     code = safe_error_code(error)
     state = "invalid"
@@ -4056,10 +4017,10 @@ def acquisition_failure_event(
         "parent_sample_validation_failed",
     }:
         category = "completeness"
-    elif code == "campaign_schedule_verdict_mismatch" or code.startswith(
-        "protocol_"
-    ) or code.startswith(
-        ("workspace_", "tool_schema_", "mounted_sample_")
+    elif (
+        code == "campaign_schedule_verdict_mismatch"
+        or code.startswith("protocol_")
+        or code.startswith(("workspace_", "tool_schema_", "mounted_sample_"))
     ):
         category = "product"
     else:
@@ -4154,19 +4115,21 @@ def build_child_environment(
     return environment
 
 
-def assert_child_environment(
-    sample_root: Path, environment: Mapping[str, str]
-) -> None:
+def assert_child_environment(sample_root: Path, environment: Mapping[str, str]) -> None:
     """Fail before target imports unless the child owns its complete environment."""
     root = sample_root.resolve()
-    allowed = set(_SAFE_INHERITED_ENVIRONMENT) | set(_OWNED_CHILD_ENVIRONMENT) | {
-        "TLDW_TEST_MODE",
-        "PYTHONDONTWRITEBYTECODE",
-        "PYTHONUNBUFFERED",
-        # macOS inserts this locale descriptor even when subprocess.env is
-        # otherwise exact. It contains no path, credential, or user content.
-        "__CF_USER_TEXT_ENCODING",
-    }
+    allowed = (
+        set(_SAFE_INHERITED_ENVIRONMENT)
+        | set(_OWNED_CHILD_ENVIRONMENT)
+        | {
+            "TLDW_TEST_MODE",
+            "PYTHONDONTWRITEBYTECODE",
+            "PYTHONUNBUFFERED",
+            # macOS inserts this locale descriptor even when subprocess.env is
+            # otherwise exact. It contains no path, credential, or user content.
+            "__CF_USER_TEXT_ENCODING",
+        }
+    )
     if set(environment) - allowed:
         raise RuntimeError("child_environment_mismatch:unexpected_key")
     for key in _OWNED_CHILD_ENVIRONMENT:
@@ -4324,11 +4287,15 @@ def preflight_provider(
             raise RuntimeError("provider_preflight_models_failed")
         models_payload = json.loads(response.read())
     data = models_payload.get("data") if isinstance(models_payload, Mapping) else None
-    model_ids = [
-        str(item.get("id"))
-        for item in data
-        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
-    ] if isinstance(data, list) else []
+    model_ids = (
+        [
+            str(item.get("id"))
+            for item in data
+            if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+        ]
+        if isinstance(data, list)
+        else []
+    )
     if model not in model_ids:
         raise RuntimeError("provider_preflight_model_mismatch")
 
@@ -4368,9 +4335,7 @@ def preflight_provider(
     )
     message = (
         choices[0].get("message")
-        if isinstance(choices, list)
-        and choices
-        and isinstance(choices[0], Mapping)
+        if isinstance(choices, list) and choices and isinstance(choices[0], Mapping)
         else None
     )
     content = message.get("content") if isinstance(message, Mapping) else None
@@ -4414,8 +4379,7 @@ def runtime_metadata(
 ) -> dict[str, Any]:
     """Return portable interpreter, SQLite, and direct dependency versions."""
     dependencies = {
-        name: version_lookup(name)
-        for name in ("httpx", "pydantic", "rich", "textual")
+        name: version_lookup(name) for name in ("httpx", "pydantic", "rich", "textual")
     }
     return {
         "python": {
@@ -4487,8 +4451,12 @@ def provider_server_metadata(
         },
         "is_sleeping": payload.get("is_sleeping"),
         "modalities": {
-            "vision": modalities.get("vision") if isinstance(modalities, Mapping) else None,
-            "audio": modalities.get("audio") if isinstance(modalities, Mapping) else None,
+            "vision": modalities.get("vision")
+            if isinstance(modalities, Mapping)
+            else None,
+            "audio": modalities.get("audio")
+            if isinstance(modalities, Mapping)
+            else None,
         },
     }
     if (
@@ -4562,9 +4530,7 @@ def listener_identity(
         capture_output=True,
         text=True,
     )
-    inventory = {
-        line.strip() for line in lookup.stdout.splitlines() if line.strip()
-    }
+    inventory = {line.strip() for line in lookup.stdout.splitlines() if line.strip()}
     if (
         lookup.returncode != 0
         or not inventory
@@ -4654,9 +4620,7 @@ def listener_resource_snapshot(
             raise RuntimeError("listener_resource_sample_failed") from exc
         if rss_kib < 0 or not math.isfinite(cpu_percent) or cpu_percent < 0:
             raise RuntimeError("listener_resource_sample_failed")
-        processes.append(
-            {"rss_bytes": rss_kib * 1_024, "cpu_percent": cpu_percent}
-        )
+        processes.append({"rss_bytes": rss_kib * 1_024, "cpu_percent": cpu_percent})
     return {"listener_count": len(processes), "processes": processes}
 
 
@@ -4669,8 +4633,7 @@ def sample_schedule(
     schedule = [SamplePlan("warmup", arm, -1) for arm in ARMS]
     for block in range(burn_in_blocks):
         schedule.extend(
-            SamplePlan("burn_in", arm, block)
-            for arm in balanced_arm_order(block)
+            SamplePlan("burn_in", arm, block) for arm in balanced_arm_order(block)
         )
     for iteration in range(iterations):
         schedule.extend(
@@ -4680,9 +4643,7 @@ def sample_schedule(
     return tuple(schedule)
 
 
-def campaign_schedule_contract(
-    iterations: int, burn_in_blocks: int
-) -> dict[str, Any]:
+def campaign_schedule_contract(iterations: int, burn_in_blocks: int) -> dict[str, Any]:
     """Return one pre-registered campaign shape or reject arbitrary counts."""
     kind = {(30, 5): "official", (1, 1): "disposable_smoke"}.get(
         (iterations, burn_in_blocks)
@@ -4883,9 +4844,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             if parsed.candidate_sha != CANDIDATE_SHA:
                 parser.error("campaign requires the fixed candidate revision")
             try:
-                campaign_schedule_contract(
-                    parsed.iterations, parsed.burn_in_blocks
-                )
+                campaign_schedule_contract(parsed.iterations, parsed.burn_in_blocks)
             except ValueError:
                 parser.error("campaign schedule must be official 30/5 or smoke 1/1")
         elif parsed.burn_in_blocks and parsed.child_spec is None:
@@ -4901,9 +4860,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
             "register-review",
             "reopen-review",
             "promote",
-        } and (
-            parsed.review_receipt is None
-        ):
+        } and (parsed.review_receipt is None):
             parser.error("review action requires --review-receipt")
         if parsed.campaign_action in {"reopen-review", "prepare-correction"} and not (
             parsed.correction_id
@@ -4944,9 +4901,7 @@ def prepare_target_worktree(
         if entry.name == name:
             raise RuntimeError(f"target_worktree_failed:{name}:target_exists")
         if _is_target_cleanup_namespace(name, entry.name):
-            raise RuntimeError(
-                f"target_worktree_failed:{name}:cleanup_reserved"
-            )
+            raise RuntimeError(f"target_worktree_failed:{name}:cleanup_reserved")
     root_metadata = root.stat(follow_symlinks=False)
     root_identity = (root_metadata.st_dev, root_metadata.st_ino)
     command = ["git", "worktree", "add", "--detach", str(target), revision]
@@ -4968,9 +4923,7 @@ def prepare_target_worktree(
                 root_descriptor = _open_identity_bound_directory(
                     root,
                     root_identity,
-                    error_code=(
-                        f"target_worktree_failed:{name}:cleanup_reserved"
-                    ),
+                    error_code=(f"target_worktree_failed:{name}:cleanup_reserved"),
                 )
                 target_descriptor = os.open(
                     name,
@@ -5024,9 +4977,7 @@ def prepare_target_worktree(
         )
     except BaseException as exc:
         cleanup_failures.append(exc)
-    _raise_failures(
-        "target_worktree_add_failed", [primary, *cleanup_failures]
-    )
+    _raise_failures("target_worktree_add_failed", [primary, *cleanup_failures])
     raise AssertionError("unreachable")
 
 
@@ -5036,9 +4987,7 @@ def _target_worktree_registered(
     *,
     run_command: Any = subprocess.run,
 ) -> bool:
-    registrations = _worktree_registrations(
-        repository_root, run_command=run_command
-    )
+    registrations = _worktree_registrations(repository_root, run_command=run_command)
     expected = str(target) if target.is_absolute() else str(target.resolve())
     return expected in registrations
 
@@ -5183,9 +5132,7 @@ def _prepare_workspace_runtime_owned(
             initialize_root=lambda path: shadow_service.repo_for_root(path).snapshot(
                 "root registered"
             ),
-            capability_reader=lambda: ChangeReviewCapability(
-                ChangeReviewState.ENABLED
-            ),
+            capability_reader=lambda: ChangeReviewCapability(ChangeReviewState.ENABLED),
             worker_count=1,
         )
         _owned_resources.append(("consent", consent_service))
@@ -5345,9 +5292,7 @@ def validate_protocol_preflight_rows(
             raise RuntimeError(f"protocol_preflight_behavior_mismatch:{arm}")
         if row.get("final_ownership") != {"live_threads": 0}:
             raise RuntimeError(f"protocol_preflight_ownership_mismatch:{arm}")
-    corpus_digests = {
-        str(row.get("workspace_content_tree_digest", "")) for row in rows
-    }
+    corpus_digests = {str(row.get("workspace_content_tree_digest", "")) for row in rows}
     permission_hashes = {
         arm: str(by_arm[arm][0].get("tool_definition_sha256", "")) for arm in ARMS
     }
@@ -5409,9 +5354,9 @@ def protocol_preflight(
             "arm": arm,
             "target_revision_kind": adapter.revision_kind,
             "behavior_sha256": hashlib.sha256(
-                json.dumps(
-                    behavior, sort_keys=True, separators=(",", ":")
-                ).encode("utf-8")
+                json.dumps(behavior, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
             ).hexdigest(),
             "workspace_content_tree_digest": corpus_digest,
             "tool_definition_sha256": tool_digest,
@@ -5663,9 +5608,7 @@ async def run_scripted_mounted_sample(
             await type_text(TURN_PROMPTS[0])
             await pilot.press("enter")
             try:
-                await wait_until(
-                    lambda: "turn-one-complete" in _visible_text(console)
-                )
+                await wait_until(lambda: "turn-one-complete" in _visible_text(console))
             except AssertionError as exc:
                 send_button = console.query_one("#console-send-message")
                 setup_modals = list(console.query("#console-setup-modal"))
@@ -5976,8 +5919,7 @@ def _target_tree_inventory(
             for name in names
             if name != ".git"
             and not any(
-                (current / name).resolve().is_relative_to(item)
-                for item in excluded
+                (current / name).resolve().is_relative_to(item) for item in excluded
             )
         ]
         if any(current.resolve().is_relative_to(item) for item in excluded):
@@ -6162,9 +6104,7 @@ async def run_mounted_sample(
     inventory_exclusions = (root,) + (
         (owned_run_root.resolve(),) if owned_run_root is not None else ()
     )
-    source_before = _target_tree_inventory(
-        adapter.target_root, inventory_exclusions
-    )
+    source_before = _target_tree_inventory(adapter.target_root, inventory_exclusions)
     baseline_threads = {id(thread) for thread in threading.enumerate()}
     ui_loop = asyncio.get_running_loop()
     turn_two_terminal = asyncio.Event()
@@ -6302,7 +6242,9 @@ async def run_mounted_sample(
         app.console_provider_gateway_factory = lambda: gateway
         host = ConsoleHarness(app)
 
-        async def wait_until(predicate: Callable[[], bool], timeout: float = 180.0) -> None:
+        async def wait_until(
+            predicate: Callable[[], bool], timeout: float = 180.0
+        ) -> None:
             deadline = time.monotonic() + timeout
             while not predicate():
                 if time.monotonic() >= deadline:
@@ -6310,7 +6252,9 @@ async def run_mounted_sample(
                 await asyncio.sleep(0.005)
 
         async def wait_review_idle(screen: Any) -> None:
-            coordinator = getattr(screen._console_runtime(), "change_review_coordinator", None)
+            coordinator = getattr(
+                screen._console_runtime(), "change_review_coordinator", None
+            )
             if coordinator is not None:
                 idle = await asyncio.to_thread(coordinator.wait_idle, 30.0)
                 if not idle:
@@ -6397,9 +6341,7 @@ async def run_mounted_sample(
             await asyncio.wait_for(third_assistant_terminal.wait(), timeout=180.0)
             await wait_until(lambda: observation.snapshot()["provider_call_count"] >= 5)
             await wait_review_idle(console)
-            expected_queue_counts = expected_mounted_queue_counts(
-                adapter.revision_kind
-            )
+            expected_queue_counts = expected_mounted_queue_counts(adapter.revision_kind)
             await wait_until(
                 lambda: all(
                     observation.snapshot()[name] == expected
@@ -6430,8 +6372,7 @@ async def run_mounted_sample(
             )
             prompt_loss_count = abs(3 - user_count) + queue_snapshot.total_count
             mutation_success = (
-                mutation_path.is_file()
-                and mutation_path.read_bytes() == FIXED_MUTATION
+                mutation_path.is_file() and mutation_path.read_bytes() == FIXED_MUTATION
             )
             if not mutation_success:
                 raise RuntimeError("benchmark_mutation_contract_failed")
@@ -6486,26 +6427,18 @@ async def run_mounted_sample(
             "status": "complete",
             "provider_round_counts": snapshot["provider_round_counts"],
             "provider_usage": provider_usage,
-            "terminal_turn_2_provider_completed_ns": provider_calls[3][
-                "completed_ns"
-            ],
+            "terminal_turn_2_provider_completed_ns": provider_calls[3]["completed_ns"],
             "third_send_requested_ns": snapshot["third_send_requested_ns"],
             "turn_2_release_ns": snapshot["turn_2_release_ns"],
             "third_worker_started_ns": snapshot["third_worker_started_ns"],
             "third_provider_started_ns": provider_calls[4]["started_ns"],
-            "terminal_third_provider_completed_ns": provider_calls[4][
-                "completed_ns"
-            ],
-            "terminal_third_assistant_ns": snapshot[
-                "terminal_third_assistant_ns"
-            ],
+            "terminal_third_provider_completed_ns": provider_calls[4]["completed_ns"],
+            "terminal_third_assistant_ns": snapshot["terminal_third_assistant_ns"],
             "heartbeat_lateness_ns": heartbeat.values(),
             "prompt_loss_count": prompt_loss_count,
             "selected_binding_access": runtime.binding.metadata["access"],
             "expected_payload_sha256": hashlib.sha256(FIXED_MUTATION).hexdigest(),
-            "expected_permission_definition_hash": (
-                runtime.permission_definition_hash
-            ),
+            "expected_permission_definition_hash": (runtime.permission_definition_hash),
             "tool_calls": snapshot["tool_calls"],
             "mutation": {
                 "path": "measured/turn-two.txt",
@@ -6519,9 +6452,7 @@ async def run_mounted_sample(
                     int(snapshot["third_worker_started_ns"])
                     - int(snapshot["third_send_requested_ns"])
                 ),
-                "event_loop_lag_p95_ns": sample_heartbeat_p95_ns(
-                    heartbeat.values()
-                ),
+                "event_loop_lag_p95_ns": sample_heartbeat_p95_ns(heartbeat.values()),
                 "assistant_durable_to_release_ns": (
                     int(snapshot["turn_2_release_ns"])
                     - int(snapshot["turn_2_assistant_durable_ns"])
@@ -6582,8 +6513,7 @@ async def run_mounted_sample(
         names = ":".join(
             sorted(
                 {
-                    re.sub(r"[^a-z0-9_-]+", "-", thread.name.lower())[:40]
-                    or "unnamed"
+                    re.sub(r"[^a-z0-9_-]+", "-", thread.name.lower())[:40] or "unnamed"
                     for thread in survivors
                 }
             )
@@ -6635,9 +6565,10 @@ def run_child_mode(args: argparse.Namespace) -> int:
         )
         try:
             assert_child_environment(sample_root, os.environ)
-            if Path(os.environ["TLDW_CONFIG_PATH"]).resolve() != (
-                sample_root / "config" / "tldw_cli" / "config.toml"
-            ).resolve():
+            if (
+                Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+                != (sample_root / "config" / "tldw_cli" / "config.toml").resolve()
+            ):
                 raise RuntimeError("child_environment_mismatch:config")
             install_target_root(target_root)
             imported = assert_target_modules(TARGET_MODULES, target_root)
@@ -6764,9 +6695,7 @@ def _remove_directory_contents_fd(
             continue
         if entry.is_dir(follow_symlinks=False):
             try:
-                child = os.open(
-                    entry.name, _directory_open_flags(), dir_fd=descriptor
-                )
+                child = os.open(entry.name, _directory_open_flags(), dir_fd=descriptor)
             except FileNotFoundError:
                 continue
             try:
@@ -6785,9 +6714,7 @@ def _remove_directory_contents_fd(
     os.fsync(descriptor)
 
 
-def _git_common_directory(
-    repository_root: Path, *, run_command: Any
-) -> Path:
+def _git_common_directory(repository_root: Path, *, run_command: Any) -> Path:
     completed = run_command(
         ["git", "rev-parse", "--git-common-dir"],
         cwd=repository_root,
@@ -6848,11 +6775,7 @@ def _open_identity_bound_directory(
 def _read_regular_file_fd(
     parent_descriptor: int, name: str, *, error_code: str
 ) -> bytes:
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_CLOEXEC", 0)
-    )
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
         descriptor = os.open(name, flags, dir_fd=parent_descriptor)
         try:
@@ -6900,9 +6823,7 @@ def _admin_tombstone_payload(
     target_descriptor: int | None,
 ) -> bytes:
     admin_metadata = os.fstat(admin_descriptor)
-    target_metadata = (
-        None if target_descriptor is None else os.fstat(target_descriptor)
-    )
+    target_metadata = None if target_descriptor is None else os.fstat(target_descriptor)
     return (
         json.dumps(
             {
@@ -6951,13 +6872,9 @@ def _admin_tombstone_identity(
         or not isinstance(record["admin_ino"], int)
         or isinstance(record["admin_ino"], bool)
         or record["admin_ino"] < 0
-        or record["target_sha256"]
-        != hashlib.sha256(target.encode()).hexdigest()
+        or record["target_sha256"] != hashlib.sha256(target.encode()).hexdigest()
         or payload
-        != json.dumps(
-            record, sort_keys=True, separators=(",", ":")
-        ).encode()
-        + b"\n"
+        != json.dumps(record, sort_keys=True, separators=(",", ":")).encode() + b"\n"
     ):
         raise RuntimeError("target_worktree_admin_marker_conflict")
     target_identity: tuple[int, int] | None
@@ -6984,23 +6901,17 @@ def _publish_admin_tombstone(
     admin_descriptor: int,
     target_descriptor: int | None,
 ) -> None:
-    payload = _admin_tombstone_payload(
-        target, admin_descriptor, target_descriptor
-    )
+    payload = _admin_tombstone_payload(target, admin_descriptor, target_descriptor)
     try:
         stage_name = (
-            f".{_worktree_admin_marker_name(target)}-receipt-"
-            f"{secrets.token_hex(16)}"
+            f".{_worktree_admin_marker_name(target)}-receipt-{secrets.token_hex(16)}"
         )
     except BaseException as exc:
         raise RuntimeError("target_worktree_unregister_failed") from exc
     try:
         receipt_descriptor = os.open(
             stage_name,
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_CLOEXEC", 0),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
             0o600,
             dir_fd=common_descriptor,
         )
@@ -7027,11 +6938,14 @@ def _publish_admin_tombstone(
         )
         os.fsync(marker_descriptor)
     except FileExistsError:
-        if _read_regular_file_fd(
-            marker_descriptor,
-            "pending.json",
-            error_code="target_worktree_admin_marker_conflict",
-        ) != payload:
+        if (
+            _read_regular_file_fd(
+                marker_descriptor,
+                "pending.json",
+                error_code="target_worktree_admin_marker_conflict",
+            )
+            != payload
+        ):
             raise RuntimeError("target_worktree_admin_marker_conflict")
     finally:
         try:
@@ -7045,10 +6959,7 @@ def _publish_admin_identity_conflict(marker_descriptor: int) -> None:
     try:
         conflict_descriptor = os.open(
             "identity-conflict",
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_CLOEXEC", 0),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
             0o600,
             dir_fd=marker_descriptor,
         )
@@ -7061,9 +6972,7 @@ def _publish_admin_identity_conflict(marker_descriptor: int) -> None:
     os.fsync(marker_descriptor)
 
 
-def _worktree_backlink_admin_name(
-    owned_descriptor: int, common: Path
-) -> str:
+def _worktree_backlink_admin_name(owned_descriptor: int, common: Path) -> str:
     payload = _read_regular_file_fd(
         owned_descriptor,
         ".git",
@@ -7166,9 +7075,7 @@ def _admin_marker_state(common: Path, target: str) -> str:
                         admin_metadata.st_dev,
                         admin_metadata.st_ino,
                     ):
-                        raise RuntimeError(
-                            "target_worktree_admin_marker_conflict"
-                        )
+                        raise RuntimeError("target_worktree_admin_marker_conflict")
                 finally:
                     os.close(admin_descriptor)
                 if "terminal.json" in entries:
@@ -7181,9 +7088,7 @@ def _admin_marker_state(common: Path, target: str) -> str:
                         "pending.json",
                         error_code="target_worktree_admin_marker_conflict",
                     ):
-                        raise RuntimeError(
-                            "target_worktree_admin_marker_conflict"
-                        )
+                        raise RuntimeError("target_worktree_admin_marker_conflict")
                     return "tombstone"
                 return "pending"
             if entries != {"admin"}:
@@ -7195,9 +7100,7 @@ def _admin_marker_state(common: Path, target: str) -> str:
                 if _admin_gitdir_target(admin_descriptor) != os.path.abspath(
                     f"{target}/.git"
                 ):
-                    raise RuntimeError(
-                        "target_worktree_admin_marker_conflict"
-                    )
+                    raise RuntimeError("target_worktree_admin_marker_conflict")
             finally:
                 os.close(admin_descriptor)
             return "owned"
@@ -7236,9 +7139,7 @@ def _move_worktree_admin_to_marker(
             try:
                 entries = {entry.name for entry in os.scandir(marker_descriptor)}
                 if entries not in (set(), {"admin"}):
-                    raise RuntimeError(
-                        "target_worktree_admin_marker_conflict"
-                    )
+                    raise RuntimeError("target_worktree_admin_marker_conflict")
                 if not entries:
                     current_descriptor = os.open(
                         admin_name,
@@ -7248,18 +7149,14 @@ def _move_worktree_admin_to_marker(
                     try:
                         expected = os.fstat(expected_admin_descriptor)
                         current = os.fstat(current_descriptor)
-                        if (
-                            (expected.st_dev, expected.st_ino)
-                            != (current.st_dev, current.st_ino)
-                            or _admin_gitdir_target(current_descriptor)
-                            != os.path.abspath(f"{target}/.git")
-                        ):
-                            _publish_admin_identity_conflict(
-                                marker_descriptor
-                            )
-                            raise RuntimeError(
-                                "target_worktree_admin_identity_changed"
-                            )
+                        if (expected.st_dev, expected.st_ino) != (
+                            current.st_dev,
+                            current.st_ino,
+                        ) or _admin_gitdir_target(
+                            current_descriptor
+                        ) != os.path.abspath(f"{target}/.git"):
+                            _publish_admin_identity_conflict(marker_descriptor)
+                            raise RuntimeError("target_worktree_admin_identity_changed")
                     finally:
                         os.close(current_descriptor)
                     try:
@@ -7272,9 +7169,9 @@ def _move_worktree_admin_to_marker(
                         os.fsync(worktrees_descriptor)
                         os.fsync(marker_descriptor)
                     except FileNotFoundError:
-                        if {
-                            entry.name for entry in os.scandir(marker_descriptor)
-                        } != {"admin"}:
+                        if {entry.name for entry in os.scandir(marker_descriptor)} != {
+                            "admin"
+                        }:
                             raise RuntimeError(
                                 "target_worktree_unregister_failed"
                             ) from None
@@ -7291,15 +7188,12 @@ def _move_worktree_admin_to_marker(
                         expected.st_dev,
                         expected.st_ino,
                     ) != (moved.st_dev, moved.st_ino)
-                    metadata_changed = (
-                        _admin_gitdir_target(moved_descriptor)
-                        != os.path.abspath(f"{target}/.git")
-                    )
+                    metadata_changed = _admin_gitdir_target(
+                        moved_descriptor
+                    ) != os.path.abspath(f"{target}/.git")
                     if identity_changed or metadata_changed:
                         _publish_admin_identity_conflict(marker_descriptor)
-                        raise RuntimeError(
-                            "target_worktree_admin_identity_changed"
-                        )
+                        raise RuntimeError("target_worktree_admin_identity_changed")
                     retain_moved_descriptor = True
                 finally:
                     if not retain_moved_descriptor:
@@ -7357,52 +7251,38 @@ def _delete_worktree_admin_marker(
                 if claimed_admin_descriptor is not None:
                     claimed = os.fstat(claimed_admin_descriptor)
                     if (claimed.st_dev, claimed.st_ino) != observed_identity:
-                        raise RuntimeError(
-                            "target_worktree_admin_marker_conflict"
-                        )
+                        raise RuntimeError("target_worktree_admin_marker_conflict")
                 if "pending.json" in entries:
                     admin_identity, target_identity = _admin_tombstone_identity(
                         marker_descriptor, target, "pending.json"
                     )
                     if admin_identity != observed_identity:
-                        raise RuntimeError(
-                            "target_worktree_admin_marker_conflict"
-                        )
+                        raise RuntimeError("target_worktree_admin_marker_conflict")
                     if target_descriptor is not None:
                         target_metadata = os.fstat(target_descriptor)
                         if target_identity != (
                             target_metadata.st_dev,
                             target_metadata.st_ino,
                         ):
-                            raise RuntimeError(
-                                "target_worktree_admin_marker_conflict"
-                            )
+                            raise RuntimeError("target_worktree_admin_marker_conflict")
                     if "terminal.json" in entries and (
                         _read_regular_file_fd(
                             marker_descriptor,
                             "terminal.json",
-                            error_code=(
-                                "target_worktree_admin_marker_conflict"
-                            ),
+                            error_code=("target_worktree_admin_marker_conflict"),
                         )
                         != _read_regular_file_fd(
                             marker_descriptor,
                             "pending.json",
-                            error_code=(
-                                "target_worktree_admin_marker_conflict"
-                            ),
+                            error_code=("target_worktree_admin_marker_conflict"),
                         )
                     ):
-                        raise RuntimeError(
-                            "target_worktree_admin_marker_conflict"
-                        )
+                        raise RuntimeError("target_worktree_admin_marker_conflict")
                 else:
-                    if _admin_gitdir_target(
-                        admin_descriptor
-                    ) != os.path.abspath(f"{target}/.git"):
-                        raise RuntimeError(
-                            "target_worktree_admin_marker_conflict"
-                        )
+                    if _admin_gitdir_target(admin_descriptor) != os.path.abspath(
+                        f"{target}/.git"
+                    ):
+                        raise RuntimeError("target_worktree_admin_marker_conflict")
                     _publish_admin_tombstone(
                         common_descriptor,
                         marker_descriptor,
@@ -7425,19 +7305,13 @@ def _delete_worktree_admin_marker(
                         if _read_regular_file_fd(
                             marker_descriptor,
                             "terminal.json",
-                            error_code=(
-                                "target_worktree_admin_marker_conflict"
-                            ),
+                            error_code=("target_worktree_admin_marker_conflict"),
                         ) != _read_regular_file_fd(
                             marker_descriptor,
                             "pending.json",
-                            error_code=(
-                                "target_worktree_admin_marker_conflict"
-                            ),
+                            error_code=("target_worktree_admin_marker_conflict"),
                         ):
-                            raise RuntimeError(
-                                "target_worktree_admin_marker_conflict"
-                            )
+                            raise RuntimeError("target_worktree_admin_marker_conflict")
             finally:
                 os.close(admin_descriptor)
             current_marker_descriptor = os.open(
@@ -7451,9 +7325,7 @@ def _delete_worktree_admin_marker(
                     marker_metadata.st_dev,
                     marker_metadata.st_ino,
                 ):
-                    raise RuntimeError(
-                        "target_worktree_admin_marker_conflict"
-                    )
+                    raise RuntimeError("target_worktree_admin_marker_conflict")
                 current_admin_descriptor = os.open(
                     "admin",
                     _directory_open_flags(),
@@ -7472,12 +7344,9 @@ def _delete_worktree_admin_marker(
                         current_admin.st_dev,
                         current_admin.st_ino,
                     ):
-                        raise RuntimeError(
-                            "target_worktree_admin_marker_conflict"
-                        )
+                        raise RuntimeError("target_worktree_admin_marker_conflict")
                     current_entries = {
-                        entry.name
-                        for entry in os.scandir(current_marker_descriptor)
+                        entry.name for entry in os.scandir(current_marker_descriptor)
                     }
                     expected_entries = {"admin", "pending.json"}
                     if complete:
@@ -7485,28 +7354,20 @@ def _delete_worktree_admin_marker(
                     elif "terminal.json" in current_entries:
                         expected_entries.add("terminal.json")
                     if current_entries != expected_entries:
-                        raise RuntimeError(
-                            "target_worktree_admin_marker_conflict"
-                        )
+                        raise RuntimeError("target_worktree_admin_marker_conflict")
                     if "terminal.json" in current_entries and (
                         _read_regular_file_fd(
                             current_marker_descriptor,
                             "terminal.json",
-                            error_code=(
-                                "target_worktree_admin_marker_conflict"
-                            ),
+                            error_code=("target_worktree_admin_marker_conflict"),
                         )
                         != _read_regular_file_fd(
                             current_marker_descriptor,
                             "pending.json",
-                            error_code=(
-                                "target_worktree_admin_marker_conflict"
-                            ),
+                            error_code=("target_worktree_admin_marker_conflict"),
                         )
                     ):
-                        raise RuntimeError(
-                            "target_worktree_admin_marker_conflict"
-                        )
+                        raise RuntimeError("target_worktree_admin_marker_conflict")
                 finally:
                     os.close(current_admin_descriptor)
             finally:
@@ -7529,9 +7390,7 @@ def _verify_target_worktree_terminal(
     *,
     run_command: Any,
 ) -> None:
-    registrations = _worktree_registrations(
-        repository_root, run_command=run_command
-    )
+    registrations = _worktree_registrations(repository_root, run_command=run_command)
     if target in registrations:
         raise RuntimeError("target_worktree_admin_marker_conflict")
     quarantine_name = f".{name}-cleanup"
@@ -7547,9 +7406,7 @@ def _verify_target_worktree_terminal(
             except FileNotFoundError:
                 continue
             except OSError as exc:
-                raise RuntimeError(
-                    "target_worktree_admin_marker_conflict"
-                ) from exc
+                raise RuntimeError("target_worktree_admin_marker_conflict") from exc
             observed.append((owned_name, descriptor))
         observed_name: str | None = None
         if expected_target_identity is None:
@@ -7565,9 +7422,7 @@ def _verify_target_worktree_terminal(
                 metadata.st_ino,
             ) or any(os.scandir(descriptor)):
                 raise RuntimeError("target_worktree_admin_marker_conflict")
-        allowed_cleanup_names = (
-            set() if observed_name is None else {observed_name}
-        )
+        allowed_cleanup_names = set() if observed_name is None else {observed_name}
         if observed_name is not None:
             current_descriptor = os.open(
                 observed_name,
@@ -7580,9 +7435,7 @@ def _verify_target_worktree_terminal(
                     current.st_dev,
                     current.st_ino,
                 ) or any(os.scandir(current_descriptor)):
-                    raise RuntimeError(
-                        "target_worktree_admin_marker_conflict"
-                    )
+                    raise RuntimeError("target_worktree_admin_marker_conflict")
             finally:
                 os.close(current_descriptor)
         if any(
@@ -7612,28 +7465,20 @@ def _remove_target_worktree(
     root, root_identity = _strict_owned_directory(
         run_root, parent=None, error_code=confinement_error
     )
-    if (
-        expected_root is not None
-        and (
-            root != expected_root
-            or root_identity != expected_root_identity
-        )
+    if expected_root is not None and (
+        root != expected_root or root_identity != expected_root_identity
     ):
         raise RuntimeError(confinement_error)
     target_path = root / name
     quarantine_name = f".{name}-cleanup"
     quarantine_path = root / quarantine_name
     target_present = target_path.exists() or target_path.is_symlink()
-    quarantine_present = (
-        quarantine_path.exists() or quarantine_path.is_symlink()
-    )
+    quarantine_present = quarantine_path.exists() or quarantine_path.is_symlink()
     if target_present and quarantine_present:
         if not (target_path.exists() or target_path.is_symlink()) or not (
             quarantine_path.exists() or quarantine_path.is_symlink()
         ):
-            raise RuntimeError(
-                f"target_worktree_unregister_failed:{name}"
-            )
+            raise RuntimeError(f"target_worktree_unregister_failed:{name}")
         raise RuntimeError(f"target_worktree_admin_marker_conflict:{name}")
     owned_name: str | None = None
     owned_identity: tuple[int, int] | None = None
@@ -7644,9 +7489,7 @@ def _remove_target_worktree(
             )
         except RuntimeError as exc:
             if not target_path.exists() and not target_path.is_symlink():
-                raise RuntimeError(
-                    f"target_worktree_unregister_failed:{name}"
-                ) from exc
+                raise RuntimeError(f"target_worktree_unregister_failed:{name}") from exc
             raise
         owned_name = name
     elif quarantine_present:
@@ -7656,9 +7499,7 @@ def _remove_target_worktree(
             )
         except RuntimeError as exc:
             if not quarantine_path.exists() and not quarantine_path.is_symlink():
-                raise RuntimeError(
-                    f"target_worktree_unregister_failed:{name}"
-                ) from exc
+                raise RuntimeError(f"target_worktree_unregister_failed:{name}") from exc
             raise
         owned_name = quarantine_name
     target_text = str(target_path)
@@ -7701,15 +7542,11 @@ def _remove_target_worktree(
         finally:
             os.close(root_descriptor)
     try:
-        common = _git_common_directory(
-            repository_root, run_command=run_command
-        )
+        common = _git_common_directory(repository_root, run_command=run_command)
         marker_state = _admin_marker_state(common, target_text)
     except RuntimeError as exc:
         if str(exc) == "target_worktree_admin_marker_conflict":
-            raise RuntimeError(
-                f"target_worktree_admin_marker_conflict:{name}"
-            ) from exc
+            raise RuntimeError(f"target_worktree_admin_marker_conflict:{name}") from exc
         raise RuntimeError(f"target_worktree_unregister_failed:{name}") from exc
     if registered and marker_state not in {"absent", "empty"}:
         raise RuntimeError(f"target_worktree_admin_marker_conflict:{name}")
@@ -7743,9 +7580,7 @@ def _remove_target_worktree(
                     os.close(terminal_root_descriptor)
                 return
         if marker_state == "empty":
-            raise RuntimeError(
-                f"target_worktree_admin_marker_conflict:{name}"
-            )
+            raise RuntimeError(f"target_worktree_admin_marker_conflict:{name}")
         if marker_state == "absent":
             if owned_name is None:
                 terminal_root_descriptor = _open_identity_bound_directory(
@@ -7775,9 +7610,7 @@ def _remove_target_worktree(
     admin_descriptor: int | None = None
     if registered:
         try:
-            admin_name, admin_descriptor = _find_worktree_admin(
-                common, target_text
-            )
+            admin_name, admin_descriptor = _find_worktree_admin(common, target_text)
         except RuntimeError as exc:
             try:
                 current_marker = _admin_marker_state(common, target_text)
@@ -7792,13 +7625,8 @@ def _remove_target_worktree(
                 raise RuntimeError(
                     f"target_worktree_unregister_failed:{name}"
                 ) from current_exc
-            if (
-                current_marker != "absent"
-                or target_text not in current_registrations
-            ):
-                raise RuntimeError(
-                    f"target_worktree_unregister_failed:{name}"
-                ) from exc
+            if current_marker != "absent" or target_text not in current_registrations:
+                raise RuntimeError(f"target_worktree_unregister_failed:{name}") from exc
             raise
     try:
         root_descriptor = _open_identity_bound_directory(
@@ -7829,9 +7657,7 @@ def _remove_target_worktree(
             if (observed_owned.st_dev, observed_owned.st_ino) != owned_identity:
                 raise RuntimeError(confinement_error)
             if registered or marker_state == "owned":
-                backlink_name = _worktree_backlink_admin_name(
-                    owned_descriptor, common
-                )
+                backlink_name = _worktree_backlink_admin_name(owned_descriptor, common)
                 if registered and backlink_name != admin_name:
                     raise RuntimeError("target_worktree_admin_invalid")
         try:
@@ -7844,9 +7670,7 @@ def _remove_target_worktree(
                     admin_name,
                     admin_descriptor,
                 )
-            after = _worktree_registrations(
-                repository_root, run_command=run_command
-            )
+            after = _worktree_registrations(repository_root, run_command=run_command)
             expected = registrations - ({target_text} if registered else set())
             if after != expected:
                 raise RuntimeError("target_worktree_unregister_failed")
@@ -7870,17 +7694,13 @@ def _remove_target_worktree(
                 raise RuntimeError(
                     f"target_worktree_admin_identity_changed:{name}"
                 ) from exc
-            raise RuntimeError(
-                f"target_worktree_unregister_failed:{name}"
-            ) from exc
+            raise RuntimeError(f"target_worktree_unregister_failed:{name}") from exc
         if (
             marker_state == "tombstone"
             and owned_descriptor is not None
             and any(os.scandir(owned_descriptor))
         ):
-            raise RuntimeError(
-                f"target_worktree_admin_marker_conflict:{name}"
-            )
+            raise RuntimeError(f"target_worktree_admin_marker_conflict:{name}")
         if owned_descriptor is not None:
             _remove_directory_contents_fd(owned_descriptor)
         try:
@@ -7900,9 +7720,7 @@ def _remove_target_worktree(
                 raise RuntimeError(
                     f"target_worktree_admin_marker_conflict:{name}"
                 ) from exc
-            raise RuntimeError(
-                f"target_worktree_unregister_failed:{name}"
-            ) from exc
+            raise RuntimeError(f"target_worktree_unregister_failed:{name}") from exc
     finally:
         if owned_descriptor is not None:
             os.close(owned_descriptor)
@@ -8045,9 +7863,8 @@ def remove_successful_sample_root(run_root: Path, sample_root: Path) -> None:
             dir_fd=current_samples_descriptor,
         )
         current_sample = os.fstat(current_sample_descriptor)
-        if (
-            (current_sample.st_dev, current_sample.st_ino) != sample_identity
-            or any(os.scandir(current_sample_descriptor))
+        if (current_sample.st_dev, current_sample.st_ino) != sample_identity or any(
+            os.scandir(current_sample_descriptor)
         ):
             raise RuntimeError("sample_cleanup_refused")
     except OSError as exc:
@@ -8157,11 +7974,11 @@ def run_parent_mode(args: argparse.Namespace) -> int:
         candidate_ref=args.candidate_sha,
     )
     burn_in_blocks = getattr(args, "burn_in_blocks", 0)
-    confirmatory = burn_in_blocks > 0 or getattr(args, "campaign_root", None) is not None
+    confirmatory = (
+        burn_in_blocks > 0 or getattr(args, "campaign_root", None) is not None
+    )
     implementation_base_revision = (
-        resolve_implementation_base_revision(repository_root)
-        if confirmatory
-        else None
+        resolve_implementation_base_revision(repository_root) if confirmatory else None
     )
     original_evidence_hashes: Mapping[str, str] | None = (
         verify_original_evidence(repository_root) if confirmatory else None
@@ -8243,8 +8060,8 @@ def run_parent_mode(args: argparse.Namespace) -> int:
                 protocol_rows.append(last)
                 remove_successful_sample_root(run_root, sample_root)
 
-            corpus_digest, permission_hashes_by_arm = (
-                validate_protocol_preflight_rows(protocol_rows)
+            corpus_digest, permission_hashes_by_arm = validate_protocol_preflight_rows(
+                protocol_rows
             )
             preflight = preflight_provider(args.endpoint, args.model)
             server_metadata = provider_server_metadata(args.endpoint, args.model)
@@ -8362,9 +8179,7 @@ def run_parent_mode(args: argparse.Namespace) -> int:
         statistics_rows, expected_iterations=args.iterations
     ):
         raise RuntimeError("original_run_validation_failed")
-    corpus_digests = {
-        str(row.get("workspace_content_tree_digest", "")) for row in rows
-    }
+    corpus_digests = {str(row.get("workspace_content_tree_digest", "")) for row in rows}
     if len(corpus_digests) != 1 or not _SHA256.fullmatch(next(iter(corpus_digests))):
         raise RuntimeError("workspace_corpus_mismatch")
     permission_hashes_by_arm: dict[str, str] = {}
@@ -8503,8 +8318,7 @@ def run_acquisition_action(args: argparse.Namespace) -> int:
             )
         except BaseException as exc:
             pin_durability_failed = (
-                safe_error_code(exc)
-                == "campaign_acquisition_pin_durability_failed"
+                safe_error_code(exc) == "campaign_acquisition_pin_durability_failed"
             )
             raise
 

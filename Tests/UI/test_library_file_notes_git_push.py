@@ -28,6 +28,7 @@ from Tests.UI.test_library_file_notes_git import (  # noqa: E402
     _WorkspaceHarness,
     _repository,
     _row,
+    _show_manage,
     _status,
     _text,
 )
@@ -421,6 +422,17 @@ async def _until(pilot, predicate, message: str) -> None:
     raise AssertionError(message)
 
 
+async def _show_session_git(workspace: LibraryFileNotesWorkspace, pilot) -> None:
+    """Show the Session Git navigator without starting Git work.
+
+    The panel shows only in Manage mode (since 2026-08-29); these tests set
+    only the navigator mode, so the panel stayed hidden (TASK-38694).
+    """
+    await _show_manage(workspace, pilot)
+    workspace._navigator_mode = "git"
+    workspace._sync_navigator_mode()
+
+
 def _assert_last_push_action(
     app: _PushPanelHarness,
     action: str,
@@ -457,9 +469,7 @@ async def test_push_panel_availability_is_a_separate_stable_list_action() -> Non
     availability = _push_availability_projection()
 
     async with _PanelHarness(panel).run_test() as pilot:
-        panel.render_status(
-            _status(_row("owned", group_id=1, unstage_eligible=True))
-        )
+        panel.render_status(_status(_row("owned", group_id=1, unstage_eligible=True)))
         panel.render_push_availability(availability)
         await pilot.pause()
 
@@ -532,8 +542,9 @@ async def test_push_panel_review_action_emits_exact_owner_projection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_details(
-) -> None:
+async def test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_details() -> (
+    None
+):
     """A generic confirmation or hidden endpoint detail must fail this test."""
     availability = _push_availability_projection()
     destination = _push_destination_projection()
@@ -714,8 +725,7 @@ async def test_push_authorization_actions_use_their_real_available_width(
 
 
 @pytest.mark.asyncio
-async def test_push_authorization_dialog_affirmative_is_authorize_and_check(
-) -> None:
+async def test_push_authorization_dialog_affirmative_is_authorize_and_check() -> None:
     """A generic confirm action must not satisfy destination authorization."""
     dialog_type = git_panel_module.PushDestinationAuthorizationDialog
     dialog = dialog_type(
@@ -769,10 +779,7 @@ async def test_push_authorization_dialog_brackets_ipv6_endpoint_summary() -> Non
     async with _DialogHarness(dialog).run_test() as pilot:
         await pilot.pause()
         copy = _text(dialog.query_one("#file-notes-push-auth-copy", Label))
-        assert (
-            "Endpoint: ssh · git@[2001:db8::1]:22 · /team/notes.git"
-            in copy
-        )
+        assert "Endpoint: ssh · git@[2001:db8::1]:22 · /team/notes.git" in copy
         assert "strict snapshotted host trust" in copy
         assert "existing SSH agent only" in copy
         assert "identity files are disabled" in copy
@@ -797,23 +804,24 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
         body = panel.query_one("#file-notes-git-push-body", VerticalScroll)
         assert body.styles.overflow_y == "auto"
         for section in ("what", "where", "impact", "recovery"):
-            assert _text(
-                panel.query_one(
-                    f"#file-notes-git-push-review-{section}-heading"
-                )
-            ) == section.title()
+            assert (
+                _text(panel.query_one(f"#file-notes-git-push-review-{section}-heading"))
+                == section.title()
+            )
         assert _text(panel.query_one("#file-notes-git-push-review-lead")) == (
             "Pushes 1 reviewed commit created from 2 session notes."
         )
         assert _text(panel.query_one("#file-notes-git-push-review-subject")) == (
             "Commit subject: Publish exact session notes"
         )
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-destination")
-        ) == "origin/session-notes"
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-repository")
-        ) == "Local repository: /canonical/repository"
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-destination"))
+            == "origin/session-notes"
+        )
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-repository"))
+            == "Local repository: /canonical/repository"
+        )
         assert _text(panel.query_one("#file-notes-git-push-review-counts")) == (
             "2 session notes: New 1 · Modified 1"
         )
@@ -857,9 +865,7 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
         assert _text(panel.query_one("#file-notes-git-push-review-transport")) == (
             "Transport: HTTPS with certificate verification"
         )
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-authentication")
-        ) == (
+        assert _text(panel.query_one("#file-notes-git-push-review-authentication")) == (
             "Authentication: existing noninteractive credentials only; "
             "terminal prompts disabled"
         )
@@ -870,9 +876,7 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
             "Git publishes the reviewed commit and required Git objects; this "
             "list is provenance, not a separate note-transfer selection"
         )
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-recovery")
-        ) == (
+        assert _text(panel.query_one("#file-notes-git-push-review-recovery")) == (
             "Back leaves this review without pushing. If the result is "
             "uncertain, Check remote again never pushes."
         )
@@ -892,22 +896,27 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
             "#file-notes-git-push-review-details",
         ):
             assert technical not in panel.query_one(selector).ancestors
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-refspec-audit")
-        ) == f"Exact refspec: {'d' * 40}:refs/heads/session-notes"
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-git-directory")
-        ) == "Git directory: /canonical/repository/.git · identity 1:2"
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-git-common-directory")
-        ) == "Git common directory: /canonical/repository/.git · identity 1:2"
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-refspec-audit"))
+            == f"Exact refspec: {'d' * 40}:refs/heads/session-notes"
+        )
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-git-directory"))
+            == "Git directory: /canonical/repository/.git · identity 1:2"
+        )
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-git-common-directory"))
+            == "Git common directory: /canonical/repository/.git · identity 1:2"
+        )
 
         details = panel.query_one("#file-notes-git-push-review-details", Button)
         back = panel.query_one("#file-notes-git-push-back", Button)
         push = panel.query_one("#file-notes-git-push-confirm", Button)
         await _until(pilot, lambda: back.has_focus, "push Back did not receive focus")
         assert not push.has_focus
-        assert tuple(button.id for button in back.parent.query(Button) if button.display) == (
+        assert tuple(
+            button.id for button in back.parent.query(Button) if button.display
+        ) == (
             "file-notes-git-push-back",
             "file-notes-git-push-confirm",
         )
@@ -989,9 +998,7 @@ async def test_push_panel_progress_is_compact_and_phase_safe(
         panel.render_push_progress(phase, operation_id=operation_id)
         await pilot.pause()
         assert panel.push_phase == phase
-        assert _text(panel.query_one("#file-notes-git-push-progress-copy")) == (
-            copy
-        )
+        assert _text(panel.query_one("#file-notes-git-push-progress-copy")) == (copy)
         assert _text(panel.query_one("#file-notes-git-push-progress-detail")) == (
             detail
         )
@@ -1037,7 +1044,15 @@ async def test_push_panel_progress_is_compact_and_phase_safe(
         "primary_label",
     ),
     (
-        ("review", "", None, True, None, "file-notes-git-push-confirm", "Push 1 commit"),
+        (
+            "review",
+            "",
+            None,
+            True,
+            None,
+            "file-notes-git-push-confirm",
+            "Push 1 commit",
+        ),
         (
             "success",
             "Succeeded",
@@ -1136,9 +1151,7 @@ async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
             button.id for button in footer.query(Button) if button.display
         )
         expected_buttons = (
-            (back_id,)
-            if primary_id == back_id
-            else (back_id, primary_id)
+            (back_id,) if primary_id == back_id else (back_id, primary_id)
         )
         assert visible_buttons == expected_buttons
         await _until(
@@ -1305,9 +1318,7 @@ async def test_push_result_footer_uses_widest_equal_column_boundary(
         await pilot.pause()
 
         footer = panel.query_one("#file-notes-git-push-footer", Widget)
-        buttons = tuple(
-            button for button in footer.query(Button) if button.display
-        )
+        buttons = tuple(button for button in footer.query(Button) if button.display)
         assert footer.region.height == (2 if stacked else 1)
         for button in buttons:
             required = len(str(button.label)) + button.styles.padding.width
@@ -1317,8 +1328,7 @@ async def test_push_result_footer_uses_widest_equal_column_boundary(
 
 
 @pytest.mark.asyncio
-async def test_push_focus_repair_and_buffered_enter_cannot_cross_operation(
-) -> None:
+async def test_push_focus_repair_and_buffered_enter_cannot_cross_operation() -> None:
     """A stale checking callback must never focus or activate Push."""
     panel = git_panel_module.LibraryFileNotesGitPanel()
     panel.styles.display = "block"
@@ -1333,8 +1343,15 @@ async def test_push_focus_repair_and_buffered_enter_cannot_cross_operation(
         await pilot.press("enter")
         await pilot.pause()
 
+        # The safety property, not an event order: Enter may reach Back, but
+        # it never pushes, and nothing acts for the stale operation 61.
+        assert not [
+            message
+            for message in app.messages
+            if getattr(message, "action", None) == "push_reviewed_commit"
+            or getattr(message, "operation_id", None) == 61
+        ], app.messages
         assert panel.query_one("#file-notes-git-push-back", Button).has_focus
-        assert not app.messages
 
 
 @pytest.mark.asyncio
@@ -1379,8 +1396,7 @@ async def test_workspace_push_review_adopts_operations_and_restores_endpoint_det
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         review_button = workspace.query_one(
             "#file-notes-git-push-review",
@@ -1423,8 +1439,7 @@ async def test_workspace_push_review_adopts_operations_and_restores_endpoint_det
         ).press()
         await _until(
             pilot,
-            lambda: service.authorize_and_check_calls
-            == [(binding, local_operation)],
+            lambda: service.authorize_and_check_calls == [(binding, local_operation)],
             "authorization did not use the exact local-proof operation",
         )
         preflight_operation = service.retained_push_operation(binding)
@@ -1520,8 +1535,7 @@ async def test_workspace_local_proof_rechecks_candidate_after_trust_aba(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         assert workspace._push_operation is operation
         assert workspace._git_panel_widget.push_phase == "checking_candidate"
@@ -1547,9 +1561,10 @@ async def test_workspace_local_proof_rechecks_candidate_after_trust_aba(
         )
         assert workspace._push_authorization_projection is None
         assert workspace._git_panel_widget.push_phase == "result"
-        assert _text(
-            workspace.query_one("#file-notes-git-push-result-title")
-        ) == "Push review expired"
+        assert (
+            _text(workspace.query_one("#file-notes-git-push-result-title"))
+            == "Push review expired"
+        )
         assert workspace.query_one(
             "#file-notes-git-push-result-copy",
             TextArea,
@@ -1610,8 +1625,7 @@ async def test_workspace_preflight_review_rechecks_candidate_after_trust_aba(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         assert workspace._push_operation is operation
         assert workspace._git_panel_widget.push_phase == "checking_remote"
@@ -1634,9 +1648,10 @@ async def test_workspace_preflight_review_rechecks_candidate_after_trust_aba(
         assert workspace._push_review_handle is None
         assert workspace._push_review_projection is None
         assert workspace._git_panel_widget.push_phase == "result"
-        assert _text(
-            workspace.query_one("#file-notes-git-push-result-title")
-        ) == "Push review expired"
+        assert (
+            _text(workspace.query_one("#file-notes-git-push-result-title"))
+            == "Push review expired"
+        )
         assert workspace.query_one(
             "#file-notes-git-push-result-copy",
             TextArea,
@@ -1678,8 +1693,7 @@ async def test_endpoint_details_close_rejects_stale_push_operation_focus(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._push_review_projection = projection
         workspace._push_view_phase = "review"
         workspace._push_operation_id = 41
@@ -1776,6 +1790,8 @@ async def test_workspace_push_keyboard_happy_path_reaches_succeeded_result(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
+        # Session Git lives in Manage mode (TASK-38694).
+        await _show_manage(workspace, pilot)
         session_git = workspace.query_one(
             "#file-notes-session-changes",
             Button,
@@ -1837,8 +1853,7 @@ async def test_workspace_push_keyboard_happy_path_reaches_succeeded_result(
         await pilot.press("enter")
         await _until(
             pilot,
-            lambda: service.authorize_and_check_calls
-            == [(binding, local_operation)],
+            lambda: service.authorize_and_check_calls == [(binding, local_operation)],
             "authorization did not admit the exact preflight",
         )
         assert workspace._git_panel_widget.push_phase == "checking_remote"
@@ -1937,13 +1952,11 @@ async def test_workspace_accepted_push_cancel_ignores_late_local_proof(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
-            lambda: workspace._git_panel_widget.push_phase
-            == "checking_candidate",
+            lambda: workspace._git_panel_widget.push_phase == "checking_candidate",
             "local proof did not render",
         )
         observer = workspace._push_observer_task
@@ -2004,13 +2017,11 @@ async def test_workspace_accepted_cancel_allows_new_candidate_review(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
-            lambda: workspace._git_panel_widget.push_phase
-            == "checking_candidate",
+            lambda: workspace._git_panel_widget.push_phase == "checking_candidate",
             "candidate A proof did not render",
         )
         observer_a = workspace._push_observer_task
@@ -2120,13 +2131,11 @@ async def test_workspace_old_cancelled_replay_cannot_strand_new_candidate(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
-            lambda: workspace._git_panel_widget.push_phase
-            == "checking_candidate",
+            lambda: workspace._git_panel_widget.push_phase == "checking_candidate",
             "candidate A proof did not render",
         )
         observer_a = workspace._push_observer_task
@@ -2246,8 +2255,7 @@ async def test_workspace_push_observer_exception_renders_sanitized_attention(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         release.set()
         observer = workspace._push_observer_task
@@ -2266,6 +2274,336 @@ async def test_workspace_push_observer_exception_renders_sanitized_attention(
         assert "raw-secret-observer-failure" not in rendered
         assert "retry" not in rendered.casefold()
         assert workspace._push_phase == "needs_attention"
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+async def _poll_rehydrate(
+    workspace: LibraryFileNotesWorkspace,
+    owner: FileNotesSessionOwner,
+    binding: SessionBinding,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run the poll's own refresh once the owner revision moved (TASK-38648)."""
+    rehydrates: list[object] = []
+    rehydrate = workspace._rehydrate_push_state
+
+    def counted(*args, **kwargs):
+        rehydrates.append(args)
+        return rehydrate(*args, **kwargs)
+
+    monkeypatch.setattr(workspace, "_rehydrate_push_state", counted)
+    assert owner.record_change(binding, SessionChange("modified", "three.md"))
+    assert await workspace.refresh_files()
+    assert rehydrates, "the refresh did not rehydrate push state"
+
+
+def _assert_attention_kept(
+    workspace: LibraryFileNotesWorkspace,
+    title: str,
+) -> None:
+    label = str(workspace.query_one("#file-notes-session-changes", Button).label)
+    assert "Push needs attention" in label, label
+    assert workspace._push_phase == "needs_attention"
+    assert workspace._git_panel_widget.push_phase == "result"
+    projection = workspace._push_result_projection
+    assert projection is not None and projection.title == title
+
+
+@pytest.mark.asyncio
+async def test_workspace_rehydrate_keeps_review_admission_attention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38700: a poll rehydrate must not set the label idle under the copy."""
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+
+    def reject_review(current_binding: SessionBinding) -> None:
+        raise GitMutationAdmissionError("mutation_active", "review refused")
+
+    monkeypatch.setattr(service, "start_push_review", reject_review)
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        review = workspace.query_one("#file-notes-git-push-review", Button)
+        await _until(pilot, lambda: review.display, "push availability did not render")
+        review.press()
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "result",
+            "admission failure did not replace the list with a result",
+        )
+        _assert_attention_kept(workspace, "Push review unavailable")
+
+        await _poll_rehydrate(workspace, owner, binding, monkeypatch)
+        await pilot.pause()
+
+        _assert_attention_kept(workspace, "Push review unavailable")
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_rehydrate_keeps_observer_failure_attention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38700: the same unsettled operation must not go back to checking."""
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+    release = asyncio.Event()
+    operation = service.retain_push_operation(
+        binding,
+        "local_proof",
+        _push_destination_policy_result("blocked"),
+        release,
+    )
+    wait = RetainedPushOperation.wait
+
+    async def failing_wait(current: RetainedPushOperation):
+        if current is operation:
+            raise RuntimeError("observer could not observe")
+        return await wait(current)
+
+    monkeypatch.setattr(RetainedPushOperation, "wait", failing_wait)
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        observer = workspace._push_observer_task
+        assert observer is not None
+        await observer
+        assert not operation.settled
+        _assert_attention_kept(workspace, "Push check needs attention")
+
+        await _poll_rehydrate(workspace, owner, binding, monkeypatch)
+        await pilot.pause()
+
+        assert not operation.settled
+        _assert_attention_kept(workspace, "Push check needs attention")
+        release.set()
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_rehydrate_after_failure_back_observes_the_settlement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-38700 review: Back, then a rehydrate, must attach a new observer.
+
+    The failed observer is done. Putting the same unsettled operation back to
+    checking with nobody observing it meant its settlement never showed.
+    """
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+    release = asyncio.Event()
+    result = _push_destination_policy_result("blocked")
+    operation = service.retain_push_operation(binding, "local_proof", result, release)
+    wait = RetainedPushOperation.wait
+    failed = False
+
+    async def fails_once(current: RetainedPushOperation):
+        nonlocal failed
+        if current is operation and not failed:
+            failed = True
+            raise RuntimeError("observer could not observe")
+        return await wait(current)
+
+    monkeypatch.setattr(RetainedPushOperation, "wait", fails_once)
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        observer = workspace._push_observer_task
+        assert observer is not None
+        await observer
+        _assert_attention_kept(workspace, "Push check needs attention")
+
+        workspace._git_panel_widget._post_push_result_intent("back_to_session")
+        await _until(
+            pilot,
+            lambda: workspace._git_panel_widget.push_phase == "list",
+            "Back did not return to the push list",
+        )
+        await _poll_rehydrate(workspace, owner, binding, monkeypatch)
+        assert not operation.settled
+        release.set()
+        await _until(
+            pilot,
+            lambda: workspace._push_result is result,
+            "the operation settled but its result never showed",
+        )
+
+        assert workspace._git_panel_widget.push_phase == "result"
+        assert workspace._push_phase == "needs_attention"
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_push_observer_cancellation_publishes_nothing(
+    tmp_path: Path,
+) -> None:
+    """TASK-38700: loop teardown cancels the observer; that is not a failure."""
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+    release = asyncio.Event()
+    operation = service.retain_push_operation(
+        binding,
+        "local_proof",
+        _push_destination_policy_result("blocked"),
+        release,
+    )
+
+    async with _WorkspaceHarness(workspace).run_test() as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        workspace._navigator_mode = "git"
+        workspace._sync_navigator_mode()
+        workspace._rehydrate_git_presentation()
+        observer = workspace._push_observer_task
+        assert observer is not None
+        assert workspace._push_phase == "checking"
+
+        observer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await observer
+
+        assert not operation.settled
+        assert workspace._push_phase == "checking"
+        assert workspace._push_result_projection is None
+        assert workspace._git_panel_widget.push_phase != "result"
+        release.set()
+
+    await workspace.shutdown()
+    owner.shutdown()
+    replica.close()
+
+
+@pytest.mark.parametrize("height", (24, 30, 44))
+@pytest.mark.parametrize("view", ("list", "result"))
+@pytest.mark.asyncio
+async def test_session_git_views_lay_out_at_every_width_40_to_61(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    view: str,
+    height: int,
+) -> None:
+    """TASK-38710: Session Git's one-row buttons cannot raise at any width.
+
+    Open file -> Manage -> Review session changes -> Back to the navigator,
+    then sweep 61 down to 40. The 1fr button columns measured a label at
+    width 0 (``ValueError: range() arg 3 must not be zero``) at 47-49 in the
+    list ("Refresh") and 51-53 in the result ("Back to session"), and the app
+    exited. One direction keeps each case under the UI lane's 30 s budget.
+    """
+    owner, binding, replica, service, workspace = _push_workspace_fixture(tmp_path)
+    _publish_candidate_on_owner(
+        owner,
+        binding,
+        service.repository,
+        parent_oid="a" * 40,
+        candidate_oid="d" * 40,
+    )
+
+    def reject_review(current_binding: SessionBinding) -> None:
+        raise GitMutationAdmissionError("mutation_active", "review refused")
+
+    monkeypatch.setattr(service, "start_push_review", reject_review)
+
+    async with _WorkspaceHarness(workspace).run_test(size=(120, height)) as pilot:
+        await _until(
+            pilot,
+            lambda: workspace.initialized,
+            "workspace initialization did not settle",
+        )
+        assert await workspace.open_path("two.md")
+        workspace.query_one("#file-notes-manage", Button).press()
+        await pilot.pause()
+        workspace.query_one("#file-notes-session-changes", Button).press()
+        review = workspace.query_one("#file-notes-git-push-review", Button)
+        await _until(pilot, lambda: review.display, "push availability did not render")
+        if view == "result":
+            review.press()
+            await _until(
+                pilot,
+                lambda: workspace._git_panel_widget.push_phase == "result",
+                "the admission failure did not show its result",
+            )
+        await pilot.resize_terminal(61, height)
+        await pilot.pause()
+        back = workspace.query_one("#file-notes-back", Button)
+        await _until(pilot, lambda: back.display, "the narrow editor had no Back")
+        back.press()
+        await _until(
+            pilot,
+            lambda: workspace._narrow_view == "navigator",
+            "Back did not return to the navigator",
+        )
+        assert workspace._navigator_mode == "git"
+        for width in range(61, 39, -1):
+            await pilot.resize_terminal(width, height)
+            await pilot.pause()
+            await pilot.pause()
+            assert pilot.app._exception is None, (width, pilot.app._exception)
+        assert workspace._git_panel_widget.push_phase == view
 
     await workspace.shutdown()
     owner.shutdown()
@@ -2302,8 +2640,7 @@ async def test_workspace_push_review_admission_failure_has_safe_back(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         review = workspace.query_one("#file-notes-git-push-review", Button)
         await _until(
@@ -2394,8 +2731,7 @@ async def test_workspace_push_child_boundary_hides_cancel_and_keeps_observer(
         )
         assert await workspace.open_path("folder/one.md")
         editor = workspace.query_one("#file-notes-editor", TextArea)
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
@@ -2454,8 +2790,7 @@ async def test_workspace_push_child_boundary_hides_cancel_and_keeps_observer(
         assert workspace._push_phase == "needs_attention"
         assert workspace._push_observer_task is observer
 
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
@@ -2464,10 +2799,13 @@ async def test_workspace_push_child_boundary_hides_cancel_and_keeps_observer(
         )
         assert service.push_calls == [binding]
         assert workspace._push_observer_task is observer
-        assert workspace.query_one(
-            "#file-notes-git-push-result-copy",
-            TextArea,
-        ).text == push_result.outcome.message
+        assert (
+            workspace.query_one(
+                "#file-notes-git-push-result-copy",
+                TextArea,
+            ).text
+            == push_result.outcome.message
+        )
         check = workspace.query_one(
             "#file-notes-git-push-check-remote",
             Button,
@@ -2528,8 +2866,7 @@ async def test_workspace_push_failure_review_again_starts_fresh_local_proof(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
@@ -2598,8 +2935,7 @@ async def test_workspace_push_recovery_authorizes_then_queries_retained_endpoint
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
@@ -2631,9 +2967,7 @@ async def test_workspace_push_recovery_authorizes_then_queries_retained_endpoint
             lambda: len(service.push_query_calls) == 2,
             "authorized recovery did not start the query-only check",
         )
-        assert service.recovery_authorization_calls == [
-            (binding, original_operation)
-        ]
+        assert service.recovery_authorization_calls == [(binding, original_operation)]
         assert service.recovery_operations == [
             original_operation,
             original_operation,
@@ -2726,8 +3060,7 @@ async def test_workspace_reopens_original_uncertain_push_without_new_work(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
@@ -2813,10 +3146,13 @@ async def test_workspace_reopens_original_uncertain_push_without_new_work(
         assert workspace._push_observer_task is observer
         assert workspace._push_result is result
         assert workspace._push_result_projection == projection
-        assert workspace.query_one(
-            "#file-notes-git-push-result-copy",
-            TextArea,
-        ).text == result.outcome.message
+        assert (
+            workspace.query_one(
+                "#file-notes-git-push-result-copy",
+                TextArea,
+            ).text
+            == result.outcome.message
+        )
         assert workspace.query_one(
             "#file-notes-git-push-check-remote",
             Button,
@@ -2863,9 +3199,7 @@ async def test_workspace_push_recovery_failure_replaces_stale_action(
             current_binding: SessionBinding,
             operation: RetainedPushOperation,
         ) -> bool:
-            service.recovery_authorization_calls.append(
-                (current_binding, operation)
-            )
+            service.recovery_authorization_calls.append((current_binding, operation))
             return False
 
         monkeypatch.setattr(
@@ -2887,8 +3221,7 @@ async def test_workspace_push_recovery_failure_replaces_stale_action(
             lambda: workspace.initialized,
             "workspace initialization did not settle",
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
@@ -2937,9 +3270,7 @@ async def test_workspace_push_recovery_failure_replaces_stale_action(
         assert service.push_query_calls == [binding]
         assert service.recovery_operations == [original_operation]
         assert service.recovery_authorization_calls == (
-            [(binding, original_operation)]
-            if failure_mode == "authorization"
-            else []
+            [(binding, original_operation)] if failure_mode == "authorization" else []
         )
         assert service.push_calls == []
         assert workspace._push_phase == "needs_attention"
@@ -3165,8 +3496,7 @@ async def test_workspace_push_callback_requires_exact_candidate_and_operation(
             replace(key, generation=key.generation + 1),
             operation_id_b,
         )
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace._rehydrate_git_presentation()
         assert workspace._git_panel_widget.push_phase == "checking_remote"
         snapshot = owner.snapshot(binding)
@@ -3627,14 +3957,13 @@ async def test_workspace_rehydrate_hidden_settlement_without_duplicate_work(
         editor = workspace.query_one("#file-notes-editor", TextArea)
         assert not editor.read_only
         assert workspace._editor_read_only_leases == {}
+        # Session Git lives in Manage, in the editor pane; at 40x20 Manage
+        # shows that pane, not the navigator (TASK-38694).
+        await _show_manage(workspace, pilot)
         if size == (40, 20):
-            navigator_back = workspace.query_one("#file-notes-back", Button)
-            assert navigator_back.display
-            navigator_back.focus()
-            await pilot.press("enter")
-            assert workspace._narrow_view == "navigator"
-            assert workspace.query_one("#file-notes-navigator").display
-            assert not workspace.query_one("#file-notes-editor-pane").display
+            assert workspace._narrow_view == "editor"
+            assert workspace.query_one("#file-notes-editor-pane").display
+            assert not workspace.query_one("#file-notes-navigator").display
 
         observer = workspace._push_observer_task
         assert observer is not None
@@ -3697,9 +4026,9 @@ async def test_workspace_rehydrate_hidden_settlement_without_duplicate_work(
         assert result.outcome is not None
         assert result.outcome.message not in _text(action_status)
         if size == (40, 20):
-            assert workspace._narrow_view == "navigator"
-            assert workspace.query_one("#file-notes-navigator").display
-            assert not workspace.query_one("#file-notes-editor-pane").display
+            assert workspace._narrow_view == "editor"
+            assert workspace.query_one("#file-notes-editor-pane").display
+            assert not workspace.query_one("#file-notes-navigator").display
 
         session_git = workspace.query_one(
             "#file-notes-session-changes",
@@ -3714,13 +4043,17 @@ async def test_workspace_rehydrate_hidden_settlement_without_duplicate_work(
         )
         assert workspace._push_observer_task is observer
         assert workspace._push_operation is operation
-        assert workspace.query_one(
-            "#file-notes-git-push-result-copy",
-            TextArea,
-        ).text == result.outcome.message
+        assert (
+            workspace.query_one(
+                "#file-notes-git-push-result-copy",
+                TextArea,
+            ).text
+            == result.outcome.message
+        )
         if size == (40, 20):
-            assert workspace.query_one("#file-notes-navigator").display
-            assert not workspace.query_one("#file-notes-editor-pane").display
+            assert workspace._narrow_view == "editor"
+            assert workspace.query_one("#file-notes-editor-pane").display
+            assert not workspace.query_one("#file-notes-navigator").display
 
         assert service.push_review_calls == []
         assert service.push_query_calls == []
@@ -3910,14 +4243,14 @@ async def test_workspace_back_to_files_keeps_push_publication_and_attention(
         )
         await _until(
             pilot,
-            lambda: "Pushing" in str(
-                workspace.query_one("#file-notes-session-changes").label
+            lambda: (
+                "Pushing"
+                in str(workspace.query_one("#file-notes-session-changes").label)
             ),
             "actual child start did not publish Pushing",
         )
 
-        workspace._navigator_mode = "git"
-        workspace._sync_navigator_mode()
+        await _show_session_git(workspace, pilot)
         workspace.query_one("#file-notes-git-back").press()
         await _until(
             pilot,

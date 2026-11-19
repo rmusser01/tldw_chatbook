@@ -6,10 +6,14 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import mkdtemp
 
 import pytest
+import toml
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config
+from tldw_chatbook.Utils import private_paths
 from tldw_chatbook.Utils.private_paths import (
     PrivatePathError,
     PrivatePathResult,
@@ -68,19 +72,18 @@ def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
-def _patch_data_dir_settings(
+def _select_data_dir(
     monkeypatch: pytest.MonkeyPatch,
-    configured_data_dir: Path | None,
+    tmp_path: Path,
+    configured_data_dir: Path | None = None,
 ) -> None:
-    def fake_get_cli_setting(section: str, key: str, default=None):
-        if section.lower() == "paths" and key == "data_dir":
-            return (
-                str(configured_data_dir) if configured_data_dir is not None else default
-            )
-        return default
-
-    monkeypatch.setattr(config, "get_cli_setting", fake_get_cli_setting)
-    monkeypatch.setattr(config, "get_user_folder_name", lambda: "alice")
+    settings = {"general": {"users_name": "alice"}}
+    if configured_data_dir is not None:
+        settings["paths"] = {"data_dir": str(configured_data_dir)}
+    path = Path(mkdtemp(dir=tmp_path)) / "config.toml"
+    path.write_text(toml.dumps(settings), encoding="utf-8")
+    path.chmod(0o600)
+    select_config_source(monkeypatch, path, globals())
 
 
 def test_default_data_base_ignores_xdg_and_uses_home(
@@ -115,10 +118,10 @@ def test_default_data_directory_is_private_under_permissive_umask(
     home.mkdir(mode=0o700)
     default_base = home / ".local" / "share" / "tldw_cli"
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
 
     previous_umask = os.umask(0)
     try:
+        _select_data_dir(monkeypatch, tmp_path)
         selected = config.get_user_data_dir()
     finally:
         os.umask(previous_umask)
@@ -140,7 +143,7 @@ def test_existing_default_data_directories_are_hardened(
     default_base.chmod(0o755)
     user_dir.chmod(0o755)
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
+    _select_data_dir(monkeypatch, tmp_path)
 
     assert config.get_user_data_dir() == user_dir
     assert _mode(default_base) == 0o700
@@ -159,7 +162,7 @@ def test_fresh_data_root_recovers_without_changing_shared_ancestors(
     shared.chmod(mode)
     original_mode = _mode(shared)  # Some filesystems strip setgid on chmod.
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
+    _select_data_dir(monkeypatch, tmp_path)
 
     selected = config.get_user_data_dir()
 
@@ -187,9 +190,9 @@ def test_recovery_never_bypasses_existing_conventional_data(
         conventional.symlink_to(home / "missing")
     conventional.parent.chmod(0o775)
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
 
     with pytest.raises(PrivatePathError, match="shared_writable_parent"):
+        _select_data_dir(monkeypatch, tmp_path)
         config.get_user_data_dir()
 
     assert not (home / ".tldw_cli-data").exists()
@@ -204,17 +207,20 @@ def test_two_default_roots_require_explicit_selection(tmp_path, monkeypatch):
     conventional.mkdir(parents=True)
     fallback.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
 
-    with pytest.raises(PrivatePathError, match="ambiguous_default_data_roots"):
+    with (
+        monkeypatch.context() as patch,
+        pytest.raises(PrivatePathError, match="ambiguous_default_data_roots"),
+    ):
+        _select_data_dir(patch, tmp_path)
         config.get_user_data_dir()
 
     assert not (conventional / "alice").exists()
     assert not (fallback / "alice").exists()
-    _patch_data_dir_settings(monkeypatch, conventional)
-    assert config.get_user_data_dir() == conventional / "alice"
-    _patch_data_dir_settings(monkeypatch, fallback)
-    assert config.get_user_data_dir() == fallback / "alice"
+    for base in (conventional, fallback):
+        with monkeypatch.context() as patch:
+            _select_data_dir(patch, tmp_path, base)
+            assert config.get_user_data_dir() == base / "alice"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX symlink contract")
@@ -227,9 +233,9 @@ def test_recovery_rejects_a_fallback_symlink(tmp_path, monkeypatch):
     outside.mkdir()
     (home / ".tldw_cli-data").symlink_to(outside, target_is_directory=True)
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
 
     with pytest.raises(PrivatePathError):
+        _select_data_dir(monkeypatch, tmp_path)
         config.get_user_data_dir()
 
     assert list(outside.iterdir()) == []
@@ -239,26 +245,32 @@ def test_recovery_does_not_mask_unrelated_storage_errors(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
+    conventional = home / ".local/share/tldw_cli"
     attempted = []
     failure = PrivatePathError(
         PrivatePathResult(
-            home / ".local/share/tldw_cli",
+            conventional,
             PrivatePathStatus.OPERATION_FAILED,
             reason="injected_io_error",
         )
     )
 
-    def refuse(path, **kwargs):
-        attempted.append(path)
-        raise failure
+    secure_directory = private_paths.secure_private_directory
 
-    monkeypatch.setattr(config, "secure_private_directory", refuse)
+    def refuse(path, **kwargs):
+        if path == conventional:
+            attempted.append(path)
+            raise failure
+        return secure_directory(path, **kwargs)
+
+    monkeypatch.setattr(private_paths, "secure_private_directory", refuse)
     with pytest.raises(PrivatePathError) as caught:
+        _select_data_dir(monkeypatch, tmp_path)
         config.get_user_data_dir()
 
     assert caught.value is failure
-    assert attempted == [home / ".local/share/tldw_cli"]
+    assert attempted == [conventional]
+    assert not (home / ".tldw_cli-data").exists()
 
 
 def test_recovery_does_not_treat_inaccessible_data_as_missing(tmp_path, monkeypatch):
@@ -268,7 +280,6 @@ def test_recovery_does_not_treat_inaccessible_data_as_missing(tmp_path, monkeypa
     shared.chmod(0o775)
     conventional = shared / "tldw_cli"
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
     original_lstat = Path.lstat
 
     def denied_lstat(path):
@@ -278,6 +289,7 @@ def test_recovery_does_not_treat_inaccessible_data_as_missing(tmp_path, monkeypa
 
     monkeypatch.setattr(Path, "lstat", denied_lstat)
     with pytest.raises(PermissionError, match="inaccessible data root"):
+        _select_data_dir(monkeypatch, tmp_path)
         config.get_user_data_dir()
 
     assert not (home / ".tldw_cli-data").exists()
@@ -302,7 +314,7 @@ def test_default_root_lock_is_private_stable_and_does_not_chmod_home(
     home.mkdir()
     home.chmod(0o755)
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
+    _select_data_dir(monkeypatch, tmp_path)
 
     first = config.get_user_data_dir()
     lock = home / ".tldw_cli-data-root.lock"
@@ -321,9 +333,9 @@ def test_default_root_selection_rejects_symlinked_lock(tmp_path, monkeypatch):
     outside.write_text("keep me")
     (home / ".tldw_cli-data-root.lock").symlink_to(outside)
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, None)
 
     with pytest.raises(PrivatePathError):
+        _select_data_dir(monkeypatch, tmp_path)
         config.get_user_data_dir()
 
     assert outside.read_text() == "keep me"
@@ -337,10 +349,10 @@ def test_explicit_root_does_not_create_a_default_selection_lock(tmp_path, monkey
     custom = tmp_path / "custom"
     custom.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    _patch_data_dir_settings(monkeypatch, custom)
+    _select_data_dir(monkeypatch, tmp_path, custom)
 
     assert config.get_user_data_dir() == custom / "alice"
-    assert list(home.iterdir()) == []
+    assert {entry.name for entry in home.iterdir()} <= {".config"}
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX fresh-install contract")
@@ -407,9 +419,9 @@ def test_default_data_directory_rejects_intermediate_symlink(
     alias = tmp_path / "alias"
     alias.symlink_to(target, target_is_directory=True)
     monkeypatch.setenv("HOME", str(alias))
-    _patch_data_dir_settings(monkeypatch, None)
 
     with pytest.raises(PrivatePathError):
+        _select_data_dir(monkeypatch, tmp_path)
         config.get_user_data_dir()
 
     assert not (target / ".local").exists()
@@ -424,9 +436,9 @@ def test_default_data_directory_rejects_unsafe_intermediate_namespace(
     unsafe.mkdir()
     unsafe.chmod(0o777)
     monkeypatch.setenv("HOME", str(unsafe))
-    _patch_data_dir_settings(monkeypatch, None)
 
     with pytest.raises(PrivatePathError):
+        _select_data_dir(monkeypatch, tmp_path)
         config.get_user_data_dir()
 
     assert not (unsafe / ".local").exists()
@@ -440,7 +452,7 @@ def test_custom_data_base_mode_is_preserved_and_only_user_child_is_secured(
     custom_base = tmp_path / "shared-base"
     custom_base.mkdir()
     custom_base.chmod(0o751)
-    _patch_data_dir_settings(monkeypatch, custom_base)
+    _select_data_dir(monkeypatch, tmp_path, custom_base)
 
     selected = config.get_user_data_dir()
 
@@ -467,9 +479,9 @@ def test_custom_data_base_must_be_existing_trusted_directory(
         target.mkdir()
         custom_base = tmp_path / "alias"
         custom_base.symlink_to(target, target_is_directory=True)
-    _patch_data_dir_settings(monkeypatch, custom_base)
 
     with pytest.raises(PrivatePathError):
+        _select_data_dir(monkeypatch, tmp_path, custom_base)
         config.get_user_data_dir()
 
     assert not (custom_base / "alice").exists()

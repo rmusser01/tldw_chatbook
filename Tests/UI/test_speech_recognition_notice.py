@@ -24,7 +24,8 @@ async def _open_recognition(app, pilot):
     await app.push_screen(screen)
     await pilot.pause()
     row = next(
-        b for b in screen.query(Button)
+        b
+        for b in screen.query(Button)
         if getattr(b, "lab_view_key", None) == "dictation"
     )
     row.press()
@@ -33,6 +34,7 @@ async def _open_recognition(app, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_privacy_notice_costs_one_row():
     """Four rows each, twice over, is a third of the viewport spent on
@@ -49,6 +51,7 @@ async def test_the_privacy_notice_costs_one_row():
     assert not tall, f"privacy notice still costs {tall} rows"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_notice_still_says_something():
     """Shrinking it must not empty it -- the privacy state is the point."""

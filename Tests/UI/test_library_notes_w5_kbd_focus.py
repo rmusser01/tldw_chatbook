@@ -113,6 +113,7 @@ _INFO_ENTER_STOPS = (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_info_footer_names_the_focused_control_instead_of_run_action():
     """task-32607 AC#1/#4.
@@ -142,6 +143,7 @@ async def test_info_footer_names_the_focused_control_instead_of_run_action():
             assert chips.get("esc") == "back to note", chips
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_info_drops_the_enter_chip_where_enter_does_nothing():
     """task-32607 AC#1: the keywords field owns no Enter.
@@ -166,6 +168,7 @@ async def test_info_drops_the_enter_chip_where_enter_does_nothing():
         assert chips.get("esc") == "back to note", chips
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_backlink_row_names_itself_even_though_it_has_no_dom_id():
     """task-32607 AC#1/#4: Info's backlink rows are identified by class.
@@ -276,6 +279,7 @@ async def test_info_delete_reads_as_destructive_rather_than_disabled(request):
 # --- task-32607 AC#5: the list footer's map is true, then extended -------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_navigator_map_advertises_only_keys_that_fire():
     """task-32607 AC#5 and task-32609 AC#1/#2.
@@ -320,6 +324,7 @@ async def test_the_navigator_map_advertises_only_keys_that_fire():
             assert typing_chips.get("esc") == "focus rail", typing_chips
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_g_jumps_to_the_folder_tree_from_the_notes_toolbar():
     """task-32607 AC#5: "g go to folder" is a real key, not new copy."""
@@ -340,6 +345,7 @@ async def test_g_jumps_to_the_folder_tree_from_the_notes_toolbar():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_e_runs_export_selected_only_once_something_is_selected():
     """task-32607 AC#5: "e export selected" appears with the live key.
@@ -376,6 +382,7 @@ async def test_e_runs_export_selected_only_once_something_is_selected():
 # --- task-32609 AC#1/#3/#4: where "/" goes -------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_from_a_notes_toolbar_button_reaches_the_notes_filter():
     """task-32609 AC#1/#3: not the rail search, and not as a character."""
@@ -397,6 +404,7 @@ async def test_slash_from_a_notes_toolbar_button_reaches_the_notes_filter():
         assert rail_search.value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_in_the_editor_is_not_advertised_by_the_notes_footer():
     """task-32609 AC#2/#4: the editor tier never claimed "/", and must not.
@@ -422,6 +430,7 @@ async def test_slash_in_the_editor_is_not_advertised_by_the_notes_footer():
 # --- task-32613 AC#2/#3: the order out of a reading pane -----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_out_of_previews_reading_region_reaches_the_mode_strip():
     """task-32613 AC#3.
@@ -457,6 +466,7 @@ async def test_tab_out_of_previews_reading_region_reaches_the_mode_strip():
         assert not screen.query("#library-note-work-empty")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_walks_every_stop_of_the_info_pane():
     """task-32613 AC#3, fix round 1 -- the half the first cut broke.
@@ -508,6 +518,7 @@ async def test_tab_walks_every_stop_of_the_info_pane():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_note_pane_toolbar_prefix_is_the_same_in_every_mode():
     """task-32613 AC#2 (the part that is achievable).
@@ -549,6 +560,7 @@ async def test_the_note_pane_toolbar_prefix_is_the_same_in_every_mode():
 # --- task-32608: Tab reaches the terminal action of a full-pane task -----
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_stays_inside_the_lasting_sync_pane():
     """task-32608 AC#1/#4.

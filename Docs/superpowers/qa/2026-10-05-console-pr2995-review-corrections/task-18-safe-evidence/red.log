@@ -1,0 +1,1608 @@
+FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEEEEEEEEEEEEEE                             [100%]
+==================================== ERRORS ====================================
+_ ERROR at setup of test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge _
+
+self = <Coroutine test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+---------------------------- Captured stderr setup -----------------------------
+2026-10-04 18:42:24.789 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-10-04 18:42:25.094 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+_ ERROR at setup of test_no_destination_consent_means_no_synthesis_or_background_modal _
+
+self = <Coroutine test_no_destination_consent_means_no_synthesis_or_background_modal>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_explicit_consent_revalidates_changed_destination_before_speech _
+
+self = <Coroutine test_explicit_consent_revalidates_changed_destination_before_speech>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_owner_revalidated_after_destination_await[assistant] __
+
+self = <Coroutine test_owner_revalidated_after_destination_await[assistant]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+___ ERROR at setup of test_owner_revalidated_after_destination_await[close] ____
+
+self = <Coroutine test_owner_revalidated_after_destination_await[close]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+__ ERROR at setup of test_owner_revalidated_after_destination_await[profile] ___
+
+self = <Coroutine test_owner_revalidated_after_destination_await[profile]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+__ ERROR at setup of test_owner_revalidated_after_destination_await[binding] ___
+
+self = <Coroutine test_owner_revalidated_after_destination_await[binding]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+__ ERROR at setup of test_owner_revalidated_after_destination_await[content] ___
+
+self = <Coroutine test_owner_revalidated_after_destination_await[content]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_persona_revision_and_retirement_revoke_queued_speech[version] _
+
+self = <Coroutine test_persona_revision_and_retirement_revoke_queued_speech[version]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_persona_revision_and_retirement_revoke_queued_speech[is_active] _
+
+self = <Coroutine test_persona_revision_and_retirement_revoke_queued_speech[is_active]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_persona_revision_and_retirement_revoke_queued_speech[deleted] _
+
+self = <Coroutine test_persona_revision_and_retirement_revoke_queued_speech[deleted]>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_______ ERROR at setup of test_speech_controls_only_change_presentation ________
+
+self = <Coroutine test_speech_controls_only_change_presentation>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_rebind_dismisses_owned_destination_confirmation_without_consent _
+
+self = <Coroutine test_rebind_dismisses_owned_destination_confirmation_without_consent>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ ERROR at setup of test_workspace_questions_precede_named_results_and_never_acknowledge _
+
+self = <Coroutine test_workspace_questions_precede_named_results_and_never_acknowledge>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:463: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:735: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+Tests/UI/conftest.py:192: in _disable_model_catalog_refresh
+    monkeypatch.setattr(
+tldw_chatbook/app.py:686: in <module>
+    APP_CONFIG = load_settings()
+                 ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2106: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c215f70>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+=================================== FAILURES ===================================
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-approval] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110116150>
+kind = 'approval', away = 'navigation'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-04 18:42:22.266 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-04 18:42:22.313 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-04 18:42:22.403 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-04 18:42:22.405 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-skill_install] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1104384a0>
+kind = 'skill_install', away = 'navigation'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-skill_script] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110439b20>
+kind = 'skill_script', away = 'navigation'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-worktree_merge] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043adb0>
+kind = 'worktree_merge', away = 'navigation'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-question] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043ad20>
+kind = 'question', away = 'navigation'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[session-approval] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043b500>
+kind = 'approval', away = 'session'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[session-skill_install] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043ba10>
+kind = 'skill_install', away = 'session'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[session-skill_script] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043bc20>
+kind = 'skill_script', away = 'session'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[session-worktree_merge] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043ad80>
+kind = 'worktree_merge', away = 'session'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+_ test_decision_budget_pauses_while_its_card_cannot_be_answered[session-question] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043b230>
+kind = 'question', away = 'session'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    @pytest.mark.parametrize("away", ("navigation", "session"))
+    def test_decision_budget_pauses_while_its_card_cannot_be_answered(
+        monkeypatch, kind, away
+    ):
+        """Wall-clock deadlines would expire at 102; ten visible seconds end at 110."""
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:25: TypeError
+_____ test_hidden_decision_still_observes_explicit_cancellation[approval] ______
+
+kind = 'approval'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_hidden_decision_still_observes_explicit_cancellation(kind):
+        """Pausing a deadline must never pause Stop or application shutdown."""
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:65: TypeError
+___ test_hidden_decision_still_observes_explicit_cancellation[skill_install] ___
+
+kind = 'skill_install'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_hidden_decision_still_observes_explicit_cancellation(kind):
+        """Pausing a deadline must never pause Stop or application shutdown."""
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:65: TypeError
+___ test_hidden_decision_still_observes_explicit_cancellation[skill_script] ____
+
+kind = 'skill_script'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_hidden_decision_still_observes_explicit_cancellation(kind):
+        """Pausing a deadline must never pause Stop or application shutdown."""
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:65: TypeError
+__ test_hidden_decision_still_observes_explicit_cancellation[worktree_merge] ___
+
+kind = 'worktree_merge'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_hidden_decision_still_observes_explicit_cancellation(kind):
+        """Pausing a deadline must never pause Stop or application shutdown."""
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:65: TypeError
+_____ test_hidden_decision_still_observes_explicit_cancellation[question] ______
+
+kind = 'question'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_hidden_decision_still_observes_explicit_cancellation(kind):
+        """Pausing a deadline must never pause Stop or application shutdown."""
+        seams = FakeSeamsFull()
+>       host = InterruptRoundHost(seams)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:65: TypeError
+__ test_queued_decision_only_spends_budget_after_becoming_fifo_head[approval] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043a120>
+kind = 'approval'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_queued_decision_only_spends_budget_after_becoming_fifo_head(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:94: TypeError
+_ test_queued_decision_only_spends_budget_after_becoming_fifo_head[skill_install] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043ba10>
+kind = 'skill_install'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_queued_decision_only_spends_budget_after_becoming_fifo_head(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:94: TypeError
+_ test_queued_decision_only_spends_budget_after_becoming_fifo_head[skill_script] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043a120>
+kind = 'skill_script'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_queued_decision_only_spends_budget_after_becoming_fifo_head(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:94: TypeError
+_ test_queued_decision_only_spends_budget_after_becoming_fifo_head[worktree_merge] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043ae70>
+kind = 'worktree_merge'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_queued_decision_only_spends_budget_after_becoming_fifo_head(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:94: TypeError
+__ test_queued_decision_only_spends_budget_after_becoming_fifo_head[question] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11043b920>
+kind = 'question'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_queued_decision_only_spends_budget_after_becoming_fifo_head(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:94: TypeError
+__ test_legacy_unparked_decision_expires_while_its_card_is_visible[approval] ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110461700>
+kind = 'approval'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_legacy_unparked_decision_expires_while_its_card_is_visible(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:130: TypeError
+_ test_legacy_unparked_decision_expires_while_its_card_is_visible[skill_install] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110463860>
+kind = 'skill_install'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_legacy_unparked_decision_expires_while_its_card_is_visible(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:130: TypeError
+_ test_legacy_unparked_decision_expires_while_its_card_is_visible[skill_script] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110463dd0>
+kind = 'skill_script'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_legacy_unparked_decision_expires_while_its_card_is_visible(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:130: TypeError
+_ test_legacy_unparked_decision_expires_while_its_card_is_visible[worktree_merge] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110461f70>
+kind = 'worktree_merge'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_legacy_unparked_decision_expires_while_its_card_is_visible(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:130: TypeError
+__ test_legacy_unparked_decision_expires_while_its_card_is_visible[question] ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110461130>
+kind = 'question'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_legacy_unparked_decision_expires_while_its_card_is_visible(monkeypatch, kind):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:130: TypeError
+_ test_external_decision_projection_only_charges_supported_visible_kinds[approval] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110463b00>
+kind = 'approval'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_external_decision_projection_only_charges_supported_visible_kinds(
+        monkeypatch, kind
+    ):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:161: TypeError
+_ test_external_decision_projection_only_charges_supported_visible_kinds[skill_install] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110460680>
+kind = 'skill_install'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_external_decision_projection_only_charges_supported_visible_kinds(
+        monkeypatch, kind
+    ):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:161: TypeError
+_ test_external_decision_projection_only_charges_supported_visible_kinds[skill_script] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1104616d0>
+kind = 'skill_script'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_external_decision_projection_only_charges_supported_visible_kinds(
+        monkeypatch, kind
+    ):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:161: TypeError
+_ test_external_decision_projection_only_charges_supported_visible_kinds[worktree_merge] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110461070>
+kind = 'worktree_merge'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_external_decision_projection_only_charges_supported_visible_kinds(
+        monkeypatch, kind
+    ):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:161: TypeError
+_ test_external_decision_projection_only_charges_supported_visible_kinds[question] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110462720>
+kind = 'question'
+
+    @pytest.mark.parametrize("kind", tuple(KIND_SETTER_ATTRS))
+    def test_external_decision_projection_only_charges_supported_visible_kinds(
+        monkeypatch, kind
+    ):
+        import tldw_chatbook.Chat.console_interrupt_rounds as rounds
+    
+        now = [0.0]
+        monkeypatch.setattr(rounds.time, "monotonic", lambda: now[0])
+>       host = InterruptRoundHost(FakeSeamsFull())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/Chat/test_console_decision_clock.py:161: TypeError
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-18-safe-evidence/red.xml -
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+ERROR Tests/UI/test_buddy_speech.py::test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge
+ERROR Tests/UI/test_buddy_speech.py::test_no_destination_consent_means_no_synthesis_or_background_modal
+ERROR Tests/UI/test_buddy_speech.py::test_explicit_consent_revalidates_changed_destination_before_speech
+ERROR Tests/UI/test_buddy_speech.py::test_owner_revalidated_after_destination_await[assistant]
+ERROR Tests/UI/test_buddy_speech.py::test_owner_revalidated_after_destination_await[close]
+ERROR Tests/UI/test_buddy_speech.py::test_owner_revalidated_after_destination_await[profile]
+ERROR Tests/UI/test_buddy_speech.py::test_owner_revalidated_after_destination_await[binding]
+ERROR Tests/UI/test_buddy_speech.py::test_owner_revalidated_after_destination_await[content]
+ERROR Tests/UI/test_buddy_speech.py::test_persona_revision_and_retirement_revoke_queued_speech[version]
+ERROR Tests/UI/test_buddy_speech.py::test_persona_revision_and_retirement_revoke_queued_speech[is_active]
+ERROR Tests/UI/test_buddy_speech.py::test_persona_revision_and_retirement_revoke_queued_speech[deleted]
+ERROR Tests/UI/test_buddy_speech.py::test_speech_controls_only_change_presentation
+ERROR Tests/UI/test_buddy_speech.py::test_rebind_dismisses_owned_destination_confirmation_without_consent
+ERROR Tests/UI/test_buddy_speech.py::test_workspace_questions_precede_named_results_and_never_acknowledge
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-approval]
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-skill_install]
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-skill_script]
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-worktree_merge]
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[navigation-question]
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[session-approval]
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[session-skill_install]
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[session-skill_script]
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[session-worktree_merge]
+FAILED Tests/Chat/test_console_decision_clock.py::test_decision_budget_pauses_while_its_card_cannot_be_answered[session-question]
+FAILED Tests/Chat/test_console_decision_clock.py::test_hidden_decision_still_observes_explicit_cancellation[approval]
+FAILED Tests/Chat/test_console_decision_clock.py::test_hidden_decision_still_observes_explicit_cancellation[skill_install]
+FAILED Tests/Chat/test_console_decision_clock.py::test_hidden_decision_still_observes_explicit_cancellation[skill_script]
+FAILED Tests/Chat/test_console_decision_clock.py::test_hidden_decision_still_observes_explicit_cancellation[worktree_merge]
+FAILED Tests/Chat/test_console_decision_clock.py::test_hidden_decision_still_observes_explicit_cancellation[question]
+FAILED Tests/Chat/test_console_decision_clock.py::test_queued_decision_only_spends_budget_after_becoming_fifo_head[approval]
+FAILED Tests/Chat/test_console_decision_clock.py::test_queued_decision_only_spends_budget_after_becoming_fifo_head[skill_install]
+FAILED Tests/Chat/test_console_decision_clock.py::test_queued_decision_only_spends_budget_after_becoming_fifo_head[skill_script]
+FAILED Tests/Chat/test_console_decision_clock.py::test_queued_decision_only_spends_budget_after_becoming_fifo_head[worktree_merge]
+FAILED Tests/Chat/test_console_decision_clock.py::test_queued_decision_only_spends_budget_after_becoming_fifo_head[question]
+FAILED Tests/Chat/test_console_decision_clock.py::test_legacy_unparked_decision_expires_while_its_card_is_visible[approval]
+FAILED Tests/Chat/test_console_decision_clock.py::test_legacy_unparked_decision_expires_while_its_card_is_visible[skill_install]
+FAILED Tests/Chat/test_console_decision_clock.py::test_legacy_unparked_decision_expires_while_its_card_is_visible[skill_script]
+FAILED Tests/Chat/test_console_decision_clock.py::test_legacy_unparked_decision_expires_while_its_card_is_visible[worktree_merge]
+FAILED Tests/Chat/test_console_decision_clock.py::test_legacy_unparked_decision_expires_while_its_card_is_visible[question]
+FAILED Tests/Chat/test_console_decision_clock.py::test_external_decision_projection_only_charges_supported_visible_kinds[approval]
+FAILED Tests/Chat/test_console_decision_clock.py::test_external_decision_projection_only_charges_supported_visible_kinds[skill_install]
+FAILED Tests/Chat/test_console_decision_clock.py::test_external_decision_projection_only_charges_supported_visible_kinds[skill_script]
+FAILED Tests/Chat/test_console_decision_clock.py::test_external_decision_projection_only_charges_supported_visible_kinds[worktree_merge]
+FAILED Tests/Chat/test_console_decision_clock.py::test_external_decision_projection_only_charges_supported_visible_kinds[question]
+30 failed, 14 errors in 8.26s

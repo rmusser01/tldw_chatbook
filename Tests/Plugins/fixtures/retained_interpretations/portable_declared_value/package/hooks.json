@@ -1,0 +1,26 @@
+{
+  "hooks": [
+    {
+      "argv": [
+        "python3",
+        "${PLUGIN_ROOT}/guard.py",
+        "${CHATBOOK_WORKSPACE_DATA}"
+      ],
+      "cwd": "working",
+      "effects": [
+        "deny"
+      ],
+      "env": {
+        "TOKEN": {
+          "variable": "TOKEN"
+        },
+        "WORKSPACE": "${CHATBOOK_WORKSPACE_DATA}"
+      },
+      "event": "PreToolUse",
+      "id": "guard",
+      "required": true,
+      "type": "command"
+    }
+  ],
+  "version": 2
+}

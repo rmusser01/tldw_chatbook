@@ -1,0 +1,8 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+6.50s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[fenced-structured-True]
+3.54s call     Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[fenced-structured-False]
+1.14s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[fenced-structured-True]
+
+(3 durations < 1s hidden.)
+2 passed, 57 deselected in 13.03s

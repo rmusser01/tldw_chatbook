@@ -1,0 +1,151 @@
+{
+  "pid": 99330,
+  "cells": [
+    {
+      "size": [
+        80,
+        24
+      ],
+      "inspect_open": true,
+      "mode": "fast-deny",
+      "painted_controls": true,
+      "real_ask_gate": true,
+      "real_local_executor_on_approval": false,
+      "result_ok": false,
+      "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "inspect_open": true,
+      "mode": "deny-all",
+      "painted_controls": true,
+      "real_ask_gate": true,
+      "real_local_executor_on_approval": false,
+      "result_ok": false,
+      "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "inspect_open": true,
+      "mode": "approve-once",
+      "painted_controls": true,
+      "real_ask_gate": true,
+      "real_local_executor_on_approval": true,
+      "result_ok": true,
+      "error": ""
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "inspect_open": false,
+      "mode": "fast-deny",
+      "painted_controls": true,
+      "real_ask_gate": true,
+      "real_local_executor_on_approval": false,
+      "result_ok": false,
+      "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "inspect_open": false,
+      "mode": "deny-all",
+      "painted_controls": true,
+      "real_ask_gate": true,
+      "real_local_executor_on_approval": false,
+      "result_ok": false,
+      "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "inspect_open": false,
+      "mode": "approve-once",
+      "painted_controls": true,
+      "real_ask_gate": true,
+      "real_local_executor_on_approval": true,
+      "result_ok": true,
+      "error": ""
+    },
+    {
+      "size": [
+        235,
+        52
+      ],
+      "inspect_open": true,
+      "mode": "fast-deny",
+      "painted_controls": true,
+      "real_ask_gate": true,
+      "real_local_executor_on_approval": false,
+      "result_ok": false,
+      "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+    },
+    {
+      "size": [
+        235,
+        52
+      ],
+      "inspect_open": true,
+      "mode": "deny-all",
+      "painted_controls": true,
+      "real_ask_gate": true,
+      "real_local_executor_on_approval": false,
+      "result_ok": false,
+      "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+    },
+    {
+      "size": [
+        235,
+        52
+      ],
+      "inspect_open": true,
+      "mode": "approve-once",
+      "painted_controls": true,
+      "real_ask_gate": true,
+      "real_local_executor_on_approval": true,
+      "result_ok": true,
+      "error": ""
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/__init__.py",
+    "tldw_chatbook.app": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/app.py",
+    "tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+    "tldw_chatbook.Utils.input_validation": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/Utils/input_validation.py",
+    "tldw_chatbook.Utils.path_validation": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/Utils/path_validation.py",
+    "tldw_chatbook.Chat.console_chat_controller": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
+    "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "06de3846778e2770e864f1d1b23e4394b7502997d2658a96a4e6b728d1123694",
+    "tldw_chatbook/css/widget_defaults_scoped.tcss": "64958e3290cd2d7de727872a6bc00f78c463442423987a47054f1cb29a702899",
+    "tldw_chatbook/css/widget_defaults_self.tcss": "100d5febf97b1dd445cba53eea6e35eba95375d820a9f11c5a3a410d6234a779",
+    "tldw_chatbook/css/core/_variables.tcss": "a28132137a6ff8d6c247e64b340f1b96c2d3106db58c6c6d20f7d31cca817287",
+    "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e"
+  },
+  "runner_sha256": "20023d46b23d7112ce5566725d5b275828d5189bf8941bca9d2b88bd729fac47",
+  "fixture_scope": "Real Ask-gated fs_read via the production controller-composed LocalToolProvider, real private permission store, native Console decisions and production local executor. The disposable project root is supplied explicitly at the provider-composition seam; no model turn, external MCP server or network request is simulated as successful.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "approval cleared",
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null
+}

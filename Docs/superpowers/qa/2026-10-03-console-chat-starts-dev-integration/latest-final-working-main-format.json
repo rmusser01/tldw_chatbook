@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    "scripts/terminal_qualification/format_ratchet.py",
+    "verify",
+    "--baseline",
+    ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/format-ratchet-baseline.json"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 2,
+  "elapsed_s": 8.038852214813232,
+  "output": "tldw_chatbook/Chat/console_runtime.py: formatter-required hunk overlaps changed lines\ntldw_chatbook/Chat/console_runtime.py: normalized formatter debt grew from 196 to 200\n"
+}

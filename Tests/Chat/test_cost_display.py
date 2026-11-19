@@ -154,7 +154,11 @@ def test_provenance_line_never_fabricates_dollar_when_cost_missing_despite_flag(
     """
     usage = ProviderUsage(uncached_input=100, output=0, provider="anthropic", model="m")
     line = build_provenance_line(
-        provider="anthropic", model="m", usage=usage, cost=None, pricing_known=True,
+        provider="anthropic",
+        model="m",
+        usage=usage,
+        cost=None,
+        pricing_known=True,
     )
     assert "$" not in line
     assert "0.00" not in line
@@ -168,9 +172,15 @@ def test_provenance_line_large_token_count_uses_full_comma_grouping():
     tok") rather than the chip's lossy "12.3k" abbreviation, so a user can
     see precisely what they were charged for.
     """
-    usage = ProviderUsage(uncached_input=10_000, output=2_345, provider="anthropic", model="m")
+    usage = ProviderUsage(
+        uncached_input=10_000, output=2_345, provider="anthropic", model="m"
+    )
     line = build_provenance_line(
-        provider="anthropic", model="m", usage=usage, cost=Decimal("0.50"), pricing_known=True,
+        provider="anthropic",
+        model="m",
+        usage=usage,
+        cost=Decimal("0.50"),
+        pricing_known=True,
     )
     assert "(12,345 tok)" in line
     assert "12.3k" not in line
@@ -187,7 +197,9 @@ def test_provenance_line_blank_model_with_known_cost_omits_the_model_segment():
     was still captured, so the call was still billed, and the line must
     still report the cost. The blank `model` must be OMITTED, never left as
     a dangling `" · "` between the provider and the rest of the line."""
-    usage = ProviderUsage(uncached_input=1000, output=240, provider="anthropic", model="")
+    usage = ProviderUsage(
+        uncached_input=1000, output=240, provider="anthropic", model=""
+    )
     line = build_provenance_line(
         provider="anthropic",
         model="",
@@ -203,7 +215,9 @@ def test_provenance_line_blank_model_pricing_unknown_omits_the_model_segment():
     """Same blank-model upstream shape, but pricing is also unknown -- both
     facts (tokens spent, pricing unresolved) must still surface, with the
     model segment omitted rather than blank."""
-    usage = ProviderUsage(uncached_input=1000, output=240, provider="anthropic", model="")
+    usage = ProviderUsage(
+        uncached_input=1000, output=240, provider="anthropic", model=""
+    )
     line = build_provenance_line(
         provider="anthropic",
         model="",
@@ -252,4 +266,6 @@ def test_cost_display_module_has_no_console_imports():
         lowered = name.lower()
         assert "console" not in lowered, f"cost_display must not import {name!r}"
         assert "chat_screen" not in lowered, f"cost_display must not import {name!r}"
-        assert "widgets.console" not in lowered, f"cost_display must not import {name!r}"
+        assert "widgets.console" not in lowered, (
+            f"cost_display must not import {name!r}"
+        )

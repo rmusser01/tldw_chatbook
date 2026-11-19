@@ -19,9 +19,13 @@ from Tests.UI.app_factory import (
     drain_active_service_patches,
     drain_created_dirs,
 )
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+    _ReadyResolutionGateway,
+)
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
+from tldw_chatbook.Agents.plain_chat_tool_surface import FULL_AGENT_TOOLS_GATE_KEY
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
@@ -132,7 +136,7 @@ def _publish_owner_receipt(path: Path, value: dict) -> None:
     staged.replace(path)
 
 
-class _ScriptedCanvasGateway:
+class _ScriptedCanvasGateway(_ReadyResolutionGateway):
     """Replay two genuine agent/tool cycles without contacting a provider."""
 
     def __init__(self) -> None:
@@ -469,6 +473,7 @@ def main() -> None:
         if not config_module.save_settings_to_cli_config(
             {
                 "first_run": {"setup_completed": True},
+                "tools": {FULL_AGENT_TOOLS_GATE_KEY: True},
                 "model_catalog": {
                     "auto_refresh_enabled": False,
                     "refresh_consent_recorded": True,

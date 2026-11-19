@@ -141,8 +141,11 @@ async def test_quick_note_load_preview_clear_and_undo_patch_in_place() -> None:
         assert body.text == "**Evidence-backed** note"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_cleared_existing_note_saves_as_untitled_without_losing_dirty_retry() -> None:
+async def test_cleared_existing_note_saves_as_untitled_without_losing_dirty_retry() -> (
+    None
+):
     from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
         ResearchQuickNotesSection,
     )
@@ -249,6 +252,7 @@ class _ResearchHarness(ConsolidatedCSSApp):
         await self.push_screen(self._screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_save_uses_editor_owner_version_and_source_provenance() -> None:
     from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
@@ -286,6 +290,7 @@ async def test_mounted_save_uses_editor_owner_version_and_source_provenance() ->
         assert not section.is_dirty
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_conflict_copy_as_new_preserves_draft_without_force_write() -> (
     None
@@ -339,6 +344,7 @@ async def test_mounted_conflict_copy_as_new_preserves_draft_without_force_write(
         assert not section.is_dirty
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dirty_authority_switch_is_blocked_then_retries_exact_captured_owner() -> (
     None
@@ -512,13 +518,19 @@ async def test_capability_refresh_from_full_to_empty_resets_every_control_fail_c
             "research-quick-note-delete",
         ):
             assert section.query_one(f"#{widget_id}").disabled
-        assert "unavailable" in str(
-            section.query_one("#research-quick-note-owner-limits", Static).render()
-        ).lower()
+        assert (
+            "unavailable"
+            in str(
+                section.query_one("#research-quick-note-owner-limits", Static).render()
+            ).lower()
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_capability_refresh_exception_immediately_disables_previous_actions() -> None:
+async def test_capability_refresh_exception_immediately_disables_previous_actions() -> (
+    None
+):
     from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
         ResearchQuickNotesSection,
     )
@@ -549,11 +561,15 @@ async def test_capability_refresh_exception_immediately_disables_previous_action
             "research-quick-note-delete",
         ):
             assert section.query_one(f"#{widget_id}").disabled
-        assert "retry" in str(
-            section.query_one("#research-quick-note-status", Static).render()
-        ).lower()
+        assert (
+            "retry"
+            in str(
+                section.query_one("#research-quick-note-status", Static).render()
+            ).lower()
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "owner_error",
@@ -597,6 +613,7 @@ async def test_expected_local_owner_errors_keep_editor_recoverable(owner_error) 
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_flush_retries_exact_original_ref_even_if_editor_ref_changes() -> (
     None
@@ -623,9 +640,9 @@ async def test_navigation_flush_retries_exact_original_ref_even_if_editor_ref_ch
                 break
         section = screen.query_one(ResearchQuickNotesSection)
         section.sync_note(local.row)
-        section.query_one("#research-quick-note-body", TextArea).text = (
-            "Exact original draft"
-        )
+        section.query_one(
+            "#research-quick-note-body", TextArea
+        ).text = "Exact original draft"
         flush = asyncio.create_task(screen.flush_pending_work())
         for _ in range(30):
             await pilot.pause(0.02)
@@ -641,6 +658,7 @@ async def test_navigation_flush_retries_exact_original_ref_even_if_editor_ref_ch
         assert server.saved == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_catalog_fallback_cancel_preserves_dirty_editor_and_selected_workspace() -> (
     None
@@ -665,9 +683,9 @@ async def test_catalog_fallback_cancel_preserves_dirty_editor_and_selected_works
                 break
         section = screen.query_one(ResearchQuickNotesSection)
         section.sync_note(local.row)
-        section.query_one("#research-quick-note-body", TextArea).text = (
-            "Catalog must not destroy this"
-        )
+        section.query_one(
+            "#research-quick-note-body", TextArea
+        ).text = "Catalog must not destroy this"
         state = ResearchWorkspaceCatalogState(
             data_source=WorkspaceDataSource.LOCAL,
             context_revision=controller.context_revision,
@@ -691,6 +709,7 @@ async def test_catalog_fallback_cancel_preserves_dirty_editor_and_selected_works
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_save_message_cannot_write_after_editor_owner_changes() -> None:
     from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
@@ -719,6 +738,7 @@ async def test_stale_save_message_cannot_write_after_editor_owner_changes() -> N
         assert port.saved == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_delete_confirmation_cannot_mutate_after_editor_owner_changes() -> (
     None
@@ -748,6 +768,7 @@ async def test_stale_delete_confirmation_cannot_mutate_after_editor_owner_change
         assert port.deleted == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dirty_quick_note_body_never_enters_navigation_or_overlay_state(
     tmp_path,

@@ -92,6 +92,7 @@ async def _dirty_the_open_editor(screen, pilot):
     )
 
 
+@pytest.mark.bootstrap_profile
 async def test_escape_on_a_dirty_prompt_editor_states_why_it_will_not_leave(
     tmp_path,
 ) -> None:
@@ -124,6 +125,7 @@ async def test_escape_on_a_dirty_prompt_editor_states_why_it_will_not_leave(
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_prompt_editor_footer_chip_names_the_dirty_blocker(
     tmp_path,
 ) -> None:
@@ -154,6 +156,7 @@ async def test_the_prompt_editor_footer_chip_names_the_dirty_blocker(
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_escape_during_an_in_flight_write_says_so_too(tmp_path) -> None:
     """Review round 1 (F10): the last state where Escape neither left nor spoke.
 
@@ -181,6 +184,7 @@ async def test_escape_during_an_in_flight_write_says_so_too(tmp_path) -> None:
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_footer_chip_follows_an_in_flight_write_too(tmp_path) -> None:
     """PR #2655 Qodo finding 1: the chip must name EVERY state Escape refuses.
 
@@ -218,6 +222,7 @@ async def test_the_footer_chip_follows_an_in_flight_write_too(tmp_path) -> None:
         prompts_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_busy_editor_that_is_also_dirty_names_the_blocker_that_wins(
     tmp_path,
 ) -> None:

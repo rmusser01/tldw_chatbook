@@ -17,7 +17,9 @@ from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import DestinationHarness, _static_text
 from tldw_chatbook.Subscriptions.watchlist_item_page import WatchlistItemPage
 from tldw_chatbook.UI.Screens import watchlists_collections_screen as collections_module
-from tldw_chatbook.UI.Screens.watchlists_collections_screen import WatchlistsCollectionsScreen
+from tldw_chatbook.UI.Screens.watchlists_collections_screen import (
+    WatchlistsCollectionsScreen,
+)
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import (
     BreadcrumbScopeSelected,
@@ -173,8 +175,7 @@ async def test_item_inspector_keeps_advanced_actions(content_kind: str) -> None:
     )
     async with app.run_test():
         action_ids = [
-            button.id
-            for button in app.query_one("#inspector-actions").query(Button)
+            button.id for button in app.query_one("#inspector-actions").query(Button)
         ]
 
         assert "inspector-ingest-button" in action_ids
@@ -216,6 +217,7 @@ async def test_inspector_snapshot_actions_post_existing_request(
         assert request.which == which
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_screen_keeps_previous_snapshot_modal_handler(monkeypatch) -> None:
     app = _build_test_app()
@@ -246,6 +248,7 @@ async def test_screen_keeps_previous_snapshot_modal_handler(monkeypatch) -> None
         assert modal._content == "before"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_source_handler_calls_controller(fake_controller):
     async with _open_screen(fake_controller) as (screen, pilot):
@@ -257,6 +260,7 @@ async def test_preview_source_handler_calls_controller(fake_controller):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_source_handler_calls_controller(fake_controller):
     async with _open_screen(fake_controller) as (screen, pilot):
@@ -268,6 +272,7 @@ async def test_check_now_source_handler_calls_controller(fake_controller):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_check_now_failure_toast_uses_validated_copy_and_action(fake_controller):
     from unittest.mock import Mock
@@ -300,6 +305,7 @@ async def test_check_now_failure_toast_uses_validated_copy_and_action(fake_contr
         assert "TAMPERED" not in failure_toasts[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_opml_handler_calls_controller(fake_controller):
     async with _open_screen(fake_controller) as (screen, pilot):
@@ -309,16 +315,17 @@ async def test_import_opml_handler_calls_controller(fake_controller):
         top_screen = screen.app.screen
         assert isinstance(top_screen, OpmlImportDialog)
         text_area = top_screen.query_one("#opml-import-text", TextArea)
-        text_area.text = "<opml><outline text=\"A\" xmlUrl=\"http://a.com/feed\"/>"
+        text_area.text = '<opml><outline text="A" xmlUrl="http://a.com/feed"/>'
         top_screen.query_one("#opml-import-confirm", Button).press()
         await pilot.pause(0.2)
 
         fake_controller.import_opml.assert_awaited_once_with(
             runtime_backend="local",
-            xml_text="<opml><outline text=\"A\" xmlUrl=\"http://a.com/feed\"/>",
+            xml_text='<opml><outline text="A" xmlUrl="http://a.com/feed"/>',
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_opml_handler_calls_controller(fake_controller):
     async with _open_screen(fake_controller) as (screen, pilot):
@@ -334,6 +341,7 @@ async def test_export_opml_handler_calls_controller(fake_controller):
 # (and its `#watchlists-list-pane`) is gone entirely.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_read_tab_is_the_default_section():
     """The screen lands on Read: `active_section` defaults to "items" (the
@@ -349,6 +357,7 @@ async def test_the_read_tab_is_the_default_section():
         assert screen.query_one("#watchlists-items-pane")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pre_mount_server_read_is_query_free_and_enters_recovery(
     monkeypatch,
@@ -401,6 +410,7 @@ async def test_pre_mount_server_read_is_query_free_and_enters_recovery(
             assert spy.call_count == 0, name
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_digit_1_switches_to_read_and_7_to_overview():
     """The digit bindings follow the new tab order: Read first, Overview last."""
@@ -423,6 +433,7 @@ async def test_digit_1_switches_to_read_and_7_to_overview():
         assert screen.active_section == "sources"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_tab_strip_is_mounted_on_the_read_and_sources_tabs():
     """`#wl-tabs` lives in the centre header (`_build_centre_status_header`),
@@ -444,6 +455,7 @@ async def test_the_tab_strip_is_mounted_on_the_read_and_sources_tabs():
         assert screen.query_one("#wl-centre-status")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size",
@@ -480,9 +492,7 @@ async def test_read_snapshot_count_and_arrivals_fit_the_feed_items_pane(size):
             strips = widget.screen._compositor.render_strips()
             region = widget.region
             return "\n".join(
-                "".join(segment.text for segment in strips[y])[
-                    region.x : region.right
-                ]
+                "".join(segment.text for segment in strips[y])[region.x : region.right]
                 for y in range(region.y, region.bottom)
             )
 
@@ -508,6 +518,7 @@ async def test_read_snapshot_count_and_arrivals_fit_the_feed_items_pane(size):
         assert composited_text(pill).strip() == "3 new items"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_list_pane_is_gone_on_every_tab():
     """The FEEDS region's `#watchlists-list-pane` died with the region -- no
@@ -527,6 +538,7 @@ async def test_the_list_pane_is_gone_on_every_tab():
             assert not screen.query("#wl-header-feeds"), section
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_backed_read_recovers_through_the_normal_local_load_path(
     monkeypatch,
@@ -607,9 +619,12 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         switch = screen.query_one("#watchlists-switch-local", Button)
         assert switch.disabled is False
         assert "Switch to Local" in str(switch.label)
-        assert "local" in _static_text(
-            screen.query_one("#watchlists-read-local-only-copy", Static)
-        ).lower()
+        assert (
+            "local"
+            in _static_text(
+                screen.query_one("#watchlists-read-local-only-copy", Static)
+            ).lower()
+        )
 
         screen.post_message(ItemsFilterChanged("unread", "server search"))
         screen.action_refresh_all()
@@ -629,9 +644,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
             count_spies,
         ):
             assert spy.call_count == 0, name
-        assert not screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).items
+        assert not screen.query_one("#watchlists-items-pane", ArticleListPane).items
 
         switch.press()
         assert await _wait_until(pilot, local_load_entered.is_set)
@@ -644,9 +657,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         assert screen.query_one("#watchlists-switch-local", Button).disabled is False
         assert screen.query("#watchlists-read-local-only-copy")
         assert not screen.query("#watchlists-content-pane")
-        assert not screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).items
+        assert not screen.query_one("#watchlists-items-pane", ArticleListPane).items
 
         release_local_load.set()
         await host.workers.wait_for_complete()
@@ -673,6 +684,7 @@ async def test_server_backed_read_recovers_through_the_normal_local_load_path(
         assert screen._selected_content_item is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
     controller = _controller_double()
@@ -738,9 +750,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         assert screen.query_one("#watchlists-switch-local", Button).disabled is False
         assert screen.query("#watchlists-read-local-only-copy")
         assert not screen.query("#watchlists-content-pane")
-        assert not screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).items
+        assert not screen.query_one("#watchlists-items-pane", ArticleListPane).items
         assert screen._tree_watchlists[0]["name"] == "Recovery local watchlist"
         failed_render = host.export_screenshot()
         assert "Recovery local watchlist" not in failed_render
@@ -767,6 +777,7 @@ async def test_failed_switch_to_local_retries_the_normal_load_path() -> None:
         assert screen._selected_content_item is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
     monkeypatch,
@@ -864,14 +875,10 @@ async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
         assert selector.value == "server"
         assert selector.disabled is True
         assert not screen.query("#watchlists-content-pane")
-        assert not screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).items
+        assert not screen.query_one("#watchlists-items-pane", ArticleListPane).items
         assert screen._selected_content_item is None
         assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
-        assert not screen.query(
-            f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
-        )
+        assert not screen.query(f"#wl-tree-node-source-{watchlist['id']}-{source_id}")
         rendered = host.export_screenshot()
         assert "Same-tab local watchlist" not in rendered
         assert "Same-tab local source" not in rendered
@@ -892,11 +899,13 @@ async def test_same_tab_switch_to_server_replaces_local_reader_without_queries(
         for name, spy in local_spies.items():
             assert spy.call_count == 0, name
         assert screen._items_page_loading is False
-        assert screen.query_one(
-            "#watchlists-items-pane", ArticleListPane
-        ).page_loading is False
+        assert (
+            screen.query_one("#watchlists-items-pane", ArticleListPane).page_loading
+            is False
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_entering_server_read_hides_local_reader_navigation_without_queries(
     monkeypatch,
@@ -935,9 +944,7 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
         await screen._load_tree_data().wait()
         assert await _wait_until(
             pilot,
-            lambda: bool(
-                screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
-            ),
+            lambda: bool(screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")),
         )
         assert service.list_source_rows(watchlist["id"])[0]["name"] == (
             "Local counted feed"
@@ -956,16 +963,12 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
         assert screen.query_one("#watchlists-items-pane", ArticleListPane).items
         screen.query_one(f"#wl-tree-expand-{watchlist['id']}", Button).press()
         screen.post_message(
-            TreeScopeChanged(
-                TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
-            )
+            TreeScopeChanged(TreeScope(kind="watchlist", watchlist_id=watchlist["id"]))
         )
         assert await _wait_until(
             pilot,
             lambda: bool(
-                screen.query(
-                    f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
-                )
+                screen.query(f"#wl-tree-node-source-{watchlist['id']}-{source_id}")
             ),
         )
         await host.workers.wait_for_complete()
@@ -1024,9 +1027,7 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
         assert screen._local_watchlist_count == parked_snapshot_count
         assert screen._wc_loaded is True
         assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
-        assert not screen.query(
-            f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
-        )
+        assert not screen.query(f"#wl-tree-node-source-{watchlist['id']}-{source_id}")
         rendered = host.export_screenshot()
         assert "Cross-tab local watchlist" not in rendered
         assert "Local counted feed" not in rendered
@@ -1056,14 +1057,12 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
         await host.workers.wait_for_complete()
         assert await _wait_until(
             pilot,
-            lambda: bool(screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}"))
+            lambda: bool(screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")),
         )
         assert await _wait_until(
             pilot,
             lambda: bool(
-                screen.query(
-                    f"#wl-tree-node-source-{watchlist['id']}-{source_id}"
-                )
+                screen.query(f"#wl-tree-node-source-{watchlist['id']}-{source_id}")
             ),
         )
         assert screen.query("#wc-watchlists-summary")
@@ -1113,6 +1112,7 @@ async def test_entering_server_read_hides_local_reader_navigation_without_querie
 # exact rather than escape-hatched.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scoped_source_rows_narrows_by_watchlist_and_unassigned():
     app = _build_test_app()
@@ -1157,6 +1157,7 @@ async def test_scoped_source_rows_narrows_by_watchlist_and_unassigned():
         assert [row["id"] for row in screen.scoped_source_rows()] == [b]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_header_summary_names_the_scope_with_a_live_count():
     # Seeded *before* the screen mounts (unlike the narrowing test above,
@@ -1262,9 +1263,7 @@ def test_unread_context_forces_effective_filter_without_overwriting_manual_choic
     screen = WatchlistsCollectionsScreen(Mock())
     screen.__dict__["_reactive_runtime_backend"] = "local"
     screen._items_status_filter = "all"
-    unread_source = TreeScope(
-        kind="source", source_id=9, parent_context="unread"
-    )
+    unread_source = TreeScope(kind="source", source_id=9, parent_context="unread")
 
     assert screen._effective_items_status_filter(unread_source) == "unread"
     assert screen._items_status_filter == "all"
@@ -1326,9 +1325,15 @@ def test_contextual_scope_reconciliation_chooses_nearest_existing_parent(
 ) -> None:
     screen = WatchlistsCollectionsScreen(Mock())
     snapshot = collections_module.TreeDataSnapshot(
-        tuple({"id": watchlist_id, "name": f"List {watchlist_id}"} for watchlist_id in watchlists),
+        tuple(
+            {"id": watchlist_id, "name": f"List {watchlist_id}"}
+            for watchlist_id in watchlists
+        ),
         tuple({"id": source_id, "name": f"Feed {source_id}"} for source_id in all_ids),
-        tuple({"id": source_id, "name": f"Feed {source_id}"} for source_id in unassigned_ids),
+        tuple(
+            {"id": source_id, "name": f"Feed {source_id}"}
+            for source_id in unassigned_ids
+        ),
         {},
         {},
         watchlist_source_ids={
@@ -1466,9 +1471,7 @@ def test_committed_read_scope_reconciliation_requests_atomic_fallback() -> None:
             TreeScope(kind="source", source_id=9, parent_context="unassigned"),
             [
                 TreeScope(kind="unassigned"),
-                TreeScope(
-                    kind="source", source_id=9, parent_context="unassigned"
-                ),
+                TreeScope(kind="source", source_id=9, parent_context="unassigned"),
             ],
         ),
         (
@@ -1532,7 +1535,9 @@ def test_server_management_disables_only_individual_feed_navigation():
 # `_build_test_app()`'s isolated temp-dir SQLite file.
 
 
-def _seed_item(db, subscription_id: int, title: str, created_at: str | None = None) -> int:
+def _seed_item(
+    db, subscription_id: int, title: str, created_at: str | None = None
+) -> int:
     """Insert one `subscription_items` row for `subscription_id`.
 
     `created_at` (ISO text) pins the display order when a test seeds several
@@ -1573,6 +1578,7 @@ async def _wait_for_items(pilot, pane, attempts: int = 60) -> None:
             return
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_watchlist():
     """A watchlist scope shows only its member sources' items."""
@@ -1606,6 +1612,7 @@ async def test_items_reload_scopes_to_watchlist():
         assert {item["source_id"] for item in screen._loaded_items} == {member}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_unassigned():
     """The Unassigned scope shows only items of sources in no watchlist."""
@@ -1635,6 +1642,7 @@ async def test_items_reload_scopes_to_unassigned():
         assert {item["source_id"] for item in screen._loaded_items} == {loose}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_source():
     """A source scope collapses to that one source's items, even inside a
@@ -1668,6 +1676,7 @@ async def test_items_reload_scopes_to_source():
         assert {item["source_id"] for item in screen._loaded_items} == {krebs}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_starred():
     """TASK-3072 plan task 6: the Starred smart feed lists flagged items from
@@ -1706,6 +1715,7 @@ async def test_items_reload_scopes_to_starred():
 # --- TASK-3791 plan task 4: All Unread + Today scopes --------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_all_unread():
     """All Unread: every source's unread items, membership irrelevant."""
@@ -1735,6 +1745,7 @@ async def test_items_reload_scopes_to_all_unread():
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_all_unread_scope_wins_over_the_all_filter():
     """The node is the stronger statement: All Unread + the pane's "All"
@@ -1763,6 +1774,7 @@ async def test_all_unread_scope_wins_over_the_all_filter():
         assert [item["title"] for item in screen._loaded_items] == ["Still unread"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_items_reload_scopes_to_today():
     """Today: effective date at/after local midnight, across every source."""
@@ -1796,6 +1808,7 @@ async def test_items_reload_scopes_to_today():
         assert [item["title"] for item in screen._loaded_items] == ["Fresh today"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_move_requests_atomic_scope_on_read_tab():
     """Read navigation uses the pending request path, not the watcher."""
@@ -1834,6 +1847,7 @@ async def test_tree_move_requests_atomic_scope_on_read_tab():
 # rail-focus and typing-guard facts have their own regression tests below.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_toggles_read_state_on_open_item():
     """`m` flips the open item new -> reviewed -> new (and the open itself
@@ -1881,6 +1895,7 @@ async def test_m_toggles_read_state_on_open_item():
         ], "`m` on an unread item must mark it read"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
     app = _build_test_app()
@@ -1903,9 +1918,7 @@ async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
         await pilot.click("#wl-tree-expand-root-unread")
         assert await _wait_until(
             pilot,
-            lambda: bool(
-                screen.query(f"#wl-tree-node-source-unread-{source_id}")
-            ),
+            lambda: bool(screen.query(f"#wl-tree-node-source-unread-{source_id}")),
         )
         await pilot.click(f"#wl-tree-node-source-unread-{source_id}")
         expected_scope = TreeScope(
@@ -1933,8 +1946,7 @@ async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
         page_before_refresh = pane.page_number
         assert await _wait_until(
             pilot,
-            lambda: screen._tree_source_counts.get(source_id, {}).get("unread")
-            == 0,
+            lambda: screen._tree_source_counts.get(source_id, {}).get("unread") == 0,
             ticks=140,
         )
 
@@ -1957,12 +1969,11 @@ async def test_last_unread_item_keeps_contextual_feed_and_reader_pinned():
         assert screen._tree_source_counts[source_id]["unread"] == 1
         assert await _wait_until(
             pilot,
-            lambda: bool(
-                screen.query(f"#wl-tree-node-source-unread-{source_id}")
-            ),
+            lambda: bool(screen.query(f"#wl-tree-node-source-unread-{source_id}")),
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_refuses_on_ingested_item():
     """`m` is a read/unread verb only: an ingested item is a deliberate
@@ -2011,6 +2022,7 @@ def _flagged_value(db, item_id: int) -> int:
     return int(row[0]) if row else -1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_s_toggles_star_on_the_open_item():
     """`s` stars, then unstars, the open item through the service; the row's
@@ -2073,6 +2085,7 @@ async def test_s_toggles_star_on_the_open_item():
         assert str(screen.query_one("#content-star-button", Button).label) == "☆ Star"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_s_with_no_open_item_is_a_noop():
     """`s` with nothing open writes nothing and raises nothing."""
@@ -2094,6 +2107,7 @@ async def test_s_with_no_open_item_is_a_noop():
         assert _flagged_value(db, item_id) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_star_toggle_requested_toggles_the_same_path():
     """The reader's Star button and the `s` key share one handler."""
@@ -2117,9 +2131,7 @@ async def test_star_toggle_requested_toggles_the_same_path():
         await pilot.pause(0.3)
         assert screen._selected_content_item is not None, "precondition: item open"
 
-        screen.post_message(
-            StarToggleRequested(dict(screen._selected_content_item))
-        )
+        screen.post_message(StarToggleRequested(dict(screen._selected_content_item)))
         for _ in range(60):
             await pilot.pause()
             if _flagged_value(db, item_id) == 1:
@@ -2153,6 +2165,7 @@ async def _open_item_and_get_url(pilot, screen, db, title: str, url: str) -> int
 
 def _successful_browser_recorder(opened: list[str]):
     """Return a browser stub that records its URL and reports success."""
+
     def record(url: str) -> bool:
         opened.append(url)
         return True
@@ -2160,6 +2173,7 @@ def _successful_browser_recorder(opened: list[str]):
     return record
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_o_opens_the_open_items_url(monkeypatch):
     """`o` hands the open item's http URL to the system browser."""
@@ -2184,6 +2198,7 @@ async def test_o_opens_the_open_items_url(monkeypatch):
         app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_o_refuses_a_non_http_url(monkeypatch):
     """A `javascript:`/`file:`/empty URL is a remote-derived string reaching
@@ -2214,6 +2229,7 @@ async def test_o_refuses_a_non_http_url(monkeypatch):
         assert kwargs.get("severity") == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_o_strips_control_bytes_from_the_url_before_opening(monkeypatch):
     """A feed URL is remote-derived text: control bytes are stripped before
@@ -2239,6 +2255,7 @@ async def test_o_strips_control_bytes_from_the_url_before_opening(monkeypatch):
         app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_o_with_no_open_item_is_a_noop(monkeypatch):
     opened: list[str] = []
@@ -2262,6 +2279,7 @@ async def test_o_with_no_open_item_is_a_noop(monkeypatch):
         assert opened == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
     """The reader's Open button and the `o` key share one handler."""
@@ -2283,15 +2301,14 @@ async def test_open_in_browser_requested_takes_the_same_path(monkeypatch):
         )
         app.notify = Mock()
 
-        screen.post_message(
-            OpenInBrowserRequested(dict(screen._selected_content_item))
-        )
+        screen.post_message(OpenInBrowserRequested(dict(screen._selected_content_item)))
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert opened == ["https://example.com/via-button"]
         app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("activation", ["keyboard", "button"])
 @pytest.mark.asyncio
 async def test_open_validates_on_ui_thread_then_opens_in_worker(
@@ -2305,6 +2322,7 @@ async def test_open_validates_on_ui_thread_then_opens_in_worker(
     ui_thread = threading.get_ident()
     validation_threads: list[int] = []
     browser_threads: list[int] = []
+
     def validate_on_recorded_thread(url: str) -> bool:
         validation_threads.append(threading.get_ident())
         return real_validate_url(url)
@@ -2346,9 +2364,10 @@ async def test_open_validates_on_ui_thread_then_opens_in_worker(
 # --- TASK-3072 plan task 9: the reader's position footer ----------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_reader_footer_numbers_the_open_item():
-    """"N of M": M is the displayed list, N the open item's 1-based place in
+    """ "N of M": M is the displayed list, N the open item's 1-based place in
     it; `j` advances the reader and the footer together."""
     from textual.widgets import Static
 
@@ -2384,11 +2403,12 @@ async def test_the_reader_footer_numbers_the_open_item():
             if screen._selected_content_item.get("title") == "a":
                 break
         assert screen._selected_content_item["title"] == "a", "precondition: j moved"
-        assert str(screen.query_one("#content-position", Static).renderable) == "3 of 3", (
-            "the footer must walk with the reader"
-        )
+        assert (
+            str(screen.query_one("#content-position", Static).renderable) == "3 of 3"
+        ), "the footer must walk with the reader"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_reader_footer_is_empty_with_nothing_open():
     """Nothing open: no footer at all, and definitely not "0 of 0"."""
@@ -2401,6 +2421,7 @@ async def test_the_reader_footer_is_empty_with_nothing_open():
         assert not screen.query("#content-position")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_next_unread_footer_button_opens_the_next_unread():
     """The footer's Next Unread control drives the same handler `space` does."""
@@ -2444,6 +2465,7 @@ async def test_the_next_unread_footer_button_opens_the_next_unread():
 # --- TASK-3072 plan task 10: the hostile-HTML end-to-end pin ------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_hostile_item_stars_queues_and_still_renders_inert():
     """The phase-2 DoD, end to end: an item whose title and body carry
@@ -2455,7 +2477,9 @@ async def test_a_hostile_item_stars_queues_and_still_renders_inert():
     from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
 
     hostile_title = "[bold red]x[/]<script>alert('TITLE_LITERAL')</script>\x1b[31m"
-    hostile_body = "<script>alert('BODY_PAYLOAD')</script> [bold red]injected[/]\x00\x07"
+    hostile_body = (
+        "<script>alert('BODY_PAYLOAD')</script> [bold red]injected[/]\x00\x07"
+    )
 
     app = _build_test_app()
     host = DestinationHarness(app, "watchlists_collections")
@@ -2542,6 +2566,7 @@ async def test_a_hostile_item_stars_queues_and_still_renders_inert():
         assert int(queued[0]) == 1, "the queue flag survives a re-persist"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_opens_next_unread():
     """`space` walks to the next UNREAD item, skipping reviewed rows."""
@@ -2586,6 +2611,7 @@ async def test_space_opens_next_unread():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_at_end_notifies_all_caught_up():
     """No unread row below the current one: `space` says so, moves nothing."""
@@ -2620,6 +2646,7 @@ async def test_space_at_end_notifies_all_caught_up():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_with_rail_focused_does_not_navigate():
     """Regression: `space` is pane-bound, so the rail never triggers it.
@@ -2649,6 +2676,7 @@ async def test_space_with_rail_focused_does_not_navigate():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_space_in_items_search_input_still_types():
     """Typing spaces in the items search box is typing, not navigation.
@@ -2684,6 +2712,7 @@ async def test_space_in_items_search_input_still_types():
         assert screen._selected_content_item is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_in_sources_search_survives_the_recompose():
     """Typing in the sources search box keeps focus and value, end to end.
@@ -2729,6 +2758,7 @@ async def test_typing_in_sources_search_survives_the_recompose():
         assert search.has_focus, "typing must not lose the sources search box"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_form_open_focuses_first_field_over_search():
     """Opening the create form focuses its first field even when search had focus.
@@ -2762,6 +2792,7 @@ async def test_create_form_open_focuses_first_field_over_search():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_then_undo_roundtrip():
     """`a` catches the scope up and `u` restores it — the two-key loop."""
@@ -2776,7 +2807,9 @@ async def test_mark_all_read_then_undo_roundtrip():
         )
         for minute in range(3):
             _seed_item(
-                db, source_id, f"item {minute}",
+                db,
+                source_id,
+                f"item {minute}",
                 created_at=f"2026-08-06 09:0{minute}:00",
             )
         await screen._replace_items_snapshot(reason="initial")
@@ -2805,6 +2838,7 @@ async def test_mark_all_read_then_undo_roundtrip():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_undo_failure_keeps_the_batch_for_retry(monkeypatch):
     """Qodo review (PR #1383): a failing restore must not consume the only
@@ -2869,6 +2903,7 @@ async def test_undo_failure_keeps_the_batch_for_retry(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_scoped_to_watchlist():
     """`a` catches up the rail's current scope only — sources outside the
@@ -2921,6 +2956,7 @@ async def test_mark_all_read_scoped_to_watchlist():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_verbs_noop_off_read_tab():
     """m/a/u are Read-tab verbs: on any other tab they change nothing."""
@@ -2950,6 +2986,7 @@ async def test_verbs_noop_off_read_tab():
 # --- Fix round 1, Finding 2: a pane-row click must not discard the tree scope
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_pane_row_keeps_the_header_summary_on_the_tree_scope():
     """Finding 2's exact reproduction: click a watchlist in the tree, then
@@ -2996,7 +3033,9 @@ async def test_selecting_a_pane_row_keeps_the_header_summary_on_the_tree_scope()
         assert [row["id"] for row in screen.scoped_source_rows()] == [a]
         assert summary == "Local Watchlists snapshot: Morning AI Brief (1 source)"
 
-        screen.post_message(SourceSelected({"id": "source-1", "name": "Some Feed", "url": "https://x"}))
+        screen.post_message(
+            SourceSelected({"id": "source-1", "name": "Some Feed", "url": "https://x"})
+        )
         await pilot.pause()
 
         assert screen.tree_scope == TreeScope(
@@ -3009,6 +3048,7 @@ async def test_selecting_a_pane_row_keeps_the_header_summary_on_the_tree_scope()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pane_row_selection_still_claims_no_inspector_ancestry():
     """The half of Task 5 fix round 2 that must NOT regress while Finding 2
@@ -3050,6 +3090,7 @@ async def test_pane_row_selection_still_claims_no_inspector_ancestry():
 # --- Fix round 1, Finding 1: staging follows the tree scope ----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_staged_console_payload_follows_the_tree_scope():
     """The Console handoff must send the scope the user navigated to.
@@ -3095,6 +3136,7 @@ async def test_staged_console_payload_follows_the_tree_scope():
     assert metadata["source_titles"] == ["ArXiv"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_all_scope_summary_is_a_single_line_in_the_header():
     """Finding 1's headline symptom was the unscoped staging block printing
@@ -3129,6 +3171,7 @@ async def test_the_all_scope_summary_is_a_single_line_in_the_header():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_header_summary_escapes_an_untrusted_source_name():
     """The `source` scope takes its summary label from `rows[0]["name"]` --
@@ -3172,6 +3215,7 @@ async def test_the_header_summary_escapes_an_untrusted_source_name():
         assert "[bold red]Not Actually Bold[/bold red]" in summary
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
     """task-1344 fix wave (Qodo correctness), kept current by task-2513:
@@ -3220,12 +3264,15 @@ async def test_centre_header_summary_follows_the_tree_scope_off_the_read_tab():
             if "Morning AI Brief" in summary_after:
                 break
 
-        assert summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)", (
+        assert (
+            summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)"
+        ), (
             f"the header must reflect the NEW scope's counts, not the old: "
             f"{summary_after!r}"
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too():
     """TASK-2312: before this task, `watch_tree_scope` refreshed the centre
@@ -3265,8 +3312,7 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
         screen.refresh(recompose=True)
         await pilot.pause(0.2)
         assert screen.query_one("#wl-centre-status"), (
-            "precondition: the header exists on the Read tab too "
-            "(TASK-2312)"
+            "precondition: the header exists on the Read tab too (TASK-2312)"
         )
 
         summary_before = _static_text(
@@ -3286,7 +3332,9 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
             if "Morning AI Brief" in summary_after:
                 break
 
-        assert summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)", (
+        assert (
+            summary_after == "Local Watchlists snapshot: Morning AI Brief (1 source)"
+        ), (
             f"the header must reflect the NEW scope's counts on the Read "
             f"tab too, not just every other section: {summary_after!r}"
         )
@@ -3303,6 +3351,7 @@ async def test_centre_header_summary_follows_the_tree_scope_on_the_read_tab_too(
 # `expanded`.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_breadcrumb_promotion_moves_the_tree_highlight_same_as_a_click():
     # Seeded *before* the screen mounts, like
@@ -3342,6 +3391,7 @@ async def test_breadcrumb_promotion_moves_the_tree_highlight_same_as_a_click():
         ).has_class("is-active")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_highlight_survives_a_section_switch_and_a_rail_toggle():
     """Both a section switch (`watch_active_section`) and a rail toggle
@@ -3385,6 +3435,7 @@ async def test_tree_highlight_survives_a_section_switch_and_a_rail_toggle():
         ).has_class("is-active"), "the highlight must survive a rail toggle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_load_tree_data_failure_notifies_the_user():
     """A real database failure in `_load_tree_data` must not render
@@ -3393,7 +3444,9 @@ async def test_load_tree_data_failure_notifies_the_user():
     behaviour (`_load_sources`/`_load_runs`/`_load_notifications`, etc.).
     """
     app = _build_test_app()
-    app.watchlist_bundle_service.list_watchlists = Mock(side_effect=RuntimeError("boom"))
+    app.watchlist_bundle_service.list_watchlists = Mock(
+        side_effect=RuntimeError("boom")
+    )
     app.notify = Mock()
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3410,6 +3463,7 @@ async def test_load_tree_data_failure_notifies_the_user():
         assert screen.query_one("#wl-tree-node-unassigned", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_snapshot_owns_complete_aggregate_rows_not_management_cache(
     monkeypatch,
@@ -3456,15 +3510,16 @@ async def test_tree_snapshot_owns_complete_aggregate_rows_not_management_cache(
         assert [row["id"] for row in screen._tree_unassigned_source_rows] == [
             unassigned_id
         ]
-        assert screen._loaded_sources == [
-            {"id": 999, "name": "Capped management row"}
-        ]
+        assert screen._loaded_sources == [{"id": 999, "name": "Capped management row"}]
         for name, spy in spies.items():
             assert spy.call_count == 1, name
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_root_and_watchlist_expansion_persist_independently_across_rebuilds() -> None:
+async def test_root_and_watchlist_expansion_persist_independently_across_rebuilds() -> (
+    None
+):
     app = _build_test_app()
     watchlist = app.watchlist_bundle_service.create("Persistent branch")
     host = DestinationHarness(app, "watchlists_collections")
@@ -3485,12 +3540,11 @@ async def test_root_and_watchlist_expansion_persist_independently_across_rebuild
 
         assert tree.expanded_root_kinds == frozenset({"all", "unassigned"})
         assert tree.expanded == frozenset({watchlist["id"]})
-        assert screen._tree_expanded_root_kinds == frozenset(
-            {"all", "unassigned"}
-        )
+        assert screen._tree_expanded_root_kinds == frozenset({"all", "unassigned"})
         assert screen._tree_expanded_watchlist_ids == frozenset({watchlist["id"]})
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_snapshot_acquisition_runs_off_the_textual_event_loop(
     monkeypatch,
@@ -3514,6 +3568,7 @@ async def test_tree_snapshot_acquisition_runs_off_the_textual_event_loop(
     assert all(thread_id != caller_thread for thread_id in acquisition_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slow_tree_refresh_cannot_overwrite_a_newer_snapshot(monkeypatch) -> None:
     app = _build_test_app()
@@ -3550,6 +3605,7 @@ async def test_slow_tree_refresh_cannot_overwrite_a_newer_snapshot(monkeypatch) 
         assert [row["name"] for row in screen._tree_all_source_rows] == ["Fresh"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_branch_failure_retains_last_snapshot_and_notifies_once_per_episode(
     monkeypatch,
@@ -3636,6 +3692,7 @@ def _label_plain(widget) -> str:
     return raw
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_creating_a_watchlist_from_the_tree_shows_it_without_a_refresh():
     """AC #1. The rail must show the new watchlist on its own -- the whole
@@ -3665,6 +3722,7 @@ async def test_creating_a_watchlist_from_the_tree_shows_it_without_a_refresh():
         ), "the new watchlist must appear in the rail with no manual refresh"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_empty_name_is_rejected_with_a_visible_reason():
     """AC #7. Not a silent no-op: the dialog stays open and says why."""
@@ -3689,6 +3747,7 @@ async def test_an_empty_name_is_rejected_with_a_visible_reason():
         assert app.watchlist_bundle_service.list_watchlists() == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_duplicate_name_is_rejected_and_the_reason_escapes_the_name():
     """AC #7, both halves at once.
@@ -3709,9 +3768,9 @@ async def test_a_duplicate_name_is_rejected_and_the_reason_escapes_the_name():
 
         screen.query_one("#wl-tree-new", Button).press()
         dialog = await _wait_for_dialog(host, WatchlistNameDialog, pilot)
-        dialog.query_one("#watchlist-name-input", Input).value = (
-            "[bold red]alpha[/bold red]"
-        )
+        dialog.query_one(
+            "#watchlist-name-input", Input
+        ).value = "[bold red]alpha[/bold red]"
         dialog.query_one("#watchlist-name-submit", Button).press()
         await pilot.pause()
         await pilot.pause()
@@ -3725,6 +3784,7 @@ async def test_a_duplicate_name_is_rejected_and_the_reason_escapes_the_name():
         assert len(app.watchlist_bundle_service.list_watchlists()) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_renaming_a_watchlist_updates_the_rail():
     """AC #2, rename half."""
@@ -3769,8 +3829,10 @@ async def test_renaming_a_watchlist_updates_the_rail():
         service = app.watchlist_bundle_service
         assert await _wait_until(
             pilot,
-            lambda: [row["name"] for row in service.list_watchlists()]
-            == ["Morning AI Brief"],
+            lambda: (
+                [row["name"] for row in service.list_watchlists()]
+                == ["Morning AI Brief"]
+            ),
         )
         assert await _wait_until(
             pilot,
@@ -3787,9 +3849,11 @@ async def test_renaming_a_watchlist_updates_the_rail():
         # header refresh, so poll for it.
         assert await _wait_until(
             pilot,
-            lambda: bool(screen.query("#wc-watchlists-summary"))
-            and _static_text(screen.query_one("#wc-watchlists-summary", Static))
-            == "Local Watchlists snapshot: Morning AI Brief (1 source)",
+            lambda: (
+                bool(screen.query("#wc-watchlists-summary"))
+                and _static_text(screen.query_one("#wc-watchlists-summary", Static))
+                == "Local Watchlists snapshot: Morning AI Brief (1 source)"
+            ),
         )
         assert screen._breadcrumb_labels == ["Morning AI Brief"]
         # ...and the MOUNTED Inspector, not only the screen's mirror of it
@@ -3803,6 +3867,7 @@ async def test_renaming_a_watchlist_updates_the_rail():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deleting_a_watchlist_says_what_happens_to_its_sources_first():
     """AC #2, delete half: the count and the destination are stated before
@@ -3848,6 +3913,7 @@ async def test_deleting_a_watchlist_says_what_happens_to_its_sources_first():
         assert len(service.list_watchlists()) == 1, "Cancel must not delete anything"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_deleting_a_watchlist_never_orphans_its_sources_into_invisibility():
     """AC #3. Deleting cascades only the membership rows, so the sources
@@ -3897,6 +3963,7 @@ async def test_deleting_a_watchlist_never_orphans_its_sources_into_invisibility(
         assert not screen.query(f"#wl-tree-node-watchlist-{watchlist['id']}")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_adding_a_source_to_a_watchlist_from_the_tree():
     """AC #4, add half. The picker offers only sources that are not already
@@ -3935,11 +4002,13 @@ async def test_adding_a_source_to_a_watchlist_from_the_tree():
         dialog.query_one(f"#wl-add-source-option-{candidate}", Button).press()
 
         assert await _wait_until(
-            pilot, lambda: set(service.list_sources(watchlist["id"])) == {member, candidate}
+            pilot,
+            lambda: set(service.list_sources(watchlist["id"])) == {member, candidate},
         )
         assert service.list_unassigned_source_rows() == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_removing_a_source_from_a_watchlist_keeps_the_source():
     """AC #4, remove half -- and the other side of AC #3: a removed source
@@ -3986,11 +4055,14 @@ async def test_removing_a_source_from_a_watchlist_keeps_the_source():
         # a source node that no longer exists.
         assert await _wait_until(
             pilot,
-            lambda: screen.tree_scope
-            == TreeScope(kind="watchlist", watchlist_id=watchlist["id"]),
+            lambda: (
+                screen.tree_scope
+                == TreeScope(kind="watchlist", watchlist_id=watchlist["id"])
+            ),
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_server_backend_disables_all_five_verbs_with_a_stated_reason():
     """AC #5. Not cosmetic hiding: `SourceUpdateRequest` carries no
@@ -4027,13 +4099,16 @@ async def test_the_server_backend_disables_all_five_verbs_with_a_stated_reason()
             "#wl-tree-remove-source",
         ):
             button = screen.query_one(action_id, Button)
-            assert button.disabled, f"{action_id} must be disabled on the server backend"
+            assert button.disabled, (
+                f"{action_id} must be disabled on the server backend"
+            )
             assert "no wire path" in str(button.tooltip)
 
         note = screen.query_one("#wl-tree-actions-unavailable", Static)
         assert "Switch the backend to Local" in _label_plain(note)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_verbs_are_disabled_when_the_bundle_service_is_missing():
     """The same degrade-don't-crash contract every other caller of
@@ -4099,7 +4174,10 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
                 and node.func.id == "WatchlistBundleService"
             ):
                 return True
-            if isinstance(node, ast.Attribute) and node.attr == "watchlist_bundle_service":
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr == "watchlist_bundle_service"
+            ):
                 return True
             return isinstance(node, ast.Name) and node.id in self.aliases
 
@@ -4114,15 +4192,16 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
             for argument in (*node.args.posonlyargs, *node.args.args):
                 annotation = argument.annotation
                 if annotation is not None and any(
-                    isinstance(part, ast.Name)
-                    and part.id == "WatchlistBundleService"
+                    isinstance(part, ast.Name) and part.id == "WatchlistBundleService"
                     for part in ast.walk(annotation)
                 ):
                     self.aliases.add(argument.arg)
             self.generic_visit(node)
 
         def visit_Call(self, node: ast.Call) -> None:
-            if isinstance(node.func, ast.Attribute) and self._is_service(node.func.value):
+            if isinstance(node.func, ast.Attribute) and self._is_service(
+                node.func.value
+            ):
                 self.called.add(node.func.attr)
             self.generic_visit(node)
 
@@ -4146,8 +4225,7 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
     public_methods = {
         name
         for name, member in vars(WatchlistBundleService).items()
-        if not name.startswith("_")
-        and callable(getattr(member, "__func__", member))
+        if not name.startswith("_") and callable(getattr(member, "__func__", member))
     }
     # Guard the guard: if the reflection above ever stops seeing the class's
     # own methods, the emptiness check below would pass vacuously.
@@ -4161,6 +4239,7 @@ def test_every_watchlist_bundle_service_method_has_a_production_caller():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_tree_write_start_does_not_wedge_later_writes():
     """Qodo #3 on PR #989: `_tree_write_active` could stick True forever.
@@ -4204,6 +4283,7 @@ async def test_a_failed_tree_write_start_does_not_wedge_later_writes():
 # --- TASK-3791 plan task 3: `/` and the corpus-wide search --------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_focuses_the_items_search_box():
     """`/` on the Read tab puts the caret in the search input."""
@@ -4222,6 +4302,7 @@ async def test_slash_focuses_the_items_search_box():
         assert isinstance(focused, Input) and focused.id == "items-search-input"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_types_literally_once_the_search_box_has_focus():
     """The verb guard: once an Input has focus, `/` is text, not a verb."""
@@ -4241,6 +4322,7 @@ async def test_slash_types_literally_once_the_search_box_has_focus():
         assert search.value == "/", "a second `/` must type into the box"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_search_reaches_beyond_the_first_page():
     """The corpus-wide path: an item past the newest-50 page still surfaces."""
@@ -4261,7 +4343,9 @@ async def test_a_search_reaches_beyond_the_first_page():
             day = 1 + index // 24
             hour = index % 24
             _seed_item(
-                db, source_id, f"generic {index:03d}",
+                db,
+                source_id,
+                f"generic {index:03d}",
                 created_at=f"2026-08-0{day} {hour:02d}:00:00",
             )
         _seed_item(db, source_id, "zzqtoken oldest", created_at="2026-08-01 00:00:00")
@@ -4279,14 +4363,14 @@ async def test_a_search_reaches_beyond_the_first_page():
         for _ in range(80):
             await pilot.pause(0.05)
             if any(
-                "zzqtoken" in str(item.get("title"))
-                for item in pane.displayed_items()
+                "zzqtoken" in str(item.get("title")) for item in pane.displayed_items()
             ):
                 found = True
                 break
         assert found, "a corpus-wide search must surface items beyond the page"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_the_search_restores_the_unsearched_page():
     from textual.widgets import Input
@@ -4348,6 +4432,7 @@ async def test_clearing_the_search_restores_the_unsearched_page():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_search_keeps_the_open_item_pinned():
     """The pin is unconditional since TASK-3072: searching away from the open
@@ -4402,9 +4487,7 @@ def _seed_checkable_sources(app):
         name="Paused", type="rss", source="https://c.example/f"
     )
     with db.transaction() as conn:
-        conn.execute(
-            "UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,)
-        )
+        conn.execute("UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,))
     return active_a, active_b, paused
 
 
@@ -4421,6 +4504,7 @@ async def _screen_with_sources(pilot, host):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_checks_every_active_source_once_and_aggregates():
     """`r` launches a check per ACTIVE source (paused are skipped), then
@@ -4470,7 +4554,8 @@ async def test_r_checks_every_active_source_once_and_aggregates():
             "every active source exactly once; the paused one never"
         )
         toasts = [
-            str(call.args[0]) for call in app.notify.call_args_list
+            str(call.args[0])
+            for call in app.notify.call_args_list
             if "Checked" in str(call.args[0])
         ]
         assert len(toasts) == 1, "one aggregated toast, never one per source"
@@ -4480,6 +4565,7 @@ async def test_r_checks_every_active_source_once_and_aggregates():
         assert pane.new_items_note == "2 new items"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_all_pill_uses_arrivals_not_the_unread_delta():
     """Reading an old row during a check cannot hide a new arrival."""
@@ -4533,6 +4619,7 @@ async def test_refresh_all_pill_uses_arrivals_not_the_unread_delta():
         assert screen._items_snapshot_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_arrivals_respect_scope_and_stay_outside_the_cached_snapshot():
     app = _build_test_app()
@@ -4572,9 +4659,7 @@ async def test_arrivals_respect_scope_and_stay_outside_the_cached_snapshot():
         assert screen._items_pending_arrivals == 0
 
         arrival_id = _seed_item(db, active, "Matching arrival")
-        count_arrivals = AsyncMock(
-            wraps=screen._controller.count_reader_item_arrivals
-        )
+        count_arrivals = AsyncMock(wraps=screen._controller.count_reader_item_arrivals)
         screen._controller.count_reader_item_arrivals = count_arrivals
         await screen._load_tree_data().wait()
         await pilot.pause(0.1)
@@ -4612,6 +4697,7 @@ async def test_arrivals_respect_scope_and_stay_outside_the_cached_snapshot():
         assert screen._items_snapshot_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_with_no_eligible_sources_notifies_and_dispatches_nothing():
     from unittest.mock import Mock
@@ -4622,9 +4708,7 @@ async def test_r_with_no_eligible_sources_notifies_and_dispatches_nothing():
         name="Paused", type="rss", source="https://c.example/f"
     )
     with db.transaction() as conn:
-        conn.execute(
-            "UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,)
-        )
+        conn.execute("UPDATE subscriptions SET is_paused = 1 WHERE id = ?", (paused,))
 
     host = DestinationHarness(app, "watchlists_collections")
     async with host.run_test(size=(180, 50)) as pilot:
@@ -4644,6 +4728,7 @@ async def test_r_with_no_eligible_sources_notifies_and_dispatches_nothing():
         assert "Nothing to check" in str(app.notify.call_args.args[0])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_during_a_batch_is_a_noop():
     """One batch at a time: a second `r` while checks are in flight does
@@ -4690,6 +4775,7 @@ async def test_r_during_a_batch_is_a_noop():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_names_a_failed_source_and_finishes_the_batch():
     from unittest.mock import Mock
@@ -4733,21 +4819,21 @@ async def test_r_names_a_failed_source_and_finishes_the_batch():
                 break
 
         toasts = [
-            str(call.args[0]) for call in app.notify.call_args_list
+            str(call.args[0])
+            for call in app.notify.call_args_list
             if "Checked" in str(call.args[0])
         ]
         assert len(toasts) == 1
         assert "1" in toasts[0] and "failed" in toasts[0], (
             "the aggregate names the failure count"
         )
-        assert "1 new items" in toasts[0], (
-            "the delta counts what actually arrived"
-        )
+        assert "1 new items" in toasts[0], "the delta counts what actually arrived"
 
 
 # --- TASK-3791 plan task 6: the hostile-search end-to-end pin ------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_hostile_search_query_renders_inert_and_never_raises():
     """An FTS5-syntax attack typed into the reader's search box: the corpus
@@ -4827,40 +4913,54 @@ def test_opml_import_summary_text_tells_the_whole_story():
         _opml_import_summary_text,
     )
 
-    text = _opml_import_summary_text({
-        "created": 12,
-        "existing": 3,
-        "watchlists_created": ["AI", "News"],
-        "watchlists_reused": ["Tech"],
-        "assignments": 13,
-    })
+    text = _opml_import_summary_text(
+        {
+            "created": 12,
+            "existing": 3,
+            "watchlists_created": ["AI", "News"],
+            "watchlists_reused": ["Tech"],
+            "assignments": 13,
+        }
+    )
     assert "12 new" in text and "3 already present" in text
     assert "13 into 3 watchlists, 2 new" in text
     assert "2 unassigned" in text
 
-    shared = _opml_import_summary_text({
-        "created": 2,
-        "existing": 0,
-        "watchlists_created": ["News", "Tech"],
-        "watchlists_reused": [],
-        "assignments": 2,
-        "unassigned": 1,
-    })
+    shared = _opml_import_summary_text(
+        {
+            "created": 2,
+            "existing": 0,
+            "watchlists_created": ["News", "Tech"],
+            "watchlists_reused": [],
+            "assignments": 2,
+            "unassigned": 1,
+        }
+    )
     assert "1 unassigned" in shared, (
         "membership edges cannot be subtracted from unique source count"
     )
 
-    assert _opml_import_summary_text({
-        "created": 5, "existing": 0,
-        "watchlists_created": [], "watchlists_reused": [], "assignments": 0,
-    }) == "Imported 5 new source(s) from OPML.", (
-        "a folderless import reads exactly like the old toast"
-    )
+    assert (
+        _opml_import_summary_text(
+            {
+                "created": 5,
+                "existing": 0,
+                "watchlists_created": [],
+                "watchlists_reused": [],
+                "assignments": 0,
+            }
+        )
+        == "Imported 5 new source(s) from OPML."
+    ), "a folderless import reads exactly like the old toast"
 
-    noop = _opml_import_summary_text({
-        "created": 0, "existing": 15,
-        "watchlists_created": [], "watchlists_reused": ["Tech"],
-        "assignments": 15,
-    })
+    noop = _opml_import_summary_text(
+        {
+            "created": 0,
+            "existing": 15,
+            "watchlists_created": [],
+            "watchlists_reused": ["Tech"],
+            "assignments": 15,
+        }
+    )
     assert "0 new + 15 already present" in noop
     assert "unassigned" not in noop, "a full round-trip leaves no remainder"

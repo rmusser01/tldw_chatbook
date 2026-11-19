@@ -211,6 +211,7 @@ class ActorPackActivationService:
         prepared = self._prepare_character_sections(
             review, sections, cancel_requested, published
         )
+        self.importer.revalidate_review(review)
         if action == "update_existing":
             if (
                 review._matched_local_actor_id is None
@@ -221,7 +222,7 @@ class ActorPackActivationService:
             fields["image"] = portrait
             with self.db.transaction(immediate=True) as cursor:
                 self._raise_if_cancelled(cancel_requested)
-                self.importer.revalidate_review(review)
+                self.importer._revalidate_review_authority(review)
                 self.db._update_character_card_in_transaction(
                     cursor,
                     character_id,
@@ -245,7 +246,7 @@ class ActorPackActivationService:
         fields["image"] = portrait
         with self.db.transaction(immediate=True) as cursor:
             self._raise_if_cancelled(cancel_requested)
-            self.importer.revalidate_review(review)
+            self.importer._revalidate_review_authority(review)
             if action == "create_copy":
                 fields["name"] = self._copy_character_name(cursor, str(fields["name"]))
             character_id = self.db._insert_character_card_in_transaction(
@@ -680,7 +681,7 @@ class ActorPackActivationService:
         alternate_actor_authorities: tuple[tuple[int, str], ...] = (),
     ) -> bool:
         try:
-            self.importer.revalidate_review(
+            self.importer._revalidate_review_authority(
                 review,
                 alternate_actor_authorities=alternate_actor_authorities,
             )

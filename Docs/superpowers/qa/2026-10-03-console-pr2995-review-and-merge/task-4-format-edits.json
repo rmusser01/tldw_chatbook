@@ -1,0 +1,1277 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "666-667",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "619-650",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "617-618",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "583-584",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "576-577",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "561-572",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "511-559",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "507-508",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "505-506",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "476-501",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "472-473",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "470-471",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "453-467",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "425-450",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "403-424",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "401-402",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "399-400",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "397-398",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "395-396",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "381-382",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "376-378",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "374-375",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "311-312",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "302-306",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "296-298",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "291-293",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "284-288",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "277-278",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "226-230",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "205-213",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "77-78",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "43-44",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "17-23",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "9-12",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "7-8",
+      "tldw_chatbook/Chat/console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "19598-19600",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "19581-19582",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "19543-19544",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "19541-19542",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "19495-19496",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "19493-19494",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "19426-19430",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "12867-12874",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "12782-12805",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "145-151",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "69-73",
+      "tldw_chatbook/Chat/message_metadata.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "53-57",
+      "tldw_chatbook/Chat/message_metadata.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "48-49",
+      "tldw_chatbook/Chat/message_metadata.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "36-43",
+      "tldw_chatbook/Chat/message_metadata.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "29-30",
+      "tldw_chatbook/Chat/message_metadata.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "1220-1227",
+      "tldw_chatbook/DB/automatic_work.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "936-974",
+      "tldw_chatbook/DB/automatic_work.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "199-200",
+      "tldw_chatbook/DB/automatic_work.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "179-180",
+      "tldw_chatbook/DB/automatic_work.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "66-115",
+      "tldw_chatbook/DB/automatic_work.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "40-45",
+      "tldw_chatbook/DB/automatic_work.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "13-14",
+      "tldw_chatbook/DB/automatic_work.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "2731-3038",
+      "Tests/Chat/test_console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "1104-1118",
+      "Tests/Chat/test_console_chat_start.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "387-501",
+      "Tests/DB/test_automatic_chat_starts.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file reformatted\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "327-328",
+      "Tests/Chat/test_console_durable_commit_offload.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "325-326",
+      "Tests/Chat/test_console_durable_commit_offload.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "286-287",
+      "Tests/Chat/test_console_durable_commit_offload.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "284-285",
+      "Tests/Chat/test_console_durable_commit_offload.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "227-228",
+      "Tests/Chat/test_console_durable_commit_offload.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "225-226",
+      "Tests/Chat/test_console_durable_commit_offload.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "47-48",
+      "Tests/Chat/test_console_durable_commit_offload.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "45-46",
+      "Tests/Chat/test_console_durable_commit_offload.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "29-30",
+      "Tests/Chat/test_console_durable_commit_offload.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "124-128",
+      "Tests/Chat/test_console_durable_commit_diagnostics.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "99-103",
+      "Tests/Chat/test_console_durable_commit_diagnostics.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "30-31",
+      "Tests/Chat/test_console_durable_commit_diagnostics.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "319-320",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "317-318",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "285-286",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "283-284",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "249-250",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "247-248",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "205-206",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "203-204",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "180-181",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "178-179",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "152-153",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "150-151",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--no-cache",
+      "--range",
+      "27-28",
+      "Tests/Chat/test_console_close_during_durable_postcommit.py"
+    ],
+    "exit": 0,
+    "stdout": "1 file left unchanged\n",
+    "stderr": ""
+  }
+]

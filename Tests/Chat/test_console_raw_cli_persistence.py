@@ -7,6 +7,10 @@ import threading
 from typing import Any
 
 import pytest
+
+from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
+    _retire_original_run_databases,
+)
 from pydantic import BaseModel
 
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
@@ -37,6 +41,26 @@ from tldw_chatbook.Tools.raw_cli_executor import (
 from tldw_chatbook.UI.Console_Modules import raw_cli as raw_cli_module
 from tldw_chatbook.UI.Console_Modules.raw_cli import ConsoleRawCliController
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
+
+
+@pytest.fixture(autouse=True)
+def _retire_original_chat_databases(monkeypatch, request):
+    """This persistence harness owns its directly constructed Chat databases."""
+    database_type = CharactersRAGDB
+    originals = []
+
+    def create(*args, **kwargs):
+        database = database_type(*args, **kwargs)
+        originals.append(database)
+        return database
+
+    monkeypatch.setattr(request.module, "CharactersRAGDB", create)
+    try:
+        yield
+    finally:
+        for database in reversed(originals):
+            database.close_connection()
+            assert not database._maintenance_participant.connections
 
 
 class _Runtime:

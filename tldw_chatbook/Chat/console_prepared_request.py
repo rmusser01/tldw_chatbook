@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
 from tldw_chatbook.Agents.agent_runtime import split_visible_text_and_tool_call
+from tldw_chatbook.Agents.project_instruction_runtime import PROJECT_INSTRUCTION_ROW_KEY
 from tldw_chatbook.Chat.attachment_core import image_url_part
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_PER_IMAGE_TOKENS,
@@ -25,6 +26,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_provider_continuation_tokens,
 )
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_prompt_mixins import MixinAttemptSnapshot
 from tldw_chatbook.Chat.console_thinking_history import (
     EffectiveThinkingHistoryPolicy,
     ThinkingOwnerGroup,
@@ -52,8 +54,50 @@ from tldw_chatbook.Chat.local_reasoning import (
     effective_replay_policy,
     starts_reasoning_exchange,
 )
-from tldw_chatbook.Chat.provider_continuation import ContinuationOwnerGroup
-from tldw_chatbook.Chat.thinking_blocks import ThinkingHistoryPolicy
+from tldw_chatbook.Provider_Contract.provider_continuation import ContinuationOwnerGroup
+from tldw_chatbook.Provider_Contract.thinking_blocks import ThinkingHistoryPolicy
+
+MIXIN_ATTEMPT_KEY = "_tldw_mixin_attempt"
+
+
+def compose_current_mixin_messages(
+    messages: list[dict[str, Any]],
+    snapshot: MixinAttemptSnapshot,
+    *,
+    user_message_id: str,
+    attempt_id: str,
+) -> list[dict[str, Any]]:
+    """Compose the exact native user anchor once; never select a trailing hook row."""
+    from .console_prompt_mixins import (
+        MixinSnapshotUnavailableError,
+        compose_mixin_content,
+    )
+
+    if not snapshot.items:
+        return messages
+    positions = [
+        i
+        for i, row in enumerate(messages)
+        if row.get("_native_message_id") == user_message_id
+    ]
+    if len(positions) != 1 or messages[positions[0]].get("role") != "user":
+        raise MixinSnapshotUnavailableError("mixin_anchor_unavailable")
+    index = positions[0]
+    row = messages[index]
+    if MIXIN_ATTEMPT_KEY in row:
+        if row[MIXIN_ATTEMPT_KEY] != attempt_id:
+            raise MixinSnapshotUnavailableError("mixin_attempt_changed")
+        return messages
+    return [
+        *messages[:index],
+        {
+            **row,
+            "content": compose_mixin_content(thaw_json(row["content"]), snapshot),
+            MIXIN_ATTEMPT_KEY: attempt_id,
+        },
+        *messages[index + 1 :],
+    ]
+
 
 MINIMUM_SAFETY_MARGIN_TOKENS = 512
 MEMORY_OPEN_TAG = "<chatbook_conversation_memory>"
@@ -74,7 +118,9 @@ MEMORY_SAFETY_COPY = (
 
 RequestOwner = Literal["system", "memory", "mandatory", "compactable", "active"]
 WireStyle = Literal["distinct_roles", "single_preamble"]
-LimitSource = Literal["detected", "estimated", "provider_input_cap", "user_override", "unknown"]
+LimitSource = Literal[
+    "detected", "estimated", "provider_input_cap", "user_override", "unknown"
+]
 
 
 def freeze_json(value: Any) -> Any:
@@ -170,6 +216,36 @@ def _is_tool_loop_row(row: Mapping[str, Any]) -> bool:
     )
 
 
+def _cache_structure_fingerprint(messages: Sequence[Mapping[str, Any]]) -> str:
+    """Bind a private cache boundary to one exact wire projection."""
+    return hashlib.sha256(
+        json.dumps(
+            thaw_json(tuple(messages)),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleCacheBoundary:
+    """Ephemeral, verified clean-history end in adapter-input coordinates."""
+
+    clean_history_message_index: int
+    semantic_structure_fingerprint: str = field(repr=False)
+
+    def matches(self, messages: Sequence[Mapping[str, Any]]) -> bool:
+        """Refuse stale, changed or out-of-range adapter inputs."""
+        index = self.clean_history_message_index
+        return (
+            type(index) is int
+            and 0 <= index < len(messages) - 1
+            and self.semantic_structure_fingerprint
+            == _cache_structure_fingerprint(messages)
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleConversationUnit:
     """One complete user/exchange/tool group eligible for atomic removal."""
@@ -220,6 +296,9 @@ class PreparedConsoleRequest:
     tools: tuple[Mapping[str, Any], ...] = field(default=(), repr=False)
     provenance: ConsoleRequestProvenance | None = field(default=None, repr=False)
     capture_durability: Literal["durable", "temporary"] | None = None
+    clean_history_message_index: int | None = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "system", _freeze_messages(self.system))
@@ -251,6 +330,17 @@ class PreparedConsoleRequest:
                 "compactable entries must be ConsoleConversationUnit values."
             )
         object.__setattr__(self, "compactable", units)
+        # The composition owner stamps only applied, nonempty mix-ins.
+        if units and any(MIXIN_ATTEMPT_KEY in row for row in self.active_request):
+            object.__setattr__(
+                self,
+                "clean_history_message_index",
+                len(self.system)
+                + len(self.memory)
+                + len(self.mandatory)
+                + sum(len(unit.messages) for unit in units)
+                - 1,
+            )
         frozen_tools = freeze_json(tuple(self.tools))
         if not isinstance(frozen_tools, tuple):  # pragma: no cover
             raise TypeError("Frozen tools must remain a tuple.")
@@ -575,6 +665,9 @@ class ConsoleRequestTokenAccounting:
     rag_context_tokens: int = 0
     rag_attributed: bool = False
     attachment_tokens: int = 0
+    # Ephemeral display metadata: rendered minus original system prompt at
+    # preflight. Signed; not a category or part of the authoritative total.
+    system_prompt_delta_tokens: int = 0
 
     @property
     def non_compactable_tokens(self) -> int:
@@ -612,6 +705,11 @@ class PreparedProviderRequest:
     thinking_policy: ThinkingHistoryPolicy = "auto"
     effective_thinking_policy: EffectiveThinkingHistoryPolicy = "auto"
     provenance: ProviderRequestProvenance | None = field(default=None, repr=False)
+    cache_boundary: ConsoleCacheBoundary | None = field(
+        default=None, init=False, repr=False
+    )
+
+    live_native_custody: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.semantic, PreparedConsoleRequest):
@@ -664,6 +762,15 @@ class PreparedProviderRequest:
         expected_system, expected_payload, expected_messages = _serialize_messages(
             self.semantic,
             self.wire_style,
+        )
+        object.__setattr__(
+            self,
+            "cache_boundary",
+            _prepare_cache_boundary(
+                self.semantic,
+                self.wire_style,
+                self.messages_payload,
+            ),
         )
         expected_tools = freeze_json(tuple(self.semantic.tools))
         if (
@@ -913,6 +1020,23 @@ def build_console_request(
         groups_by_owner
     ):
         raise ValueError("Every continuation group must attach to one request owner.")
+    replay_plan = _completed_replay_plan(copied, groups)
+    replay_indices = {
+        index
+        for owner, (_rows, start) in replay_plan.items()
+        for index in range(start, owner)
+    }
+    if replay_indices:
+        # Runtime carries provider rows; budgeting retains one saved semantic owner.
+        copied = [
+            row for index, row in enumerate(copied) if index not in replay_indices
+        ]
+        if capture_on:
+            message_descriptors = tuple(
+                item
+                for index, item in enumerate(message_descriptors)
+                if index not in replay_indices
+            )
     thinking = tuple(thinking_groups)
     thinking_by_owner = {group.owner_message_id: group for group in thinking}
     if len(thinking_by_owner) != len(thinking):
@@ -953,7 +1077,10 @@ def build_console_request(
         raise ValueError("A Console provider request requires an active request.")
 
     starts = [index for index, row in enumerate(history) if _starts_user_turn(row)]
-    active_start = starts[-1] if starts else 0
+    anchors = [index for index, row in enumerate(history) if MIXIN_ATTEMPT_KEY in row]
+    if len(anchors) > 1:
+        raise ValueError("mixin_anchor_unavailable")
+    active_start = anchors[0] if anchors else starts[-1] if starts else 0
     compactable_rows = history[:active_start]
     active = history[active_start:]
     compactable_descriptors = history_descriptors[:active_start]
@@ -1081,6 +1208,27 @@ def build_console_request(
     )
 
 
+def request_safety_margin_tokens(window_tokens: int) -> int:
+    """Tokens a request keeps free of a ``window_tokens`` context window.
+
+    The Console gateway refuses a request over ``window - reply reserve -
+    this margin`` (``resolve_request_capacity``); the first-request planner
+    plans within the same ceiling (``first_request_window.planning_window``)
+    so it never picks a tool surface the gateway then refuses
+    (TASK-34100.5.3 review round 2, V2-2).
+    """
+    return max(MINIMUM_SAFETY_MARGIN_TOKENS, window_tokens // 50)
+
+
+def positive_token_cap(capabilities: Mapping[str, Any], *names: str) -> int | None:
+    """Return the first advertised positive integer cap, excluding booleans."""
+    for name in names:
+        value = capabilities.get(name)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    return None
+
+
 def resolve_request_capacity(
     *,
     context_window_tokens: int | None,
@@ -1126,7 +1274,7 @@ def resolve_request_capacity(
     else:
         source = "unknown"
     margin = (
-        max(MINIMUM_SAFETY_MARGIN_TOKENS, effective_window // 50)
+        request_safety_margin_tokens(effective_window)
         if effective_window is not None
         else 0
     )
@@ -1199,6 +1347,93 @@ def _project_runtime_guidance(
     return rows, origins
 
 
+def _completed_replay_plan(messages, groups):
+    """Expand only a collapsed, exact completed owner under an engine contract."""
+    from tldw_chatbook.Provider_Contract.provider_continuation import project_provider_continuation
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+    engine_keys = {record.key for record in ENGINE_RECORDS}
+    projected = {}
+    for group in groups:
+        if (
+            group.checkpoint.state != "complete"
+            or group.checkpoint.provider not in engine_keys
+        ):
+            continue
+        canonical = tuple(project_provider_continuation(group.checkpoint))
+        index = next(
+            i
+            for i, row in enumerate(messages)
+            if row.get(CONTINUATION_OWNER_KEY) == group.owner_message_id
+        )
+
+        def visible(row):
+            return {
+                key: thaw_json(value)
+                for key, value in row.items()
+                if key
+                not in {
+                    MEMORY_OWNER_KEY,
+                    CONTINUATION_OWNER_KEY,
+                    THINKING_OWNER_KEY,
+                    IDLE_REQUEST_OWNER_KEY,
+                    PERSISTED_MESSAGE_ID_KEY,
+                    PERSISTED_CONVERSATION_ID_KEY,
+                    EXCHANGE_CONTINUATION_KEY,
+                    LOCAL_TOOL_RESULT_KEY,
+                }
+            }
+
+        terminal = visible(messages[index])
+        call_ids = {call.call_id for round_ in group.rounds for call in round_.calls}
+        owner_call_ids = {
+            call.get("id")
+            for call in terminal.get("tool_calls") or ()
+            if isinstance(call, Mapping)
+        }
+        if owner_call_ids and owner_call_ids <= call_ids:
+            # Native rows are already inline with the owner on its batch (the
+            # pre-replay shape); the adapter matches those rows itself.
+            continue
+        if (
+            terminal.get("role") != "assistant"
+            or type(terminal.get("content")) is not str
+            or set(terminal) != {"role", "content"}
+        ):
+            raise ValueError("completed continuation owner changed")
+        canonical = (*canonical, terminal)
+        native_indices = [
+            i
+            for i, row in enumerate(messages)
+            if row.get("tool_call_id") in call_ids
+            or any(call.get("id") in call_ids for call in row.get("tool_calls", ()))
+        ]
+        start = index - len(canonical) + 1
+        if native_indices and (
+            start < 0
+            or tuple(visible(row) for row in messages[start : index + 1]) != canonical
+            or any(i < start or i > index for i in native_indices)
+        ):
+            raise ValueError("completed continuation replay is partial or duplicated")
+        projected[index] = (canonical, start if native_indices else index)
+    return projected
+
+
+def _completed_replays(semantic: PreparedConsoleRequest):
+    groups = (
+        tuple(
+            group for unit in semantic.compactable for group in unit.continuation_groups
+        )
+        + semantic.active_continuation_groups
+    )
+    return {
+        index: rows
+        for index, (rows, _start) in _completed_replay_plan(
+            semantic.flattened_messages(), groups
+        ).items()
+    }
+
+
 def _serialize_messages(
     semantic: PreparedConsoleRequest, wire_style: WireStyle
 ) -> tuple[str | None, tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
@@ -1219,12 +1454,15 @@ def _serialize_messages(
             for key, value in message.items()
             if key
             not in {
+                MIXIN_ATTEMPT_KEY,
+                "_native_message_id",
                 MEMORY_OWNER_KEY,
                 CONTINUATION_OWNER_KEY,
                 THINKING_OWNER_KEY,
                 IDLE_REQUEST_OWNER_KEY,
                 PERSISTED_MESSAGE_ID_KEY,
                 PERSISTED_CONVERSATION_ID_KEY,
+                PROJECT_INSTRUCTION_ROW_KEY,
                 EXCHANGE_CONTINUATION_KEY,
                 LOCAL_TOOL_RESULT_KEY,
             }
@@ -1238,8 +1476,17 @@ def _serialize_messages(
             # Semantic ownership remains "memory" for accounting and safety.
             row["role"] = "user"
         serialized.append(row)
-    transformed, _origins = _project_runtime_guidance(semantic, tuple(serialized))
-    all_messages = tuple(transformed)
+    transformed, origins = _project_runtime_guidance(semantic, tuple(serialized))
+    replays = _completed_replays(semantic)
+    all_messages = tuple(
+        row
+        for value, (indices, changed) in zip(transformed, origins, strict=True)
+        for row in (
+            replays[indices[0]]
+            if len(indices) == 1 and not changed and indices[0] in replays
+            else (value,)
+        )
+    )
     if wire_style == "distinct_roles":
         return None, all_messages, all_messages
 
@@ -1256,6 +1503,26 @@ def _serialize_messages(
         + payload
     )
     return system_message, tuple(payload), counted
+
+
+def _prepare_cache_boundary(
+    semantic: PreparedConsoleRequest,
+    wire_style: WireStyle,
+    payload: Sequence[Mapping[str, Any]],
+) -> ConsoleCacheBoundary | None:
+    boundary = semantic.clean_history_message_index
+    if boundary is None:
+        return None
+    transformed, origins = _project_runtime_guidance(semantic)
+    offset = len(transformed) - len(payload) if wire_style == "single_preamble" else 0
+    for position, (indices, _rewritten) in enumerate(origins):
+        if boundary in indices:
+            # A conversion that folds active content into history has no safe end.
+            index = position - offset
+            if max(indices) != boundary or not 0 <= index < len(payload) - 1:
+                return None
+            return ConsoleCacheBoundary(index, _cache_structure_fingerprint(payload))
+    return None
 
 
 def _serialize_provenance(
@@ -1426,6 +1693,38 @@ def _serialize_provenance(
         else flattened[indices[0]]
         for indices, changed in origins
     )
+    replays = _completed_replays(semantic)
+    if replays:
+        expanded = []
+        expanded_tools = []
+        for index, (descriptor, (indices, changed)) in enumerate(
+            zip(flattened_values, origins, strict=True)
+        ):
+            replay = (
+                replays.get(indices[0]) if len(indices) == 1 and not changed else None
+            )
+            if replay is None:
+                if index in tool_loop:
+                    expanded_tools.append(len(expanded))
+                expanded.append(descriptor)
+                continue
+            attachment = next(
+                item for item in continuations if item.inputs == (descriptor,)
+            )
+            derived = DerivedTraceProvenance(
+                TraceTransformKind.MESSAGE_REWRITE,
+                (descriptor, attachment),
+                artifact=ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.PROVIDER_OVERLAY, capture_policy
+                ),
+            )
+            for row in replay[:-1]:
+                if _is_tool_loop_row(row):
+                    expanded_tools.append(len(expanded))
+                expanded.append(derived)
+            expanded.append(descriptor)
+        flattened_values = tuple(expanded)
+        tool_loop = expanded_tools
     if wire_style == "distinct_roles":
         return ProviderRequestProvenance(
             messages=flattened_values,
@@ -1488,8 +1787,17 @@ def _count_wire(
         )
         + semantic.active_continuation_groups
     )
+    replay_owners = {
+        semantic.flattened_messages()[index][CONTINUATION_OWNER_KEY]
+        for index in _completed_replays(semantic)
+    }
     total += sum(
-        count_provider_continuation_tokens(group, model=model, count_fn=count_fn)
+        count_provider_continuation_tokens(
+            group,
+            model=model,
+            count_fn=count_fn,
+            wire_replayed=group.owner_message_id in replay_owners,
+        )
         for group in groups
     )
     return total
@@ -1801,3 +2109,127 @@ def prepare_provider_request(
         effective_thinking_policy=selected.effective_thinking_policy,
         provenance=provider_provenance,
     )
+
+
+def _is_current_user_text_transform(
+    source: Mapping[str, Any], visible: Mapping[str, Any]
+) -> bool:
+    """Admit text-only changes; retain every role, attachment and sidecar."""
+    if source.get("role") != "user" or {
+        key: value for key, value in source.items() if key != "content"
+    } != {key: value for key, value in visible.items() if key != "content"}:
+        return False
+    before, after = source.get("content"), visible.get("content")
+    if type(before) is str and type(after) is str:
+        return True
+    if (
+        type(before) is not list
+        or type(after) is not list
+        or len(before) != len(after)
+    ):
+        return False
+    for original, transformed in zip(before, after, strict=True):
+        if original == transformed:
+            continue
+        if (
+            type(original) is not dict
+            or type(transformed) is not dict
+            or original.get("type") != "text"
+            or type(original.get("text")) is not str
+            or type(transformed.get("text")) is not str
+            or {key: value for key, value in original.items() if key != "text"}
+            != {key: value for key, value in transformed.items() if key != "text"}
+        ):
+            return False
+    return True
+
+
+def _reseal_archive_followup_trace_request(
+    self,
+    request: PreparedConsoleRequest,
+    before: list[dict[str, Any]],
+    after: list[dict[str, Any]],
+    current_user_id: str | None,
+) -> PreparedConsoleRequest:
+    """Bind authorized selection text to its exact admitted current source."""
+    from . import console_chat_controller as _controller
+
+    try:
+        if (
+            type(request) is not _controller.PreparedConsoleRequest
+            or request.provenance is None
+            or len(request.active_request) != 1
+            or not before
+            or len(before) != len(after)
+            or before[:-1] != after[:-1]
+            or not self._is_current_user_text_transform(before[-1], after[-1])
+        ):
+            raise ValueError("archive_trace_current_text")
+        # Native owner annotations are not provider values. Keep them
+        # unchanged above, then compare the same shape admission froze.
+        owner_keys = {
+            _controller.NATIVE_MESSAGE_ID_KEY,
+            _controller.PERSISTED_MESSAGE_ID_KEY,
+            _controller.PERSISTED_CONVERSATION_ID_KEY,
+        }
+        visible = tuple(
+            {key: value for key, value in row.items() if key not in owner_keys}
+            for row in before
+        )
+        admitted = tuple(
+            {key: value for key, value in row.items() if key not in owner_keys}
+            for row in _controller._flatten_preflight_messages(request)
+        )
+        if admitted and admitted[0].get("role") == "system":
+            admitted = admitted[1:]
+        if _controller.freeze_json(visible) != _controller.freeze_json(admitted):
+            raise ValueError("archive_trace_admitted_rows")
+        descriptor = request.provenance.active_request[0]
+        source_id = _controller.current_turn_source_revision_id(descriptor)
+        if source_id is None or current_user_id is None:
+            raise ValueError("archive_trace_source")
+        current = self.store.get_message(current_user_id)
+        session_id = self.store.session_id_for_message(current_user_id)
+        session = next(
+            item for item in self.store.sessions() if item.id == session_id
+        )
+        persistence = self.store.persistence
+        with persistence.db.transaction() as cursor:
+            source = persistence.console_trace_repository.get_semantic_revision(
+                cursor, source_id
+            )
+        if (
+            current.role is not _controller.ConsoleMessageRole.USER
+            or source is None
+            or source.normalized_role != "user"
+            or source.source_message_id != current.persisted_message_id
+            or source.source_conversation_id != session.persisted_conversation_id
+        ):
+            raise ValueError("archive_trace_source_owner")
+        saved = (
+            descriptor
+            if type(descriptor) is _controller.SavedRevisionTraceProvenance
+            else descriptor.inputs[0]
+        )
+        transformed = _controller.DerivedTraceProvenance(
+            _controller.TraceTransformKind.CURRENT_TURN_TEXT,
+            inputs=(saved,),
+            artifact=_controller.ProviderArtifactTraceProvenance(
+                _controller.TraceProvenanceSource.ACTIVE_REQUEST,
+                request.provenance.capture_policy,
+            ),
+        )
+        row = {
+            key: value for key, value in after[-1].items() if key not in owner_keys
+        }
+        return _controller.replace(
+            request,
+            active_request=(row,),
+            provenance=_controller.replace(request.provenance, active_request=(transformed,)),
+        )
+    except Exception:  # noqa: BLE001 - failed source proof must refuse capture
+        # This seam precedes the bridge's first trace reservation. Use the
+        # ordinary controlled capture recovery path, never an unowned send.
+        raise _controller.TraceCallPersistenceError(
+            reservation_status="not_established"
+        ) from None

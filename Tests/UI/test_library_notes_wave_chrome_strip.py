@@ -67,6 +67,7 @@ def test_chrome_facts_copy_counts_words_and_reports_a_one_based_caret():
 # --- one row, under the body, carrying no save state of its own ------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_strip_is_one_row_under_the_body_and_never_a_focus_stop():
     host = _build_notes_host()
@@ -93,6 +94,7 @@ async def test_the_strip_is_one_row_under_the_body_and_never_a_focus_stop():
 # --- the facts themselves --------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_strip_reports_the_word_count_and_caret_and_follows_typing():
     host = _build_notes_host()
@@ -120,6 +122,7 @@ async def test_the_strip_reports_the_word_count_and_caret_and_follows_typing():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_strip_reports_the_caret_line_after_a_multi_line_move():
     host = _build_notes_host(body="alpha\nbeta gamma\ndelta")
@@ -142,6 +145,7 @@ async def test_the_strip_reports_the_caret_line_after_a_multi_line_move():
 # --- the meta line the strip replaced (AC#2), and what it must not move ----
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_info_meta_line_is_muted_without_pushing_the_rows_below_it():
     """The dead `#library-note-meta` took its colour to Info and nothing else.
@@ -193,6 +197,7 @@ async def test_info_meta_line_is_muted_without_pushing_the_rows_below_it():
 # --- the surfaces that have no caret, and the narrow terminal --------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_strip_is_hidden_off_the_editor_and_below_eighty_columns():
     host = _build_notes_host()

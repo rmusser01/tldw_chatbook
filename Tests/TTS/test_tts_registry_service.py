@@ -1702,6 +1702,7 @@ def test_bootstrap_falls_back_to_normalized_tts_configuration() -> None:
     assert snapshot["app_tts"] == {"default_format": "mp3"}
 
 
+@pytest.mark.bootstrap_profile
 def test_default_bootstrap_prepends_audio_cpp_without_changing_legacy_specs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1760,6 +1761,7 @@ def test_default_bootstrap_prepends_audio_cpp_without_changing_legacy_specs(
     assert all(factory.calls == 0 for factory in factories.values())
 
 
+@pytest.mark.bootstrap_profile
 def test_default_service_constructs_one_supervisor_without_launch() -> None:
     service = build_default_tts_service({})
 
@@ -1773,6 +1775,7 @@ def test_default_service_constructs_one_supervisor_without_launch() -> None:
     assert service.registry._slots["audio_cpp"].active is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_default_service_runtime_observation_does_not_materialize_adapter() -> (
     None
@@ -1793,6 +1796,7 @@ async def test_default_service_runtime_observation_does_not_materialize_adapter(
         await service.wait_closed()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reconfigured_audio_cpp_adapters_share_the_app_supervisor() -> None:
     service = build_default_tts_service({})
@@ -1823,6 +1827,7 @@ async def test_reconfigured_audio_cpp_adapters_share_the_app_supervisor() -> Non
         await service.wait_closed()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_legacy_provider_materialization_never_touches_supervisor() -> None:
     service = build_default_tts_service({})
@@ -1841,6 +1846,7 @@ async def test_legacy_provider_materialization_never_touches_supervisor() -> Non
         await service.wait_closed()
 
 
+@pytest.mark.bootstrap_profile
 def test_default_bootstrap_parses_supplied_preferences_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1878,6 +1884,7 @@ def test_default_bootstrap_parses_supplied_preferences_exactly_once(
     assert all(slot.active is None for slot in service.registry._slots.values())
 
 
+@pytest.mark.bootstrap_profile
 def test_default_bootstrap_wires_lazy_nonmigrating_studio_reader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

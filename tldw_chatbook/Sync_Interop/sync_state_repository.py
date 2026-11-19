@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any, Mapping, TYPE_CHECKING
 
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_getter,
-    _register_core_connection,
+    core_access,
+    core_getter,
+    register_core_connection,
 )
 from tldw_chatbook.DB.base_db import BaseDB
 from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
@@ -130,7 +130,7 @@ class SyncStateRepository(BaseDB):
             self._initialize_schema()
             self._schema_ready = True
 
-    @_core_getter
+    @core_getter
     def _get_connection(self) -> sqlite3.Connection:
         self._ensure_schema()
         return self._open_connection()
@@ -172,18 +172,18 @@ class SyncStateRepository(BaseDB):
                 # branch below (task-15465).
                 self._memory_conn.execute("PRAGMA synchronous = NORMAL")
             return self._memory_conn
-        _core_access(self)
+        core_access(self)
         conn = super()._get_connection()
-        _register_core_connection(self, conn)
+        register_core_connection(self, conn)
         try:
-            _core_access(self)
+            core_access(self)
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
             # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
             # lose the last commit, acceptable for this local dry-run sync/mirror
             # store) and avoids an fsync per commit (task-15465).
             conn.execute("PRAGMA synchronous = NORMAL")
-            _core_access(self)
+            core_access(self)
             return conn
         except BaseException:
             conn.close()
@@ -202,12 +202,12 @@ class SyncStateRepository(BaseDB):
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Commit/rollback and retire file handles on their creating thread."""
-        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.Backup_Recovery.participants import repository_participant
 
         operation = (
             nullcontext()
             if self.is_memory_db
-            else _repository_participant(self).operation()
+            else repository_participant(self).operation()
         )
         with operation:
             conn = self._get_connection()

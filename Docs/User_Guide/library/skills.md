@@ -67,7 +67,10 @@ Select a row with **Enter** to open **Overview** in the work pane. Choose
 **Edit**, **Trust**, or **Files** above it for that part of the Skill. The list
 stays mounted beside the work pane. At narrow widths, the vertical **Skills**
 grip reveals the list; **Back to list**, **Discard changes**, and new-draft
-**Cancel** reveal it and return keyboard focus there.
+**Cancel** reveal it and return keyboard focus there. Below 64 columns with no
+Skill open, the list takes the whole stage. With a Skill open, the grip gives
+the list the whole stage rather than squeezing the work pane beside it, and
+the same grip returns to the Skill with focus in it.
 
 ## Features & controls
 
@@ -303,7 +306,9 @@ this skill. Try again." If the skill changed elsewhere while you were
 editing, a banner offers one way out: "This skill changed elsewhere —
 Reload discards your edit and refetches it." with a **Reload** button.
 Leaving with unsaved edits is refused: "Unsaved skill changes — Save or
-Discard changes first." **Discard changes** returns to the saved Skill list
+Discard changes first." Quitting with **Ctrl+Q** asks 'Quit and discard
+unsaved changes to "<name>"?' instead, with **Keep editing** selected.
+**Discard changes** returns to the saved Skill list
 without writing the draft; **Cancel** abandons a new Skill and returns to Browse
 Skills. After an existing Skill saves, keyboard focus moves from Save to **Back
 to list**. A field or pane selected while saving keeps focus. Text entered

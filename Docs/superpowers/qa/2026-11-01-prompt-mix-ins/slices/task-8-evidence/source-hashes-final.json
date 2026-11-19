@@ -1,0 +1,32 @@
+{
+  "base": "a1fed4545bfc3b438d356b27503afdd6f5f611bd",
+  "files": {
+    "Docs/User_Guide/console/chat-basics.md": "194ec2734fdf7f9ddd8915c7c2b9c1aef361bf698ee84aaf9a396f1d7973750c",
+    "Tests/Chat/test_console_prompt_mixin_retry.py": "73bbb596f37f580afca94f50994829984e507bd7918ebc715cd73b65c36cb0ca",
+    "Tests/UI/test_chat_screen_console_inspector_loader.py": "45c96e5cd47d8e72c92cfdbc83fb23b87ef1c04b35e473979defaf748a8bf72c",
+    "Tests/UI/test_console_composer_menu.py": "e055212a81dbbfc8c7a5fcbce62fc5936461e124cd1e215f2f95054bd76540a2",
+    "Tests/UI/test_console_conversation_inspector.py": "8164090378ac3fec7ae0d1739fd9ec5c44bca7279619a1facd36a69f14a14c76",
+    "Tests/UI/test_console_personal_context_selection_factory.py": "e6ffc06b455da7b6c570d0bd7cf4f0d211f6e8f3dc9909213f9ba0dbf0e92ea0",
+    "Tests/UI/test_console_prompts_modal.py": "7ea9c01bd22979d4a57d0055e931adac062210ba57184e760d116301b62a1f31",
+    "backlog/tasks/task-38543 - Manage-chat-mix-ins-through-the-existing-composer-Prompts-action.md": "52cb754299e0981c3f4837f9c9ba08e935a8f667797064476fd1acfb637859ff",
+    "tldw_chatbook/Chat/console_chat_controller.py": "861b614a9adbb35ffab38ebd1472118d2fe7911753d8212f5cd867007950c960",
+    "tldw_chatbook/Chat/console_chat_models.py": "07288d78f3086a5d65073cd10b03bcea917d0b8ae486b289ae2910b5f91eb8de",
+    "tldw_chatbook/Chat/console_chat_store.py": "5042fd352effc0d17fb6318e63381615a49b370ead14d1110f5c5bf3a4d0cb24",
+    "tldw_chatbook/Chat/console_conversation_hydration.py": "8e2d5eb84f37db1e1bdce27d523bafb4ddb228fa9e02bfa3bd77c3d02041808f",
+    "tldw_chatbook/Chat/console_message_actions.py": "3798942d0b7ae25b34b35cae1b2720b7de64d53c185302ffa4bd32a5145b7238",
+    "tldw_chatbook/Chat/console_turn_resend.py": "318061dd3d7f106f7ed05d81a48851872f7f89ee9e0de0a3b4ef56870ef3107f",
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": "59060f2e6b39c0713b73a7184743dd0e075dd9ec2d17a4d8958d31b129698350",
+    "tldw_chatbook/UI/Console_Modules/inspector_data.py": "c72fd6b1abc170310fc62a1cb06c77b193717dc04f5d99850e2f85cd93b3e527",
+    "tldw_chatbook/UI/Console_Modules/prompts.py": "d13ddfffd4836870656f32af6eeb9e74ab0e3f53ce86d2fa263444e683cc3141",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "2f6e59e5cd39c88a06b4d9fe1ebc7bca3c4cb516aa5b68488bc9f3e7a12ef850",
+    "tldw_chatbook/Widgets/Console/console_composer_menu_modal.py": "2214fb27155dcc9065340ba425854d5960514ee14ecaf8103f700b4ae93fbacd",
+    "tldw_chatbook/Widgets/Console/console_conversation_inspector.py": "9d866f15dcf6bfb97c8e475d70906bb9f8b11b84a88c7fea5aa46bc04a742622",
+    "tldw_chatbook/Widgets/Console/console_prompts_browse.py": "745509e1b6ec7ac1e7d34ed5333982e13a343065d5d18548bc8791fd7d32fce3",
+    "tldw_chatbook/Widgets/Console/console_prompts_modal.py": "a7509b79836b2622befea108cc2d2c2cfb4586f2b029ce418774974f4606caf9",
+    "tldw_chatbook/Widgets/Console/console_prompts_state.py": "26050cb9fb58d7f50d80ca9fe9917da630a11726059831f288555c15101752d5",
+    "tldw_chatbook/css/features/_console_panels.tcss": "d3feda2285851228b23233816c0a1704dd001c4d27577fad2520c5f6bf9ea02a",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "6f56971cd95420d8d8fc4af4d0cbc50fcbc00ee46d308b5bb720100fb523505a",
+    "tldw_chatbook/Widgets/Console/console_prompt_mixins_view.py": "3afca217bb3fe9415f61efa4dae851df8ce60ff80213de44f430ae93331af443",
+    "Tests/UI/test_console_prompt_mixins.py": "124d916fb385da03ab60ce2c594c0c37283ed068fc9a2f854e6f1be95eb9e475"
+  }
+}

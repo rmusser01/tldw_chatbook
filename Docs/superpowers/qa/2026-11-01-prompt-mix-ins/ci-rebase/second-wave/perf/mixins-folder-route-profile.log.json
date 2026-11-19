@@ -1,0 +1,4 @@
+{
+  "sha256": "24ea30f560283d3c181c32ec2e33d46250e42b222b21ae4747738e593c70979c",
+  "raw_text": ".                                                                        [100%]\n============================= slowest 25 durations =============================\n2.05s call     Tests/UI/test_library_notes_characterization.py::test_notes_new_folder_opens_the_folder_name_dialog\n\n(2 durations < 1s hidden.)\n1 passed in 4.29s\n"
+}

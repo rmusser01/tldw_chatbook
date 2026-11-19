@@ -11,9 +11,12 @@ from urllib.parse import urlsplit, urlunsplit
 
 from httpx import InvalidURL, URL
 
+from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY  # noqa: F401  (re-export)
+# TASK-36517: the endpoint contract's label rule, so "_" hosts key and label.
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import valid_dns_label
+
 
 PROJECT_CONTEXT_VERSION = 1
-EPHEMERAL_ORIGIN_KEY = "_chatbook_ephemeral_origin"
 
 LOCATOR_FINGERPRINT_DOMAIN = b"tldw_chatbook.console.project-instructions.locator.v1\0"
 PROVIDER_DESTINATION_FINGERPRINT_DOMAIN = (
@@ -324,19 +327,10 @@ def _canonical_hostname(hostname: str) -> str | None:
     if (
         not normalized
         or len(normalized) > 253
-        or any(not _valid_dns_label(label) for label in labels)
+        or any(not valid_dns_label(label) for label in labels)
     ):
         return None
     return normalized
-
-
-def _valid_dns_label(label: str) -> bool:
-    return (
-        1 <= len(label) <= 63
-        and label[0].isalnum()
-        and label[-1].isalnum()
-        and all(character.isalnum() or character == "-" for character in label)
-    )
 
 
 def _netloc(scheme: str, hostname: str, port: int | None) -> str:

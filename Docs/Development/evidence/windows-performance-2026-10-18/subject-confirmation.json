@@ -1,0 +1,157 @@
+{
+  "verify-control1": {
+    "input_ms": [
+      205.73590000276454,
+      165.40130000794306,
+      165.98610000801273,
+      162.0853999920655,
+      155.70760000264272,
+      171.67569999583066
+    ],
+    "median_input_ms": 165.6937000079779,
+    "worst_input_ms": 205.73590000276454,
+    "median_attach_ms": 1082.5849499960896,
+    "median_max_heartbeat_ms": 115.37554999813437,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 6,
+      "_check_subject_pseudo_classes": 0,
+      "_config_file_posture": 6,
+      "_build_console_inspector_state": 3,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  },
+  "verify-after1": {
+    "input_ms": [
+      170.24549999041483,
+      165.9905999840703,
+      158.172099996591,
+      424.86440000357106,
+      170.37760000675917,
+      135.26820001425222
+    ],
+    "median_input_ms": 168.11804998724256,
+    "worst_input_ms": 424.86440000357106,
+    "median_attach_ms": 1072.5430500024231,
+    "median_max_heartbeat_ms": 102.79394999088254,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 6,
+      "_check_subject_pseudo_classes": 8,
+      "_config_file_posture": 12,
+      "_build_console_inspector_state": 4,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  },
+  "verify-after2": {
+    "input_ms": [
+      154.75039999000728,
+      163.4879000193905,
+      271.7127999931108,
+      195.68950001848862,
+      505.58060000184923,
+      334.9064000067301
+    ],
+    "median_input_ms": 233.70115000579972,
+    "worst_input_ms": 505.58060000184923,
+    "median_attach_ms": 1831.990050006425,
+    "median_max_heartbeat_ms": 167.21504999441095,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 4,
+      "_check_subject_pseudo_classes": 10,
+      "_config_file_posture": 11,
+      "_build_console_inspector_state": 8,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 1
+    }
+  },
+  "verify-control2": {
+    "input_ms": [
+      220.03669998957776,
+      179.87880000146106,
+      260.87069997447543,
+      199.34190000640228,
+      192.40780000109226,
+      178.59369999496266
+    ],
+    "median_input_ms": 195.87485000374727,
+    "worst_input_ms": 260.87069997447543,
+    "median_attach_ms": 1363.261450009304,
+    "median_max_heartbeat_ms": 135.38670001435094,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0,
+    "sample_counts": {
+      "_check_selectors": 15,
+      "_check_subject_pseudo_classes": 0,
+      "_config_file_posture": 9,
+      "_build_console_inspector_state": 4,
+      "_unread_notification_count": 0,
+      "_checked_display_status": 0
+    }
+  },
+  "benchmark": {
+    "nodes": 526,
+    "warm_ms": {
+      "before": [
+        145.26089999708347,
+        166.32379998918623,
+        143.48189998418093,
+        142.02899998053908
+      ],
+      "after": [
+        111.37960001360625,
+        104.31609998340718,
+        124.03010000707582,
+        126.17950001731515
+      ]
+    },
+    "cold_ms": {
+      "before": [
+        177.07209999207407,
+        175.1734999998007,
+        264.0550000069197,
+        276.52740001212806
+      ],
+      "after": [
+        148.40910001657903,
+        163.77590000047348,
+        138.73380000586621,
+        155.61560000060126
+      ]
+    },
+    "style_mismatches": 0,
+    "matcher": {
+      "after": {
+        "calls": 4233,
+        "matches": 2059,
+        "total_instrumented_ms": 36.94469967740588
+      },
+      "before": {
+        "calls": 4233,
+        "matches": 2059,
+        "total_instrumented_ms": 98.39550021570176
+      }
+    },
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "exit_code": 0
+  }
+}

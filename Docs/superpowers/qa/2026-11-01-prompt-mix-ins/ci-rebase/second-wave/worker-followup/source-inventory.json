@@ -1,0 +1,17 @@
+[
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "sha256": "f197c15f816e8e337c40a1e7335b651840633b175d028a06c22168686aa69098",
+    "lines": 29173
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_agent_reply.py",
+    "sha256": "977658e4e5e96b51bc9f1c6538b0a248eb83fdef570970f46c18cee5bf40882c",
+    "lines": 1156
+  },
+  {
+    "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+    "sha256": "859b6f21a103b4d412bc8723f9199fdf96665c2a2b459af6a0bb1ab5645a4987",
+    "lines": 5603
+  }
+]

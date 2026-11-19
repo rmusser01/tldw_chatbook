@@ -30,6 +30,7 @@ def _service_with(recorder):
     return service
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_dictation_releases_capture():
     """The whole point: a successful stop must stop the microphone."""
     recorder = _Recorder()
@@ -41,6 +42,7 @@ def test_stop_dictation_releases_capture():
     assert recorder.is_recording is False
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_dictation_does_not_construct_a_recorder_when_none_exists():
     """`audio_service` is a lazy property; reading it opens a device.
 
@@ -51,6 +53,7 @@ def test_stop_dictation_does_not_construct_a_recorder_when_none_exists():
     service.stop_dictation()  # must not raise, must not construct
 
     assert service._audio_service is None
+
 
 # --------------------------------------------------------------------------
 # The PCM bound the recorder is (or is not) built with
@@ -86,6 +89,7 @@ def _spy_recorder(monkeypatch):
     return built
 
 
+@pytest.mark.bootstrap_profile
 def test_the_recorder_is_unbounded_by_default(monkeypatch):
     """Three non-Console callers rely on this; the new parameter must be opt-in."""
     from tldw_chatbook.Audio.dictation_service_lazy import LazyLiveDictationService
@@ -98,6 +102,7 @@ def test_the_recorder_is_unbounded_by_default(monkeypatch):
     assert built[0].kwargs["on_buffer_limit"] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_a_requested_pcm_bound_reaches_the_recorder(monkeypatch):
     """Without this the Console's bound stops at the service and never lands.
 

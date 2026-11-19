@@ -1,7 +1,7 @@
 ---
 id: TASK-32896
 title: "Work stream: harden the atomic-write helper, then adopt it"
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-21 23:05'
 labels:
@@ -102,3 +102,15 @@ upgrades, and records why this class of defect survives: `MCP/permission_store.p
 citing TASK-32808.5 asserting it was the only writer fsyncing both file and parent. True when written, false
 now, and exactly the kind of note that freezes a weakness in place. De-fossilised here.
 <!-- SECTION:NOTES:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+Implemented on `fix/tier2-atomic` (34c0316b01) and merged via PR #2804 (2026-09-24):
+"fix(durability): harden the atomic-write helper, then adopt it (TASK-32896)". Implementation
+Notes record the premise held (atomic_file_ops.py weakest of three, confirmed by the S25
+validation slice) and the adoption completed.
+
+AC checkboxes are left as found; this section is the audit's evidence record.

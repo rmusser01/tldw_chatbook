@@ -1,0 +1,204 @@
+{
+  "evidence_root": "/private/tmp/mixins-pr3346-ui-fixes",
+  "inventory_self": "/private/tmp/mixins-pr3346-ui-fixes/evidence-inventory.json",
+  "self_hash": "Not included to avoid a self-referential hash; all other exact root files are listed below.",
+  "root_files": [
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/affected-ui.log",
+      "role": "Final ordinary affected UI native test run",
+      "bytes": 2685,
+      "sha256": "f1e0925d03c88e40c1ebbaefa629762c8f67403c80b9f56477196bbe80ddc129"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/architecture-final.log",
+      "role": "Final focused static guards",
+      "bytes": 414,
+      "sha256": "9dd78d1487444b55bc170d2a2458be87285e1adacf884a6c82dc97aef3e37fd4"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/architecture.log",
+      "role": "Preserved broader static failure/baseline qualification",
+      "bytes": 4042,
+      "sha256": "13668cee0e5ceaf797ac3139612761bcd5b1f91668223f660dcc25b066baa488"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/baseline-lint.json",
+      "role": "Owned-file b110 Ruff baseline",
+      "bytes": 6101,
+      "sha256": "0e1fa772ad2fec8cdf5477817838282266283bb0bc79e96e1d6de077d2f83ddd"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/cohort-source-proof.json",
+      "role": "Historical earlier seven-file/pre-Info source identity only",
+      "bytes": 873,
+      "sha256": "d4ac19d0a87bcd864d7990397509f552e20b60819c8c1049caf84ecbfdaae98b"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/controller-guards.log",
+      "role": "Original unchanged ceiling/anti-slack controls",
+      "bytes": 207,
+      "sha256": "fc75e6bac93e20ab2d12306c08f2edbd6daf9ad4dda23bd78c6e778be7d976d4"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/current-lint.json",
+      "role": "Final owned-file Ruff comparison",
+      "bytes": 1214,
+      "sha256": "5ed61053bc348dc7316c80413614e1f3ff258b5e8e985224fa8efc43583757b7"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/frozen-source-proof.json",
+      "role": "Authoritative final eight-file source identity",
+      "bytes": 1313,
+      "sha256": "77f7b23981cba87f044d4e3ce5dfb0b3897c39f9c05f0ccbe98a4fe96fdb813c"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/green-focused-final.log",
+      "role": "Final focused ten-case native green run",
+      "bytes": 832,
+      "sha256": "d73cfbe922aeef21606479f6d2fdea159194c04e14024adf1fb67fbc04fef67f"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/green-focused.log",
+      "role": "Preserved test-driver list-settlement failures",
+      "bytes": 355743,
+      "sha256": "231190970bf46817ddcb494d1ff9a53e6b8425ddc0c5c94453acbbcab267fcc0"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/green-initial.log",
+      "role": "Initial product green with missing dirty-history projection discovered",
+      "bytes": 174166,
+      "sha256": "15e7607374dbfcd7889f72f407e0e2687dd4f5ffa5277f9010283de3ac355ac3"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/info-mode-probe.log",
+      "role": "Confirmed production-CSS Info-mode metadata defect",
+      "bytes": 565,
+      "sha256": "2450e3e86e31c40aa680678e5bb22f52743f625cd08662cb51f4ae88441e66e3"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/metadata-red.log",
+      "role": "New metadata regression RED before fix",
+      "bytes": 50806,
+      "sha256": "67a8c5046561744a019b4a53818d7d7116c37e5500692b4a7f01590a04caa98a"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/modal-guard-baseline.json",
+      "role": "All-production base/head equality for five pre-PR guarded-modal entries",
+      "bytes": 1176,
+      "sha256": "5dbfa656e7c3750dc6214bb3475145d733337c105f926734279fff1655015156"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/original-app-controls-profile-owned-nodes.json",
+      "role": "Exact28 original parametrized nodes and private marker mechanism",
+      "bytes": 3761,
+      "sha256": "aff7fe2e7e9c1144228d6df2b490811c5ed8248aa9b819d2325f0b8973fb8bb8"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/original-app-controls-profile-owned.log",
+      "role": "Final qualified original app native control bodies",
+      "bytes": 3498,
+      "sha256": "4db9e9193c6b28f6fcef3412dc9f05edbbfa9429387cd6be0a140c3fe9a1cc24"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/original-controls.log",
+      "role": "Ordinary4 widget passes and pre-body profile refusal",
+      "bytes": 8830,
+      "sha256": "b56505360df75357285fc84c556e34dfd2a197bb543b7e9d4230d662845f3440"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/red.log",
+      "role": "Initial RED with unsupported conversion fixture retained",
+      "bytes": 221093,
+      "sha256": "a89ef5e0c9eecb74e9359593b1c7af3f1ceb6b1f7daac5a35992c94f2664b099"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/report.md",
+      "role": "Final UI implementation handoff",
+      "bytes": 7368,
+      "sha256": "5ae4b39bb01625f4c1f2b447b1840212e6f19a7d4b34ea445847b74e6eaa3faa"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/restore-metadata-green.log",
+      "role": "Metadata green and insufficient restored-projection wait retained",
+      "bytes": 163380,
+      "sha256": "9101bff80b1964b8af1819b12603c17b14b68f9382cad5179921414bb16b7afc"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/restore-red.log",
+      "role": "Corrected permitted-kind restore fixtures RED before product fix",
+      "bytes": 173153,
+      "sha256": "8fc0c7973dd34103c615a26aed45a6deb413317dc097e363b969b2e67abee228"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/review-reproduction-inventory.json",
+      "role": "Initial review reproductions and complete RED/GREEN qualifications",
+      "bytes": 6019,
+      "sha256": "3b8492bb8f23f1b784f9163f7d40e18f2e662b78bf87f7797867b3f5ca44063c"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/save-extraction-proof.json",
+      "role": "Save executable AST/public facade/acknowledgement equivalence",
+      "bytes": 281,
+      "sha256": "2553df2f1135de454dfbf13cbbe0e10045f09f7a360c9a51d2dca7b825131052"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/source-proof-validation.json",
+      "role": "Post-final-five exact owned source freeze validation",
+      "bytes": 1772,
+      "sha256": "9c7c456c38c8d00121daaa97bdaafe933c081b8ba5c0385ff68fb6d1dd026422"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-ui-fixes/visual-capture-inventory.json",
+      "role": "Exact six SVG paths/hashes and sizes",
+      "bytes": 1060,
+      "sha256": "df8fbedb605462d0a751e220960539b9f01c0b7f2e6fd694aa993f40bbf7882f"
+    }
+  ],
+  "known_external_files": [
+    {
+      "path": "/private/tmp/mixins-pr3346-premerge-ui-review.md",
+      "role": "Initial independent b110 UI review and two fresh diagnostic observations",
+      "bytes": 9934,
+      "sha256": "322aec9fab21b3c5b6c53c03631f6e8e549a008fddf0413654bfbb3c7a7762dc"
+    },
+    {
+      "path": "/private/tmp/task7-captures/mixin-120x40-clean.svg",
+      "sha256": "7f4d4121737ec8469185b1c100c60788b5582a929340bc4dea8e6b2db74ff6e0",
+      "bytes": 129276,
+      "role": "Generated production-CSS SVG capture"
+    },
+    {
+      "path": "/private/tmp/task7-captures/mixin-120x40-dirty.svg",
+      "sha256": "3a25530b89c061189cdeabc6cc2ee6427140ad4619b47dc559a9e53eb498dc4c",
+      "bytes": 128754,
+      "role": "Generated production-CSS SVG capture"
+    },
+    {
+      "path": "/private/tmp/task7-captures/mixin-170x48-clean.svg",
+      "sha256": "9ab87785424effc15f00db6567f724963f554e3398054066ae448e77d427e34e",
+      "bytes": 208484,
+      "role": "Generated production-CSS SVG capture"
+    },
+    {
+      "path": "/private/tmp/task7-captures/mixin-170x48-dirty.svg",
+      "sha256": "de2668f60f3f59c71f31227fe467b511a019b9762b6c61ea307d4e2712ce482a",
+      "bytes": 209220,
+      "role": "Generated production-CSS SVG capture"
+    },
+    {
+      "path": "/private/tmp/task7-captures/mixin-80x24-clean.svg",
+      "sha256": "f2b9256833dbb814494beb2c0c91815f083902918d4d6507ebbd65d3bfe83b47",
+      "bytes": 42962,
+      "role": "Generated production-CSS SVG capture"
+    },
+    {
+      "path": "/private/tmp/task7-captures/mixin-80x24-dirty.svg",
+      "sha256": "d18a9034f8e73a0e417d91915f26e5bb5580de4c4f5942e942d33fd0315881d1",
+      "bytes": 43478,
+      "role": "Generated production-CSS SVG capture"
+    }
+  ],
+  "enumeration_scope": "Only this exact evidence directory, the one initial review report path, and six capture paths already listed in visual-capture-inventory.json; no broad temporary-directory prefix scan.",
+  "initial_private_probe_files": "No standalone initial probe source or log persisted/claimed; stdin diagnostic evidence is recorded in the original review report and review-reproduction-inventory.json.",
+  "source_freeze": "All eight owned product/test bytes match frozen-source-proof.json; no source edit or further test was performed after final-five."
+}

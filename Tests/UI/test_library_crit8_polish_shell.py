@@ -47,6 +47,7 @@ COMPACT_TEST_SIZE = (100, 30)
 WIDE_TEST_SIZE = (170, 48)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_landing_canvas_stays_beside_the_rail_at_compact_widths():
     """task-32066: docs and code disagreed; the CODE is the one that is right.
@@ -79,6 +80,7 @@ async def test_library_landing_canvas_stays_beside_the_rail_at_compact_widths():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_landing_canvas_paints_at_wide_widths():
     """The same route keeps the landing beside the rail above the breakpoint."""
@@ -146,6 +148,7 @@ def test_get_started_survives_a_relaunch_before_the_first_library_visit(
 # --- task-32058: a skill import updates the rail count and the list ------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_import_updates_the_rail_count_and_the_list_in_place():
     """task-32058: an import left the rail at (2) and the list unchanged.
@@ -202,6 +205,7 @@ async def _open_first_tree_note(screen, pilot) -> None:
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_from_the_editor_restores_the_notes_list_pane():
     """task-32061: opening a note must not leave the list pane collapsed.
@@ -232,6 +236,7 @@ async def test_escape_from_the_editor_restores_the_notes_list_pane():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_does_not_reopen_a_notes_list_the_user_collapsed():
     """Restore means "the visibility it had", not "always open"."""
@@ -331,6 +336,7 @@ async def _type(pilot, text: str) -> None:
     await pilot.press(*("space" if character == " " else character for character in text))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_note_on_a_fresh_profile_leaves_the_notes_list_visible():
     """task-32061 in the condition it was reported in: a FRESH profile.
@@ -373,6 +379,7 @@ async def test_first_note_on_a_fresh_profile_leaves_the_notes_list_visible():
 # --- task-32062: typing is never interrupted by the graduation ----------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typing_the_first_note_survives_the_graduation_transition():
     """task-32062: 'My first note' + Tab + a body became one corrupted title.
@@ -416,6 +423,7 @@ async def test_typing_the_first_note_survives_the_graduation_transition():
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_notes_refresh_never_rebuilds_the_editor_the_reader_is_typing_in():
     """task-32062 AC#1: no recompose or focus reset while an editor has focus.
@@ -469,6 +477,7 @@ async def test_a_notes_refresh_never_rebuilds_the_editor_the_reader_is_typing_in
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_notes_sync_while_typing_leaves_focus_where_the_reader_moved_it():
     """Fix-round regression: the skipped refresh must strand no follow-up.
@@ -510,6 +519,7 @@ async def test_a_notes_sync_while_typing_leaves_focus_where_the_reader_moved_it(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_notes_sync_in_an_untouched_new_note_does_not_re_land_on_the_title():
     """The same lateness for `EditorReady`, which re-focuses an untouched title.
@@ -546,6 +556,7 @@ async def test_a_notes_sync_in_an_untouched_new_note_does_not_re_land_on_the_tit
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_stale_snapshot_never_rewrites_the_field_that_has_focus():
     """task-32062, the defect measured live: the in-place snapshot patch.
@@ -590,6 +601,7 @@ async def test_a_stale_snapshot_never_rewrites_the_field_that_has_focus():
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_notes_refresh_from_outside_the_editor_still_recomposes():
     """The skip is scoped to the reader's hands, not permanent.
@@ -629,6 +641,7 @@ async def test_a_notes_refresh_from_outside_the_editor_still_recomposes():
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_notes_refresh_never_overwrites_the_keywords_being_typed():
     """Review of #2531: the keyword boxes are editable fields too.
@@ -669,6 +682,7 @@ async def test_a_notes_refresh_never_overwrites_the_keywords_being_typed():
 # --- task-32063: one status line, one header, one toast ------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notes_work_pane_does_not_repeat_the_list_pane_status_line():
     """task-32063: both Notes panes painted the same authority sentence.
@@ -703,6 +717,7 @@ async def test_notes_work_pane_does_not_repeat_the_list_pane_status_line():
         assert work_line
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_add_from_files_paints_one_header_not_four():
     """task-32063: the surface stacked a 140-character run-on over three more.
@@ -737,6 +752,7 @@ def _graduation_notifications(app) -> list:
     return sent
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "stored_lifecycle, expected",
     [
@@ -772,6 +788,7 @@ def test_graduation_is_silent_from_every_lifecycle(stored_lifecycle, expected):
     assert sent == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_graduation_announces_on_neither_a_toast_nor_a_canvas_line():
     """task-32063's AC was one surface for one event; task-32555 AC#2 is none.
@@ -808,6 +825,7 @@ async def test_graduation_announces_on_neither_a_toast_nor_a_canvas_line():
 # --- task-32064: the Chunking Lab strip and its exit --------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_chunking_lab_strip_lives_under_details_actions_with_a_gloss():
     """task-32064: the strip was the first interactive row on every canvas.
@@ -845,6 +863,7 @@ def test_chunking_lab_escape_returns_to_the_library_canvas() -> None:
     assert "escape" in keys
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_chunking_lab_escape_leaves_from_the_focused_sample_editor(
     tmp_path, monkeypatch
@@ -893,6 +912,7 @@ async def test_chunking_lab_escape_leaves_from_the_focused_sample_editor(
 # --- task-32069: rail search clear, and three Study rows ----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_search_box_clears_and_does_not_carry_a_query_across_canvases():
     """task-32069: the box kept the last query with no way to clear it."""
@@ -925,6 +945,7 @@ async def test_rail_search_box_clears_and_does_not_carry_a_query_across_canvases
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_section_renders_three_rows_not_six():
     """task-32069: three destinations spent six rail rows on a repeated hint."""
@@ -952,13 +973,15 @@ def test_wizard_summary_offers_a_route_into_library_import() -> None:
     content lives, so a finished setup handed the user nowhere to put a file."""
     import inspect
 
-    from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+    # TASK-34100.1: the Summary step moved to its own module.
+    from tldw_chatbook.UI.Wizards import first_run_summary_step as summary_module
 
-    source = inspect.getsource(wizard_module)
+    source = inspect.getsource(summary_module)
     assert '"Add your first document", id="setup-exit-library"' in source
     assert '@on(Button.Pressed, "#setup-exit-library")' in source
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_get_started_steps_are_live_controls_that_unlock_in_sequence():
     """task-32072: "1 Add · 2 Find · 3 Use" named steps with no controls."""
@@ -991,6 +1014,7 @@ async def test_get_started_steps_are_live_controls_that_unlock_in_sequence():
         assert "Import a file" in hint and hint.endswith(".")
 
 
+@pytest.mark.bootstrap_profile
 def test_use_it_in_console_unlocks_on_a_selection_not_on_bare_results() -> None:
     """Review of #2531: the step unlocked on results the user had not picked.
 
@@ -1056,6 +1080,7 @@ def _burst(app, *keys: str) -> None:
         app._driver.send_message(event)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_notes_refresh_at_the_tab_boundary_keeps_the_title():
     """task-32062: a refresh landing as focus leaves the title clobbered it.
@@ -1094,6 +1119,7 @@ async def test_a_notes_refresh_at_the_tab_boundary_keeps_the_title():
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_title_tab_body_burst_lands_the_body_in_the_body_field():
     """task-32106 AC#1: the reported gesture, driven as a REAL burst.
@@ -1134,6 +1160,7 @@ async def test_a_title_tab_body_burst_lands_the_body_in_the_body_field():
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_body_tab_burst_leaves_the_trailing_word_out_of_the_body():
     """The same defect one widget over -- the note BODY (coordinator addendum).
@@ -1176,6 +1203,7 @@ async def test_a_body_tab_burst_leaves_the_trailing_word_out_of_the_body():
         assert "world" not in after
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_keywords_field_is_its_own_authority_while_focused():
     """task-32106 AC#2: the same rule as the title, one field over.
@@ -1222,6 +1250,7 @@ async def test_the_keywords_field_is_its_own_authority_while_focused():
         assert applied.cursor_position == len("retro, half")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_overlapping_syncs_mid_edit_keep_the_readers_place():
     """Two editor-owned syncs in flight must not restore a zero snapshot.
@@ -1264,6 +1293,7 @@ async def test_overlapping_syncs_mid_edit_keep_the_readers_place():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", (COMPACT_TEST_SIZE, WIDE_TEST_SIZE))
 async def test_a_sync_mid_edit_repaints_the_list_pane_and_keeps_its_scroll(size):

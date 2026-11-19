@@ -1,0 +1,46 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FFF                                                                      [100%]
+================================== FAILURES ===================================
+__________ test_index_timestamp_writers_store_canonical_utc[publish] __________
+Tests\DB\test_workspace_project_index_db.py:1021: in test_index_timestamp_writers_store_canonical_utc
+    assert is_canonical_utc(value), value
+E   AssertionError: 2026-10-22T05:37:38.416707+00:00
+E   assert False
+E    +  where False = <function is_canonical_utc at 0x0000024620F01940>('2026-10-22T05:37:38.416707+00:00')
+_______ test_index_timestamp_writers_store_canonical_utc[clear_revoked] _______
+Tests\DB\test_workspace_project_index_db.py:1021: in test_index_timestamp_writers_store_canonical_utc
+    assert is_canonical_utc(value), value
+E   AssertionError: 2026-10-22T05:37:41.041193+00:00
+E   assert False
+E    +  where False = <function is_canonical_utc at 0x0000024620F01940>('2026-10-22T05:37:41.041193+00:00')
+___ test_index_timestamp_writers_store_canonical_utc[clear_owned_namespace] ___
+Tests\DB\test_workspace_project_index_db.py:1016: in test_index_timestamp_writers_store_canonical_utc
+    store.clear_owned_namespace(key.namespace, key.binding_namespace)
+tldw_chatbook\DB\Workspace_Project_Index_DB.py:182: in run
+    return function(store, *args, **kwargs)
+tldw_chatbook\DB\Workspace_Project_Index_DB.py:1137: in clear_owned_namespace
+    self.cleanup_eligible(namespace, binding_namespace)
+tldw_chatbook\DB\Workspace_Project_Index_DB.py:1122: in cleanup_eligible
+    raise ValueError("legacy_retirement_unproven")
+E   ValueError: legacy_retirement_unproven
+============================== warnings summary ===============================
+Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc[publish]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+2.27s call     Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc[clear_revoked]
+2.15s call     Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc[clear_owned_namespace]
+1.82s call     Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc[publish]
+1.35s setup    Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc[publish]
+
+(5 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc[publish]
+FAILED Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc[clear_revoked]
+FAILED Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc[clear_owned_namespace]
+3 failed, 1 warning in 8.45s

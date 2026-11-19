@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "/private/tmp/mixins-pr3346-frozen-final-five/probe.py",
+    "pr3346-landing-final"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 0,
+  "seconds": 45.052,
+  "source_path_count": 3453,
+  "checks": {
+    "head": true,
+    "cwd": true,
+    "path_roots": true,
+    "paths": true,
+    "manifest_sha256": true,
+    "product_diff_sha256": true,
+    "observing_driver_sha256": true
+  },
+  "observer_unchanged": true
+}

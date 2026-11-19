@@ -1168,9 +1168,7 @@ async def test_inspector_row_status_class_is_drawn_from_a_closed_vocabulary(
         await pilot.pause()
         inspector = app.query_one("#inspector", ConsoleRunInspector)
         row = inspector.query_one("#console-inspector-retrieval", Static)
-        attached = {
-            c for c in row.classes if c.startswith("console-inspector-row-")
-        }
+        attached = {c for c in row.classes if c.startswith("console-inspector-row-")}
         assert attached == {expected_class}, (
             f"status {raw_status!r} attached {attached} rather than "
             f"{{{expected_class!r}}}"
@@ -1206,6 +1204,7 @@ async def test_inspector_group_heading_shares_a_left_edge_with_its_rows():
     raised background and the rows carried no padding at all, so each group
     label sat one cell off-axis from the content it labels.
     """
+
     # MUST load the real bundle: bare InspectorHarness has no CSS_PATH, so
     # `.console-inspector-group-heading`'s own padding never applies and an
     # alignment assertion against it passes vacuously.
@@ -1262,7 +1261,8 @@ def test_retrieval_status_row_is_not_called_sources():
     from tldw_chatbook.Widgets.Console import console_inspector_ownership as own
 
     readiness = next(
-        labels for heading, _id, labels in own.ROW_GROUPS
+        labels
+        for heading, _id, labels in own.ROW_GROUPS
         if heading == "Source Readiness"
     )
     assert "Retrieval" in readiness, (
@@ -1274,9 +1274,7 @@ def test_retrieval_status_row_is_not_called_sources():
     # allowlist. "Sources" survives there deliberately as a classification
     # alias for replayed snapshots -- the classifier is STRICT and raises on
     # an unowned label, so deleting it would turn old state into a crash.
-    emitted = {
-        row.label for row in ConsoleInspectorState.from_values().rows
-    }
+    emitted = {row.label for row in ConsoleInspectorState.from_values().rows}
     assert "Retrieval" in emitted
     assert "Sources" not in emitted, (
         "the run inspector still emits a row labelled 'Sources', colliding "
@@ -1300,9 +1298,7 @@ def test_the_legacy_sources_label_still_classifies_rather_than_crashing():
             ConsoleDisplayRow("Sources", "not staged", status="blocked"),
         )
     )
-    owned = own.classify_inspector_content(
-        legacy, own.InspectorOwnershipPolicy.STRICT
-    )
+    owned = own.classify_inspector_content(legacy, own.InspectorOwnershipPolicy.STRICT)
     assert not owned.incomplete
     assert [e.row.label for e in owned.rows_for("Source Readiness")] == ["Sources"]
 
@@ -1385,9 +1381,7 @@ async def test_disabled_action_stays_visible_with_its_reason():
             "#console-inspector-review-approval-reason", Static
         )
         assert reason.display is True, "the authored reason is mounted hidden"
-        assert reason.region.height > 0, (
-            f"the reason occupies no rows: {reason.region}"
-        )
+        assert reason.region.height > 0, f"the reason occupies no rows: {reason.region}"
         assert "No approval is pending." in str(reason.renderable)
         assert not reason.has_class("console-hidden-control")
 

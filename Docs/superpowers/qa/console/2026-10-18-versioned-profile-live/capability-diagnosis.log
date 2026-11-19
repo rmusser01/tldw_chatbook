@@ -1,0 +1,45 @@
+2026-10-18 10:37:13.578 | DEBUG    | tldw_chatbook.config:<module>:100 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-10-18 10:37:13.595 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /private/tmp/archive-recovery-profilev2-live-20261018/direct-ready/config.toml
+2026-10-18 10:37:13.602 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6109 - Successfully loaded and merged CLI config from /private/tmp/archive-recovery-profilev2-live-20261018/direct-ready/config.toml
+2026-10-18 10:37:13.602 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'paths', 'first_run', 'home']
+2026-10-18 10:37:13.602 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-18 10:37:13.603 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook
+2026-10-18 10:37:13.603 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook
+2026-10-18 10:37:13.603 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-18 10:37:13.604 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2188 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-18 10:37:13.607 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3403 - Ensured chat dictionaries folder exists: /private/tmp/archive-recovery-profilev2-live-20261018/direct-ready/data/task7_live/chat_dicts
+2026-10-18 10:37:13.607 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3413 - load_settings: Configuration cached for future use
+2026-10-18 10:37:13.607 | INFO     | tldw_chatbook.config:<module>:9618 - Default API Endpoint (from config.py global scope): openai
+2026-10-18 10:37:13.607 | DEBUG    | tldw_chatbook.config:<module>:9641 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-10-18 10:37:14.171 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1539 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+{
+  "ready": true,
+  "provider": "llama_cpp",
+  "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+  "reasoning_policy": {
+    "mode": "server_default",
+    "source": "Auto",
+    "template_family": "",
+    "supports_preserve": false,
+    "verified": false,
+    "native_tools": false
+  },
+  "native_tools_supported": false,
+  "pure_native_fact_only_control": true,
+  "native_overrides": {},
+  "get_observations": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/props",
+      "status": 404
+    }
+  ],
+  "model_requests": 0,
+  "counter_unchanged": true,
+  "control_is_detached_not_app_override": true
+}

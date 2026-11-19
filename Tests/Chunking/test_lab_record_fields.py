@@ -34,6 +34,7 @@ def test_record_edit_preserves_invalid_and_pending_authority():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_unsaved_run_captures_record_fields_without_catalog_identity():
     assert hasattr(state, "edit_record_fields")
     session = state.new_session("test")

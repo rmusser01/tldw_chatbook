@@ -131,3 +131,73 @@ and the connected desktop controller refuses terminal-app control. No native
 keyboard or screenshot outcome is inferred from the mounted tests. TASK-31245
 remains In Progress; Windows, participant, and performance evidence also remain
 open.
+
+## 2026-10-04 coalesced transcript publication repair
+
+PR #2835 is merged. Fresh checks on `dev f800952214` initially passed 24 of
+26 cases, with two Character activation waits failing after an inactive-tab
+switch. Both passed individually, but bounded state probes reproduced genuine
+postcommit `FAILED` results as well as one wait that expired before a later
+successful completion. Passing retries did not establish a clean result.
+
+The reproduced failure had the requested runtime active and composer focused,
+but the transcript still belonged to the preceding runtime. A whole-Console
+sync was already running, so the requested sync returned after coalescing its
+work. The exact-ready check correctly rejected the stale transcript and rolled
+back. Subsequent reconciliation could retire the visible failure.
+
+Character activation now awaits the existing transcript renderer before its
+immediate composer-focus and strict readiness proof. It retains the transcript
+refresh lock, immutable target, modal ownership, precommit cancellation,
+postcommit rollback, and ordinary exposed-destination requirements. No timeout
+was raised, readiness check weakened, new resume path introduced, or visual
+value changed. Existing ADR-120 governs; no new ADR is needed.
+
+A deterministic installed regression holds the full sync before transcript
+publication while opening an exact existing character conversation. After a
+fixture identity-type correction, the valid RED test returned `FAILED` before
+the repair; GREEN returned `OPENED` and the same single runtime with its exact
+transcript owner and composer focus. The affected unit and reuse/mode cases
+passed **27 tests**. The additional activation file initially had **14 setup
+errors** from missing collection-time profile ownership, before any switcher
+action; it now declares the same private-profile marker as the reuse suite,
+and all **14 cases passed** without a diagnostic plugin. Independent review
+found no production blocker, but identified an older rollback double missing
+the awaited renderer seam. That fixture now reaches and asserts its intended
+stale-transcript, missing-composer, and broken-focus paths; the activation and
+reuse-decision unit files passed **40 tests**.
+
+The changed tests pass Ruff and all four Python paths pass formatting.
+Workspace's 69 inherited Ruff diagnostics match the exact base, with none added.
+After rebasing onto `dev 9878fd251a`, the four-file gate passed **69 tests**
+in 210.09 seconds with no warnings and no diagnostic plugin. All eleven
+derived-artifact guards passed; the first sandboxed attempt could not obtain
+the pinned Mermaid input, and the network-enabled rerun verified its hashes
+and completed successfully. Changed-path Ruff, formatting, and whitespace
+checks also passed after the rebase.
+Native terminal, Windows, participant, and deferred performance qualifications
+remain open. TASK-31245 remains In Progress.
+
+### Qodo cancellation follow-up
+
+Qodo's review of the original patch identified a real postcommit cancellation
+gap: the renderer could suspend after a cold runtime was captured but before
+its token reached the outer rollback owner. Caller shielding does not prevent
+cancellation of that child task. The deterministic real-store RED run leaked
+the cold runtime (one failure) while the warm-preservation case passed.
+
+The opener now catches cancellation at that publication seam, synchronously
+removes only its exact captured cold instance using the store's existing
+ownership guard, and rethrows. The incumbent caller still drains its shielded
+prior-session restoration; warm and unrelated runtimes are retained. No new
+cleanup task or suspension point was added. The two regression cases and
+covering activation/reuse-decision unit files passed **42 tests** in 5.83s.
+Independent follow-up review found no issues. The new installed regression's
+Google-style docstring now describes both fixture arguments, addressing Qodo's
+documentation finding. ADR-120 and all qualification limits remain unchanged.
+
+Final covering verification of this correction passed **29 mounted reuse/mode
+and activation-presentation tests** in 180.60s with no warnings, in addition to
+the 42 unit tests. All eleven artifact guards passed again. Changed tests pass
+Ruff, all four Python paths pass formatting, and whitespace is clean; workspace
+still has exactly the base's 69 inherited lint findings with no additions.

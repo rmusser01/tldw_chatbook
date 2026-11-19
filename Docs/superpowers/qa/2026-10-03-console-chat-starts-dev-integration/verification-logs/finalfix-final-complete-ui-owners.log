@@ -1,0 +1,214 @@
+...........................................x................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..........FF [ 58%]
+....................................................                     [100%]
+=================================== FAILURES ===================================
+_____ test_clearing_agent_handoff_in_mounted_composer_persists_before_exit _____
+
+tmp_path = PosixPath('/private/tmp/console-finalfix-final-ui-01a0fa6c/test_clearing_agent_handoff_in0')
+
+    @pytest.mark.asyncio
+    async def test_clearing_agent_handoff_in_mounted_composer_persists_before_exit(
+        tmp_path,
+    ):
+        import json
+        from Tests.Chat.test_console_chat_start import _create_handoff, _restore_handoff
+    
+        app = _build_test_app()
+        _attach_real_dbs(app, tmp_path)
+        _configure_native_ready_console(app)
+        async with app.run_test(size=(160, 48)) as pilot:
+            chat = ChatScreen(app)
+            await app.push_screen(chat)
+            app._initial_screen_pushed = True
+            app.current_tab = "chat"
+            await _wait_for_selector(chat, pilot, "#console-native-composer")
+            store = chat._ensure_console_chat_store()
+            conversation = _create_handoff(store)
+            target = _restore_handoff(store, conversation)
+            store.switch_session(target.id)
+            await chat._sync_native_console_chat_ui()
+            composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+            composer.focus()
+            await pilot.pause()
+>           assert composer.draft_text() == "original"
+E           AssertionError: assert '' == 'original'
+E             
+E             - original
+
+Tests/UI/test_console_runtime_ownership.py:2959: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 14:54:09 [WARNING ] root:1492 - Prompts service not initialized, self.prompts_db set to None.
+2026-10-03 14:54:09 [ERROR   ] root:1513 - ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     root:app.py:2277 Splash screen enabled: True
+INFO     root:app.py:2290 Creating splash screen - duration: 7.0, card: random
+INFO     root:app.py:2305 Splash screen yielded, returning early from compose
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=base provider=faster-whisper status=ok
+INFO     root:app_lifecycle.py:991 --- App Unmounting ---
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_stopping component=app
+______ test_accepted_agent_chat_start_has_visible_stop_in_mounted_target _______
+
+tmp_path = PosixPath('/private/tmp/console-finalfix-final-ui-01a0fa6c/test_accepted_agent_chat_start0')
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(tmp_path):
+        from threading import Event
+        from textual.widgets import Button
+        from Tests.Chat.test_console_chat_start import _native_start_rig
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(
+            tmp_path
+        )
+        entered, release = Event(), Event()
+        original_reply = controller._agent_bridge.run_reply
+    
+        def paused_reply(*args, **kwargs):
+            entered.set()
+            assert release.wait(120)
+            return original_reply(*args, **kwargs)
+    
+        controller._agent_bridge.run_reply = paused_reply
+        app = _build_test_app()
+        _attach_real_dbs(app, tmp_path)
+        _configure_native_ready_console(app)
+        try:
+            async with app.run_test(size=(160, 48)) as pilot:
+                chat = ChatScreen(app)
+                await app.push_screen(chat)
+                app._initial_screen_pushed = True
+                app.current_tab = "chat"
+                await _wait_for_selector(chat, pilot, "#console-native-composer")
+                runtime = app.console_runtime
+                runtime._chat_store = store
+                runtime._chat_controller = controller
+                runtime._agent_bridge = controller._agent_bridge
+                controller.app = app
+                try:
+                    start = asyncio.create_task(controller._chat_start.start(request))
+                    assert (await start).launch_status == "started"
+                    assert await asyncio.to_thread(entered.wait, 5)
+                    store.switch_session(target.id)
+                    await chat._sync_native_console_chat_ui()
+                    await pilot.pause()
+                    stop = chat.query_one("#console-stop-generation", Button)
+                    assert controller.run_state.status is ConsoleRunStatus.STREAMING
+                    assert stop.display and stop.region.width > 0
+                    assert stop.region.right <= stop.parent.region.right
+                    assert (
+                        str(chat.query_one("#console-send-message", Button).label)
+                        != "Preparing..."
+                    )
+                    assert not chat._console_setup_modal_blocking()
+                    stop_calls = []
+                    stop_active = controller.stop_active_run
+    
+                    def observe_stop(*args, **kwargs):
+                        result = stop_active(*args, **kwargs)
+                        stop_calls.append((store.active_session_id, result))
+                        return result
+    
+                    controller.stop_active_run = observe_stop
+                    assert not stop.disabled
+                    assert await pilot.click("#console-stop-generation")
+                    for _ in range(50):
+                        if stop_calls:
+                            break
+                        await pilot.pause(0.1)
+>                   assert stop_calls == [(target.id, True)], (
+                        stop_calls,
+                        stop.disabled,
+                        str(stop.label),
+                        chat._console_setup_modal_blocking(),
+                    )
+E                   AssertionError: ([], False, 'Stop', False)
+E                   assert [] == [('f84b9414-9...69f3c', True)]
+E                     
+E                     Right contains one more item: ('f84b9414-9786-420b-8706-f7688e969f3c', True)
+E                     Use -v to get more diff
+
+Tests/UI/test_console_runtime_ownership.py:3034: AssertionError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 14:54:18 [WARNING ] root:1492 - Prompts service not initialized, self.prompts_db set to None.
+2026-10-03 14:54:18 [ERROR   ] root:1513 - ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+------------------------------ Captured log call -------------------------------
+INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1046 No capability information found for llama_cpp/test-model, using defaults
+INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     root:app.py:2277 Splash screen enabled: True
+INFO     root:app.py:2290 Creating splash screen - duration: 7.0, card: random
+INFO     root:app.py:2305 Splash screen yielded, returning early from compose
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=base provider=faster-whisper status=ok
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage app_version=0.2.3 attempt_id=43a37112d3ec434192209d71341479d5 component=console duration_ms=0 phase=controller_submit python_version=3.12.11 sqlite_version=3.49.1 status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=43a37112d3ec434192209d71341479d5 component=console duration_ms=122 phase=provider_resolution status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=43a37112d3ec434192209d71341479d5 capture_enabled=false component=console duration_ms=129 phase=capture_policy status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=43a37112d3ec434192209d71341479d5 component=console duration_ms=134 phase=durable_commit status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=43a37112d3ec434192209d71341479d5 component=console duration_ms=361 phase=durable_commit status=succeeded
+ERROR    tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=worker_failed component=app exception_type=AttributeError operation=deferred_actor_pack_recovery
+INFO     tldw_chatbook.diagnostics.scheduling:persistent_diagnostics.py:256 event=scheduler_configured component=scheduling item_count=5 status=ok
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=43a37112d3ec434192209d71341479d5 component=console duration_ms=14058 phase=controller_submit status=stopped
+INFO     root:app_lifecycle.py:991 --- App Unmounting ---
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_stopping component=app
+=============================== warnings summary ===============================
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_console_session_controller.py::test_workspace_created_blank_console_uses_published_defaults
+Tests/UI/test_console_session_controller.py::test_controller_new_session_preserves_explicit_source_settings
+Tests/UI/test_console_session_controller.py::test_personas_preview_handoff_preserves_control_derived_source_settings
+Tests/UI/test_console_session_controller.py::test_typed_then_cleared_work_marker_survives_screen_state_restore
+Tests/UI/test_console_session_controller.py::test_persona_memory_mode_survives_screen_state_restore
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/UI/Screens/chat_screen.py:24890: RuntimeWarning: coroutine 'Timer._run_timer' was never awaited
+    logger.error(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+Tests/UI/test_console_session_controller.py::test_postcommit_registration_failure_open_retry_reuses_identity
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/conftest.py:600: UserWarning: open file descriptors grew by 978 over the test session (start=14, end=992, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+39.69s call     Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+21.74s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+21.45s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]
+20.18s call     Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target
+16.66s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+16.52s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+15.06s call     Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+14.71s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+14.46s call     Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+12.99s call     Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime
+12.99s call     Tests/UI/test_console_runtime_ownership.py::test_post_unmount_raw_refusal_restores_on_second_console_visit
+10.09s call     Tests/UI/test_console_session_controller.py::test_cancelled_fork_validation_generation_cannot_publish_late_result
+9.74s call     Tests/UI/test_console_session_controller.py::test_workspace_projection_failure_keeps_one_open_fork_pending_retry
+9.17s call     Tests/UI/test_console_session_controller.py::test_postcommit_registration_failure_open_retry_reuses_identity
+9.09s call     Tests/UI/test_console_session_controller.py::test_durable_fork_orders_commit_projection_registration_and_activation
+8.56s call     Tests/UI/test_console_session_controller.py::test_promote_console_temporary_session_writes_durable_rows_to_the_database
+8.47s call     Tests/UI/test_console_session_controller.py::test_ambiguous_durable_commit_reconciles_without_second_bundle
+8.29s call     Tests/UI/test_console_session_controller.py::test_ambiguous_durable_collision_fails_closed_without_publication
+8.10s call     Tests/UI/test_console_session_controller.py::test_promote_console_temporary_session_second_call_does_not_duplicate_the_row
+7.81s call     Tests/UI/test_console_runtime_ownership.py::test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
+7.15s call     Tests/UI/test_console_session_controller.py::test_activate_native_console_session_realigns_active_workspace
+6.85s call     Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit
+5.86s call     Tests/UI/test_console_session_controller.py::test_temporary_activation_failure_open_reuses_registered_id_once
+5.85s call     Tests/UI/test_console_session_controller.py::test_apply_console_switcher_choice_none_is_a_noop
+5.67s call     Tests/UI/test_console_session_controller.py::test_fork_validation_freezes_the_accepted_title_until_retry
+=========================== short test summary info ============================
+XFAIL Tests/UI/test_console_runtime_ownership.py::test_captured_attach_timer_overlap_rearms_real_sync_worker - TASK-32873: the real sync worker now reads whole-screen owner state (library projection, staged evidence, active settings, Textual message-pump context) that a bare __new__ ChatScreen mount cannot satisfy; needs the app_factory real-mount rewrite. Tracked in the task notes.
+FAILED Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit
+FAILED Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target
+2 failed, 121 passed, 1 xfailed, 10 warnings in 465.57s (0:07:45)

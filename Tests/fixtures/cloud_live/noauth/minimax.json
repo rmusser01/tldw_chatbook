@@ -1,0 +1,42 @@
+{
+  "server": "minimax",
+  "base_url": "https://api.minimax.io/v1",
+  "probe_model": "MiniMax-M3",
+  "listing": {
+    "status": 401,
+    "body": {
+      "type": "error",
+      "error": {
+        "type": "authorized_error",
+        "message": "login fail: Please carry the API secret key in the 'Authorization' field of the request header (1004)",
+        "http_code": "401"
+      },
+      "request_id": "070bc0df1ffa305f71d05d64b255b3bd"
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "type": "error",
+      "error": {
+        "type": "authorized_error",
+        "message": "login fail: Please carry the API secret key in the 'Authorization' field of the request header (1004)",
+        "http_code": "401"
+      },
+      "request_id": "070bc0df56673eb157fd7f08ec116657"
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "type": "error",
+      "error": {
+        "type": "authorized_error",
+        "message": "login fail: Please carry the API secret key in the 'Authorization' field of the request header (1004)",
+        "http_code": "401"
+      },
+      "request_id": "070bc0e03c822b45b4b19f9272259410"
+    }
+  },
+  "probed_at": "2026-09-30T04:19:44+00:00"
+}

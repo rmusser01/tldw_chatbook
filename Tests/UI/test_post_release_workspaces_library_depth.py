@@ -27,6 +27,7 @@ class LibraryWorkspaceHarness(DestinationHarness):
     CSS_PATH = TldwCli.CSS_PATH
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_workspace_receipts_and_actions_follow_mounted_source_transitions(theme):
@@ -195,6 +196,7 @@ def _seed_cross_workspace_library(app) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff() -> (
     None
@@ -283,6 +285,7 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
         assert "Notes 2" in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> None:
     app = _build_test_app()
@@ -344,6 +347,7 @@ async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> N
         assert import_sources_button.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_workspaces_can_create_and_select_local_workspace() -> None:
     app = _build_test_app()
@@ -384,6 +388,7 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
     """Verify mouse clicks can create and activate a local workspace."""
@@ -437,6 +442,7 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
         assert active_workspace_row.renderable.plain == "Active · Workspace 1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_workspaces_create_skips_archived_local_workspace_identity() -> (
     None
@@ -480,6 +486,7 @@ async def test_library_workspaces_create_skips_archived_local_workspace_identity
         assert active_workspace.name == "Workspace 2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_workspaces_active_workspace_label_escapes_markup_text() -> None:
     """The workspace summary label still escapes user-provided markup.
@@ -513,6 +520,7 @@ async def test_library_workspaces_active_workspace_label_escapes_markup_text() -
         assert all(span.style == "dim" for span in row.renderable.spans)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actions(
     monkeypatch,
@@ -549,6 +557,7 @@ async def test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actio
         assert calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_details_section_renders_grouped_headers_and_drops_policy_prose() -> (
     None
@@ -630,6 +639,7 @@ async def test_library_details_section_renders_grouped_headers_and_drops_policy_
         assert "Copy or link them into this workspace" in handoff_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_create_workspace_notification_names_console_retarget() -> None:
     """TASK-713: the Library create toast must say the new workspace became
@@ -660,6 +670,7 @@ async def test_library_create_workspace_notification_names_console_retarget() ->
         ), f"expected an activation-aware creation toast, got {notifications!r}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_workspace_recomposes_after_activation_failure() -> None:
     """Finding 2: activation failure must not skip the depth-state
@@ -724,6 +735,7 @@ async def test_create_workspace_recomposes_after_activation_failure() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_blocked_use_in_console_press_explains_inline() -> None:
     """TASK-716: pressing the blocked action must surface the reason as a
@@ -746,6 +758,7 @@ async def test_blocked_use_in_console_press_explains_inline() -> None:
         assert notifications, "expected the blocked press to explain itself"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_create_workspace_preserves_rail_scroll() -> None:
     """TASK-716: the create-workspace recompose must not reset the rail
@@ -782,6 +795,7 @@ async def test_create_workspace_preserves_rail_scroll() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate() -> (
     None

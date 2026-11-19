@@ -67,6 +67,7 @@ def painted_lines(widget) -> list[str]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", CRITIQUE_SIZES)
 async def test_the_folder_files_title_row_claims_one_row_not_a_share_of_the_pane(
     tmp_path: Path, size: tuple[int, int]

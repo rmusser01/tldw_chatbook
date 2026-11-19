@@ -23,6 +23,7 @@ overlap checks *stricter* than a real tokenizer would be (it collapses
 sales/sale, increased/increase), so a pair that passes here is not reachable
 by keyword matching for a token-shape reason either.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -55,23 +56,142 @@ from Tests.RAG_Eval.harness.goldenset import (
 # --------------------------------------------------------------------------
 
 _STOPWORDS = {
-    "a", "an", "the", "and", "or", "but", "if", "of", "to", "in", "on", "at",
-    "for", "from", "by", "with", "without", "into", "onto", "over", "under",
-    "is", "are", "was", "were", "be", "been", "being", "am", "do", "does",
-    "did", "done", "has", "have", "had", "can", "could", "should", "would",
-    "may", "might", "must", "shall", "it", "its", "this", "that", "these",
-    "those", "as", "than", "then", "so", "not", "no", "any", "all", "each",
-    "every", "some", "who", "whom", "whose", "what", "which", "when", "where",
-    "why", "how", "there", "here", "he", "she", "they", "them", "his", "her",
-    "their", "our", "we", "you", "your", "i", "my", "me", "up", "out", "off",
-    "about", "after", "before", "during", "while", "because", "since",
-    "between", "through", "very", "much", "more", "most", "get", "got",
-    "make", "made", "one", "two", "own", "same", "other", "another", "such",
-    "only", "also", "still", "just", "now", "per", "both", "either",
+    "a",
+    "an",
+    "the",
+    "and",
+    "or",
+    "but",
+    "if",
+    "of",
+    "to",
+    "in",
+    "on",
+    "at",
+    "for",
+    "from",
+    "by",
+    "with",
+    "without",
+    "into",
+    "onto",
+    "over",
+    "under",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "am",
+    "do",
+    "does",
+    "did",
+    "done",
+    "has",
+    "have",
+    "had",
+    "can",
+    "could",
+    "should",
+    "would",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "it",
+    "its",
+    "this",
+    "that",
+    "these",
+    "those",
+    "as",
+    "than",
+    "then",
+    "so",
+    "not",
+    "no",
+    "any",
+    "all",
+    "each",
+    "every",
+    "some",
+    "who",
+    "whom",
+    "whose",
+    "what",
+    "which",
+    "when",
+    "where",
+    "why",
+    "how",
+    "there",
+    "here",
+    "he",
+    "she",
+    "they",
+    "them",
+    "his",
+    "her",
+    "their",
+    "our",
+    "we",
+    "you",
+    "your",
+    "i",
+    "my",
+    "me",
+    "up",
+    "out",
+    "off",
+    "about",
+    "after",
+    "before",
+    "during",
+    "while",
+    "because",
+    "since",
+    "between",
+    "through",
+    "very",
+    "much",
+    "more",
+    "most",
+    "get",
+    "got",
+    "make",
+    "made",
+    "one",
+    "two",
+    "own",
+    "same",
+    "other",
+    "another",
+    "such",
+    "only",
+    "also",
+    "still",
+    "just",
+    "now",
+    "per",
+    "both",
+    "either",
 }
 
 _SUFFIXES = (
-    "iness", "ingly", "edly", "ness", "ing", "ies", "ied", "es", "ed", "ly", "s", "e",
+    "iness",
+    "ingly",
+    "edly",
+    "ness",
+    "ing",
+    "ies",
+    "ied",
+    "es",
+    "ed",
+    "ly",
+    "s",
+    "e",
 )
 
 
@@ -195,9 +315,7 @@ def _scoped_query(
     scope: tuple[str, ...] | None = ("n1", "m1"),
 ) -> GoldenQuery:
     """A scoped golden query, with every rule-relevant part parameterized."""
-    return GoldenQuery(
-        query_id, "alpha beta", category, relevant, scope_slugs=scope
-    )
+    return GoldenQuery(query_id, "alpha beta", category, relevant, scope_slugs=scope)
 
 
 def _defects(corpus: list[CorpusDoc], golden: list[GoldenQuery]) -> str:
@@ -254,9 +372,9 @@ def test_guard_catches_an_inflected_reword_of_a_shipped_pair(by_slug):
     """
     # note-hypertension-followup says "...elevated systolic readings..."
     hypertension = by_slug["note-hypertension-followup"]
-    assert _content_stems("how dangerous is a high blood pressure reading") & _doc_stems(
-        hypertension
-    )
+    assert _content_stems(
+        "how dangerous is a high blood pressure reading"
+    ) & _doc_stems(hypertension)
 
     # conv-workout-time says "...the evening classes were always full."
     workout = by_slug["conv-workout-time"]
@@ -359,7 +477,9 @@ def test_loaded_records_are_frozen(corpus, golden):
 
 def test_every_document_has_at_least_three_sentences(corpus):
     thin = {
-        doc.slug: len([s for s in re.split(r"[.!?]\s", doc.content.strip()) if s.strip()])
+        doc.slug: len(
+            [s for s in re.split(r"[.!?]\s", doc.content.strip()) if s.strip()]
+        )
         for doc in corpus
     }
     assert {slug: n for slug, n in thin.items() if n < 3} == {}
@@ -380,7 +500,9 @@ def test_documents_are_self_contained_and_timeless(corpus):
     assert offenders == set()
 
 
-def test_paraphrase_and_vocabulary_queries_share_no_content_word_with_targets(golden, by_slug):
+def test_paraphrase_and_vocabulary_queries_share_no_content_word_with_targets(
+    golden, by_slug
+):
     """The defining property of both vector-advantage groups.
 
     A single shared content word turns a paraphrase case into a keyword case
@@ -411,7 +533,8 @@ def test_keyword_queries_own_a_token_unique_to_their_targets(golden, by_slug):
         unique = [
             stem
             for stem in _content_stems(query.query)
-            if {slug for slug, stems in stems_by_slug.items() if stem in stems} == targets
+            if {slug for slug, stems in stems_by_slug.items() if stem in stems}
+            == targets
         ]
         if not unique:
             undiscriminating.append(query.id)
@@ -427,7 +550,9 @@ def test_negative_queries_are_about_topics_absent_from_the_corpus(golden, by_slu
         if query.category != NEGATIVE_CATEGORY:
             continue
         for stem in sorted(_content_stems(query.query)):
-            hits = sorted(slug for slug, stems in stems_by_slug.items() if stem in stems)
+            hits = sorted(
+                slug for slug, stems in stems_by_slug.items() if stem in stems
+            )
             if hits:
                 leaks[(query.id, stem)] = hits
     assert leaks == {}
@@ -713,7 +838,10 @@ def test_scoped_queries_are_uniquely_resolvable_by_the_keyword_path_in_scope(
             slug
             for slug in query.scope_slugs or ()
             if all(
-                any(variant.lower() in words_by_slug[slug] for variant in expand_keyword_term(term))
+                any(
+                    variant.lower() in words_by_slug[slug]
+                    for variant in expand_keyword_term(term)
+                )
                 for term in terms
             )
         )
@@ -926,14 +1054,21 @@ def test_fixture_files_parse_as_plain_toml_with_the_documented_shape():
     assert set(raw_corpus) == {"doc"}
     assert set(raw_golden) == {"query"}
     assert {key for doc in raw_corpus["doc"] for key in doc} == {
-        "slug", "source_type", "title", "content",
+        "slug",
+        "source_type",
+        "title",
+        "content",
     }
     golden_keys = {key for query in raw_golden["query"] for key in query}
     assert {"id", "query", "category", "relevant_slugs"} <= golden_keys
     # `scope_slugs` is optional (scoped queries only), so it is permitted but
     # not required; nothing else may appear.
     assert golden_keys <= {
-        "id", "query", "category", "relevant_slugs", "scope_slugs",
+        "id",
+        "query",
+        "category",
+        "relevant_slugs",
+        "scope_slugs",
     }
 
 
@@ -1203,7 +1338,9 @@ content = "A. B. C."
     message = str(excinfo.value)
     assert "missing required key 'title'" in message
     assert "unknown key 'sourcetype'" in message
-    assert len(excinfo.value.defects) >= 3  # missing title, unknown key, missing source_type
+    assert (
+        len(excinfo.value.defects) >= 3
+    )  # missing title, unknown key, missing source_type
 
 
 def test_load_corpus_rejects_blank_and_non_string_fields(tmp_path):

@@ -1,8 +1,12 @@
 """Recovery admission for installed agent runs and their native workers."""
 
+import inspect
 import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
+from types import FunctionType, ModuleType
 
 from tldw_chatbook.Backup_Recovery import bootstrap, profile_paths
 from tldw_chatbook.Backup_Recovery.admission_runtime import RecoveryAdmissionGuard
@@ -89,8 +93,92 @@ def execution(service=None, *, sources=()):
     return _guard.execution(service, sources=sources)
 
 
+def _explicit_writer_root(service):
+    """Select only the unchanged writer that stock run_turn will actually bind."""
+    service_source = sys.modules.get("tldw_chatbook.Agents.agent_service")
+    log_source = sys.modules.get("tldw_chatbook.Agents.run_log")
+    if type(service_source) is not ModuleType or type(log_source) is not ModuleType:
+        return None
+    AgentService = vars(service_source).get("AgentService")
+    record = vars(log_source).get("_RUN_LOG_PATH_WRITER_ORIGINAL")
+    if type(record) is not tuple or len(record) != 2:
+        return None
+    writer_class, methods = record
+    if (
+        type(AgentService) is not type
+        or type(writer_class) is not type
+        or type(methods) is not tuple
+        or len(methods) != 3
+        or not all(
+            type(row) is tuple
+            and len(row) == 4
+            and type(row[0]) is str
+            and type(row[1]) is FunctionType
+            for row in methods
+        )
+        or type(service) is not AgentService
+        or inspect.getattr_static(AgentService, "__getattribute__")
+        is not object.__getattribute__
+        or inspect.getattr_static(writer_class, "__getattribute__")
+        is not object.__getattribute__
+    ):
+        return None
+    writer = inspect.getattr_static(service, "_injected_run_log_writer", None)
+    if type(writer) is not writer_class or not all(
+        inspect.getattr_static(writer, name, None) is function
+        and function.__code__ is code
+        and function.__defaults__ is defaults
+        for name, function, code, defaults in methods
+    ):
+        return None
+    root = inspect.getattr_static(writer, "_explicit_root", None)
+    return root if type(root) is type(Path()) else None
+
+
+@contextmanager
+def history_execution(service: object) -> Iterator[Path | None]:
+    """Admit saved history at selection and retain it through segment loading."""
+    from .run_log import resolve_log_root
+
+    with execution(service):
+        root = resolve_log_root()
+        sources = (("agents.history", root),) if root is not None else ()
+        with execution(service, sources=sources):
+            yield root
+
+
+def standard_history_resolver(callback: Callable[..., Path | None]) -> bool:
+    """Recognize the recorded reader before supplying its optional root argument."""
+    from .run_log import _RUN_LOG_PROBE_SOURCE
+
+    original = next(
+        function
+        for _owner, name, function in _RUN_LOG_PROBE_SOURCE[4]
+        if name == "resolve_existing_log_dir"
+    )
+    if callback is not original:
+        return False
+    record = next(row for row in _RUN_LOG_PROBE_SOURCE[5] if row[0] is original)
+    _, code, namespace, defaults, kwdefaults, items, closure, cells, wrapped = record
+    return (
+        callback.__code__ is code
+        and callback.__globals__ is namespace
+        and callback.__defaults__ is defaults
+        and callback.__kwdefaults__ is kwdefaults
+        and len(callback.__kwdefaults__ or {}) == len(items)
+        and all(
+            (callback.__kwdefaults__ or {}).get(key) is value for key, value in items
+        )
+        and callback.__closure__ is closure
+        and all(cell.cell_contents is value for cell, value in cells)
+        and vars(callback).get("__wrapped__") is wrapped
+    )
+
+
 def guarded(function):
     """Guard synchronous installed run entry points before their first effect."""
+
+    original_code = function.__code__
 
     @wraps(function)
     def call(self, *args, **kwargs):
@@ -102,13 +190,19 @@ def guarded(function):
         log_dir = getattr(kwargs.get("run_log_writer"), "log_dir", None)
         if log_dir is not None:
             sources += (("agents.history", profile_paths.lexical_path(log_dir)),)
+        # Passive stock-source observation joins the initial fresh admission;
+        # custom writers still resolve global history inside the admitted scope.
+        explicit_root = (
+            _explicit_writer_root(self)
+            if function.__name__ == "run_turn" and function.__code__ is original_code
+            else None
+        )
+        if explicit_root is not None:
+            sources += (("agents.history", explicit_root),)
         with execution(self, sources=sources):
-            if function.__name__ == "run_turn":
+            if function.__name__ == "run_turn" and explicit_root is None:
                 from .run_log import resolve_log_root
 
-                # This installed selector consults the admitted workspace DB.
-                # Check the actual workspace log source before writer.bind can
-                # migrate logs or before any model/tool consumes saved history.
                 root = resolve_log_root()
                 if root is not None:
                     with execution(self, sources=(("agents.history", root),)):

@@ -3,12 +3,15 @@
 Improved dictation interface with privacy settings and better error handling.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable
 from pathlib import Path
 from datetime import datetime
 import asyncio
+import threading
 import time
 from textual.app import ComposeResult
+from textual import on
+from textual.message import Message
 from textual.containers import Horizontal, Vertical, ScrollableContainer, Container
 from textual.widgets import (
     Label,
@@ -23,6 +26,7 @@ from textual.widgets import (
 from textual.widget import Widget
 from textual.reactive import reactive
 from textual.binding import Binding
+from textual.widgets._select import SelectOverlay
 from loguru import logger
 
 # Local imports
@@ -33,7 +37,6 @@ from ..config import (
 )
 from ..Audio.dictation_service_lazy import LazyLiveDictationService, DictationState
 from ..Event_Handlers.Audio_Events import VoiceCommandEvent
-from ..Utils.local_stt_providers import normalize_provider_id
 from ..Widgets.audio_troubleshooting_dialog import AudioTroubleshootingDialog
 
 
@@ -55,6 +58,34 @@ def dictation_export_directory() -> Path:
         The profile-owned Dictation export directory.
     """
     return get_user_data_dir() / "exports" / "dictation"
+
+
+class _DictationActionButton(Button):
+    """Activate focused Dictation controls with Space and inherited Enter."""
+
+    BINDINGS = [Binding("space", "press", "Press button", show=False)]
+
+
+class _ProviderSelect(Select):
+    """Distinguish an overlay choice from passive value synchronization."""
+
+    class Chosen(Message):
+        def __init__(self, select: "_ProviderSelect", value: str) -> None:
+            super().__init__()
+            self.select = select
+            self.value = value
+
+    @on(SelectOverlay.UpdateSelection)
+    def _update_selection(self, event: SelectOverlay.UpdateSelection) -> None:
+        # Textual also dispatches decorated base handlers. Invoke the native
+        # selection exactly once, then prevent its second MRO dispatch.
+        event.prevent_default()
+        if self._closing or self._pruning or not self.expanded:
+            event.stop()
+            return
+        super()._update_selection(event)
+        if isinstance(self.value, str):
+            self.post_message(self.Chosen(self, self.value))
 
 
 class ImprovedDictationWindow(Widget):
@@ -208,6 +239,8 @@ class ImprovedDictationWindow(Widget):
 
         # Lazy service - not initialized until needed
         self.dictation_service = None
+        self._retired = False
+        self._capture_generation = 0
 
         # Transcript management
         self.transcript_segments = []
@@ -250,14 +283,20 @@ class ImprovedDictationWindow(Widget):
 
                     # Control buttons
                     with Horizontal():
-                        yield Button(
+                        yield _DictationActionButton(
                             "🎤 Start Dictation",
                             id="dictation-toggle-btn",
                             variant="primary",
                         )
-                        yield Button("⏸️ Pause", id="dictation-pause-btn", disabled=True)
-                        yield Button("🗑️ Clear", id="dictation-clear-btn")
-                        yield Button("🔧 Troubleshoot", id="troubleshoot-btn")
+                        yield _DictationActionButton(
+                            "⏸️ Pause", id="dictation-pause-btn", disabled=True
+                        )
+                        yield _DictationActionButton(
+                            "🗑️ Clear", id="dictation-clear-btn"
+                        )
+                        yield _DictationActionButton(
+                            "🔧 Troubleshoot", id="troubleshoot-btn"
+                        )
 
                 # Sidebar
                 with ScrollableContainer(classes="dictation-sidebar"):
@@ -324,7 +363,7 @@ class ImprovedDictationWindow(Widget):
 
                             # Provider selection (filtered by privacy mode)
                             yield Label("Provider:")
-                            yield Select(
+                            yield _ProviderSelect(
                                 options=self._get_provider_options(),
                                 value=self.settings.get("provider")
                                 or "auto",  # Ensure never None
@@ -370,9 +409,15 @@ class ImprovedDictationWindow(Widget):
                     # Export section
                     with Vertical(classes="control-section"):
                         yield Label("Export", classes="section-title")
-                        yield Button("📋 Copy to Clipboard", id="copy-button")
-                        yield Button("💾 Save as Text", id="save-text-button")
-                        yield Button("📝 Save as Markdown", id="save-md-button")
+                        yield _DictationActionButton(
+                            "📋 Copy to Clipboard", id="copy-button"
+                        )
+                        yield _DictationActionButton(
+                            "💾 Save as Text", id="save-text-button"
+                        )
+                        yield _DictationActionButton(
+                            "📝 Save as Markdown", id="save-md-button"
+                        )
 
     def on_mount(self):
         """Initialize on mount."""
@@ -397,27 +442,87 @@ class ImprovedDictationWindow(Widget):
 
     def _get_provider_options(self) -> List[tuple]:
         """Get provider options based on privacy settings."""
-        if self.settings["privacy"]["local_only"]:
-            # Only local providers in privacy mode
-            return [
-                ("Auto (Local)", "auto"),
-                ("Parakeet MLX", "parakeet-mlx"),
-                ("Faster Whisper", "faster-whisper"),
-                ("Lightning Whisper", "lightning-whisper-mlx"),
-            ]
-        else:
-            # All providers available
-            return [
-                ("Auto", "auto"),
-                ("Parakeet MLX", "parakeet-mlx"),
-                ("Faster Whisper", "faster-whisper"),
-                ("Lightning Whisper", "lightning-whisper-mlx"),
+        from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+        local_only = self.settings["privacy"]["local_only"]
+        options = [
+            ("Auto (Local)" if local_only else "Auto", "auto"),
+            ("Parakeet MLX", "parakeet-mlx"),
+            ("Faster Whisper", "faster-whisper"),
+        ]
+        if not local_only:
+            options.extend((
                 ("OpenAI Whisper", "openai-whisper"),
                 ("Google Speech", "google-speech"),
-            ]
+            ))
+        stored = self.settings.get("provider")
+        if provider_release_deferral(stored):
+            options.append(("Lightning Whisper MLX (unavailable in 0.2.4)", stored))
+        return options
+
+    def _provider_deferral(self, provider: str | None = None) -> str | None:
+        """Check this selection without constructing a transcription service."""
+        from tldw_chatbook.Utils.local_stt_providers import provider_release_deferral
+
+        selected = (
+            self.settings.get("provider", "auto") if provider is None else provider
+        )
+        if not selected or selected == "auto":
+            selected = get_cli_setting(
+                "transcription.default_provider", "faster-whisper"
+            )
+        return provider_release_deferral(selected)
+
+    def _update_provider_availability(self) -> None:
+        reason = self._provider_deferral()
+        button = self.query_one("#dictation-toggle-btn", Button)
+        # A running capture must retain its Stop control.
+        button.disabled = bool(reason) and not self.is_dictating
+        button.tooltip = reason
+        if reason and not self.is_dictating:
+            self._show_status(reason, "error")
+
+    @on(_ProviderSelect.Chosen)
+    def _replace_deferred_provider(self, event: _ProviderSelect.Chosen) -> None:
+        """Persist an explicit replacement only before this view owns a service."""
+        event.stop()
+        if self._retired or getattr(self, "_settings_are_mounting", True):
+            return
+        select = self.query_one("#provider-select", _ProviderSelect)
+        value = event.value
+        if event.select is not select or value != select.value:
+            return
+        if not self._provider_deferral() or value == self.settings["provider"]:
+            return
+        if value not in {"auto", "parakeet-mlx", "faster-whisper"} or (
+            self._provider_deferral(value)
+        ):
+            select.value = self.settings["provider"]
+            return
+        if self.dictation_service is not None:
+            select.value = self.settings["provider"]
+            self._show_status(
+                "Close and reopen Dictation before replacing this provider.", "error"
+            )
+            return
+        self.settings["provider"] = value
+        self.is_initialized = False
+        self.initialization_error = ""
+        select.set_options(self._get_provider_options())
+        select.value = value
+        self._update_provider_availability()
+        self._show_status("Provider selected. Start Dictation when ready.", "info")
+        self._persist_settings()
 
     def _initialize_service(self) -> bool:
         """Initialize dictation service lazily."""
+        if self._retired:
+            return False
+        if reason := self._provider_deferral():
+            self.is_initialized = False
+            self.initialization_error = reason
+            self._show_status(reason, "error")
+            return False
         if self.dictation_service is not None:
             return True
 
@@ -484,10 +589,17 @@ class ImprovedDictationWindow(Widget):
             self._export_as_text()
         elif button_id == "save-md-button":
             self._export_as_markdown()
+        else:
+            return
+        # STTS forwards bubbled presses to its active child; handled actions
+        # already ran here and must not be delivered a second time.
+        event.stop()
 
     def _finish_mounting(self) -> None:
         """Stop treating control changes as mount noise."""
         self._settings_are_mounting = False
+        if not self._retired:
+            self._update_provider_availability()
 
     def _persist_settings(self) -> None:
         """Schedule a debounced settings save unless controls are mounting.
@@ -546,8 +658,35 @@ class ImprovedDictationWindow(Widget):
         self._settings_dirty = False
         await asyncio.to_thread(self._write_settings_snapshot, snapshot)
 
+    def cleanup(self) -> None:
+        """Retire this foreground capture without waiting for transcription."""
+        if self._retired:
+            return
+        # Revoke saved callback references before abandon can notify, and before
+        # on_unmount yields to a pending settings write.
+        self._retired = True
+        self.is_dictating = False
+        service = self.dictation_service
+        if service is None:
+            return
+        for callback in (
+            "on_partial_transcript",
+            "on_final_transcript",
+            "on_state_change",
+            "on_error",
+            "on_command",
+        ):
+            setattr(service, callback, None)
+        processor = service.processing_thread
+        # A failed Start may own a processor even though is_dictating is False.
+        # A completed explicit Stop is already idle and must not stop twice.
+        if service.state != DictationState.IDLE or (
+            processor is not None and processor.is_alive()
+        ):
+            service.abandon()
+
     async def on_unmount(self) -> None:
-        """Flush a pending debounced settings write.
+        """Retire capture and flush a pending debounced settings write.
 
         Fires both when this view is switched away from (`STTS_Window`'s
         `content_container.remove_children()`) and when the app quits while
@@ -556,6 +695,7 @@ class ImprovedDictationWindow(Widget):
         write is already in flight, waits for it rather than dispatching a
         second writer against the same config file.
         """
+        self.cleanup()
         if self._settings_save_timer is not None:
             self._settings_save_timer.stop()
             self._settings_save_timer = None
@@ -586,7 +726,12 @@ class ImprovedDictationWindow(Widget):
             self._update_privacy_ui()
             # Update provider options
             provider_select = self.query_one("#provider-select", Select)
-            provider_select.set_options(self._get_provider_options())
+            provider_select.expanded = False
+            options = self._get_provider_options()
+            provider_select.set_options(options)
+            stored = self.settings["provider"]
+            if any(value == stored for _, value in options):
+                provider_select.value = stored
         elif event.switch.id == "auto-clear-switch":
             self.settings["privacy"]["auto_clear_buffer"] = event.value
             self._persist_settings()
@@ -640,6 +785,8 @@ class ImprovedDictationWindow(Widget):
         if not self._initialize_service():
             return
 
+        self._capture_generation += 1
+
         # Update UI
         toggle_btn = self.query_one("#dictation-toggle-btn", Button)
         toggle_btn.label = "🛑 Stop Dictation"
@@ -674,7 +821,10 @@ class ImprovedDictationWindow(Widget):
         if not self.dictation_service:
             return
 
+        if self.dictation_service.state == DictationState.PAUSED:
+            self.dictation_service.resume_dictation()
         result = self.dictation_service.stop_dictation()
+        self._capture_generation += 1
 
         # Update UI
         toggle_btn = self.query_one("#dictation-toggle-btn", Button)
@@ -686,6 +836,10 @@ class ImprovedDictationWindow(Widget):
         pause_btn.label = "⏸️ Pause"
 
         self.is_dictating = False
+        # Stop owns the completed result after service privacy cleanup. Queued
+        # processor updates from this capture must not overwrite that result.
+        self.transcript_text = result.transcript
+        self.query_one("#transcript-display", TextArea).load_text(result.transcript)
         self.duration = result.duration
         self.word_count = len(result.transcript.split()) if result.transcript else 0
         self._update_stats()
@@ -694,28 +848,62 @@ class ImprovedDictationWindow(Widget):
 
         self._show_status("Dictation stopped", "info")
 
+    def _dispatch_dictation_callback(
+        self, callback: Callable[..., None], *args: Any
+    ) -> bool:
+        """Allow publication only on this live widget's UI message loop."""
+        generation = self._capture_generation
+        if self._retired:
+            return False
+        if threading.get_ident() != self._thread_id:
+            # Nonblocking: explicit Stop may be joining this processor. Re-enter
+            # the callback on the UI loop so retirement is checked there too.
+            self.call_later(
+                self._publish_dictation_callback, generation, callback, args
+            )
+            return False
+        return True
+
+    def _publish_dictation_callback(
+        self, generation: int, callback: Callable[..., None], args: tuple[Any, ...]
+    ) -> None:
+        """Publish a queued update only while its foreground capture still owns it."""
+        if self._retired or generation != self._capture_generation:
+            return
+        callback(*args)
+
     def _on_partial_transcript(self, text: str):
         """Handle partial transcript updates."""
+        if not self._dispatch_dictation_callback(self._on_partial_transcript, text):
+            return
         self._update_transcript_display(text, is_partial=True)
 
     def _on_final_transcript(self, text: str):
         """Handle final transcript segments."""
+        if not self._dispatch_dictation_callback(self._on_final_transcript, text):
+            return
         self._add_transcript_segment(text)
 
     def _on_state_change(self, state: str):
         """Handle dictation state changes."""
+        if not self._dispatch_dictation_callback(self._on_state_change, state):
+            return
         self.dictation_state = state
         state_display = self.query_one("#state-display", Static)
         state_display.update(f"State: {state}")
 
     def _on_error(self, error: Exception):
         """Handle dictation errors."""
+        if not self._dispatch_dictation_callback(self._on_error, error):
+            return
         self._show_status(f"Error: {error}", "error")
         logger.error(f"Dictation error: {error}")
 
     def _on_command(self, command: str):
         """Handle voice commands."""
-        self.post_message(VoiceCommandEvent(command=command))
+        if not self._dispatch_dictation_callback(self._on_command, command):
+            return
+        self.post_message(VoiceCommandEvent(command=command, raw_text=command))
         logger.info(f"Voice command detected: {command}")
 
     def _update_privacy_ui(self):
@@ -830,18 +1018,9 @@ Performance Tips:
         self.app.notify(help_text.strip(), title="Dictation Help", timeout=15)
 
     def _load_settings(self) -> Dict[str, Any]:
-        """Load dictation settings with privacy defaults.
-
-        Normalizes `dictation.provider` on read so a config file saved before
-        `_get_provider_options()` was corrected to `"lightning-whisper-mlx"`
-        (it used to offer the misspelled `"lightning-whisper"`) still resolves
-        to a real dispatch id. This is read-side only -- it does not write
-        the normalized value back to config.
-        """
+        """Load privacy defaults while retaining the exact saved provider value."""
         settings = {
-            "provider": normalize_provider_id(
-                get_cli_setting("dictation.provider", "auto") or "auto"
-            ),
+            "provider": get_cli_setting("dictation.provider", "auto") or "auto",
             "model": get_cli_setting("dictation.model", None),
             "language": get_cli_setting("dictation.language", "en") or "en",
             "punctuation": get_cli_setting("dictation.punctuation", True),

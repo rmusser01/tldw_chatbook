@@ -81,7 +81,7 @@ def test_active_terminal_qualification_example_uses_python_312() -> None:
 
 def test_ci_jobs_that_install_or_parse_chatbook_use_python_312() -> None:
     derived = _text(".github/workflows/derived-artifacts.yml")
-    for job_name in ("pr-fast-lane", "derived-artifacts"):
+    for job_name in ("preflight", "pr-fast-lane"):
         assert "python-version: '3.12" in _job_block(derived, job_name)
 
     comprehensive = _text(".github/workflows/test.yml")

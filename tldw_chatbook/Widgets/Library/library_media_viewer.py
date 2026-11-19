@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from loguru import logger
 from rich.color import Color
@@ -35,6 +35,8 @@ from tldw_chatbook.Library.library_media_viewer_state import (
     LibraryMediaViewerState,
     find_content_matches,
     looks_like_markdown_content,
+    media_analysis_dirty,
+    media_edit_form_dirty,
 )
 from tldw_chatbook.Widgets.Library.library_canvas_sync import (
     PostRecomposeCallback,
@@ -43,6 +45,10 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
     LibraryMediaContentSearchControls,
 )
+
+#: TASK-34000.25: why the Reader's Note action is off for a server detail --
+#: one string for the button's tooltip and the key's refusal.
+MEDIA_TAKE_NOTE_EXTERNAL_REASON = "Notes beside server items need server support"
 
 
 #: task-31635 (critique #5 item 12): when the Media list load failed and
@@ -90,6 +96,30 @@ def empty_reader_copy(*, loading: bool, list_failed: bool) -> str:
     if loading:
         return "Loading media…"
     return READER_EMPTY_FAILED_COPY if list_failed else READER_EMPTY_COPY
+
+
+def library_media_delete_confirm_copy(title: str) -> str:
+    """Return the single-item trash confirmation copy (TASK-34000.18 AC#3).
+
+    The confirm names the item it is about to trash, so a user who opened
+    an item by link (and whose list cursor may sit elsewhere) can tell
+    which document is about to go. The second sentence is the Trash path
+    promise the bulk confirm makes too (task-4025 AC3) and is unchanged.
+    Rendered with ``markup=False`` -- a title holding ``[b]`` paints
+    literally.
+
+    Args:
+        title: The Reader's loaded title, or "" when it has none.
+
+    Returns:
+        ``Move "<title>" to Trash? …`` or, with no title, ``Move this item to
+        Trash? …``.
+    """
+    subject = f'"{title}"' if title else "this item"
+    return (
+        f"Move {subject} to Trash? You can undo right away, or restore later "
+        "from Trash."
+    )
 
 
 class LibraryMediaViewer(PostRecomposeCallback, Vertical):
@@ -178,11 +208,41 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         trash_list_open: bool = False,
         media_db: Any = None,
         speaker_rename_media_id: int | None = None,
+        link_receipt: str = "",
+        link_undo_offered: bool = False,
+        delete_target_title: str = "",
+        edit_draft: Mapping[str, str] | None = None,
+        analysis_draft: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Hold the viewer's compose inputs.
 
         Args:
+            delete_target_title: The title of the item the trash confirm
+                would move -- the Reader's loaded item, never the list
+                row (TASK-34000.18 AC#3). "" renders the "this item"
+                fallback. See ``library_media_delete_confirm_copy``.
+            edit_draft: The Edit metadata form's typed values, or None
+                (TASK-34000.22). The form composes from the draft when one
+                stands and from ``viewer.edit_fields`` otherwise, so a
+                Reader tab switch, More or Find rebuild keeps the typed
+                text; its Cancel reads "Discard changes" while the draft
+                differs from the saved values (``media_edit_form_dirty``).
+                NOT a compose-compare input: the screen hands it over on
+                every sync (``sync_editor_drafts``), never recomposing for
+                a keystroke.
+            analysis_draft: The analysis form's typed text, or None -- the
+                same contract for ``_compose_analysis_edit_form`` and
+                ``media_analysis_dirty``.
+            link_receipt: The workspace-link receipt line the last "Use in
+                Console" press earned ("Linked to Local Default · staged in
+                Console"), or "" when none stands (TASK-34000.24). The
+                screen decides visibility (the receipt's workspace must be
+                the active one and the receipt must name the open item), so
+                this widget paints exactly what it is handed.
+            link_undo_offered: Whether "Undo link" renders beside the
+                receipt -- only for a membership a press in this reader
+                session wrote.
             viewer: Pure display state for the loaded item.
             analysis_provider_reason: Why the Analysis tab's Generate
                 action cannot run (no configured provider, an unready
@@ -254,6 +314,11 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.trash_list_open = trash_list_open
         self.media_db = media_db
         self.speaker_rename_media_id = speaker_rename_media_id
+        self.link_receipt = link_receipt
+        self.link_undo_offered = link_undo_offered
+        self.delete_target_title = delete_target_title
+        self.edit_draft = edit_draft
+        self.analysis_draft = analysis_draft
         # Fill the (already 13fr) canvas host, not an independent 13fr: an `fr`
         # width here breaks width:100% child resolution so long lines (analysis
         # summary, a long URL) clip instead of wrapping. 1fr fills the same
@@ -294,9 +359,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             )
         if not self.viewer.media_id:
             yield Static(
-                empty_reader_copy(
-                    loading=self.loading, list_failed=self.list_failed
-                ),
+                empty_reader_copy(loading=self.loading, list_failed=self.list_failed),
                 id="library-media-reader-empty",
                 classes="destination-purpose",
                 markup=False,
@@ -356,12 +419,18 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         )
         if not self.editing:
             byline = next(
-                (line.removeprefix("Author: ") for line in self.viewer.metadata_lines
-                 if line.startswith("Author: ")),
+                (
+                    line.removeprefix("Author: ")
+                    for line in self.viewer.metadata_lines
+                    if line.startswith("Author: ")
+                ),
                 "",
             ) or next(
-                (line.removeprefix("URL: ") for line in self.viewer.metadata_lines
-                 if line.startswith("URL: ")),
+                (
+                    line.removeprefix("URL: ")
+                    for line in self.viewer.metadata_lines
+                    if line.startswith("URL: ")
+                ),
                 "",
             )
             # task-31277: an item with neither an author nor a URL spent a
@@ -384,64 +453,165 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # now exists (the media list toolbar's "Trash" action), so the
             # copy names the durable recovery path exactly like the bulk
             # confirm does -- one promise, two entry points.
+            # TASK-34000.18 AC#3: and it names the ITEM -- the Reader's
+            # loaded title, so an item opened by link is never confirmed
+            # under a cursor that sits on another row.
             yield Static(
-                "Delete this media? You can undo right away, or restore "
-                "later from Trash.",
+                library_media_delete_confirm_copy(self.delete_target_title),
                 id="library-media-delete-confirm-copy",
                 markup=False,
             )
             with Horizontal(classes="ds-toolbar"):
-                yield Button(
-                    "Delete", id="library-media-delete-confirm", compact=True
-                )
-                yield Button(
-                    "Cancel", id="library-media-delete-cancel", compact=True
-                )
+                yield Button("Delete", id="library-media-delete-confirm", compact=True)
+                yield Button("Cancel", id="library-media-delete-cancel", compact=True)
 
         yield from self._compose_active_body()
 
+    def _primary_toolbar_labels(self) -> tuple[str, ...]:
+        """The primary row's labels as composed, with More in its OPEN form.
+
+        The open-state suffix is always counted so opening More can never
+        push the row past the pane; the Read later / Remove later twin is
+        read live, so a Reader that fits "Read later" on one row keeps it
+        (120x36: 50 of 50 cells, as before the fifth button) and stacks only
+        when the longer twin genuinely would not fit. Mirrors the strings
+        ``_compose_primary_toolbar`` composes; a label change there is a
+        threshold change here.
+
+        This deliberately over-counts More: always its open "More \u25b4"
+        form (even for external details where it may not open). Note is
+        counted exactly as composed -- "\u25cb Note" (+2 cells) for a server
+        detail, plain "Note" otherwise -- so the threshold never under-counts
+        the row (PR #3055 review, Minor 3). It errs safe -- at worst the row
+        stacks a little early, it never overflows the pane.
+        """
+        return (
+            "Find",
+            library_disabled_action_label("Note", self.external_detail),
+            "Remove later" if self.viewer.read_later else "Read later",
+            "Use in Console",
+            "More \u25b4",
+        )
+
+    def _primary_toolbar_one_row_min_width(self) -> int:
+        """Content cells the five actions need on one row.
+
+        Each label-sized compact Button is ``len(label) + 2`` (Textual's
+        ``line-pad``), the two ``.ds-toolbar`` gutters add 2. Derived, so the
+        fifth button (TASK-34000.25) and any future label change move the
+        threshold with them -- never a per-size number.
+        """
+        return sum(len(label) + 2 for label in self._primary_toolbar_labels()) + 2
+
+    def _primary_toolbar_stacked(self, content_width: int) -> bool:
+        """Whether the primary row stacks its two groups at ``content_width``.
+
+        A zero width (pre-layout) composes the one-row shape; the first
+        ``Resize`` corrects it before paint.
+        """
+        return 0 < content_width < self._primary_toolbar_one_row_min_width()
+
+    def on_resize(self, _event: Any = None) -> None:
+        """Re-shape the primary row for the Reader's real width (TASK-34000.25)."""
+        try:
+            toolbar = self.query_one("#library-media-reader-primary-toolbar")
+        except (NoMatches, QueryError):
+            return
+        toolbar.set_class(
+            self._primary_toolbar_stacked(self.content_region.width or self.size.width),
+            "library-media-reader-toolbar-stacked",
+        )
+
     def _compose_primary_toolbar(self) -> ComposeResult:
-        """Render the always-reachable Reader actions."""
-        with Horizontal(classes="ds-toolbar", id="library-media-reader-primary-toolbar"):
-            # Qodo on #2378: an Analysis tab with nothing to search has no
-            # bar to mount -- say why Find is off instead of toggling silently.
-            find_reason = analysis_find_unavailable_reason(
-                mode=self.reader_mode,
-                analysis=self.viewer.analysis,
-                generating=self.generating_analysis,
-                editing=self.editing_analysis,
-                # Qodo 4 on #2602: an external detail composes the READ body
-                # whatever mode the session carried in, so the gate needs to
-                # know -- without this the KEY opened Find on a server
-                # document while this button stayed disabled, the exact
-                # key/control divergence one shared gate exists to prevent.
-                external=self.external_detail,
-            )
-            find = Button(
-                library_disabled_action_label("Find", bool(find_reason)),
-                id="library-media-reader-find",
-                compact=True,
-            )
-            if find_reason:
-                find.disabled = True
-                find.tooltip = find_reason
-            yield find
-            if not self.external_detail:
-                yield Button(
-                    "Remove later" if self.viewer.read_later else "Read later",
-                    id="library-media-read-later",
+        """Render the always-reachable Reader actions.
+
+        TASK-34000.25 fix round 1: the row gained a fifth button (Note), and
+        at the narrowest pinned Reader (100x30, 46 content cells) the five
+        labels no longer fit beside the ``More \u25b4`` open-state suffix. The
+        answer is layout, not padding: the buttons compose in two groups
+        inside one toolbar container that lays them side by side
+        (``layout: horizontal``) when the Reader is wide enough for the full
+        row, and one group under the other (``library-media-reader-toolbar-stacked``) when it is not --
+        the threshold is derived from the labels themselves
+        (:meth:`_primary_toolbar_one_row_min_width`) and applied from this
+        widget's own ``on_resize``, so no size is special-cased and the
+        ``.ds-toolbar`` gutter stays.
+        """
+        primary = Horizontal(
+            classes="ds-toolbar", id="library-media-reader-primary-toolbar"
+        )
+        primary.set_class(
+            self._primary_toolbar_stacked(self.content_region.width or self.size.width),
+            "library-media-reader-toolbar-stacked",
+        )
+        with primary:
+            with Horizontal(
+                id="library-media-reader-primary-group-read",
+                classes="library-media-reader-primary-group",
+            ):
+                # Qodo on #2378: an Analysis tab with nothing to search has no
+                # bar to mount -- say why Find is off instead of toggling silently.
+                find_reason = analysis_find_unavailable_reason(
+                    mode=self.reader_mode,
+                    analysis=self.viewer.analysis,
+                    generating=self.generating_analysis,
+                    editing=self.editing_analysis,
+                    # Qodo 4 on #2602: an external detail composes the READ body
+                    # whatever mode the session carried in, so the gate needs to
+                    # know -- without this the KEY opened Find on a server
+                    # document while this button stayed disabled, the exact
+                    # key/control divergence one shared gate exists to prevent.
+                    external=self.external_detail,
+                )
+                find = Button(
+                    library_disabled_action_label("Find", bool(find_reason)),
+                    id="library-media-reader-find",
                     compact=True,
                 )
-            yield Button("Use in Console", id="library-media-use-in-chat", compact=True)
-            if not self.external_detail or self.viewer.original_source:
-                # task-31633 AC#3: the glyph is the disclosure state. The
-                # actions render as ONE toolbar row under this one, so
-                # nothing else on screen says whether More is open.
-                yield Button(
-                    "More \u25b4" if self.more_open else "More",
-                    id="library-media-reader-more",
+                if find_reason:
+                    find.disabled = True
+                    find.tooltip = find_reason
+                yield find
+                # TASK-34000.25 (reading-desk design §4.5): take a note from
+                # the open document without re-finding it on the way back.
+                # Refused with its reason for a server detail -- the note
+                # names the item by its local ``Media.uuid`` (§5.1), which a
+                # server detail does not carry, and reading progress is
+                # local-only (design non-goal). The key (``n``) shares the
+                # gate the button reads.
+                note = Button(
+                    library_disabled_action_label("Note", self.external_detail),
+                    id="library-media-take-note",
                     compact=True,
                 )
+                if self.external_detail:
+                    note.disabled = True
+                    note.tooltip = MEDIA_TAKE_NOTE_EXTERNAL_REASON
+                else:
+                    note.tooltip = "Take a note from this document (n)"
+                yield note
+                if not self.external_detail:
+                    yield Button(
+                        "Remove later" if self.viewer.read_later else "Read later",
+                        id="library-media-read-later",
+                        compact=True,
+                    )
+            with Horizontal(
+                id="library-media-reader-primary-group-act",
+                classes="library-media-reader-primary-group",
+            ):
+                yield Button(
+                    "Use in Console", id="library-media-use-in-chat", compact=True
+                )
+                if not self.external_detail or self.viewer.original_source:
+                    # task-31633 AC#3: the glyph is the disclosure state. The
+                    # actions render as ONE toolbar row under this one, so
+                    # nothing else on screen says whether More is open.
+                    yield Button(
+                        "More \u25b4" if self.more_open else "More",
+                        id="library-media-reader-more",
+                        compact=True,
+                    )
         if find_reason:
             # task-32362 (critique #10, A cap 42): the "\u25cb" said blocked and
             # nothing said why unless you hovered -- the same gap task-31981
@@ -455,6 +625,32 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 classes="library-media-action-reason",
                 markup=False,
             )
+        if self.link_receipt:
+            # TASK-34000.24: the receipt for the membership "Use in Console"
+            # just wrote (or found), and its inverse -- the conversation
+            # reader's shape (task-32107). Workspace membership decides what
+            # a Console turn may read, so the widening is a visible,
+            # reversible act rather than a silent side effect. One row: the
+            # receipt text ellipsises, the Undo keeps its own cells. Yielded
+            # AFTER the ``ds-toolbar`` Horizontal closes, like the Find
+            # reason above, for the same non-rendering reason.
+            with Horizontal(
+                id="library-media-link-receipt-row",
+                classes="library-media-link-receipt-row",
+            ):
+                yield Static(
+                    self.link_receipt,
+                    id="library-media-link-receipt",
+                    classes="library-media-link-receipt",
+                    markup=False,
+                )
+                if self.link_undo_offered:
+                    yield Button(
+                        "Undo link",
+                        id="library-media-link-undo",
+                        classes="library-canvas-action library-media-link-undo",
+                        compact=True,
+                    )
         # The same condition the More button above is composed under: a stale
         # ``more_open`` carried onto a server-only detail would otherwise paint
         # an empty actions row under a button that is no longer there.
@@ -482,7 +678,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 if not self.external_detail:
                     yield Button("Edit metadata", id="library-media-edit", compact=True)
                 if self.viewer.original_source:
-                    yield Button("Open original", id="library-media-open-original", compact=True)
+                    yield Button(
+                        "Open original", id="library-media-open-original", compact=True
+                    )
                 if not self.external_detail:
                     yield Button("Open manager", id="library-media-open", compact=True)
                     # task-31980 (critique #6 P2): the one destructive action
@@ -555,9 +753,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # "Search content…" input duplicated Find and spent 3 rows on
             # every fresh item.
             if self.find_open or self.content_query:
-                matches = find_content_matches(
-                    self.viewer.content, self.content_query
-                )
+                matches = find_content_matches(self.viewer.content, self.content_query)
                 yield LibraryMediaContentSearchControls(
                     is_markdown=self.viewer.is_markdown,
                     query=self.content_query,
@@ -590,7 +786,11 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             if self.editing:
                 yield from self._compose_edit_form()
             else:
-                yield Static("\n".join(self.viewer.metadata_lines), id="library-media-viewer-meta", markup=False)
+                yield Static(
+                    "\n".join(self.viewer.metadata_lines),
+                    id="library-media-viewer-meta",
+                    markup=False,
+                )
                 # task-32068: why this item has no Rendered view -- asked
                 # and answered here, once, rather than banner-ed over every
                 # read of every plain item.
@@ -602,13 +802,15 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                         markup=False,
                     )
                 yield Static(
-                    "\n".join((
-                        f"Backend: {self.viewer.backend}",
-                        f"Canonical ID: {self.viewer.canonical_id}",
-                        f"Original source: {self.viewer.original_source or 'None recorded'}",
-                        f"Stored representation: {self.viewer.stored_representation}",
-                        f"Use in Console sends: {self.console_representation}",
-                    )),
+                    "\n".join(
+                        (
+                            f"Backend: {self.viewer.backend}",
+                            f"Canonical ID: {self.viewer.canonical_id}",
+                            f"Original source: {self.viewer.original_source or 'None recorded'}",
+                            f"Stored representation: {self.viewer.stored_representation}",
+                            f"Use in Console sends: {self.console_representation}",
+                        )
+                    ),
                     id="library-media-reader-provenance",
                     markup=False,
                 )
@@ -747,9 +949,13 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         the new name. The screen re-reads the item on this message.
         """
 
-        def __init__(self, media_id: int) -> None:
+        def __init__(self, media_id: int, *, content: str | None = None) -> None:
             super().__init__()
             self.media_id = media_id
+            # TASK-34933: the renamed content travels with the message so
+            # the screen patches its memoized detail without re-reading the
+            # full media row (content blob included) from the DB.
+            self.content = content
 
     def _compose_speaker_legend(self) -> ComposeResult:
         """Render one rename row per speaker of a finished meeting recording.
@@ -814,7 +1020,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         widget_id = event.input.id or ""
         if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
             return
-        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
+        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX) :]
         name = normalize_speaker_name(event.value)
         event.input.value = ""
         media_id = self.speaker_rename_media_id
@@ -849,9 +1055,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         content = ""
         rows: tuple[tuple[str, str], ...] = ()
         try:
-            outcome = rename_meeting_speaker(
-                self.media_db, media_id, cluster_id, name
-            )
+            outcome = rename_meeting_speaker(self.media_db, media_id, cluster_id, name)
             if outcome.ok:
                 row = self.media_db.get_media_by_id(media_id)
                 content = (row["content"] if row else "") or ""
@@ -862,7 +1066,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 "Library media reader speaker rename failed: {}",
                 redact_user_paths(str(exc)),
             )
-            outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
+            outcome = SpeakerRenameResult(
+                False, f"unexpected error ({type(exc).__name__})"
+            )
         self.app.call_from_thread(
             self._apply_speaker_rename_outcome, media_id, outcome, content, rows
         )
@@ -895,7 +1101,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             self.viewer, content=content, speaker_legend_rows=rows
         )
         self.refresh(recompose=True)
-        self.post_message(self.SpeakerRenamed(media_id))
+        self.post_message(self.SpeakerRenamed(media_id, content=content))
 
     def sync_loading_state(self, *, loading: bool, message: str) -> None:
         """Patch the mounted loading placeholder without rebuilding the body.
@@ -923,9 +1129,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             except (NoMatches, QueryError):
                 # Not composed yet -- compose() reads the attributes above.
                 return
-            copy = empty_reader_copy(
-                loading=loading, list_failed=self.list_failed
-            )
+            copy = empty_reader_copy(loading=loading, list_failed=self.list_failed)
             if str(empty.content) != copy:
                 empty.update(copy)
             return
@@ -1000,9 +1204,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             "#library-media-viewer-content", LibraryMediaContentBody
         ).sync_search(query, match_index)
 
-    def sync_match_index(
-        self, *, matches: tuple[int, ...], match_index: int
-    ) -> None:
+    def sync_match_index(self, *, matches: tuple[int, ...], match_index: int) -> None:
         """Synchronize match navigation without rebuilding viewer children.
 
         Args:
@@ -1035,9 +1237,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         """
         self.content_mode = mode
         rendered_selected = mode == "rendered"
-        rendered_button = self.query_one(
-            "#library-media-content-mode-rendered", Button
-        )
+        rendered_button = self.query_one("#library-media-content-mode-rendered", Button)
         raw_button = self.query_one("#library-media-content-mode-raw", Button)
         rendered_button.label = (
             "Rendered (selected)" if rendered_selected else "Rendered"
@@ -1051,16 +1251,71 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             "#library-media-viewer-content", LibraryMediaContentBody
         ).sync_mode(mode)
 
+    def _edit_cancel_label(self) -> str:
+        """"Discard changes" while the metadata draft is dirty, else "Cancel"."""
+        return (
+            "Discard changes"
+            if media_edit_form_dirty(self.edit_draft, self.viewer.edit_fields)
+            else "Cancel"
+        )
+
+    def _analysis_cancel_label(self) -> str:
+        """"Discard changes" while the analysis draft is dirty, else "Cancel"."""
+        return (
+            "Discard changes"
+            if media_analysis_dirty(self.analysis_draft, self.viewer.analysis)
+            else "Cancel"
+        )
+
+    def sync_editor_drafts(
+        self, *, edit_draft: Mapping[str, str] | None, analysis_draft: str | None
+    ) -> None:
+        """Adopt the screen's drafts and relabel the two Cancel buttons in place.
+
+        TASK-34000.22: called on EVERY viewer sync, both the unchanged path
+        (a keystroke that flipped the dirty state: nothing recomposes, the
+        mounted button's label is patched) and the changed path (the
+        attributes are set before the recompose, whose compose reads them).
+        The ids never change, so every handler and test keeps its selector;
+        only the word on the button follows the draft (ADR-055 Pattern D:
+        the deliberate Discard is named as such).
+
+        Args:
+            edit_draft: ``LibraryMediaState.edit_draft``.
+            analysis_draft: ``LibraryMediaState.analysis_draft``.
+        """
+        self.edit_draft = edit_draft
+        self.analysis_draft = analysis_draft
+        for selector, label in (
+            ("#library-media-edit-cancel", self._edit_cancel_label()),
+            ("#library-media-analysis-cancel", self._analysis_cancel_label()),
+        ):
+            try:
+                button = self.query_one(selector, Button)
+            except (NoMatches, QueryError):
+                # That form is not mounted -- compose() reads the draft.
+                continue
+            if str(button.label) != label:
+                button.label = label
+                # ``Button.label`` repaints but does not re-lay out, and the
+                # button is ``width: auto`` -- without this the 16-cell box
+                # sized for "Cancel" wraps "Discard changes" to its first
+                # word (measured: "    Discard" painted at 160x45).
+                button.refresh(layout=True)
+
     def _compose_edit_form(self) -> ComposeResult:
-        """Render the metadata edit inputs, prefilled from ``viewer.edit_fields``.
+        """Render the metadata edit inputs, prefilled from the draft or the saved values.
 
         Stacked full-width ``Input`` widgets in a plain ``Vertical`` --
         matching the render-verified pattern already used by the Library
-        Collections create/rename form.
+        Collections create/rename form. TASK-34000.22: ``edit_draft`` wins
+        over ``viewer.edit_fields`` while one stands, so a rebuild of this
+        form never drops typed text.
 
         Returns:
             ComposeResult for the metadata edit form.
         """
+        values = self.edit_draft if self.edit_draft is not None else self.viewer.edit_fields
         with Vertical(id="library-media-edit-form"):
             for label, field, placeholder, field_id in (
                 ("Title", "title", "Title", "library-media-edit-title"),
@@ -1082,13 +1337,17 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     markup=False,
                 )
                 yield Input(
-                    value=self.viewer.edit_fields.get(field, ""),
+                    value=str(values.get(field, "") or ""),
                     placeholder=placeholder,
                     id=field_id,
                 )
             with Horizontal(classes="ds-toolbar"):
                 yield Button("Save", id="library-media-edit-save", compact=True)
-                yield Button("Cancel", id="library-media-edit-cancel", compact=True)
+                yield Button(
+                    self._edit_cancel_label(),
+                    id="library-media-edit-cancel",
+                    compact=True,
+                )
 
     def _compose_analysis(self) -> ComposeResult:
         """Render the Analysis section: read-only text + Edit/Generate, or a form.
@@ -1142,9 +1401,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # task-31269: like Read, the bar is collapsed until Find opens
             # it -- an always-mounted bar stole focus on every item load and
             # swallowed the walk keys (critique #4 P0).
-            blocked = (
-                ANALYSIS_RENDERED_BLOCKED_BY_SEARCH if self.content_query else ""
-            )
+            blocked = ANALYSIS_RENDERED_BLOCKED_BY_SEARCH if self.content_query else ""
             yield from self._compose_content_mode_toggle(
                 is_markdown=analysis_is_markdown,
                 mode=analysis_mode,
@@ -1235,19 +1492,24 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             )
 
     def _compose_analysis_edit_form(self) -> ComposeResult:
-        """Render the analysis edit ``TextArea`` prefilled with the current analysis.
+        """Render the analysis edit ``TextArea`` prefilled from the draft or the analysis.
 
         ``TextArea`` renders cleanly full-width in a plain ``Vertical``
         (verified when this canvas's rendering approach was chosen), so
         this follows the same stacked, render-safe shape as
-        ``_compose_edit_form``.
+        ``_compose_edit_form``. TASK-34000.22: ``analysis_draft`` wins over
+        ``viewer.analysis`` while one stands.
 
         Returns:
             ComposeResult for the analysis edit form.
         """
         with Vertical(id="library-media-analysis-edit-form"):
             yield TextArea(
-                self.viewer.analysis,
+                (
+                    self.analysis_draft
+                    if self.analysis_draft is not None
+                    else self.viewer.analysis
+                ),
                 id="library-media-analysis-edit-text",
             )
             toolbar = Horizontal(classes="ds-toolbar")
@@ -1260,7 +1522,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     compact=True,
                 )
                 yield Button(
-                    "Cancel",
+                    self._analysis_cancel_label(),
                     id="library-media-analysis-cancel",
                     classes="library-canvas-action",
                     compact=True,

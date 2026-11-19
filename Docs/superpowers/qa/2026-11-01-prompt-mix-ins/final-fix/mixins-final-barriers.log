@@ -1,0 +1,12 @@
+...........F..............                                               [100%]
+=================================== FAILURES ===================================
+_________ test_historical_import_rejects_foreign_anchor_and_rolls_back _________
+Tests/Chat/test_console_prompt_mixin_forks.py:182: in test_historical_import_rejects_foreign_anchor_and_rolls_back
+    assert cursor.execute("SELECT count(*) FROM console_prompt_mixin_attempts WHERE conversation_id=?", (target,)).fetchone()[0] == 0
+E   assert 1 == 0
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_forks.py::test_historical_import_rejects_foreign_anchor_and_rolls_back
+1 failed, 25 passed in 14.53s

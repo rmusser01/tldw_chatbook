@@ -1,6 +1,9 @@
+import pytest
+
 from tldw_chatbook.Chunking.engine import Chunker
 
 
+@pytest.mark.bootstrap_profile
 def test_chunk_with_metadata_json_offsets_match_source():
 
     text = '{ "data": [ {"a": 1}, {"b": 2} ], "meta": "x" }'
@@ -21,6 +24,7 @@ def test_chunk_with_metadata_json_offsets_match_source():
         assert res.text == text[s:e]
 
 
+@pytest.mark.bootstrap_profile
 def test_chunk_with_metadata_xml_offsets_match_source():
 
     text = "<root><a>Alpha one</a><b>Beta two</b></root>"

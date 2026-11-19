@@ -377,11 +377,11 @@ class ConfigProfileManager:
         # sentence-transformers model, no provider/credential/network) and
         # MEASURED it on the gated eval instrument against a rule fixed
         # before the run. Verdict: net HARMFUL on the averaged row
-    # F1 CAVEAT (final review): that averaged row EXCLUDES `scoped` and
-    # `negative` (UNAVERAGED_CATEGORIES) -- and `scoped` is precisely where
-    # this strategy WINS. Averaged over all 53 ground-truthed queries,
-    # hybrid REVERSES sign: MRR 0.731 -> 0.806 (+0.075). The verdict stands
-    # on the pre-registered rule; the headline is narrower than it sounds.
+        # F1 CAVEAT (final review): that averaged row EXCLUDES `scoped` and
+        # `negative` (UNAVERAGED_CATEGORIES) -- and `scoped` is precisely where
+        # this strategy WINS. Averaged over all 53 ground-truthed queries,
+        # hybrid REVERSES sign: MRR 0.731 -> 0.806 (+0.075). The verdict stands
+        # on the pre-registered rule; the headline is narrower than it sounds.
         # (semantic MRR 0.808 -> 0.762, hybrid 0.812 -> 0.787 at k=10),
         # and strongly BIMODAL -- large gains where retrieval is weak
         # (hybrid `scoped` MRR 0.163 -> 0.929) paid for by demoting
@@ -632,7 +632,11 @@ class ConfigProfileManager:
     @contextmanager
     def _definition_write(self, selected: Path | None = None):
         """Retain one synchronous profile mutation, including its nested writes."""
-        selected = Path(self.profiles_dir if selected is None else selected).expanduser().absolute()
+        selected = (
+            Path(self.profiles_dir if selected is None else selected)
+            .expanduser()
+            .absolute()
+        )
         previous = getattr(_definition_writes, "active", None)
         if previous is not None and previous[0] is self:
             if previous[1] != selected:
@@ -806,7 +810,9 @@ class ConfigProfileManager:
                 with open(blob, "r") as f:
                     data = json.load(f)
             except Exception as e:
-                logger.error(f"Legacy profile blob migration failed to read {blob}: {e}")
+                logger.error(
+                    f"Legacy profile blob migration failed to read {blob}: {e}"
+                )
                 return
 
             if not isinstance(data, dict) or "profiles" not in data:
@@ -827,11 +833,17 @@ class ConfigProfileManager:
                         # builtin id -- write it to a uniquified file instead.
                         profile.id = self._unique_id_reserving_disk(profile.id)
                     target = self._profile_path(profile.id)
-                    if not target.exists():  # never clobber an existing per-file profile
+                    if (
+                        not target.exists()
+                    ):  # never clobber an existing per-file profile
                         with open(target, "w") as out:
                             json.dump(profile.to_dict(), out, indent=2, default=str)
                 except Exception as e:
-                    entry_name = pdata.get("name", "<unknown>") if isinstance(pdata, dict) else "<unknown>"
+                    entry_name = (
+                        pdata.get("name", "<unknown>")
+                        if isinstance(pdata, dict)
+                        else "<unknown>"
+                    )
                     logger.error(
                         f"Skipping unmigratable legacy profile entry '{entry_name}': {e}"
                     )
@@ -839,7 +851,9 @@ class ConfigProfileManager:
             try:
                 # os.replace is an atomic overwrite on both POSIX and Windows
                 # (Path.rename raises on Windows if the destination exists).
-                os.replace(str(blob), str(blob.parent / "custom_profiles.json.migrated"))
+                os.replace(
+                    str(blob), str(blob.parent / "custom_profiles.json.migrated")
+                )
                 logger.info("Migrated legacy custom_profiles.json to per-file profiles")
             except OSError as e:
                 logger.error(f"Failed to rename migrated legacy blob {blob}: {e}")
@@ -1023,13 +1037,15 @@ class ConfigProfileManager:
         if src is None:
             raise ValueError(f"Source profile '{source_id}' not found")
         new_id = self._unique_id(_slugify(new_name))
-        clone = ProfileConfig.from_dict({
-            **src.to_dict(),
-            "id": new_id,
-            "name": new_name,
-            "read_only": False,
-            "profile_type": "custom",
-        })
+        clone = ProfileConfig.from_dict(
+            {
+                **src.to_dict(),
+                "id": new_id,
+                "name": new_name,
+                "read_only": False,
+                "profile_type": "custom",
+            }
+        )
         return self.save_profile(clone)
 
     def create_custom_profile(
@@ -1089,7 +1105,10 @@ class ConfigProfileManager:
     @definition_experiment_operation
     def start_experiment(self, config: ExperimentConfig):
         """Start an A/B testing experiment."""
-        selected = config.results_dir or self.profiles_dir / "experiments" / config.experiment_id
+        selected = (
+            config.results_dir
+            or self.profiles_dir / "experiments" / config.experiment_id
+        )
         with self._definition_write(selected):
             self._current_experiment = config
             self._experiment_results[config.experiment_id] = []
@@ -1105,7 +1124,9 @@ class ConfigProfileManager:
             with open(config.results_dir / "config.json", "w") as f:
                 json.dump(asdict(config), f, indent=2)
 
-            logger.info(f"Started experiment: {config.name} (ID: {config.experiment_id})")
+            logger.info(
+                f"Started experiment: {config.name} (ID: {config.experiment_id})"
+            )
 
             log_counter(
                 "rag_experiment_started", labels={"experiment_id": config.experiment_id}
@@ -1236,7 +1257,11 @@ class ConfigProfileManager:
                 "metrics": profile_stats,
             }
 
-        with self._definition_write(self._current_experiment.results_dir) if self._current_experiment.save_results else nullcontext():
+        with (
+            self._definition_write(self._current_experiment.results_dir)
+            if self._current_experiment.save_results
+            else nullcontext()
+        ):
             # Save results if configured
             if self._current_experiment.save_results:
                 results_file = self._current_experiment.results_dir / "results.json"
@@ -1276,7 +1301,10 @@ class ConfigProfileManager:
             )
 
         # Check chunk size vs overlap
-        if profile.rag_config.chunking.chunk_overlap >= profile.rag_config.chunking.chunk_size:
+        if (
+            profile.rag_config.chunking.chunk_overlap
+            >= profile.rag_config.chunking.chunk_size
+        ):
             warnings.append("Chunk overlap should be less than chunk size")
 
         # Check reranking configuration
@@ -1378,5 +1406,3 @@ def reset_profile_manager_cache() -> None:
     global _GLOBAL_PROFILE_MANAGER
     with _profile_manager_lock:
         _GLOBAL_PROFILE_MANAGER = None
-
-

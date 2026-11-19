@@ -1,0 +1,11 @@
+{
+  "normal_fingerprints_equal": true,
+  "health_status": 200,
+  "consumed": 22,
+  "authorized_total": 30,
+  "remaining": 8,
+  "native_apps": "all three pane_dead1/status0; server160x48",
+  "no_source_edit_during_app": true,
+  "restore_confirmation_not_reached": true,
+  "rag_only_not_launched": true
+}

@@ -103,6 +103,14 @@ class ActivityLogWidget(Widget):
     # Maximum entries to keep in memory
     MAX_ENTRIES = 1000
 
+    # Presentation bound: at most this many entry rows are mounted at once.
+    # Oldest overflow drops out of the view only; data retention
+    # (self.entries) is unchanged. (Review-B efficiency remediation, B17.)
+    _RENDER_CAP = 200
+
+    # Debounce window for search-as-you-type display rebuilds (seconds).
+    SEARCH_DEBOUNCE_SECONDS = 0.3
+
     # Reactive properties
     filter_level: reactive[Optional[LogLevel]] = reactive(None)
     filter_category: reactive[Optional[str]] = reactive(None)
@@ -133,6 +141,7 @@ class ActivityLogWidget(Widget):
 
         # UI state
         self._update_timer: Optional[Timer] = None
+        self._search_debounce_timer: Optional[Timer] = None
 
     def compose(self) -> ComposeResult:
         """Compose the activity log widget."""
@@ -291,13 +300,17 @@ class ActivityLogWidget(Widget):
         if entry.details:
             message_text += f" [+] {json.dumps(entry.details, sort_keys=True)}"
 
-        return Horizontal(
+        row = Horizontal(
             Static(f"{time_str}\n{relative_time}", classes="log-timestamp"),
             Static(icon, classes=f"log-icon {level_class}"),
             Static(f"[{entry.category}]", classes="log-category"),
             Static(message_text, classes="log-message"),
             classes=f"log-entry log-{entry.level}",
         )
+        # Keep the source entry on the row so the periodic timestamp refresh
+        # can patch the label in place instead of rebuilding the display.
+        row._activity_entry = entry
+        return row
 
     def _get_level_style(self, level: LogLevel) -> tuple[str, str]:
         """Get icon and CSS class for log level."""
@@ -372,6 +385,9 @@ class ActivityLogWidget(Widget):
             if self._has_active_filters()
             else len(self.entries)
         )
+        # The mounted view is bounded to _RENDER_CAP rows regardless of how
+        # many entries are retained (see _update_display).
+        visible_count = min(visible_count, self._RENDER_CAP)
         children = list(container.children)
         while len(children) > visible_count:
             children[-1].remove()
@@ -384,14 +400,19 @@ class ActivityLogWidget(Widget):
         self._update_display()
 
     def _update_display(self) -> None:
-        """Update the entire log display."""
+        """Update the entire log display.
+
+        Bounded: at most ``_RENDER_CAP`` entry rows are mounted (the newest
+        matching slice). This is a presentation bound for prompt-visible rows
+        only -- data retention in ``self.entries`` is unchanged.
+        """
         try:
             container = self.query_one("#log-entries", Container)
             for child in list(container.children):
                 child.remove()
 
-            # Add filtered entries
-            for entry in self._get_filtered_entries():
+            # Add filtered entries, newest first, capped at the render bound.
+            for entry in self._get_filtered_entries()[: self._RENDER_CAP]:
                 if self._should_display_entry(entry):
                     entry_widget = self._create_entry_widget(entry)
                     container.mount(entry_widget)
@@ -400,13 +421,31 @@ class ActivityLogWidget(Widget):
             logger.error(f"Error updating log display: {e}")
 
     def _update_timestamps(self) -> None:
-        """Update relative timestamps periodically."""
+        """Refresh relative timestamps on the rows already on screen.
+
+        Patches each rendered row's timestamp label in place -- no widget is
+        mounted or removed, so the 60 s tick costs no rebuild.
+        """
         # Skip while the screen/tab is inactive so hidden tabs burn no CPU.
         if not self.is_attached or not self.screen.is_active:
             return
-        # This would update all visible timestamps
-        # For now, just trigger a display update
-        self._update_display()
+        try:
+            container = self.query_one("#log-entries", Container)
+        except Exception:
+            return
+        for row in container.children:
+            entry = getattr(row, "_activity_entry", None)
+            if entry is None:
+                continue
+            try:
+                timestamp_label = row.query_one(".log-timestamp", Static)
+            except Exception:
+                continue
+            time_str = entry.timestamp.strftime("%H:%M:%S")
+            relative_time = self._get_relative_time(entry.timestamp)
+            # Same fixed two-line shape and the widest state ("just now")
+            # is already rendered, so the repaint never needs a layout pass.
+            timestamp_label.update(f"{time_str}\n{relative_time}", layout=False)
 
     def _scroll_to_bottom(self) -> None:
         """Scroll to the bottom of the log."""
@@ -431,10 +470,20 @@ class ActivityLogWidget(Widget):
             )
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Handle search input changes."""
+        """Handle search input changes (debounced -- one rebuild per settled query)."""
         if event.input.id == "search-logs":
-            self.search_query = event.value
-            self._update_display()
+            query = event.value
+            if self._search_debounce_timer is not None:
+                self._search_debounce_timer.stop()
+            self._search_debounce_timer = self.set_timer(
+                self.SEARCH_DEBOUNCE_SECONDS, lambda: self._apply_search_query(query)
+            )
+
+    def _apply_search_query(self, query: str) -> None:
+        """Apply the settled search query with a single display rebuild."""
+        self._search_debounce_timer = None
+        self.search_query = query
+        self._update_display()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Handle filter dropdown changes."""

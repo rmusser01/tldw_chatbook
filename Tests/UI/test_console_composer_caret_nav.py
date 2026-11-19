@@ -51,6 +51,7 @@ async def _focused_composer(host, pilot, text: str) -> ConsoleComposerBar:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_up_from_mid_row_two_lands_on_the_same_column_in_row_one():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
@@ -71,6 +72,7 @@ async def test_up_from_mid_row_two_lands_on_the_same_column_in_row_one():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_down_mirrors_up_back_to_the_same_column_in_row_two():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
@@ -89,6 +91,7 @@ async def test_down_mirrors_up_back_to_the_same_column_in_row_two():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_up_from_the_first_row_returns_false_and_moves_nothing():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
@@ -104,6 +107,7 @@ async def test_up_from_the_first_row_returns_false_and_moves_nothing():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_down_from_the_last_row_returns_false_and_moves_nothing():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
@@ -125,7 +129,7 @@ def test_middle_collapsed_paste_uses_the_actual_predecessor_and_maps_caret():
     composer = ConsoleComposerBar(paste_collapse_threshold=50)
     composer.insert_pasted_text(first)
     composer.insert_text("tail")
-    first_token_end = len(f"Pasted text | {len(first)} characters | Expand")
+    first_token_end = len(f"Pasted text | {len(first)} characters | Ctrl+E expand")
     composer.position_cursor_from_display_index(first_token_end)
 
     composer.insert_pasted_text(second)
@@ -134,7 +138,7 @@ def test_middle_collapsed_paste_uses_the_actual_predecessor_and_maps_caret():
     assert composer.cursor_index == len(first) + 1 + len(second)
     assert composer._canonical_index_at_display(first_token_end) == len(first)
     assert composer._cursor_display_index() == (
-        first_token_end + 1 + len(f"Pasted text | {len(second)} characters | Expand")
+        first_token_end + 1 + len(f"Pasted text | {len(second)} characters | Ctrl+E expand")
     )
 
 
@@ -151,6 +155,7 @@ def test_collapsed_paste_before_first_segment_has_no_synthetic_prefix_boundary()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_up_from_a_long_rows_column_fifty_clamps_into_a_twenty_char_row():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
@@ -175,6 +180,7 @@ async def test_up_from_a_long_rows_column_fifty_clamps_into_a_twenty_char_row():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_up_across_a_soft_wrapped_line_lands_on_the_same_column():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
@@ -209,12 +215,11 @@ async def test_up_across_a_soft_wrapped_line_lands_on_the_same_column():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_pilot_press_up_and_down_move_the_real_caret():
     _, host = _ready_host()
     async with host.run_test(size=APP_SIZE) as pilot:
-        composer = await _focused_composer(
-            host, pilot, "line0\nline1\nline2"
-        )
+        composer = await _focused_composer(host, pilot, "line0\nline1\nline2")
         # row0 "line0" -> [0, 5); row1 "line1" -> [6, 11); row2 "line2" -> [12, 17)
         composer.position_cursor_from_display_index(12 + 2)
         assert composer.cursor_index == 14
@@ -233,6 +238,7 @@ async def test_pilot_press_up_and_down_move_the_real_caret():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_pilot_press_up_on_the_first_row_leaves_the_caret_untouched():
     """Side-effect signal only (fragile to prove non-consumption this way
     alone -- the unit-style test below asserts the actual conditional-stop
@@ -249,6 +255,7 @@ async def test_pilot_press_up_on_the_first_row_leaves_the_caret_untouched():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_on_key_only_consumes_up_and_down_when_the_move_actually_happened(
     monkeypatch,
 ):
@@ -300,6 +307,7 @@ async def test_on_key_only_consumes_up_and_down_when_the_move_actually_happened(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_moving_up_above_the_visible_window_scrolls_it_to_follow_the_caret():
     """>MAX_DRAFT_ROWS-row draft; walk the caret up from the last row past
     the initially-visible window and confirm the PAINTED first row (CSS-true
@@ -358,6 +366,7 @@ def _painted_caret_rowcol(visible_draft: Static) -> tuple[int, int]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_down_across_soft_wrapped_rows_matches_painted_caret_including_column_zero():
     """HIGH fix: Down across soft-wrapped rows, at several columns including
     0, must land at the same column (clamped to the row below's length) --
@@ -399,9 +408,7 @@ async def test_down_across_soft_wrapped_rows_matches_painted_caret_including_col
             expected_index = row1.start + expected_column
             assert moved is True, column
             assert composer.cursor_index == expected_index, column
-            assert (
-                _painted_caret_rowcol(visible_draft) == (1, expected_column)
-            ), column
+            assert _painted_caret_rowcol(visible_draft) == (1, expected_column), column
 
         # penultimate -> last: the last row is the SHORT remainder row, so a
         # late column in the penultimate row exercises the clamp on a
@@ -427,6 +434,7 @@ async def test_down_across_soft_wrapped_rows_matches_painted_caret_including_col
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_up_from_the_first_column_after_a_whitespace_wrap_boundary_ascends():
     """MEDIUM fix: a caret sitting right at a whitespace wrap boundary (the
     first column of a soft-wrapped row) must resolve Up to the row ABOVE,
@@ -466,6 +474,7 @@ async def test_up_from_the_first_column_after_a_whitespace_wrap_boundary_ascends
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_windowed_draft_with_unequal_row_lengths_clamps_while_climbing():
     """Windowed (>8-row) draft with genuinely UNEQUAL row lengths -- the
     original windowed test used equal-length rows, which the report
@@ -583,6 +592,7 @@ def test_noop_down_breaks_typed_run_coalescing_like_every_other_cursor_key():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_clamp_into_a_soft_wrap_contiguous_row_stays_on_that_row_not_the_next():
     """Reviewer's live reproduction (re-review), reproduced generically: a
     column near the end of a neighboring row -- at or past the length of a

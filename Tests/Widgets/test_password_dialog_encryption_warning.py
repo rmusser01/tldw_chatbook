@@ -28,9 +28,7 @@ class _EncryptionSetupDialogHostApp(App):
         yield from ()
 
     async def show_dialog(self) -> None:
-        await self.push_screen(
-            EncryptionSetupDialog(detected_providers=["openai"])
-        )
+        await self.push_screen(EncryptionSetupDialog(detected_providers=["openai"]))
 
 
 @pytest.mark.asyncio
@@ -45,9 +43,7 @@ async def test_encryption_setup_dialog_warns_about_comment_loss():
 
         dialog = app.screen
         assert isinstance(dialog, EncryptionSetupDialog)
-        rendered_texts = [
-            str(widget.render()) for widget in dialog.query(Static)
-        ]
+        rendered_texts = [str(widget.render()) for widget in dialog.query(Static)]
         assert any(COMMENT_LOSS_WARNING in text for text in rendered_texts), (
             "EncryptionSetupDialog no longer warns about comment/formatting "
             f"loss; rendered Static widgets: {rendered_texts!r}"

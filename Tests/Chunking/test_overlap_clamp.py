@@ -48,7 +48,9 @@ def test_ebook_chapters_with_metadata_overlap_ge_maxsize_does_not_hang():
     chunker = Chunker()
     text = " ".join(["word"] * 1000)
 
-    results = chunker.chunk_text_with_metadata(text, method="ebook_chapters", max_size=50, overlap=200)
+    results = chunker.chunk_text_with_metadata(
+        text, method="ebook_chapters", max_size=50, overlap=200
+    )
 
     assert isinstance(results, list)
     assert len(results) > 0

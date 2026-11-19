@@ -198,7 +198,7 @@ def iter_records(data: bytes) -> Iterator[RunLogRecord]:
         # Integrity check: the byte at the slice end MUST be the terminating newline.
         # If not, this record is torn (declared byte count overran real content);
         # resync instead of yielding stitched content.
-        if data[end:end + 1] != b"\n":
+        if data[end : end + 1] != b"\n":
             nxt = data.find(b"\n" + _ANCHOR_BYTES, position + 1)
             if nxt == -1:
                 return

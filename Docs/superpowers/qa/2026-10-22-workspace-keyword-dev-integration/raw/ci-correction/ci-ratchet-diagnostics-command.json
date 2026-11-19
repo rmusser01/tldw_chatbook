@@ -1,0 +1,26 @@
+{
+  "diff": {
+    "command": [
+      "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_persistent_diagnostic_inventory.py",
+      "--diff"
+    ],
+    "exit_code": 1,
+    "elapsed_seconds": 85.95277404785156,
+    "output_tail": "production diagnostic owners or persistent-sink topology changed; review the diff below before running --write\nsummary:\n    owner_files: 688 -> 689\nowners:\n  + only in rebuild (file now has diagnostics): tldw_chatbook/Chat/console_project_index_preparation.py [TASK-492] count=2 digest=60cd5a7c138f59575754\n  ~ changed: tldw_chatbook/Chat/console_chat_controller.py 71/8d81d4d3e73c41d9fde8 -> 69/3583c9aa681f2416bfbe  (-2 diagnostic call(s))\nNext: read every row above and confirm each change is one you intended.\n  - a call_count delta means a diagnostic was added or deleted;\n  - an unchanged count with a changed digest means one was reworded,\n    re-levelled, given different arguments, or merely RE-INDENTED -- check\n    it does not now interpolate user content, secrets, or paths into a\n    persistent sink;\n  - a sink-topology row means a new file/handler destination appeared.\nThe pin stores only an aggregate per-file digest, so the rows above can name\nWHICH files changed and by how much, never the statement text -- and the\ninterpolation check just above needs that text. Recover it with:\n  base=$(git log -1 --format=%H -- Docs/security/production-diagnostic-inventory.json)\n  python scripts/check_persistent_diagnostic_inventory.py \\\n      --statements <each path listed above> --since $base\nThat prints the added and removed STATEMENTS themselves, and separates the\nones that only moved or re-indented from the ones whose text really changed.\nDo NOT reach for `git diff` here: the digest covers a statement's own source\ntext, indentation included, so a call that merely shifted nesting level\nreports as changed, and a line diff buries it in unrelated edits -- measured\non tldw_chatbook/Chat/console_fleet_wake.py, whose row changed inside a\n328-line diff in which not one statement had actually changed.\nTreat that base revision as a LOWER BOUND, not the truth: the pin has been\ncommitted stale before (TASK-19572 review found two rows whose drift predated\nthe pin's own commit), so if a listed file shows no logger change in that\nrange, widen it rather than assuming the row is noise.\nOnly then run:  python scripts/check_persistent_diagnostic_inventory.py --write\nand commit Docs/security/production-diagnostic-inventory.json with the review recorded in the task/PR notes.\n"
+  },
+  "statements": {
+    "command": [
+      "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+      "scripts/check_persistent_diagnostic_inventory.py",
+      "--statements",
+      "tldw_chatbook/Chat/console_chat_controller.py",
+      "tldw_chatbook/Chat/console_project_index_preparation.py",
+      "--since",
+      "HEAD"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 5.580366134643555,
+    "output_tail": "tldw_chatbook/Chat/console_chat_controller.py: 71 -> 69 diagnostic call(s)\n  moved/re-indented only: 0   removed: 2   added: 0\n\n- REMOVED -- these statements no longer exist:\n  - debug b8793619bd8fab20 (was line 15527)\n      | logger.debug(\"Project index preparation unavailable\")\n  - debug 01e2062d57c54aa9 (was line 15568)\n      | logger.debug(\"Project index unavailable for this run binding\")\n\ntldw_chatbook/Chat/console_project_index_preparation.py: did not exist at HEAD; every statement below is new.\n\ntldw_chatbook/Chat/console_project_index_preparation.py: 0 -> 2 diagnostic call(s)\n  moved/re-indented only: 0   removed: 0   added: 2\n\n+ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?\n  + debug b8793619bd8fab20 (now line 23)\n      | logger.debug(\"Project index preparation unavailable\")\n  + debug 01e2062d57c54aa9 (now line 71)\n      | logger.debug(\"Project index unavailable for this run binding\")\n"
+  }
+}

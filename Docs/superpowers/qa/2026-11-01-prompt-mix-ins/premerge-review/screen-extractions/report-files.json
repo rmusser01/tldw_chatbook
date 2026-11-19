@@ -1,0 +1,253 @@
+{
+  "inventory_path": "/private/tmp/mixins-pr3346-size-repair/report-files.json",
+  "files": [
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/ast-proof.log",
+      "bytes": 38,
+      "sha256": "d18ee08d0490cea9e43939b2afd8b41c4426b51efd7d6243dda59c19b41f5434",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/ast-reverse-proof.json",
+      "bytes": 730,
+      "sha256": "e00b39f1228c1cc03d72709790b3daeb671ac36a5338afdfffe8e3da83251dbf",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/baseline-browse.log",
+      "bytes": 86435,
+      "sha256": "b0f96d80600643a415475f84eba54d62bf60d1797bc21cab66abd03477ab69bd",
+      "classification": "invalid early installed-checkout baseline probe; retained only for audit"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/baseline-profile-browse-final.log",
+      "bytes": 6134,
+      "sha256": "71fe0791562825e2b20503bec808c397ec344d1912c758d0f9ca77dce20bfb7b",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/baseline-profile-browse.log",
+      "bytes": 35241,
+      "sha256": "5a1a3f8587ef2d461c050950e1892aa954f7e100562e05eb61eec79e6fa6d737",
+      "classification": "invalid early installed-checkout baseline probe; retained only for audit"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/browse-probe.py",
+      "bytes": 1368,
+      "sha256": "ab64ce342ec1b0c512836766d4dde425747e80ec915f2e7354d3ccc73603999b",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/browse.log",
+      "bytes": 80116,
+      "sha256": "51a4d0ea9c526497a5556edfaa95e2becce1732d87c94393fa7e4a909e6f0f25",
+      "classification": "superseded/intermediate evidence; not final qualification"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/ci-worker.log",
+      "bytes": 207,
+      "sha256": "15b1d16c4b111ff6472039294743dd4f6d04cf83c6d715995b0e349c01de87da",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/commands.json",
+      "bytes": 6086,
+      "sha256": "c76941be7ed4fc978a45a1c139073d524450c497fbb0f7b5546499304826d0f5",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/current-profile-browse-final.log",
+      "bytes": 6010,
+      "sha256": "76b6742deff389135793c3472db2eeb84423c677ffa2869540e0b5b0879929a1",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/current-profile-browse.log",
+      "bytes": 209,
+      "sha256": "db61e0a5560af3fe87439684e2f02266a00d58eec76b36a8013f4a47ad84e9f0",
+      "classification": "superseded/intermediate evidence; not final qualification"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/derived.log",
+      "bytes": 207,
+      "sha256": "e0fa9ce88e7a2f99417cbca4ab28d7c119a558ee5eefbaeb48b5ffdbb274058c",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/fix.patch",
+      "bytes": 36738,
+      "sha256": "7b0ba6e3b2cecc2858d4b73bd4016555cf7a41121e446e2553bf782cbd298284",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/format-source-comparison.json",
+      "bytes": 1994,
+      "sha256": "4804e2825464855fb35c30009b9b440c52664acf5eee855a4547d678f61ac5d3",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/frozen-source-proof.json",
+      "bytes": 1257,
+      "sha256": "bd17d78a947aa28cb777f3ff73f0f14e0b782ffd10e23996a47187c919a1855f",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/guards.log",
+      "bytes": 303,
+      "sha256": "34536d7105119f8b7c9a107fa236d5d3971952d69880dad4be68f2457a985841",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/helper-lint.json",
+      "bytes": 7945,
+      "sha256": "82d5d7abbadc45291e21479f8da9145371b4ee699822d17f3b64845a8297050c",
+      "classification": "superseded/intermediate evidence; not final qualification"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/lint-base.json",
+      "bytes": 350944,
+      "sha256": "d0af4078b7cb9af94062890bcaf678dfcaea6c60526a862af40b9ecd25e2d2ce",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/lint-current.json",
+      "bytes": 357362,
+      "sha256": "80952e05126546b5d21afdf129923aa71e6b96164d355264662fe9b9794211b7",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/lint-delta.json",
+      "bytes": 229,
+      "sha256": "783b609c04145d87c4bc97a8fdc2fb42ed395dbfed7c6b30afe44254d8c8ae80",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/moves.json",
+      "bytes": 688,
+      "sha256": "b554bf632494c6c9d21befa79244d238a97421f7f6a8cf30d1891df85ccb1211",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/original-bodies.json",
+      "bytes": 9672,
+      "sha256": "77ef6bb265a2ca148759f37c7dec821ab2ccea6b41cd440b55fab2851bc9a9ca",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/pure.log",
+      "bytes": 91728,
+      "sha256": "ea6ea33d694539129d58db1c505f3ccd560089834221aa35474ff11fab5528e0",
+      "classification": "superseded/intermediate evidence; not final qualification"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/red.log",
+      "bytes": 8273,
+      "sha256": "96fbb315375fef1d28a84866c1f1e6aa6735298d00b5af64f58c452e7ccc4b74",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/report.md",
+      "bytes": 6846,
+      "sha256": "00eb53e481e38076057993123b5a761aa181ff90c60bc88ab9e0a30b483ca192",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/retired-caller-census.txt",
+      "bytes": 61,
+      "sha256": "7176a739fe02ec14009ad5f5d6fa42e16674eec8606181afec3ee2f68d980ec5",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/screen-lint.json",
+      "bytes": 363255,
+      "sha256": "8b1b0f3a0537782e76f83d24ac5923eec83dcba5b70e137afce7c1f9c3df5e53",
+      "classification": "superseded/intermediate evidence; not final qualification"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/source-proof.json",
+      "bytes": 1332,
+      "sha256": "d1ea325f4c19458831c806e8519eeec8f4edab57e70558856148b28725a876e3",
+      "classification": "superseded/intermediate evidence; not final qualification"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/test-format.log",
+      "bytes": 26,
+      "sha256": "3bc53bf3e981a98a34a852e175bf9b77af841edea74fca595d9aedcbaf9a4938",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/test-lint-final.json",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/test-lint.json",
+      "bytes": 1454,
+      "sha256": "bc43c4fb0a8dc49caa76c45b6a14c07be10866ba7d0f3f75649ab63490a0a2b9",
+      "classification": "superseded/intermediate evidence; not final qualification"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/top-level-import-proof.json",
+      "bytes": 625,
+      "sha256": "224a5862df0ad86ecb65459f01f9aac847f4ffa25f7d64bb2cfea8731e448d75",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/verify_moves.py",
+      "bytes": 3166,
+      "sha256": "636dc420bebaad88b17485aa58e79b92d866cb41e92488a7320b4b7a6084a4b7",
+      "classification": "current report or supporting evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/whitespace.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "classification": "current report or supporting evidence"
+    }
+  ],
+  "excluded_directories": [
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/baseline-browse-tmp",
+      "reason": "Generated private pytest temporary trees; not delivery evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/baseline-profile-browse-tmp",
+      "reason": "Generated private pytest temporary trees; not delivery evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/before",
+      "reason": "Redundant original source snapshots; exact git-qualified bodies are preserved in original-bodies.json and baseline revision remains available"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/browse-tmp",
+      "reason": "Generated private pytest temporary trees; not delivery evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/ci-worker-tmp",
+      "reason": "Generated private pytest temporary trees; not delivery evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/current-profile-browse-tmp",
+      "reason": "Generated private pytest temporary trees; not delivery evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/derived-tmp",
+      "reason": "Generated private pytest temporary trees; not delivery evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/guard-tmp",
+      "reason": "Generated private pytest temporary trees; not delivery evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/pure-tmp",
+      "reason": "Generated private pytest temporary trees; not delivery evidence"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-size-repair/red-tmp",
+      "reason": "Generated private pytest temporary trees; not delivery evidence"
+    }
+  ],
+  "authoritative_source_hashes": "/private/tmp/mixins-pr3346-size-repair/frozen-source-proof.json",
+  "final_ordinary_ci_case_log": "/private/tmp/mixins-pr3346-size-repair/ci-worker.log"
+}

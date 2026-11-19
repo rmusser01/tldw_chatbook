@@ -46,6 +46,7 @@ def _client_returning(handler):
     return _make
 
 
+@pytest.mark.bootstrap_profile
 def test_extract_success_shape(monkeypatch):
     _allow_public_dns(monkeypatch)
     html = (
@@ -61,16 +62,20 @@ def test_extract_success_shape(monkeypatch):
     assert result["chunks"] == [] and result["analysis"] == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_non_html_content_type_is_permanent(monkeypatch):
     _allow_public_dns(monkeypatch)
     with patch(
         "httpx.Client",
-        side_effect=_client_returning(_handler_for("%PDF-1.4", ctype="application/pdf")),
+        side_effect=_client_returning(
+            _handler_for("%PDF-1.4", ctype="application/pdf")
+        ),
     ):
         with pytest.raises(PermanentIngestError):
             extract_article_for_ingest("https://example.com/x.pdf", {})
 
 
+@pytest.mark.bootstrap_profile
 def test_empty_extraction_is_permanent(monkeypatch):
     _allow_public_dns(monkeypatch)
     html = "<html><body><script>window.__NEXT_DATA__={}</script></body></html>"
@@ -83,6 +88,7 @@ def test_empty_extraction_is_permanent(monkeypatch):
             extract_article_for_ingest("https://example.com/spa", {})
 
 
+@pytest.mark.bootstrap_profile
 def test_permanent_on_4xx(monkeypatch):
     _allow_public_dns(monkeypatch)
     with patch(
@@ -102,6 +108,7 @@ def test_retryable_on_503(monkeypatch):
         assert not isinstance(ei.value, PermanentIngestError)  # retryable
 
 
+@pytest.mark.bootstrap_profile
 def test_missing_trafilatura_is_permanent(monkeypatch):
     _allow_public_dns(monkeypatch)
     import builtins
@@ -122,6 +129,7 @@ def test_missing_trafilatura_is_permanent(monkeypatch):
             extract_article_for_ingest("https://example.com/a", {})
 
 
+@pytest.mark.bootstrap_profile
 def test_oversized_streamed_body_is_permanent_before_full_buffer(monkeypatch):
     # Two 8 MB chunks: the guard must abort after the SECOND chunk crosses the
     # 10 MB cap without draining the (unbounded) remainder.
@@ -148,6 +156,7 @@ def test_oversized_streamed_body_is_permanent_before_full_buffer(monkeypatch):
     assert drained["chunks"] == 2  # aborted at the 2nd chunk, did not drain 1000
 
 
+@pytest.mark.bootstrap_profile
 def test_invalid_url_is_permanent(monkeypatch):
     # Not an httpx.HTTPError subclass -- raised by the real client when it
     # builds the request for a syntactically malformed URL. Equivalent swap
@@ -163,6 +172,7 @@ def test_invalid_url_is_permanent(monkeypatch):
             extract_article_for_ingest("https://exa mple.com/x", {})
 
 
+@pytest.mark.bootstrap_profile
 def test_unsupported_protocol_is_permanent():
     # The egress guard's scheme check rejects non-http(s) URLs before any
     # client/DNS interaction, so no client mock or DNS patch is needed here.
@@ -170,6 +180,7 @@ def test_unsupported_protocol_is_permanent():
         extract_article_for_ingest("ftp://example.com/x", {})
 
 
+@pytest.mark.bootstrap_profile
 def test_dns_failure_is_permanent(monkeypatch):
     import socket
 
@@ -194,12 +205,14 @@ def test_connection_error_without_dns_cause_is_retryable(monkeypatch):
     assert not isinstance(ei.value, PermanentIngestError)  # retryable transport error
 
 
+@pytest.mark.bootstrap_profile
 def test_blocked_url_is_permanent(monkeypatch):
     monkeypatch.setattr(egress, "_resolve", lambda host: ["169.254.169.254"])
     with pytest.raises(PermanentIngestError, match="egress"):
         extract_article_for_ingest("http://metadata-ish.example/x", {})
 
 
+@pytest.mark.bootstrap_profile
 def test_malformed_url_is_permanent():
     """Malformed URLs (e.g., invalid IPv6) raise PermanentIngestError, not ValueError.
 

@@ -71,6 +71,74 @@ def test_estimate_video_cost_text_shapes():
     assert "no per-clip charge" in local
 
 
+# -- Stop copy (TASK-33621.45/.50) --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("remote_cancel", "backend", "expected"),
+    [
+        (
+            "cancelled",
+            "minimax",
+            "Video generation stopped. MiniMax cancelled the remote task, so it "
+            "is not billed.",
+        ),
+        (
+            "refused",
+            "minimax",
+            "Video generation stopped here. MiniMax refused to cancel the task "
+            "in its current status. The remote task may still run and may still be billed.",
+        ),
+        (
+            "deleted",
+            "minimax",
+            "Video generation stopped here. MiniMax reported that the task had "
+            "finished and deleted its record. The task may have been billed.",
+        ),
+        (
+            "unconfirmed",
+            "minimax",
+            "Video generation stopped here, but MiniMax did not confirm the "
+            "cancel. The remote task may keep running and may still be billed.",
+        ),
+        # A local backend: stopping costs nothing, so no billing claim at all.
+        (None, "comfyui", "Video generation stopped."),
+    ],
+)
+def test_video_stopped_text_says_what_the_backend_did(remote_cancel, backend, expected):
+    from tldw_chatbook.Chat.console_generate_video import video_stopped_text
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationCancelled
+
+    stop = VideoGenerationCancelled("stopped", remote_cancel=remote_cancel)
+
+    text = video_stopped_text(stop, backend=backend)
+
+    assert text == expected
+    assert "failed" not in text.lower()
+
+
+def test_video_stopped_text_names_a_regeneration():
+    from tldw_chatbook.Chat.console_generate_video import video_stopped_text
+    from tldw_chatbook.Video_Generation.exceptions import VideoGenerationCancelled
+
+    stop = VideoGenerationCancelled("stopped", remote_cancel="refused")
+
+    text = video_stopped_text(stop, backend="minimax", noun="Video regeneration")
+
+    assert text.startswith("Video regeneration stopped here. MiniMax")
+
+
+def test_video_generating_text_carries_the_stop_caveat_only_when_paid():
+    from tldw_chatbook.Chat.console_generate_video import video_generating_text
+
+    paid = video_generating_text("minimax")
+    local = video_generating_text("comfyui")
+
+    assert "Stop cancels it only until MiniMax starts rendering" in paid
+    assert "may still be billed" in paid
+    assert local == "⏳ Generating video on comfyui… (Stop cancels)"
+
+
 # -- blocking generation --------------------------------------------------------
 
 
@@ -179,6 +247,7 @@ def _install_custom_workflow(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_run_video_generation_saves_and_returns_metadata(tmp_path):
     _register_fake(
         resolved_model="FakeH3", duration_seconds=6.0, width=1920, height=1080
@@ -202,6 +271,7 @@ def test_run_video_generation_saves_and_returns_metadata(tmp_path):
     assert store.resolve("msg-42", "a-red-dragon", extension="mp4") == path
 
 
+@pytest.mark.bootstrap_profile
 def test_run_video_generation_carries_webm_request_into_store_and_metadata(tmp_path):
     captured_requests = []
     _register_fake(captured_requests=captured_requests)
@@ -223,6 +293,7 @@ def test_run_video_generation_carries_webm_request_into_store_and_metadata(tmp_p
     assert store.resolve("msg-webm", "a-webm-dragon", extension="webm") == path
 
 
+@pytest.mark.bootstrap_profile
 def test_run_video_generation_passes_publication_gate_to_store(tmp_path):
     _register_fake()
     received = []
@@ -247,6 +318,7 @@ def test_run_video_generation_passes_publication_gate_to_store(tmp_path):
     assert path.read_bytes() == b"vid-bytes"
 
 
+@pytest.mark.bootstrap_profile
 def test_run_video_generation_cancel_event_threaded_when_supported(tmp_path):
     from tldw_chatbook.Video_Generation.adapter_registry import get_registry
     from tldw_chatbook.Video_Generation.adapters.base import VideoGenResult
@@ -278,6 +350,7 @@ def test_run_video_generation_cancel_event_threaded_when_supported(tmp_path):
     assert received == [event]
 
 
+@pytest.mark.bootstrap_profile
 def test_run_video_generation_unknown_backend_raises(tmp_path):
     from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
 
@@ -290,6 +363,7 @@ def test_run_video_generation_unknown_backend_raises(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_run_video_generation_invalid_request_never_writes(tmp_path):
     _register_fake()
     from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
@@ -306,6 +380,7 @@ def test_run_video_generation_invalid_request_never_writes(tmp_path):
     assert list(store.iter_stored()) == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("container", "content_type"),
     [
@@ -370,6 +445,7 @@ def test_invalid_adapter_result_never_reaches_any_persistence_boundary(
     assert "PRIVATE-VIDEO-BYTES" not in str(exc_info.value)
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_video_over_capacity_preserves_exact_result_and_metadata(tmp_path):
     payload = b"oversized-video" * 70_000
     assert len(payload) > 1024 * 1024
@@ -435,6 +511,7 @@ def test_video_store_explicit_bad_extension_fails_without_creating_root(
     assert not root.exists()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("video_format", ["mp4", "webm"])
 def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
     tmp_path, video_format
@@ -482,6 +559,7 @@ def test_pending_video_store_failure_is_sanitized_and_preserves_exact_bytes(
     result.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_real_malformed_store_root_returns_rewound_sanitized_pending_artifact(
     tmp_path,
 ):
@@ -521,6 +599,7 @@ def test_real_malformed_store_root_returns_rewound_sanitized_pending_artifact(
     result.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_video_real_store_contention_remains_readable(
     tmp_path,
     monkeypatch,
@@ -602,6 +681,7 @@ def test_pending_video_close_is_idempotent_and_releases_owned_stream():
         stream.read()
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_video_staging_failure_closes_temp_handle(tmp_path, monkeypatch):
     _register_fake(result_content=b"recoverable")
 
@@ -634,6 +714,7 @@ def test_pending_video_staging_failure_closes_temp_handle(tmp_path, monkeypatch)
     assert staged.closed
 
 
+@pytest.mark.bootstrap_profile
 def test_pending_video_staging_close_failure_does_not_mask_write_failure(
     tmp_path,
     monkeypatch,
@@ -669,6 +750,7 @@ def test_pending_video_staging_close_failure_does_not_mask_write_failure(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_custom_named_h3_dispatch_preserves_positive_suffix_and_strips_style_negative(
     tmp_path, monkeypatch
 ):
@@ -692,6 +774,7 @@ def test_custom_named_h3_dispatch_preserves_positive_suffix_and_strips_style_neg
     assert meta.negative_prompt == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_custom_named_h3_dispatch_keeps_explicit_programmatic_negative(
     tmp_path, monkeypatch
 ):
@@ -725,6 +808,7 @@ def test_custom_named_h3_dispatch_keeps_explicit_programmatic_negative(
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_custom_non_h3_dispatch_keeps_style_negative(tmp_path, monkeypatch):
     _install_custom_workflow(tmp_path, monkeypatch, class_type="GenericVideoNode")
     captured_requests: list = []
@@ -746,7 +830,7 @@ def test_successful_settings_save_rebuilds_adapter_and_console_uses_same_instanc
     tmp_path, monkeypatch
 ):
     from tldw_chatbook.UI.Screens import settings_screen as settings_screen_module
-    from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
+    from tldw_chatbook.UI.Settings_Modules.settings_video_gen_defaults import (
         VideoGenDraftValues,
     )
     from tldw_chatbook.Video_Generation import adapter_registry

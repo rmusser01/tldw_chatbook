@@ -162,4 +162,7 @@ class NotificationDispatchService:
         except Exception:
             notify = getattr(app, "notify", None)
             if callable(notify):
-                notify(display_message, severity=severity, timeout=timeout)
+                # Runtime text, never markup (TASK-34803): see the helper.
+                notify(
+                    display_message, severity=severity, timeout=timeout,
+                    markup=False)

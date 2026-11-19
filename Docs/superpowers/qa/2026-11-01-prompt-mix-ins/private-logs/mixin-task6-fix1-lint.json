@@ -1,0 +1,14 @@
+[
+  {
+    "file": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
+    "fix_base": 248,
+    "current": 248,
+    "new": []
+  },
+  {
+    "file": "Tests/Chat/test_console_prompt_mixin_caching.py",
+    "fix_base": 0,
+    "current": 0,
+    "new": []
+  }
+]

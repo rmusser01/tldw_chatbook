@@ -49,6 +49,7 @@ BROWSE_ROWS = (
 )
 
 
+@pytest.mark.bootstrap_profile
 def test_the_factory_clears_new_profile_admission() -> None:
     """The default: a factory-built app is not a newly created profile.
 
@@ -58,6 +59,7 @@ def test_the_factory_clears_new_profile_admission() -> None:
     assert _build_test_app().library_new_profile_admission is False
 
 
+@pytest.mark.bootstrap_profile
 def test_a_new_profile_can_still_be_requested() -> None:
     """The flag is what `first_profile_created_this_session()` produced, not a
     value this factory invented, so a new-profile test must be able to keep it."""
@@ -65,6 +67,7 @@ def test_a_new_profile_can_still_be_requested() -> None:
     assert app.library_new_profile_admission is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_rail_composes_its_full_sections_for_a_factory_app() -> None:
     """The behaviour the default exists for, asserted on the DOM rather than on

@@ -54,6 +54,7 @@ def _loop(subs_db: SubscriptionsDB, handler: WatchlistCheckHandler) -> Scheduler
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_due_watchlist_is_dispatched_and_persisted(tmp_path):
     """A due subscription is checked and its result written back to the DB.
@@ -104,6 +105,7 @@ async def test_due_watchlist_is_dispatched_and_persisted(tmp_path):
     assert runs[0]["stats"]["new_items_found"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shadow_mode_checks_without_persisting(tmp_path):
     """Shadow mode stays available for diagnostics and must not mutate the DB."""
@@ -129,6 +131,7 @@ async def test_shadow_mode_checks_without_persisting(tmp_path):
     assert after == before, "shadow mode must not write check results"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_not_yet_due_watchlist_is_not_dispatched(tmp_path):
     """A subscription inside its cadence window is left alone."""
@@ -155,6 +158,7 @@ async def test_not_yet_due_watchlist_is_not_dispatched(tmp_path):
     feed_monitor.check_feed.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlist_handler_absent_leaves_task_undispatched(tmp_path):
     """Guards the actual TASK-1210 failure: no registered handler for the type.

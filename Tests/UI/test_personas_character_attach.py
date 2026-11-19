@@ -155,7 +155,9 @@ async def _mounted(pilot):
 async def _enter_characters(pilot):
     """Characters is the default active mode; select the first row (id "1")."""
     screen = await _mounted(pilot)
-    await pilot.click("#personas-library-row-character-1")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(pilot, pilot.app.screen, "character:1", via="click")
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()

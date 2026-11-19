@@ -6,6 +6,7 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 )
 
 
+@pytest.mark.bootstrap_profile
 def test_article_url_routes_to_extractor_and_sets_real_url():
     fake = {
         "content": "Body text here",
@@ -33,6 +34,7 @@ def test_article_url_routes_to_extractor_and_sets_real_url():
     assert payload["metadata"]["ingestion_method"] == "web_article"
 
 
+@pytest.mark.bootstrap_profile
 def test_video_url_routes_to_audio_video_branch():
     # the audio/video branch calls the processor with the URL as input;
     # mock the processor to return a transcript result.
@@ -56,6 +58,7 @@ def test_video_url_routes_to_audio_video_branch():
     assert kwargs.get("inputs") == ["https://youtube.com/watch?v=abc"]
 
 
+@pytest.mark.bootstrap_profile
 def test_article_permanent_error_propagates_unwrapped():
     # CRITICAL: a PermanentIngestError from the extractor must NOT be re-wrapped
     # into a plain FileIngestionError by the outer `except Exception` -- else

@@ -116,6 +116,7 @@ async def _wait_for_text(screen, expected):
             await asyncio.sleep(0.01)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("source", "outcome"),
@@ -170,6 +171,7 @@ async def test_handoff_readiness_keeps_ui_responsive_and_finishes_automatically(
         assert len(credential_io.readers) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_completion_between_header_and_inspector_reads_refreshes_both_surfaces(
     handoff_app, credential_io, monkeypatch
@@ -192,17 +194,18 @@ async def test_completion_between_header_and_inspector_reads_refreshes_both_surf
         # Finish after the header read but before the inspector read in this
         # synchronous render. No further edit should be needed to reconcile it.
         screen._sync_title_and_console_actions()
-        header_status = screen.query_one(
-            "#personas-header #workbench-header-status", Static
-        )
+        # Roleplay frame B1: the header's destination block chip (no longer a
+        # "Ready" badge) is the header surface that must catch up.
+        blocked = screen.query_one("#personas-header-blocked")
         assert len(reads) >= 2
         async with asyncio.timeout(3):
-            while str(header_status.renderable) != "Ready":
+            while blocked.display:
                 await asyncio.sleep(0.01)
         assert "Ready to chat" in _readiness_text(screen)
         assert not screen.query_one("#personas-start-chat", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_handoff_readiness_refreshes_expiry_and_stale_snapshot_without_edits(
     handoff_app, credential_io
@@ -234,6 +237,7 @@ async def test_handoff_readiness_refreshes_expiry_and_stale_snapshot_without_edi
         assert not screen.query_one("#personas-start-chat", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_credential_completion_uses_current_provider_and_selection(
     handoff_app, credential_io
@@ -246,7 +250,9 @@ async def test_credential_completion_uses_current_provider_and_selection(
             "provider": "openai",
             "model": "gpt-4o",
         }
-        await pilot.click("#personas-library-row-character-2")
+        from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+        await select_roleplay_item(pilot, screen, "character:2", via="click")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert screen.state.selected_entity_id == "2"
@@ -263,6 +269,7 @@ async def test_credential_completion_uses_current_provider_and_selection(
         assert screen.query_one("#personas-start-chat", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unmount_stops_handoff_refresh_before_credential_completion(
     handoff_app, credential_io, monkeypatch

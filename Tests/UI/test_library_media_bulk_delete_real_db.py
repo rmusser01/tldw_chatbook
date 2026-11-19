@@ -119,6 +119,7 @@ async def _run_bulk_delete(screen, media_ids: tuple[str, ...]) -> None:
     await LibraryScreen._delete_library_media_selection(screen, media_ids)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bulk_delete_write_is_visible_to_a_fresh_reader_and_receipt_matches(
     tmp_path,
@@ -147,6 +148,7 @@ async def test_bulk_delete_write_is_visible_to_a_fresh_reader_and_receipt_matche
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_long_lived_reader_connection_can_miss_the_write_the_receipt_reports(
     tmp_path,
@@ -185,6 +187,7 @@ async def test_long_lived_reader_connection_can_miss_the_write_the_receipt_repor
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_contended_write_never_paints_a_success_receipt(tmp_path):
     """Finding 3: another instance holds the write lock -- no ✓, the per-item
@@ -250,6 +253,7 @@ async def test_contended_write_never_paints_a_success_receipt(tmp_path):
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rows_still_open_while_the_page_sits_behind_the_stale_gate(tmp_path):
     """task-31220: recovery is never gated by what it recovers from.
@@ -294,6 +298,7 @@ async def test_rows_still_open_while_the_page_sits_behind_the_stale_gate(tmp_pat
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retry_paints_a_new_reason_every_time_the_refresh_fails(tmp_path):
     """Step 5's substitute for the live outage: a failing request seam.
@@ -357,6 +362,7 @@ def _painted_rail_media_count(host, screen) -> str:
     return " ".join(_painted_text(host, row.region).split())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_media_count_returns_to_the_restored_total_after_undo(tmp_path):
     """task-31943 AC#1/#2: the rail's painted ``Media N`` after delete + Undo.

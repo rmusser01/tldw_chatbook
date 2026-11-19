@@ -21,7 +21,7 @@ from tldw_chatbook.Chat import provider_setup_persistence as provider_persistenc
 from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.config import ConfigMutationResult
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
 
 def _qwencloud_app(*, api_mode: object = "__absent__"):
@@ -95,6 +95,7 @@ def _expected_qwen_sections(
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_api_mode_selector_visibility_options_and_default():
     app = _qwencloud_app()
@@ -130,6 +131,7 @@ async def test_qwencloud_api_mode_selector_visibility_options_and_default():
         assert row.has_class("settings-gated-profile-hidden") is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("query", "focus_id"),
@@ -161,6 +163,7 @@ async def test_qwencloud_api_mode_search_respects_category_and_field_priority(
         assert screen.query_one("#settings-provider-api-mode", Select).disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_api_mode_loads_saved_chat_completions():
     app = _qwencloud_app(api_mode="chat_completions")
@@ -175,6 +178,7 @@ async def test_qwencloud_api_mode_loads_saved_chat_completions():
         assert selector.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_normalized_saved_qwencloud_mode_does_not_create_mount_draft():
     app = _qwencloud_app(api_mode="  Chat_Completions  ")
@@ -191,6 +195,7 @@ async def test_normalized_saved_qwencloud_mode_does_not_create_mount_draft():
         assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_returning_qwencloud_mode_to_original_removes_only_its_namespace():
     app = _qwencloud_app(api_mode="responses")
@@ -215,6 +220,7 @@ async def test_returning_qwencloud_mode_to_original_removes_only_its_namespace()
         assert "provider_api_mode:qwencloud" not in draft.originals
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_immediate_qwencloud_save_snapshots_visible_mode(monkeypatch):
     app = _qwencloud_app(api_mode="responses")
@@ -250,6 +256,7 @@ async def test_immediate_qwencloud_save_snapshots_visible_mode(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_api_mode_accepts_normalized_provider_identity():
     app = _qwencloud_app(api_mode="responses")
@@ -266,6 +273,7 @@ async def test_qwencloud_api_mode_accepts_normalized_provider_identity():
         assert mode.value == "responses"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_readiness_overlays_draft_mode_without_persisting():
     app = _qwencloud_app(api_mode="responses")
@@ -286,6 +294,7 @@ async def test_qwencloud_readiness_overlays_draft_mode_without_persisting():
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == "responses"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_save_failure_preserves_mode_input_and_draft(monkeypatch):
     app = _qwencloud_app(api_mode="responses")
@@ -318,6 +327,7 @@ async def test_qwencloud_save_failure_preserves_mode_input_and_draft(monkeypatch
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "result",
@@ -375,6 +385,7 @@ async def test_qwencloud_canonical_multifield_save_failure_is_atomic(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_canonical_multifield_save_uses_one_atomic_mutation(
     monkeypatch,
@@ -415,6 +426,7 @@ async def test_qwencloud_canonical_multifield_save_uses_one_atomic_mutation(
         assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_atomic_save_consumes_deferred_api_key_clear_once(
     monkeypatch,
@@ -473,6 +485,7 @@ async def test_qwencloud_atomic_save_consumes_deferred_api_key_clear_once(
         assert hmac.compare_digest(stored_key, credential)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_provider_switch_clear_is_suppressed_but_user_key_clear_is_staged():
     app = _qwencloud_app(api_mode="responses")
@@ -507,10 +520,18 @@ async def test_provider_switch_clear_is_suppressed_but_user_key_clear_is_staged(
         await pilot.press("backspace")
         await pilot.pause()
 
+        # TASK-33007.2, rewritten on purpose (owner ruling 2026-10-04): an
+        # emptied field keeps the saved key; the user's clear is Clear's key.
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert "api_key" not in draft.values
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["api_key"] == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_api_mode_draft_survives_provider_switch():
     app = _qwencloud_app(api_mode="responses")
@@ -544,6 +565,7 @@ async def test_qwencloud_api_mode_draft_survives_provider_switch():
         assert mode.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saving_other_provider_never_mutates_qwencloud_mode(monkeypatch):
     app = _qwencloud_app(api_mode="responses")
@@ -582,6 +604,7 @@ async def test_saving_other_provider_never_mutates_qwencloud_mode(monkeypatch):
         assert mode.value == "chat_completions"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("saved_mode", "selected_mode"),
@@ -633,6 +656,7 @@ async def test_qwencloud_api_mode_save_and_revert_exact_values(
         assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "invalid_mode",
@@ -681,6 +705,7 @@ async def test_invalid_persisted_qwencloud_mode_blocks_save_and_send(
     assert "KEY-CANARY" not in resolution.visible_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_invalid_qwencloud_mode_keyboard_selection_repairs_to_responses(
     monkeypatch,
@@ -725,6 +750,7 @@ async def test_invalid_qwencloud_mode_keyboard_selection_repairs_to_responses(
         assert app.app_config["api_settings"]["qwencloud"]["api_mode"] == "responses"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_api_mode_field_guide_describes_mode_contract():
     app = _qwencloud_app()
@@ -753,6 +779,7 @@ async def test_qwencloud_api_mode_field_guide_describes_mode_contract():
         assert "api_settings.<provider>.api_mode" in ownership.owns_config_sections
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_alias_mode_save_migrates_only_mode_to_canonical_owner(
     monkeypatch,
@@ -808,6 +835,7 @@ async def test_qwencloud_alias_mode_save_migrates_only_mode_to_canonical_owner(
     assert resolution.api_mode == "chat_completions"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("canonical_first", [False, True])
 async def test_qwencloud_malformed_canonical_table_uses_canonical_recovery_without_alias_credentials(
@@ -843,12 +871,23 @@ async def test_qwencloud_malformed_canonical_table_uses_canonical_recovery_witho
         assert "Advanced Config" in recovery
         assert "config.toml" in recovery
         assert env_var.value == ""
-        assert "Provider settings invalid" in screen._provider_key_status("QwenCloud")
-        assert "ALIAS-SECRET-CANARY" not in screen._provider_key_status("QwenCloud")
-        assert "ALIAS_ENV_CANARY" not in screen._provider_key_status("QwenCloud")
+        # TASK-33007.2, rewritten on purpose: the card's readiness block and
+        # its key line are gone; the API key row's Source word and help say it.
+        from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+            api_key_row_copy,
+        )
+
+        key_row = " ".join(api_key_row_copy(screen, "QwenCloud"))
+        # Review of PR #3057 (R1 #11), rewritten on purpose: the 40-cell
+        # sentence was cut by the row's ellipsis; the guidance line above
+        # still names config.toml.
+        assert key_row == "invalid repair it in Advanced Config"
+        assert "ALIAS-SECRET-CANARY" not in key_row
+        assert "ALIAS_ENV_CANARY" not in key_row
         assert app.app_config["api_settings"] == original_api_settings
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_malformed_qwencloud_table_selection_test_and_save_stay_blocked(
     monkeypatch,
@@ -899,6 +938,7 @@ async def test_malformed_qwencloud_table_selection_test_and_save_stay_blocked(
         assert draft.values["provider_api_mode:qwencloud"] == "responses"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("canonical_first", [False, True])
 async def test_qwencloud_malformed_alias_never_becomes_save_owner_when_canonical_is_valid(
@@ -961,6 +1001,7 @@ async def test_qwencloud_malformed_alias_never_becomes_save_owner_when_canonical
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_alias_only_malformed_table_uses_canonical_recovery_owner():
     app = _qwencloud_app()
@@ -979,10 +1020,18 @@ async def test_qwencloud_alias_only_malformed_table_uses_canonical_recovery_owne
         assert (
             screen.query_one("#settings-provider-credential-env-var", Input).value == ""
         )
-        assert "SECRET-CANARY" not in screen._provider_key_status("QwenCloud")
+        # TASK-33007.2, rewritten on purpose: the API key row's copy.
+        from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+            api_key_row_copy,
+        )
+
+        assert "SECRET-CANARY" not in " ".join(
+            api_key_row_copy(screen, "QwenCloud")
+        )
         assert app.app_config["api_settings"] == original_api_settings
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_alias_mode_migration_waits_for_other_provider_writes(
     monkeypatch,
@@ -1029,6 +1078,7 @@ async def test_qwencloud_alias_mode_migration_waits_for_other_provider_writes(
         assert endpoint.value == "https://new.example.test/compatible-mode/v1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_alias_mode_migration_waits_for_profile_write(
     monkeypatch,
@@ -1078,6 +1128,7 @@ async def test_qwencloud_alias_mode_migration_waits_for_profile_write(
         assert draft.values["provider_api_mode:qwencloud"] == "chat_completions"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_alias_mode_migration_waits_for_context_write(
     monkeypatch,
@@ -1126,6 +1177,7 @@ async def test_qwencloud_alias_mode_migration_waits_for_context_write(
         assert draft.values["provider_api_mode:qwencloud"] == "chat_completions"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_canonical_mode_wins_over_alias_for_settings_and_readiness():
     app = _qwencloud_app(api_mode="responses")
@@ -1159,6 +1211,7 @@ async def test_qwencloud_canonical_mode_wins_over_alias_for_settings_and_readine
     assert resolution.api_mode == "responses"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_qwencloud_alias_config_readiness_overlay_uses_draft_canonical_mode():
     app = _qwencloud_app(api_mode="responses")

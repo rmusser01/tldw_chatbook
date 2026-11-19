@@ -1,0 +1,26 @@
+{
+  "case": "departure-pending",
+  "before": {
+    "selection_kind": "dataset",
+    "selection_id": "0e22cd0f-b49a-460e-9d06-00dee5f41c1e",
+    "mounted_probe_set": false
+  },
+  "after": {
+    "text": "Saved",
+    "same_input": false,
+    "focus": true,
+    "cursor": 5,
+    "selection": [
+      0,
+      5
+    ],
+    "selection_kind": "character_bench",
+    "selection_id": "423116be-95ce-424e-83b8-030e78104482",
+    "mounted_probe_set": false
+  },
+  "stored_name": "Saved",
+  "stored_character_ids": [
+    2
+  ],
+  "rail_contains_saved": true
+}

@@ -118,6 +118,18 @@ class AnkiFlashcardsWidget(Widget):
         border: round $surface;
         padding: 1;
         margin-bottom: 1;
+        /* TASK-34000.6 (S-05): without this the editor took Textual's default
+           `1fr` (8 rows of the scroll container at 160x45, measured) and
+           `overflow: hidden` dropped every control after "Decks:". */
+        height: auto;
+    }
+
+    /* An Input defaults to `width: 100%`, which left its row-mate button
+       (Create Deck, Refresh) starting at the screen's right edge. Class-keyed
+       on the subject, not `.deck-controls Input` (lessons-textual: ancestor-
+       scoped bare-type rules are a ratcheted cost). */
+    Input.flashcard-row-input {
+        width: 1fr;
     }
 
     .deck-controls {
@@ -140,7 +152,12 @@ class AnkiFlashcardsWidget(Widget):
         margin-bottom: 1;
     }
     
-    .card-list {
+    /* TASK-34000.6 (S-05): keyed off the app-wide `.card-list` class, whose
+       app-tier `height: $ds-height-fill` (1fr) beat this widget-tier rule
+       regardless of specificity and collapsed the list to its two border
+       rows inside the auto-height scroll container, so a created card was
+       never visible (160x45 live capture 07 before the re-key). */
+    .flashcard-list {
         height: 10;
         border: round $surface;
         margin-bottom: 1;
@@ -182,7 +199,9 @@ class AnkiFlashcardsWidget(Widget):
                     )
                 with Horizontal(classes="deck-controls"):
                     yield Input(
-                        placeholder="New deck name...", id="new-deck-name-input"
+                        placeholder="New deck name...",
+                        id="new-deck-name-input",
+                        classes="flashcard-row-input",
                     )
                     yield Button(
                         "Create Deck", id="create-deck-button", variant="primary"
@@ -224,6 +243,7 @@ class AnkiFlashcardsWidget(Widget):
                     yield Input(
                         placeholder="Search selected deck...",
                         id="flashcard-search-input",
+                        classes="flashcard-row-input",
                     )
                     yield Button("Refresh", id="flashcard-refresh-button")
 
@@ -237,20 +257,27 @@ class AnkiFlashcardsWidget(Widget):
 
                 with Horizontal(classes="form-row"):
                     yield Label("Tags:", classes="form-label")
-                    yield Input(placeholder="space-separated tags", id="card-tags")
+                    yield Input(
+                        placeholder="space-separated tags",
+                        id="card-tags",
+                        classes="flashcard-row-input",
+                    )
 
                 yield Button("Create Card", id="create-card-btn", variant="primary")
 
             # Card list
             yield Label("Your Cards:", classes="subsection-title")
-            yield ListView(id="card-list", classes="card-list")
+            yield ListView(id="card-list", classes="flashcard-list")
 
             # Review section
             with Vertical(classes="review-area"):
                 yield Label("Review Cards:", classes="subsection-title")
-                yield Static("Create a deck to begin studying.", id="review-status")
-                yield Static("", id="review-front")
-                review_back = Static("", id="review-back")
+                # Literal: card text and deck names are typed by the user.
+                yield Static(
+                    "Create a deck to begin studying.", id="review-status", markup=False
+                )
+                yield Static("", id="review-front", markup=False)
+                review_back = Static("", id="review-back", markup=False)
                 review_back.display = False
                 yield review_back
                 yield Static("", id="review-next-intervals")
@@ -354,10 +381,13 @@ class QuizzesWidget(Widget):
 
             with Vertical(classes="quiz-attempt-area"):
                 yield Label("Attempt Quiz:", classes="subsection-title")
+                # Quiz names, question text and answers print as typed.
                 yield Static(
-                    "Create a quiz to begin practicing.", id="quiz-attempt-status"
+                    "Create a quiz to begin practicing.",
+                    id="quiz-attempt-status",
+                    markup=False,
                 )
-                yield Static("", id="quiz-attempt-question")
+                yield Static("", id="quiz-attempt-question", markup=False)
                 yield Label("Attempt History:", classes="subsection-title")
                 with Horizontal(classes="form-row"):
                     yield Select(
@@ -367,7 +397,7 @@ class QuizzesWidget(Widget):
                         id="quiz-attempt-history-select",
                     )
                     yield Button("Load Attempt", id="load-quiz-attempt-history-button")
-                yield Static("", id="quiz-attempt-history-summary")
+                yield Static("", id="quiz-attempt-history-summary", markup=False)
                 with Horizontal(classes="form-row"):
                     yield Label("Your Answer:", classes="form-label")
                     yield Input(
@@ -587,13 +617,19 @@ class StudyWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.show_sidebar = show_sidebar
+        # Bumped on every sub-view swap; the Flashcards guard compares it.
+        self.view_swaps = 0
         self.flashcards_controller = StudyFlashcardsController(self)
         self.quizzes_controller = StudyQuizzesController(self)
 
     DEFAULT_CSS = """
     StudyWindow {
         layout: horizontal;
-        height: 100%;
+        /* TASK-34000.6 (S-05): `100%` of the Study shell, placed under the
+           shell's header and section bar, overflowed the shell by 6 rows at
+           160x45 (measured), so the last rows of every section's scroll
+           container could never be shown. `1fr` is the remaining space. */
+        height: 1fr;
     }
     
     .study-sidebar {
@@ -701,8 +737,12 @@ class StudyWindow(Container):
                 yield Static(
                     "Workspace Study", id="study-scope-title", classes="section-title"
                 )
+                # Literal: a workspace name is typed by the user.
                 yield Static(
-                    "", id="study-scope-workspace-name", classes="study-scope-row"
+                    "",
+                    id="study-scope-workspace-name",
+                    classes="study-scope-row",
+                    markup=False,
                 )
                 yield Static(
                     "", id="study-scope-backend-status", classes="study-scope-row"
@@ -777,6 +817,7 @@ class StudyWindow(Container):
 
     def watch_current_view(self, old_view: str, new_view: str) -> None:
         """Handle view changes"""
+        self.view_swaps += 1
         if old_view == "flashcards":
             self.run_worker(
                 self.flashcards_controller.end_review_session_if_needed(),
@@ -1138,7 +1179,6 @@ class StudyWindow(Container):
     def handle_start_quiz_attempt(self) -> None:
         self.run_worker(
             self.quizzes_controller.start_attempt(),
-            exclusive=True,
             group="study-start-quiz-attempt",
         )
 

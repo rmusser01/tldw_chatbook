@@ -52,6 +52,13 @@ class KokoroHost(App):
 def catalog(monkeypatch):
     service = FakeTTSService()
     monkeypatch.setattr(
+        speech_catalog_mixin,
+        "get_cli_setting",
+        lambda section, key, default=None: (
+            False if (section, key) == ("app_tts", "KOKORO_USE_ONNX") else default
+        ),
+    )
+    monkeypatch.setattr(
         SpeechPlaygroundPane, "_tts_service_factory", lambda self: _resolved(service)
     )
     return service

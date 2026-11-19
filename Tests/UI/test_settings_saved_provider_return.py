@@ -17,7 +17,7 @@ from Tests.UI.test_settings_provider_keyboard_journeys import (
     _revert,
     _settle,
 )
-from tldw_chatbook.UI.Screens.provider_model_resolution import provider_config_key
+from tldw_chatbook.LLM_Provider_Catalog.provider_model_resolution import provider_config_key
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
 
@@ -33,15 +33,20 @@ def _assert_projection(screen, provider, model, endpoint):
     )
     assert screen._provider_widget_value() == provider
     assert screen.query_one("#settings-model-value", Input).value == model
+    # Final review finding 10 (R8): the picker the user sees, not only the
+    # hidden adapter; every caller has let its load worker settle first.
+    assert screen.query_one("#settings-model-picker").value == model
     assert (
         screen.query_one("#settings-provider-endpoint-value", Input).value == endpoint
     )
     picker = screen.query_one("#settings-provider-picker", OptionList)
     assert picker.highlighted is not None
     assert picker.get_option_at_index(picker.highlighted).provider_id == provider
-    readiness = str(screen.query_one("#settings-provider-readiness", Static).renderable)
-    assert screen._provider_display_name(provider) in readiness
-    assert model in readiness
+    # TASK-33007.2, rewritten on purpose: the readiness block's "Provider /
+    # model" line is gone; the Provider control names the provider.
+    assert screen.query_one(
+        "#settings-provider-search", Input
+    ).value == screen._provider_display_label(provider)
     detail, _, _ = screen._provider_readiness_test_report()
     assert screen._provider_display_name(provider).casefold() in detail.casefold()
     # TASK-33002.2: the Test result is labelled rows, not "model=<id>".
@@ -50,6 +55,7 @@ def _assert_projection(screen, provider, model, endpoint):
     ), detail
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -95,11 +101,13 @@ async def test_clean_settings_follows_changed_saved_provider(theme, size, return
                 is not previous_model_widget
             )
             assert "re-run" in host.screen._provider_test_result.lower()
-        assert "Saved chat defaults" in str(
+        # TASK-33007.2, rewritten on purpose: the Provider row's Source word.
+        assert "new-chat default" == str(
             host.screen.query_one("#settings-provider-source", Static).renderable
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("return_kind", ["restored", "retained"])
 @pytest.mark.parametrize(
@@ -152,6 +160,7 @@ async def test_saved_default_change_does_not_retarget_a_draft(
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("return_kind", ["restored", "retained"])
 async def test_api_mode_only_draft_keeps_its_provider_on_return(return_kind):
@@ -192,6 +201,7 @@ async def test_api_mode_only_draft_keeps_its_provider_on_return(return_kind):
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("finish", ["save", "revert"])
 async def test_second_edit_after_default_change_uses_draft_originals(
@@ -245,6 +255,7 @@ async def test_second_edit_after_default_change_uses_draft_originals(
         assert not screen._category_has_unsaved_changes(CATEGORY)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["QwenCloud", "ReviewCloud"])
 async def test_unchanged_saved_provider_preserves_retained_widgets_and_verdict(

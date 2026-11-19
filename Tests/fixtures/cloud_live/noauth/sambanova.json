@@ -1,0 +1,56 @@
+{
+  "server": "sambanova",
+  "base_url": "https://api.sambanova.ai/v1",
+  "probe_model": "MiniMax-M2.7",
+  "listing": {
+    "status": 200,
+    "entries": [
+      {
+        "id": "DeepSeek-V3.1"
+      },
+      {
+        "id": "DeepSeek-V3.2"
+      },
+      {
+        "id": "Meta-Llama-3.3-70B-Instruct"
+      },
+      {
+        "id": "MiniMax-M2.7"
+      },
+      {
+        "id": "MiniMax-M3"
+      },
+      {
+        "id": "gemma-4-31B-it"
+      },
+      {
+        "id": "gpt-oss-120b"
+      }
+    ]
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "You didn't provide an API key. You need to provide your API key in an Authorization header using Bearer auth (i.e. Authorization: Bearer YOUR_KEY), or via the x-api-key header.",
+        "type": "authentication_error",
+        "param": null,
+        "code": null
+      },
+      "request_id": "dau8rmsint6h0qtebmhg"
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Incorrect API key provided: tldw-p*****-key.",
+        "type": "authentication_error",
+        "param": null,
+        "code": "invalid_api_key"
+      },
+      "request_id": "dau8rmsint6h0qtebmi0"
+    }
+  },
+  "probed_at": "2026-09-30T04:19:39+00:00"
+}

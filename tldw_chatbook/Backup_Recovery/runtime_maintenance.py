@@ -606,7 +606,7 @@ class RuntimeMaintenance:
         """Fence ordinary storage, then release only this thread's owned caches."""
         from ..Logging_Config import PrivateRotatingFileHandler
         from . import storage_admission as storage
-        from .participants import _retire_current_thread_caches
+        from .participants import retire_current_thread_caches
 
         self._check()
         if not self._settled:
@@ -618,7 +618,7 @@ class RuntimeMaintenance:
             if type(handler) is PrivateRotatingFileHandler:
                 self.logging_handlers.append(handler)
                 PrivateRotatingFileHandler._maintenance_close_admission(handler)
-        _retire_current_thread_caches(self.pause)
+        retire_current_thread_caches(self.pause)
 
     def _require_storage_coverage(self, pause):
         """Accept only this app's live, settled coordinator and exact local gate."""
@@ -703,7 +703,7 @@ async def monitor_app(app):
     abandon that handoff. A refused attempt waits for its intent to end before
     retrying, preserving user work and avoiding repeated pause/resume cycles.
     """
-    from .participants import _retire_current_thread_caches
+    from .participants import retire_current_thread_caches
 
     refused = False
     while True:
@@ -729,7 +729,7 @@ async def monitor_app(app):
                 if time.monotonic() >= deadline:
                     raise RecoveryRequired("runtime_native_resources_not_settled")
                 await asyncio.sleep(0.01)
-                _retire_current_thread_caches(runtime.pause)
+                retire_current_thread_caches(runtime.pause)
             runtime.pause.retire_startup(runtime)
         except (OSError, ValueError, RuntimeError) as error:
             # Surface actionable local refusals without propagating arbitrary

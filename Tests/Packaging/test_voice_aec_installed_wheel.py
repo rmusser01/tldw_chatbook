@@ -173,21 +173,27 @@ def test_probe_rejects_missing_or_non_native_extension(tmp_path: Path) -> None:
 
 
 def test_wheel_workflow_runs_the_installed_corpus_probe_for_every_wheel() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "voice-aec-wheels.yml").read_text(
-        encoding="utf-8"
-    )
+    import yaml
 
-    assert (
-        "python {project}/../../Tests/Packaging/test_voice_aec_installed_wheel.py"
-        in workflow
+    workflow = yaml.load(
+        (ROOT / ".github" / "workflows" / "voice-aec-wheels.yml").read_text(
+            encoding="utf-8"
+        ),
+        Loader=yaml.BaseLoader,
     )
-    for required_trigger in (
-        '"Packaging/voice_aec_corpus.py"',
-        '"Packaging/qualify_installed_voice_aec.py"',
-        '"Tests/Audio/fixtures/voice_aec/manifest.json"',
-        '"Tests/Packaging/test_voice_aec_installed_wheel.py"',
-    ):
-        assert required_trigger in workflow
+    command = workflow["jobs"]["build-wheels"]["env"]["CIBW_TEST_COMMAND"]
+    assert (
+        "python {project}/Tests/Packaging/test_voice_aec_installed_wheel.py"
+        in command.split(" && ")
+    )
+    required_paths = {
+        "Packaging/voice_aec_corpus.py",
+        "Packaging/qualify_installed_voice_aec.py",
+        "Tests/Audio/fixtures/voice_aec/manifest.json",
+        "Tests/Packaging/test_voice_aec_installed_wheel.py",
+    }
+    for trigger in ("pull_request", "push"):
+        assert required_paths <= set(workflow["on"][trigger]["paths"])
 
 
 def main() -> int:

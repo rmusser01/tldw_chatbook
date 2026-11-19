@@ -69,6 +69,7 @@ async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unseen_mark_reaches_membership_rows_without_a_session(tmp_path):
     """A marked workspace conversation with no native session (the normal
@@ -103,6 +104,7 @@ async def test_unseen_mark_reaches_membership_rows_without_a_session(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unseen_mark_reaches_persisted_rows_without_a_session(tmp_path):
     """Same restart shape through the persisted-conversation listing path
@@ -140,6 +142,7 @@ async def test_unseen_mark_reaches_persisted_rows_without_a_session(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
     tmp_path,
@@ -248,6 +251,7 @@ async def test_opening_a_marked_conversation_delivers_without_a_keystroke(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_view_clear_yields_while_a_wake_is_still_owed(tmp_path):
     """The window's entry point, closed: viewing a conversation whose wake

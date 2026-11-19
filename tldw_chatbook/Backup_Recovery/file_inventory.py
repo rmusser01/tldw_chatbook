@@ -44,8 +44,25 @@ def _metadata_supported(fd: int, info: os.stat_result) -> bool:
             ctypes.c_int,
         ]
         libc.flistxattr.restype = ctypes.c_ssize_t
-        if libc.flistxattr(fd, None, 0, 0) != 0:
+        size = libc.flistxattr(fd, None, 0, 0)
+        if size == -1:
             return False
+        if size > 0:
+            names = ctypes.create_string_buffer(size)
+            written = libc.flistxattr(fd, names, size, 0)
+            if not 0 < written <= size:
+                return False
+            # darwin25 (macOS 26) kernels stamp com.apple.provenance on every
+            # inode a local process creates, including plain script-written
+            # files and directories. It is system provenance bookkeeping the
+            # user cannot apply or read back as metadata, so it alone never
+            # refuses an inventory entry. Every other attribute still does.
+            if any(
+                name != b"com.apple.provenance"
+                for name in names.raw[:written].split(b"\x00")
+                if name
+            ):
+                return False
         libc.acl_get_fd_np.argtypes = [ctypes.c_int, ctypes.c_int]
         libc.acl_get_fd_np.restype = ctypes.c_void_p
         libc.acl_get_entry.argtypes = [

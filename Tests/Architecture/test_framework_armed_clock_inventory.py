@@ -87,6 +87,18 @@ FRAMEWORK_ARMED_CLOCK_ROWS: dict[tuple[str, str, str], str] = {
 }
 
 
+#: TASK-38989: constructors whose ``auto_refresh=`` kwarg is a plain catalog
+#: field, not Textual's clock interval. Keyed by callee name; the value names
+#: the field. ``test_non_clock_auto_refresh_fields_stay_plain_bools`` pins
+#: each one as a non-widget dataclass whose field is a ``bool``.
+NON_CLOCK_AUTO_REFRESH_CALLEES: dict[str, str] = {
+    "ProviderRecord": (
+        "tldw_chatbook/provider_registry.py ProviderRecord.auto_refresh: "
+        "whether the model catalog auto-refreshes this provider's list"
+    ),
+}
+
+
 # ---------------------------------------------------------------------------
 # detectors
 # ---------------------------------------------------------------------------
@@ -179,6 +191,8 @@ def auto_refresh_armings(
                         key = (rel, _qualname(module, node), ast.unparse(node))
                         found[key] = "auto_refresh-assignment"
             elif isinstance(node, ast.Call):
+                if _callee(node) in NON_CLOCK_AUTO_REFRESH_CALLEES:
+                    continue
                 for keyword in node.keywords:
                     if keyword.arg == "auto_refresh" and not _is_none_literal(
                         keyword.value
@@ -272,8 +286,7 @@ def test_inventory_rows_are_not_stale(framework_clocks) -> None:
     assert not stale, (
         "FRAMEWORK_ARMED_CLOCK_ROWS entries with no matching live "
         "construction -- the instance was fixed or moved (TASK-23022?); "
-        "retire these rows:\n"
-        + "\n".join(f"  {row}" for row in stale)
+        "retire these rows:\n" + "\n".join(f"  {row}" for row in stale)
     )
 
 
@@ -285,8 +298,8 @@ def test_every_row_states_a_kind() -> None:
         for key, reason in sorted(FRAMEWORK_ARMED_CLOCK_ROWS.items())
         if not reason.startswith(kinds)
     ]
-    assert not bad, (
-        f"Classifications must start with one of {kinds}:\n" + "\n".join(bad)
+    assert not bad, f"Classifications must start with one of {kinds}:\n" + "\n".join(
+        bad
     )
 
 
@@ -402,3 +415,34 @@ def test_auto_refresh_arming_is_detected_in_both_spellings() -> None:
         "disarming (auto_refresh = None) must not be censused; both arming "
         f"spellings must be. Got {labels}"
     )
+
+
+def test_catalog_auto_refresh_field_is_not_a_clock_but_a_widget_kwarg_is() -> None:
+    """TASK-38989: ``ProviderRecord(auto_refresh=True)`` is a catalog field."""
+    modules = _modules_from_source(
+        """
+        RECORD = ProviderRecord(key="x", auto_refresh=True)
+
+        class HandArmed:
+            def build(self):
+                return SomeWidget(auto_refresh=True)
+        """
+    )
+    found = auto_refresh_armings(modules)
+    assert [key[2] for key in found] == ["SomeWidget(auto_refresh=True)"]
+
+
+def test_non_clock_auto_refresh_fields_stay_plain_bools() -> None:
+    """Each exempt callee is a non-widget dataclass with a bool field."""
+    import dataclasses
+
+    from textual.dom import DOMNode
+
+    from tldw_chatbook import provider_registry
+
+    for callee in NON_CLOCK_AUTO_REFRESH_CALLEES:
+        cls = getattr(provider_registry, callee)
+        assert dataclasses.is_dataclass(cls) and not issubclass(cls, DOMNode)
+        field = {f.name: f for f in dataclasses.fields(cls)}["auto_refresh"]
+        assert field.type in (bool, "bool"), (callee, field.type)
+

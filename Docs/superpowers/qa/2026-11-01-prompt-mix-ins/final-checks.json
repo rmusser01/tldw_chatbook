@@ -1,0 +1,18 @@
+{
+  "git_diff_check": {
+    "implementation_and_authored_docs": "passed",
+    "full_preserved_evidence_exit_code": 2,
+    "preserved_whitespace_diagnostics": 2317,
+    "reason": "Exact historical logs, ANSI cells and exported SVG retain original whitespace; no evidence bytes normalized."
+  },
+  "new_test_ruff": "All checks passed",
+  "new_test_format": "1 file already formatted",
+  "product_ruff_delta": 0,
+  "product_formatter_edit_delta": 0,
+  "test_execution": "249 affected,540 predecessor,1 packaging passed; no full suite",
+  "evidence_check": "Run verify_evidence.py against staged index, then committed HEAD; output recorded in final report/controller handoff.",
+  "auto_review": "Rejected combined heuristic cleanup/broad export did not execute; additive bounded preservation succeeded.",
+  "index_integrity": "Verified542 evidence/source records against index and77 actual-live product hashes before implementation commit. Committed HEAD verification is required by verify_evidence.py and reported in handoff.",
+  "provenance": "46 exact hash-verified unrelated copies reversibly quarantined in ignored workspace; original files untouched.",
+  "implementation_commit": "6dbf985083"
+}

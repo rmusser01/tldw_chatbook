@@ -68,6 +68,7 @@ def _inspector_text(inspector: InspectorPane, widget_id: str) -> str:
     return str(inspector.query_one(f"#{widget_id}", Static).renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selected_item_reports_type_item_and_offers_item_actions():
     """AC#1, AC#2, AC#5."""
@@ -197,6 +198,7 @@ def test_item_is_typed_from_its_kind_not_its_shape():
 # actually writes that status today.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_and_ignore_never_dispatch_a_write_for_an_id_less_entity():
     """Fix wave, F3 (Minor); guard still applies unchanged after task-1541's
@@ -228,8 +230,14 @@ async def test_ingest_and_ignore_never_dispatch_a_write_for_an_id_less_entity():
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
 
-        no_id_entity = {"entity_kind": "watchlist_item", "item_id": 999, "status": "new"}
-        assert "id" not in no_id_entity, "the fixture must actually lack the key under test"
+        no_id_entity = {
+            "entity_kind": "watchlist_item",
+            "item_id": 999,
+            "status": "new",
+        }
+        assert "id" not in no_id_entity, (
+            "the fixture must actually lack the key under test"
+        )
 
         calls: list[tuple[object, str]] = []
         real_update_item_status = screen._update_item_status

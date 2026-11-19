@@ -1,0 +1,39 @@
+== fresh profile p1a-t5-2 BEFORE import
+notes|0
+conversations|0
+keywords|0
+note_keywords|0
+conversation_keywords|0
+media|0
+MediaKeywords|0
+== import through LocalChatbookService.import_chatbook (app stopped; every manifest item selected, as the wizard's import-all)
+db_paths={'ChaChaNotes': '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.nlrev-harness/runs/p1a-t5-2/data/nl_review/tldw_chatbook_ChaChaNotes.db', 'Prompts': '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.nlrev-harness/runs/p1a-t5-2/data/nl_review/tldw_chatbook_prompts.db', 'Media': '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.nlrev-harness/runs/p1a-t5-2/data/nl_review/tldw_chatbook_media_v2.db'}
+selections: {'conversation': 2, 'note': 122, 'media': 23}
+import result: {'success': True, 'message': 'Successfully imported 147/147 items', 'path': '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.nlrev-harness/runs/p1a-t5-1/cwd/p1a.zip', 'name': 'p1a'}
+== fresh profile p1a-t5-2 AFTER import
+notes|122
+conversations|2
+keywords|17
+note_keywords|123
+conversation_keywords|2
+media|23
+MediaKeywords|46
+== notes (first 6 with keywords)
+A very long note title that keeps going so we can test how the tree, the editor header and the Info pane cope with it at every width|test
+Advisor meeting 2026-09-10|meeting,thesis
+Advisor meeting 2026-09-24|meeting,thesis
+Daily log 2026-09-01|daily
+Daily log 2026-09-02|daily
+Daily log 2026-09-03|daily
+== notes with keywords (count)
+120
+== conversations
+Japanese study plan|japanese
+Release notes draft v1.0|launch
+== media (first 4)
+A field guide to Markdown tables|article,seed
+Voice memo 2026-09-29|seed,audio
+学習メモ — 日本語の文法|seed,document
+Server logs excerpt 2026-09-27|seed,plaintext
+== media with keywords (count)
+23

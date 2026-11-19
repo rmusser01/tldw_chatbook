@@ -31,6 +31,7 @@ def sync_spy(monkeypatch):
     return calls
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_burst_of_fleet_sync_requests_produces_exactly_one_run(sync_spy):
     """The core coalescing proof the task brief asks for: N requests ("a
     burst of N fleet events") in a row, one trailing sync."""
@@ -59,6 +60,7 @@ async def test_a_burst_of_fleet_sync_requests_produces_exactly_one_run(sync_spy)
     )
 
 
+@pytest.mark.bootstrap_profile
 async def test_requests_landing_before_the_trailing_run_still_all_fold_in(sync_spy):
     """Requests made across several `call_after_refresh` cycles, as long as
     each new request lands before the PREVIOUS one's trailing run has
@@ -87,6 +89,7 @@ async def test_requests_landing_before_the_trailing_run_still_all_fold_in(sync_s
         assert len(sync_spy) == settled  # not yet run
 
 
+@pytest.mark.bootstrap_profile
 async def test_the_coalesced_request_still_actually_runs_the_sync(sync_spy):
     """Coalescing must not swallow the sync entirely -- a single request
     still produces exactly one execution once the event loop catches up."""

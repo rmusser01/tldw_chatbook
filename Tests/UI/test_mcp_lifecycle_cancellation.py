@@ -13,6 +13,7 @@ from textual.widgets import Button
 from textual.worker import WorkerCancelled
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.background_signals import wait_for_signal
 from Tests.UI.test_mcp_workbench import (
     LifecycleApp,
     LifecycleFakeHubService,
@@ -130,27 +131,43 @@ async def test_cancel_reserves_server_until_cleanup_then_permits_retry(
         wb = await ready(app, pilot)
         notices = _capture_notifications(app)
         wb._start_lifecycle("local:docs", "docs", "connect")
-        await service.started.wait()
         original = wb._in_flight["local:docs"]
-        wb.on_mcp_inspector_cancel_requested(MCPInspector.CancelRequested("local:docs"))
-        await service.cancelling.wait()
-        await pilot.pause()
-        during = {
-            "owner": wb._in_flight.get("local:docs") is original,
-            "state": wb._snapshot_for_display("local:docs").state,
-            "message": wb._snapshot_for_display("local:docs").message,
-            "notices": list(notices),
-        }
-        cancel = app.query(MCPInspector).first().query("#mcp-inspector-cancel")
-        during["cancel_disabled"] = bool(cancel) and cancel.first(Button).disabled
-        wb._start_lifecycle("local:docs", "docs", "connect")
-        wb._start_lifecycle("local:other", "other", "connect")
-        wb.on_mcp_inspector_cancel_requested(MCPInspector.CancelRequested("local:docs"))
-        await pilot.pause()
-        during["calls"] = list(service.lifecycle_calls)
-        during["interrupted"] = service.interrupted
-        service.release.set()
-        await finish(app)
+        try:
+            await wait_for_signal(
+                service.started, what="first docs connection to start"
+            )
+            wb.on_mcp_inspector_cancel_requested(
+                MCPInspector.CancelRequested("local:docs")
+            )
+            await wait_for_signal(
+                service.cancelling, what="first docs connection to enter cleanup"
+            )
+            await pilot.pause()
+            during = {
+                "owner": wb._in_flight.get("local:docs") is original,
+                "state": wb._snapshot_for_display("local:docs").state,
+                "message": wb._snapshot_for_display("local:docs").message,
+                "notices": list(notices),
+            }
+            cancel = app.query(MCPInspector).first().query("#mcp-inspector-cancel")
+            during["cancel_disabled"] = bool(cancel) and cancel.first(Button).disabled
+            wb._start_lifecycle("local:docs", "docs", "connect")
+            wb._start_lifecycle("local:other", "other", "connect")
+            wb.on_mcp_inspector_cancel_requested(
+                MCPInspector.CancelRequested("local:docs")
+            )
+            await pilot.pause()
+            during["calls"] = list(service.lifecycle_calls)
+            during["interrupted"] = service.interrupted
+        finally:
+            try:
+                if not original.is_cancelled:
+                    wb.on_mcp_inspector_cancel_requested(
+                        MCPInspector.CancelRequested("local:docs", original)
+                    )
+            finally:
+                service.release.set()
+                await finish(app)
         await pilot.pause()
         assert during["owner"]
         assert during["state"] is ReadinessState.CHECKING
@@ -297,11 +314,26 @@ async def test_cancel_request_does_not_hide_the_actual_terminal_outcome(
         wb = await ready(app, pilot)
         notices = _capture_notifications(app)
         wb._start_lifecycle("local:docs", "docs", "connect")
-        await service.started.wait()
-        wb.on_mcp_inspector_cancel_requested(MCPInspector.CancelRequested("local:docs"))
-        await service.cancelling.wait()
-        service.release.set()
-        await finish(app)
+        original = wb._in_flight["local:docs"]
+        try:
+            await wait_for_signal(
+                service.started, what="first docs connection to start"
+            )
+            wb.on_mcp_inspector_cancel_requested(
+                MCPInspector.CancelRequested("local:docs")
+            )
+            await wait_for_signal(
+                service.cancelling, what="first docs connection to enter cleanup"
+            )
+        finally:
+            try:
+                if not original.is_cancelled:
+                    wb.on_mcp_inspector_cancel_requested(
+                        MCPInspector.CancelRequested("local:docs", original)
+                    )
+            finally:
+                service.release.set()
+                await finish(app)
         await pilot.pause()
         assert not any("Cancelled" in text for text, _ in notices)
         expected = "connected" if outcome == "success" else "Cleanup failed"

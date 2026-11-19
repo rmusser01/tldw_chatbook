@@ -1,0 +1,535 @@
+{
+  "/private/tmp/mixins-f70-ui19-diagnosis/report.md": {
+    "source_sha256": "00544bd11adabeac044da78685943c6a4915030c1c3f48e8c132e9e966352397",
+    "source_bytes": 6737,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/report.md",
+    "retained_sha256": "00544bd11adabeac044da78685943c6a4915030c1c3f48e8c132e9e966352397"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/implementation-report.md": {
+    "source_sha256": "10067c1a2a98cecf41dee82ec3228879fd203ad85c24cc3c406028e8ce03c939",
+    "source_bytes": 5511,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/implementation-report.md",
+    "retained_sha256": "10067c1a2a98cecf41dee82ec3228879fd203ad85c24cc3c406028e8ce03c939"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/source-proof.json": {
+    "source_sha256": "57eab5b15331d042a16c32a371149de84f48895f462d8d0f8b0f3736a3eebb09",
+    "source_bytes": 2683,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/source-proof.json",
+    "retained_sha256": "57eab5b15331d042a16c32a371149de84f48895f462d8d0f8b0f3736a3eebb09"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/final-source.json": {
+    "source_sha256": "9c23c59f0192b4f27f219dccd9daa861dd0d857d7c540033dcfda90824787f9a",
+    "source_bytes": 458,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-source.json",
+    "retained_sha256": "9c23c59f0192b4f27f219dccd9daa861dd0d857d7c540033dcfda90824787f9a"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/final-static-proof.json": {
+    "source_sha256": "c8bc2a1ad1564e9660090180f28d1d967c78b59fca75abfc7d3e5066bcb60f79",
+    "source_bytes": 1338,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-static-proof.json",
+    "retained_sha256": "c8bc2a1ad1564e9660090180f28d1d967c78b59fca75abfc7d3e5066bcb60f79"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/evidence-summary.json": {
+    "source_sha256": "6c3e30a11517925a337da5ab8e79ff60cf39c6f959335208d0d4c19ea9b02325",
+    "source_bytes": 7306,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/evidence-summary.json",
+    "retained_sha256": "6c3e30a11517925a337da5ab8e79ff60cf39c6f959335208d0d4c19ea9b02325"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/commands.json": {
+    "source_sha256": "4e0f59bd3aa91e94658e089aa4f476e5f4268a6ed2669313e731888c99cf5bc9",
+    "source_bytes": 7515,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/commands.json",
+    "retained_sha256": "4e0f59bd3aa91e94658e089aa4f476e5f4268a6ed2669313e731888c99cf5bc9"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/owner_probe.py": {
+    "source_sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011",
+    "source_bytes": 3155,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner_probe.py",
+    "retained_sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/owner-events.jsonl": {
+    "source_sha256": "238bb394e352e720e0b4ac79c6c58fe068c247b11d95fb2ddf6911881de91091",
+    "source_bytes": 905,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-events.jsonl.json",
+    "retained_sha256": "a47a504c6d76897e5ae36b06ddc13976a5bac647f820f369d75dd45f4074a852"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/owner-probe.log": {
+    "source_sha256": "3187faed49a3b69f35f6d7fd3dcd6849f9e0ed4fa6f9fb44d64724254f51ac73",
+    "source_bytes": 279961,
+    "retained_format": "raw_text_json",
+    "uncompressed_retained_sha256": "cb90dd8808b5a1f3023dc63848f8ab090be7c6b12ab68ea9d89773555c0ad909",
+    "retained_encoding": "gzip",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-probe.log.json.gz",
+    "retained_sha256": "cc175c08cc279a00f0d0e1e162709f8c5aec9ebecc1ebc29ed973876d5a7caf3"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/owner-probe.xml": {
+    "source_sha256": "9d815951c3380e559b2c3bf126604b09293ad6f0e6c849abf2906ac1f1150b43",
+    "source_bytes": 7827,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-probe.xml.json",
+    "retained_sha256": "bdd5cc5faac09093af60ea4f0d879a0275c3edcaabaf70b241775d1164775b25"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/permanent-red.log": {
+    "source_sha256": "6e2a415450d8b046a1e3592e76fe1796b672b8d7a67c176d5c89381bed5e6edc",
+    "source_bytes": 36347,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/permanent-red.log.json",
+    "retained_sha256": "8a8f007a86ca0c8f1efd748c390faf9ac14dabb920c719008cd53fa24c751df3"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/permanent-red.xml": {
+    "source_sha256": "0b2d991d3d5fef04bcb4696f5547ed8cefbb91103643a7ef3fd4b7fa4f90cdb2",
+    "source_bytes": 14553,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/permanent-red.xml.json",
+    "retained_sha256": "bb4be8fa2fc50ee98e7c7178c58706d800829c4d72ad8cb087daebde65801afa"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/frozen-red.log": {
+    "source_sha256": "aead881ca6723ca1eb0d53758e35e0a5d9168cbfa445853788de96c976e53474",
+    "source_bytes": 36380,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/frozen-red.log.json",
+    "retained_sha256": "ab6b79bdc2b3c3d291156955ede93e399afdca9425880707ccd054f1fea5bb57"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/frozen-red.xml": {
+    "source_sha256": "58dcbcd0f20abc9b7eb925fb56e9bd8440a6bc15cae3c6d4206aa8a8e49f068d",
+    "source_bytes": 14586,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/frozen-red.xml.json",
+    "retained_sha256": "9240fe926606c1de072c1793c8de8b3302e6b58e1ab39c4cbc9079d9f81568b9"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/final-red.log": {
+    "source_sha256": "77f6e1722fef34531b1bbe2a7759eb174d6ad8ae2375ac654fbd64de0d59b42a",
+    "source_bytes": 36380,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-red.log.json",
+    "retained_sha256": "6ad295eed1ca17fe52de97897229ec344cce00386cddba4a94c1aec937eb5de5"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/final-red.xml": {
+    "source_sha256": "8971f7649186daeae0aac21b353305391bd62f81d4e405b8775c5ae30deaec15",
+    "source_bytes": 14586,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-red.xml.json",
+    "retained_sha256": "353a67f38923579ebbac93b23ac98592ffc28109d95ddc20c5b683dcf96784d7"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/frozen-green.log": {
+    "source_sha256": "56ce18b91c5586ce791402bcf271683bb72baf03e587c279663053b5dc584599",
+    "source_bytes": 30144,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/frozen-green.log.json",
+    "retained_sha256": "514a7e0a896c8b29db9cfa99c5f75cbb18d2ce5142667639c269144a12d76894"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/frozen-green.xml": {
+    "source_sha256": "acca06ee0d63fb846fecbe007d746e59cb99d339a5592810fbbed1692d678b0e",
+    "source_bytes": 31493,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/frozen-green.xml.json",
+    "retained_sha256": "8501b5b79915bd698dd114bebee626ce5dc44accb48a2ed75c2a8a00eee372d8"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/inherited-bootstrap.log": {
+    "source_sha256": "0ae05df44b8b6cff3c2d2389c9161a6836947ac806e464da1ab1216a62749f3e",
+    "source_bytes": 1245,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/inherited-bootstrap.log.json",
+    "retained_sha256": "c2408e71212bf19c3180378d1360a8d36942a40ec5b76cc13dae395b6e0eafa5"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/inherited-bootstrap.xml": {
+    "source_sha256": "2fba36b62c5b97af262f1bf85f22be946a0e11217eb0c24dfd3c5f0ec949bdc6",
+    "source_bytes": 1413,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/inherited-bootstrap.xml.json",
+    "retained_sha256": "0e812aa461f283348e752a4cdec3ef36209d880f45bdf4f0e22c3dd0a959fa6a"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/final-native.log": {
+    "source_sha256": "55d7e08e2eeae09bfa6e0202313c4d125fce9f2b6f0aeee98226618f70df7459",
+    "source_bytes": 435,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-native.log.json",
+    "retained_sha256": "123a90f7a0732da6d310847915ff971fd7df2ce6fddd881ac0022f20ea7ef047"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/final-native.xml": {
+    "source_sha256": "389e53c95fe5b1bcf2133e2b7ec7796d39693cb11f0790d0c8e74f5a5de11968",
+    "source_bytes": 774,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-native.xml.json",
+    "retained_sha256": "404ecb49a0b61e088ad8732c59a5502f433bc972498f1bc17c9e422fb2c7c581"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/bootstrap_selected.py": {
+    "source_sha256": "469fd1a6191c34f26044c8ef423660f47a23af0ddd5a1be52d889d9a1291fbbd",
+    "source_bytes": 219,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/bootstrap_selected.py",
+    "retained_sha256": "469fd1a6191c34f26044c8ef423660f47a23af0ddd5a1be52d889d9a1291fbbd"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/baseline-library_entry_canvases.py": {
+    "source_sha256": "20c2b3254062022297a366c4f224071e5822223b99429198ef59788b3bf0f073",
+    "source_bytes": 23385,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/baseline-library_entry_canvases.py",
+    "retained_sha256": "20c2b3254062022297a366c4f224071e5822223b99429198ef59788b3bf0f073"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/baseline-ruff.json": {
+    "source_sha256": "8968932e7f4de94f1b56896db1f31f459b61186ada9805cf37455a092b3ac632",
+    "source_bytes": 2478,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/baseline-ruff.json",
+    "retained_sha256": "8968932e7f4de94f1b56896db1f31f459b61186ada9805cf37455a092b3ac632"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/final-ruff.json": {
+    "source_sha256": "5619600d3a1b085f4c6a9344cc599500bdc93e7b7e6cc39f1d6b03667eaf53a1",
+    "source_bytes": 2572,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-ruff.json",
+    "retained_sha256": "5619600d3a1b085f4c6a9344cc599500bdc93e7b7e6cc39f1d6b03667eaf53a1"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/new-test-ruff.json": {
+    "source_sha256": "34e056623da663ad0272bdfe04ad65067ce744cf77b220bff5ce5d0318843136",
+    "source_bytes": 1331,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/new-test-ruff.json",
+    "retained_sha256": "34e056623da663ad0272bdfe04ad65067ce744cf77b220bff5ce5d0318843136"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/final-format.log": {
+    "source_sha256": "3bc53bf3e981a98a34a852e175bf9b77af841edea74fca595d9aedcbaf9a4938",
+    "source_bytes": 26,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/final-format.log.json",
+    "retained_sha256": "a8d55ae5575deb094e7cc8b22aec510097d0990071d9eacf12cbdf2b9c5b6813"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner_probe.py": {
+    "source_sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011",
+    "source_bytes": 3155,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-green/owner_probe.py",
+    "retained_sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-events.jsonl": {
+    "source_sha256": "282c57dfac45a7868e797064db0f78e827545562c81aaaa61b167f5e6eb0f217",
+    "source_bytes": 934,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-green/owner-events.jsonl.json",
+    "retained_sha256": "0d4ff02b54155278f85dff13d9d92ef6aa44819dfaf6903081e583aa13164f66"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-probe.log": {
+    "source_sha256": "8b1346d48692a2e49790158573dfceda0943f9af3d247610bee8ceb469a9aef5",
+    "source_bytes": 445,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-green/owner-probe.log.json",
+    "retained_sha256": "4fbc19d3d5c56eb33235d426cb6888ad5701ee80d4fe7c9782bf7f5f5457ac84"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-probe.xml": {
+    "source_sha256": "f750f015cb230a4bcf7497aed52ae03a52e5d12bc3059ee9097c4729f092bef7",
+    "source_bytes": 435,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/owner-green/owner-probe.xml.json",
+    "retained_sha256": "4b165298401a16b3856cc27802d3ae481fdb34a372ad698de2a763d7e0d6276f"
+  },
+  "/private/tmp/mixins-f70-ui19-diagnosis/artifact-map.json": {
+    "source_sha256": "41e5f07b59f2b812b5253b778e8b6eef91c836e7bf18690a1737df7e1fdfc239",
+    "source_bytes": 6509,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/repair/artifact-map.json",
+    "retained_sha256": "41e5f07b59f2b812b5253b778e8b6eef91c836e7bf18690a1737df7e1fdfc239"
+  },
+  "/private/tmp/mixins-f70-landing-review/report.md": {
+    "source_sha256": "fc9f245ffdb3272f6bed5ef9d1c35c2826e414614b12faf429ed2517a8579fe1",
+    "source_bytes": 6803,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/report.md",
+    "retained_sha256": "fc9f245ffdb3272f6bed5ef9d1c35c2826e414614b12faf429ed2517a8579fe1"
+  },
+  "/private/tmp/mixins-f70-landing-review/reviewed-sources-before.json": {
+    "source_sha256": "810e2da90f16091205fb1a141ed498dc0f94ceb8cb4153724f2c39e9c1024191",
+    "source_bytes": 1536,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewed-sources-before.json",
+    "retained_sha256": "810e2da90f16091205fb1a141ed498dc0f94ceb8cb4153724f2c39e9c1024191"
+  },
+  "/private/tmp/mixins-f70-landing-review/candidate-review.md": {
+    "source_sha256": "13e2ee036c2fcb049eefcd1f69499dad15acff0cb15d5d333d51d4c1763bf125",
+    "source_bytes": 6838,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/candidate-review.md",
+    "retained_sha256": "13e2ee036c2fcb049eefcd1f69499dad15acff0cb15d5d333d51d4c1763bf125"
+  },
+  "/private/tmp/mixins-f70-landing-review/reviewed-candidate-sources.json": {
+    "source_sha256": "291c7897e176595bf55e040bddd94f8ad7edf601be952d48c1e9b5f5ef21a257",
+    "source_bytes": 875,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewed-candidate-sources.json",
+    "retained_sha256": "291c7897e176595bf55e040bddd94f8ad7edf601be952d48c1e9b5f5ef21a257"
+  },
+  "/private/tmp/mixins-f70-landing-review/reviewed-evidence.json": {
+    "source_sha256": "d66be809479ffb220154530165f00389ce797dd78060b7fb37aab6d7b079ac34",
+    "source_bytes": 3844,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewed-evidence.json",
+    "retained_sha256": "d66be809479ffb220154530165f00389ce797dd78060b7fb37aab6d7b079ac34"
+  },
+  "/private/tmp/mixins-f70-landing-review/root-gates-addendum.md": {
+    "source_sha256": "b1497f698e7fe0b1794c831a42860c91c47c0870ad66021b16400bdf7544b77b",
+    "source_bytes": 5268,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/root-gates-addendum.md",
+    "retained_sha256": "b1497f698e7fe0b1794c831a42860c91c47c0870ad66021b16400bdf7544b77b"
+  },
+  "/private/tmp/mixins-f70-landing-review/reviewed-root-evidence.json": {
+    "source_sha256": "50c22f6ef062287d8759e65ac23601744292c71be2f67c740815638cf458752d",
+    "source_bytes": 4423,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewed-root-evidence.json",
+    "retained_sha256": "50c22f6ef062287d8759e65ac23601744292c71be2f67c740815638cf458752d"
+  },
+  "/private/tmp/mixins-f70-landing-review/final-review-proof.json": {
+    "source_sha256": "07b20b9d2512041d37a3022d3ce19eb649be3bdd11725b20d1140ca7e609d926",
+    "source_bytes": 1713,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/final-review-proof.json",
+    "retained_sha256": "07b20b9d2512041d37a3022d3ce19eb649be3bdd11725b20d1140ca7e609d926"
+  },
+  "/private/tmp/mixins-f70-landing-review/reviewer-artifact-map.json": {
+    "source_sha256": "85a177f3b69bbb1569d8c1f953f75560bf30ebf88efe4dede34e4dd94d541221",
+    "source_bytes": 1761,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/review/reviewer-artifact-map.json",
+    "retained_sha256": "85a177f3b69bbb1569d8c1f953f75560bf30ebf88efe4dede34e4dd94d541221"
+  },
+  "/private/tmp/mixins-f70-final/baseline-census.py": {
+    "source_sha256": "8c086e0280b84572d724b304a9da8ac8bad9d1c897dfc86752f1b3998a24756e",
+    "source_bytes": 74249,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/baseline-census.py",
+    "retained_sha256": "8c086e0280b84572d724b304a9da8ac8bad9d1c897dfc86752f1b3998a24756e"
+  },
+  "/private/tmp/mixins-f70-final/census-lint-delta.json": {
+    "source_sha256": "fe00e720b70baa724ca99f8520cd38f935ccc5b98b4496140ce21e7da93ee909",
+    "source_bytes": 369,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/census-lint-delta.json",
+    "retained_sha256": "fe00e720b70baa724ca99f8520cd38f935ccc5b98b4496140ce21e7da93ee909"
+  },
+  "/private/tmp/mixins-f70-final/census-proof.json": {
+    "source_sha256": "d267ceaa98fb43128285f96b9b84a9b108011bada78dc8522c32f4f301d982e8",
+    "source_bytes": 285,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/census-proof.json",
+    "retained_sha256": "d267ceaa98fb43128285f96b9b84a9b108011bada78dc8522c32f4f301d982e8"
+  },
+  "/private/tmp/mixins-f70-final/census-ruff-baseline.json": {
+    "source_sha256": "4bd3067ae55d7271c1bd005befde034ff612873cfabd3996d6afcf61fe6fa72b",
+    "source_bytes": 1358,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/census-ruff-baseline.json",
+    "retained_sha256": "4bd3067ae55d7271c1bd005befde034ff612873cfabd3996d6afcf61fe6fa72b"
+  },
+  "/private/tmp/mixins-f70-final/census-ruff-current.json": {
+    "source_sha256": "1abd3bfa16edbf3b6120c17fb82154325fe82aac19fb8ac0cbbf06cc760f0248",
+    "source_bytes": 1460,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/census-ruff-current.json",
+    "retained_sha256": "1abd3bfa16edbf3b6120c17fb82154325fe82aac19fb8ac0cbbf06cc760f0248"
+  },
+  "/private/tmp/mixins-f70-final/ci-contracts-0.log": {
+    "source_sha256": "fedfa8b8edf9cc36718f4dd72d4c26026f30dc8cc27a6401dc3d6282637544f2",
+    "source_bytes": 1813,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/ci-contracts-0.log.json",
+    "retained_sha256": "af855a90be2b91989f25fc97936d453b9b2142d8a391b5e23036e400d1b9ea1c"
+  },
+  "/private/tmp/mixins-f70-final/ci-contracts-commands-results.json": {
+    "source_sha256": "fc00b8b117fb964959199086ed7a25bf8c3fa74be66f2f47a30ac34f6ba07b4a",
+    "source_bytes": 588,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/ci-contracts-commands-results.json",
+    "retained_sha256": "fc00b8b117fb964959199086ed7a25bf8c3fa74be66f2f47a30ac34f6ba07b4a"
+  },
+  "/private/tmp/mixins-f70-final/final-five-proof.json": {
+    "source_sha256": "f1fd3e3d2727cb1f041949f1b1b56fe7403d606cdc4ceff23605b057f12a5680",
+    "source_bytes": 552,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/final-five-proof.json",
+    "retained_sha256": "f1fd3e3d2727cb1f041949f1b1b56fe7403d606cdc4ceff23605b057f12a5680"
+  },
+  "/private/tmp/mixins-f70-final/final-five.log": {
+    "source_sha256": "7dca1fcd9bed2cf2261fd8e30136308c27978b978df1d1337747fd288cf8fe0b",
+    "source_bytes": 2063,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/final-five.log.json",
+    "retained_sha256": "be746310da113bafaa62b130394fda830f822b0a7b490f1e839bb32f8d1c7e52"
+  },
+  "/private/tmp/mixins-f70-final/perf-source-after.json": {
+    "source_sha256": "40dda1f311f6af575d0d19ec1653d77552624d607a8a49d3fecee78ddbf12d93",
+    "source_bytes": 562772,
+    "retained_format": "raw",
+    "uncompressed_retained_sha256": "40dda1f311f6af575d0d19ec1653d77552624d607a8a49d3fecee78ddbf12d93",
+    "retained_encoding": "gzip",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/perf-source-after.json.gz",
+    "retained_sha256": "235055f06d56f4903c4846e6165b2831e96b6d410d5fba1857bc98825b9fbc49"
+  },
+  "/private/tmp/mixins-f70-final/perf-source-before.json": {
+    "source_sha256": "fb3cb14a54a421bdc001cbd82ef561976f67823cf3ccb4f0639046103737c59b",
+    "source_bytes": 562773,
+    "retained_format": "raw",
+    "uncompressed_retained_sha256": "fb3cb14a54a421bdc001cbd82ef561976f67823cf3ccb4f0639046103737c59b",
+    "retained_encoding": "gzip",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/perf-source-before.json.gz",
+    "retained_sha256": "6cba21eff5c7f5da0ecb4b3347e80feb9a0ae30e13fce190029bd0e0339fbafe"
+  },
+  "/private/tmp/mixins-f70-final/planned-commands.json": {
+    "source_sha256": "3bce86fcc4f2fb523ea7058d0d96afbd25483a7b062c13b2746ae2e5dd232ead",
+    "source_bytes": 1338,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/planned-commands.json",
+    "retained_sha256": "3bce86fcc4f2fb523ea7058d0d96afbd25483a7b062c13b2746ae2e5dd232ead"
+  },
+  "/private/tmp/mixins-f70-final/preflights-0.log": {
+    "source_sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992",
+    "source_bytes": 266,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-0.log.json",
+    "retained_sha256": "93aacd96ec0246d0e94c5732d7f7f8eab04ac2b24b7bc28db1e444042faba962"
+  },
+  "/private/tmp/mixins-f70-final/preflights-1.log": {
+    "source_sha256": "682b34d7ae7d0c91dbe30d0f9f446387a6be3bde6a7f65c8b62d23e79b5b7a7d",
+    "source_bytes": 142,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-1.log.json",
+    "retained_sha256": "76fc908b0796aa51fef08486c59ed22a921faeef6c9bc8907c654901dff22f36"
+  },
+  "/private/tmp/mixins-f70-final/preflights-2.log": {
+    "source_sha256": "075805a59995a1687818af841a309653083fe8d4e126953943810d7c76dcb261",
+    "source_bytes": 120,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-2.log.json",
+    "retained_sha256": "ccb9279946fd928ae99756027535962248eb27aea6054db4dd0054ef05d44c90"
+  },
+  "/private/tmp/mixins-f70-final/preflights-3.log": {
+    "source_sha256": "3437d62ea973a8936f94841d5cc603994ceeb6c29a812a972b7dd0cb54360791",
+    "source_bytes": 81,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-3.log.json",
+    "retained_sha256": "7ad2fa9f72357bd9a8efe45961da7d77f93322790cbca28a278288028ba5112c"
+  },
+  "/private/tmp/mixins-f70-final/preflights-commands-results.json": {
+    "source_sha256": "743a606d9196892336bae35cb5e055c97d3f27145986023611ee920cc634ee45",
+    "source_bytes": 1347,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/preflights-commands-results.json",
+    "retained_sha256": "743a606d9196892336bae35cb5e055c97d3f27145986023611ee920cc634ee45"
+  },
+  "/private/tmp/mixins-f70-final/run-checks.py": {
+    "source_sha256": "d30cb916d1f9f9599fe2488fde2653da45155f070a73343297760696ade588db",
+    "source_bytes": 702,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/run-checks.py",
+    "retained_sha256": "d30cb916d1f9f9599fe2488fde2653da45155f070a73343297760696ade588db"
+  },
+  "/private/tmp/mixins-f70-final/run-final-five.py": {
+    "source_sha256": "dc3f1697c95ccf2297014e1336f9599412543cbd11c4dfb69b22be679c7b76ab",
+    "source_bytes": 2225,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/run-final-five.py",
+    "retained_sha256": "dc3f1697c95ccf2297014e1336f9599412543cbd11c4dfb69b22be679c7b76ab"
+  },
+  "/private/tmp/mixins-f70-final/static-0.log": {
+    "source_sha256": "7c00a997c5c3d78a4d0e40445e69611204b64015ad1806c7a0a1e860ee9edc40",
+    "source_bytes": 1202,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/static-0.log.json",
+    "retained_sha256": "d2315ed5239fd9269e9ffc143006d088b88bd6b936b80535ddc706a652a9d0c7"
+  },
+  "/private/tmp/mixins-f70-final/static-commands-results.json": {
+    "source_sha256": "53402013f03eb9edf12db764ca885f90b54a18f2aa730bf25aa2303bf3b5e77f",
+    "source_bytes": 534,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/static-commands-results.json",
+    "retained_sha256": "53402013f03eb9edf12db764ca885f90b54a18f2aa730bf25aa2303bf3b5e77f"
+  },
+  "/private/tmp/mixins-f70-final/artifact-inventory.json": {
+    "source_sha256": "1881bc7f3229ba3feef86ac74f72b4b86ae4c6ef9b3513602c5e5de1842e7531",
+    "source_bytes": 3997,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/artifact-inventory.json",
+    "retained_sha256": "1881bc7f3229ba3feef86ac74f72b4b86ae4c6ef9b3513602c5e5de1842e7531"
+  },
+  "/private/tmp/mixins-f70-ui19.log": {
+    "source_sha256": "1ed2bd9c87560671a2f417606e843ddb0e930fa20a32a637ccd1100fe2ce60a2",
+    "source_bytes": 449028,
+    "retained_format": "raw_text_json",
+    "uncompressed_retained_sha256": "7d853208c758c6935eb7a64bb37e06c3f57a253796a2cad055ceffd26fa7b7e8",
+    "retained_encoding": "gzip",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/hosted/mixins-f70-ui19.log.json.gz",
+    "retained_sha256": "4caac328a69be3e5404ad32e6f87a81f70458af587a91adfc662e1c84088c4fa"
+  },
+  "/private/tmp/mixins-f70-ui19-origin.json": {
+    "source_sha256": "bd78dc44f2820a6d5b3c0ee1133c1d9fe48e371453c1b40136be3035dd3cbb32",
+    "source_bytes": 529,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/hosted/mixins-f70-ui19-origin.json",
+    "retained_sha256": "bd78dc44f2820a6d5b3c0ee1133c1d9fe48e371453c1b40136be3035dd3cbb32"
+  },
+  "/private/tmp/mixins-f70-ui19-local.log": {
+    "source_sha256": "be7c228885d5de0712bea0482f8486d1a9b97264ad5861c15773e83d53e1d4e8",
+    "source_bytes": 354,
+    "retained_format": "raw_text_json",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/hosted/mixins-f70-ui19-local.log.json",
+    "retained_sha256": "3341d791965f8dd4699294b00c11490733450b15c2e010859a847dc4c05aff98"
+  },
+  "/private/tmp/mixins-f70-ui19-local-proof.json": {
+    "source_sha256": "395d14d4484b43718ec7d208cdb70e34b3b08f0b2795583ea9464e000839ad38",
+    "source_bytes": 755,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/hosted/mixins-f70-ui19-local-proof.json",
+    "retained_sha256": "395d14d4484b43718ec7d208cdb70e34b3b08f0b2795583ea9464e000839ad38"
+  },
+  "/private/tmp/mixins-perf-pr3346-landing-final-test_ui_ready_module_census-_boot_and_census.json": {
+    "source_sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792",
+    "source_bytes": 49847,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/mixins-perf-pr3346-landing-final-test_ui_ready_module_census-_boot_and_census.json",
+    "retained_sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792"
+  },
+  "/private/tmp/mixins-perf-pr3346-landing-final-test_boot_worker_census-_boot_and_census.json": {
+    "source_sha256": "ca02faf784ce37e05cc58e0145ef196f83bb32a925482960336873deaeb65046",
+    "source_bytes": 5319,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/mixins-perf-pr3346-landing-final-test_boot_worker_census-_boot_and_census.json",
+    "retained_sha256": "ca02faf784ce37e05cc58e0145ef196f83bb32a925482960336873deaeb65046"
+  },
+  "/private/tmp/mixins-perf-pr3346-landing-final-test_screen_preimport_payload_budget-_run_census.json": {
+    "source_sha256": "b86ee81989fd1fc8656b118466aa6771b55c9d27dd4fa818395bc87f6a8a0b05",
+    "source_bytes": 35127,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/mixins-perf-pr3346-landing-final-test_screen_preimport_payload_budget-_run_census.json",
+    "retained_sha256": "b86ee81989fd1fc8656b118466aa6771b55c9d27dd4fa818395bc87f6a8a0b05"
+  },
+  "/private/tmp/mixins-perf-pr3346-landing-final-test_screen_preimport_payload_budget-warmup.json": {
+    "source_sha256": "08210bc96a9ec8f51a5b8a55feb3f7f2b3deab4bb6f3e493203733b7d6206c26",
+    "source_bytes": 24403,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/mixins-perf-pr3346-landing-final-test_screen_preimport_payload_budget-warmup.json",
+    "retained_sha256": "08210bc96a9ec8f51a5b8a55feb3f7f2b3deab4bb6f3e493203733b7d6206c26"
+  },
+  "/private/tmp/mixins-pr3346-frozen-final-five/probe.py": {
+    "source_sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c",
+    "source_bytes": 1590,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/startup-results/probe.py",
+    "retained_sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c"
+  },
+  "/private/tmp/mixins-package-hostedf70.py": {
+    "source_sha256": "583be896355bb362427c391005555f4be542f749340dd980fa08416211f70042",
+    "source_bytes": 4236,
+    "retained_format": "raw",
+    "retained": "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-f70/root-checks/mixins-package-hostedf70.py",
+    "retained_sha256": "583be896355bb362427c391005555f4be542f749340dd980fa08416211f70042"
+  }
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-6\\test_failed_start_history_race0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\review-i1-red-children\\test_failed_start_history_race0\\pytest.log",
+    "sha256": "f3499a4fae57afe2cd621c943be5df639015af0dde359a891944f3482dbcc0f5"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-6\\test_failed_start_history_race0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\review-i1-red-children\\test_failed_start_history_race0\\pytest.xml",
+    "sha256": "1e0285ba5405cfdf3d1c06777b151c03689c60ddea1f80f4b300fc9954b1e398"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-7\\test_failed_start_history_race0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\review-i1-green-children\\test_failed_start_history_race0\\pytest.log",
+    "sha256": "ac0d01008d63496c4f4c4c74760880c25bac8ae9d5d0ca7890cbbbfe0439ee1c"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-7\\test_failed_start_history_race0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\review-i1-green-children\\test_failed_start_history_race0\\pytest.xml",
+    "sha256": "d8ee374940113b8ce68b941fc456c6620bd9fff302cbae9958cafb70b7d1e2d9"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-7\\test_failed_supervisor_dispatc0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\review-i1-green-children\\test_failed_supervisor_dispatc0\\pytest.log",
+    "sha256": "62113c2af5656db5560e6491e618b585ac16d33a59b1d1231234c4e47dd672b4"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-7\\test_failed_supervisor_dispatc0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\review-i1-green-children\\test_failed_supervisor_dispatc0\\pytest.xml",
+    "sha256": "83c3743b4d936a555c41e7481c38e6297f753a228b64bd25e68156da478a38d4"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-7\\test_production_runtime_pin_dr0\\private-profile-process\\pytest.log",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\review-i1-green-children\\test_production_runtime_pin_dr0\\pytest.log",
+    "sha256": "2a088480bf34fe693bd9886946737d4dc58e60e360138577990b3cc6a1cf0ae3"
+  },
+  {
+    "source": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\pytest-of-GDesktop-1\\pytest-7\\test_production_runtime_pin_dr0\\private-profile-process\\pytest.xml",
+    "retained": ".superpowers\\sdd\\2026-10-22-keyword-dev-integration\\review-i1-green-children\\test_production_runtime_pin_dr0\\pytest.xml",
+    "sha256": "729429f501ae20e424c75350700933593137f8368f608fb7dc5591056f8821a2"
+  }
+]

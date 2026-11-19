@@ -1,6 +1,10 @@
 """Real-file recovery inventory, metadata and optional-content evidence."""
 
+import ctypes
 import os
+import sys
+
+import pytest
 
 from tldw_chatbook.Backup_Recovery.file_inventory import inventory_tree
 
@@ -161,6 +165,56 @@ def test_real_host_xattr_is_reported_unsupported(tmp_path):
         )
     else:
         os.setxattr(target, "user.chatbook", b"x")
+    assert (
+        next(
+            item
+            for item in inventory_tree(tmp_path, owner="test.files", external=True)
+            if item.path == target
+        ).status
+        == "unsupported"
+    )
+
+
+def test_darwin_kernel_provenance_xattr_alone_stays_supported(tmp_path):
+    """darwin25 (macOS 26) stamps com.apple.provenance on every created inode.
+
+    The kernel applies it to plain script-written files and directories, so
+    treating it as host user metadata refused every local capture (TASK-34911).
+    It alone never refuses an entry; any other attribute still does.
+    """
+    if sys.platform != "darwin":
+        pytest.skip("com.apple.provenance is Darwin kernel bookkeeping only")
+    target = tmp_path / "asset"
+    target.write_bytes(b"owned")
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.setxattr.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_int,
+    ]
+    assert (
+        libc.setxattr(
+            os.fsencode(target), b"com.apple.provenance", b"\x00" * 20, 20, 0, 0
+        )
+        == 0
+    )
+    assert (
+        next(
+            item
+            for item in inventory_tree(tmp_path, owner="test.files", external=True)
+            if item.path == target
+        ).status
+        == "included"
+    )
+    assert (
+        libc.setxattr(
+            os.fsencode(target), b"org.chatbook.extra", b"x", 1, 0, 0
+        )
+        == 0
+    )
     assert (
         next(
             item

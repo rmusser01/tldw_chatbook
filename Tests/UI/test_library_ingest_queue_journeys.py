@@ -62,6 +62,7 @@ async def _tab_to(screen, host, pilot, selector, label):
     await _focus(screen, host, pilot, selector, label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -107,6 +108,7 @@ async def test_tab_to_batch_retry_paints_action_above_fold_hint(
         assert app.library_ingest_jobs.jobs() == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -158,6 +160,7 @@ async def test_queue_details_and_activity_keep_keyboard_context(
         assert len(registry.jobs()) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("move_to_draft", [False, True])
 async def test_queue_transition_handles_removed_control_and_newer_focus(
@@ -194,6 +197,7 @@ async def test_queue_transition_handles_removed_control_and_newer_focus(
         assert screen._ingest_state.form.path == str(source)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_queue_focus_entered_after_tick_is_scheduled_survives(tmp_path):
     source, app, host = _queue_host(tmp_path, "textual-dark")
@@ -220,6 +224,7 @@ async def test_queue_focus_entered_after_tick_is_scheduled_survives(tmp_path):
         await _focus(screen, host, pilot, details, "Show details")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_details_action_respects_newer_queue_focus(tmp_path):
     source, app, host = _queue_host(tmp_path, "textual-dark")
@@ -245,6 +250,7 @@ async def test_pending_details_action_respects_newer_queue_focus(tmp_path):
         assert str(screen.query_one(details_id, Button).label) == "Hide details"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_queue_action_that_becomes_disabled_uses_path_fallback(
     tmp_path, monkeypatch
@@ -277,6 +283,7 @@ async def test_queue_action_that_becomes_disabled_uses_path_fallback(
         await _focus(screen, host, pilot, "#library-ingest-path", "notes.txt")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retry_stays_readable_after_compact_reentry(tmp_path):
     source, _app, host = _queue_host(tmp_path, "textual-dark")
@@ -299,6 +306,7 @@ async def test_retry_stays_readable_after_compact_reentry(tmp_path):
             await _wait_for_selector(screen, pilot, "#library-hub-action-import")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_late_layout_after_fast_focus_keeps_retry_readable(tmp_path):
     source, _app, host = _queue_host(tmp_path, "textual-light")
@@ -324,6 +332,7 @@ async def test_late_layout_after_fast_focus_keeps_retry_readable(tmp_path):
         assert title.value == "Unsaved next import"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_earlier_scroll_animation_cannot_hide_visible_retry_focus(tmp_path):
     source, _app, host = _queue_host(tmp_path, "textual-light")

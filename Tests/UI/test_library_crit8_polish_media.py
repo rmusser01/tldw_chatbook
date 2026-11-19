@@ -96,6 +96,7 @@ def _painted(widget) -> str:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_s_enters_select_mode_from_an_items_row_beside_a_loaded_reader():
     """task-32060 AC#1: "s" belongs to the focused Items row, not the layout.
@@ -127,6 +128,7 @@ async def test_s_enters_select_mode_from_an_items_row_beside_a_loaded_reader():
             service.release(media_id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_markdown_notice_is_an_info_fact_not_a_reading_banner():
     """task-32068 AC#1: the note explains the item, so it lives in Info.
@@ -147,6 +149,7 @@ async def test_markdown_notice_is_an_info_fact_not_a_reading_banner():
         assert str(note.content) == RENDERED_VIEW_NOTE
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_placeholder_author_paints_no_byline() -> None:
     """task-32068 AC#2: "Unknown" is a placeholder, not a byline.
@@ -190,6 +193,7 @@ async def test_bulk_delete_confirm_copy_wraps_at_the_items_floor(width: int) -> 
         assert _CONFIRM_COPY in painted, painted
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bulk_delete_confirm_copy_wraps_in_the_real_items_pane_floor() -> None:
     """task-32060 AC#2, in the shell: the canvas takes the slot it is given.
@@ -301,6 +305,7 @@ async def test_reader_messages_carry_the_list_age_not_an_iso_stamp(
         assert re.fullmatch(r"user · (now|\d+[mhdwy])", heading), heading
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_one_page_conversations_list_drops_its_pager_chrome() -> None:
     """task-32067 AC#2: Media's one-page rule, applied to Conversations."""
@@ -452,6 +457,7 @@ async def test_header_actions_row_collapses_when_use_in_console_is_hidden() -> N
         assert row.region.height == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_below_64_returns_to_its_list_after_a_library_round_trip() -> None:
     """task-32065 AC#1, after AC#2 has been used (fix round 1).
@@ -511,6 +517,7 @@ async def test_media_below_64_returns_to_its_list_after_a_library_round_trip() -
             service.release(media_id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_grip_priority_survives_a_library_round_trip_at_ordinary_width() -> (
     None
@@ -592,6 +599,7 @@ async def test_media_grip_priority_survives_a_library_round_trip_at_ordinary_wid
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_search_leaves_exactly_one_footer_row() -> None:
     """task-32070 AC#1: one footer widget, one row, inside its own slot.
@@ -625,6 +633,7 @@ async def test_rail_search_leaves_exactly_one_footer_row() -> None:
             service.release(media_id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_mode_hints_appear_without_a_round_trip() -> None:
     """task-32070 AC#2: the hints land with select mode, not after Escape."""
@@ -647,6 +656,7 @@ async def test_select_mode_hints_appear_without_a_round_trip() -> None:
             service.release(media_id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_query_box_footer_names_the_enter_action() -> None:
     """task-32070 AC#3: Enter runs the search, so the footer must say so.
@@ -685,6 +695,7 @@ async def test_query_box_footer_names_the_enter_action() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_below_64_columns_shows_the_items_list_and_a_way_back() -> None:
     """task-32065: at 60x24 Media painted a placeholder and two grips.

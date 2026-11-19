@@ -94,12 +94,6 @@ export the complete saved briefing when its Markdown was truncated. An empty
 briefing can be a valid terminal result when the checks produced no eligible
 items; inspect the source Runs before repeating the workflow.
 
-![A completed Console workflow showing terminal source-check receipts and the briefing summary](images/watchlists/console-workflow-complete.svg)
-
-*Completed mounted workflow using redacted demo feeds and a disposable local
-profile. The source-check cards are terminal, and the Console tool list ends by
-opening the saved briefing.*
-
 ## 5. Verify the saved records
 
 Once the Console turn has finished, confirm the result in the dedicated views:

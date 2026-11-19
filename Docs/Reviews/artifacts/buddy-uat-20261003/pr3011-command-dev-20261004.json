@@ -1,0 +1,158 @@
+{
+  "tested_head": "37340608a7233c74b7e6bb94751fcfaa7052851b",
+  "integrated_dev": "8c4dfe59a243ce0cec8e131aff3935646c64b298",
+  "previous_published_head": "e1cfc73e6611ff9e39d3c5d94080f7792ef6e6e7",
+  "previous_base": "a78a9a900b4901e33c031f830dd2d80224d5147d",
+  "expected_combined_tree": "9c0225b2e0942c0341d9aa17491dba5b2b702a23",
+  "combined_tree_verified": true,
+  "method": "Clean local rebase under AGENTS.md; pre-rebase history retained in codex/chatbook-buddy-before-command-rebase-20261004.",
+  "incoming_files": 19,
+  "incoming_files_exact_dev": 18,
+  "shared_file": "tldw_chatbook/UI/Screens/chat_screen.py",
+  "buddy_product_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "a0c24ee206c375e2dcc398232e0a830303b39da59028f16c5edf4347c21d3874",
+    "tldw_chatbook/UI/Screens/home_screen.py": "2ae1c5962527c6229d4e06868f11bf42dde57c9675982faf7aa799674f1755e0",
+    "tldw_chatbook/config.py": "8a156b9d3ee76953c76f1b2a79abc84281fd14611cdebf6ab27df64c6bf248c1",
+    "tldw_chatbook/app_service_wiring.py": "702f3d34193aeced083900874e7532f09c17da6afcc5d9f4ef0170e340a14daa",
+    "tldw_chatbook/app_lifecycle.py": "b1e79f198c67e84c1eaf5d020b196e586f44ca86d5b18003823251d8c89bb510",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "766bac674f4ca912ef0eaf535336c72b26fa3f0567b518308bd9234b5fe0b754",
+    "tldw_chatbook/app_destinations.py": "8ab50e78e651150e8f65fa25aef82b2921c251cd6ec81ac9d32bbca2d76645cc",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py": "929d00cc570fc9fbfa2747ac6fcaad2de68b0c3e615acf523b883634ab007d81"
+  },
+  "unchanged_owned_tests": [
+    "Tests/LLM_Calls/test_openai_realtime_session.py",
+    "Tests/Persona_Buddy/test_buddy_interaction_config_projection.py",
+    "Tests/Persona_Buddy/test_buddy_management_coordinator.py",
+    "Tests/Persona_Buddy/test_persona_buddy_preferences.py",
+    "Tests/UI/test_buddy_conversation_layout.py",
+    "Tests/UI/test_buddy_conversation_modal.py",
+    "Tests/UI/test_buddy_management_journey.py",
+    "Tests/UI/test_chat_screen_resume_handoff_registration.py",
+    "Tests/UI/test_console_dictation_buddy.py",
+    "Tests/UI/test_console_realtime_controller.py",
+    "Tests/UI/test_console_realtime_wiring.py",
+    "Tests/UI/test_console_roleplay_resume_navigation.py",
+    "Tests/UI/test_console_shutdown_recompose.py",
+    "Tests/UI/test_home_console_resume.py",
+    "Tests/UI/test_persona_buddy_app_mount.py"
+  ],
+  "targeted_checks": {
+    "selected_cases": 67,
+    "incoming_controlled_cases": 56,
+    "buddy_send_resume_shutdown_cases": 11,
+    "initial": {
+      "tests": 67.0,
+      "failures": 1.0,
+      "errors": 0.0,
+      "skipped": 0.0,
+      "time": 861.198
+    },
+    "isolated_retry": {
+      "tests": 1.0,
+      "failures": 0.0,
+      "errors": 0.0,
+      "skipped": 0.0,
+      "time": 21.906
+    },
+    "failure": "One SQLite disk I/O error during app construction, before Resume presentation. All seven startup stack files are unchanged from the prior publication; read-only quick_check of its test database returns ok. Same case passes unchanged with a fresh owned temporary root. No persistent cause is claimed.",
+    "initial_xml_sha256": "01711fecd9f8bf02527f99f198ff69ad9fae105403c3fd3602ea28bca7a18b51",
+    "initial_log_sha256": "109e6fe52bd57a96072401d208a2e60e2b015cfbace275e1c8f50b4757b655f7",
+    "failed_child_xml_sha256": "12ad77afb6c521a5cdafa6f7c1ef3202da1e838d7e90d4e09007ff79b2bef861",
+    "retry_xml_sha256": "4500f4e13371c882b7f792403bb5dd1aa8dde70e7c5daaaa6ef3aa35986cd8c3",
+    "retry_log_sha256": "39aaf95865e35adb0f38827594ee4c5f3c005984b9cf63ae525c36e5f2d5d8d1",
+    "unique_totals": "These integration cases do not increase the earlier 49 or 334 Buddy totals."
+  },
+  "static": {
+    "ruff": {
+      "paths": [
+        "tldw_chatbook/UI/Console_Modules/command_draft.py",
+        "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+        "tldw_chatbook/UI/Console_Modules/image.py",
+        "tldw_chatbook/UI/Console_Modules/message.py",
+        "tldw_chatbook/UI/Console_Modules/prompts.py",
+        "tldw_chatbook/UI/Console_Modules/skill.py",
+        "tldw_chatbook/UI/Console_Modules/video.py",
+        "tldw_chatbook/UI/Console_Modules/wiring.py",
+        "tldw_chatbook/UI/Screens/chat_screen.py"
+      ],
+      "dev_count": 286,
+      "combined_count": 286,
+      "introduced": [],
+      "filename_context": "Same real module path and repository configuration for both arms.",
+      "location_only_difference": [
+        {
+          "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+          "code": "F811",
+          "message": "Redefinition of unused `on_button_pressed` from line 24817: `on_button_pressed` redefined here",
+          "count": 1
+        }
+      ],
+      "normalization": "F811 reference-line offset only; code, affected function and occurrence count retained.",
+      "format_failures": {
+        "dev": [
+          "tldw_chatbook/UI/Console_Modules/message.py",
+          "tldw_chatbook/UI/Console_Modules/skill.py",
+          "tldw_chatbook/UI/Console_Modules/video.py",
+          "tldw_chatbook/UI/Console_Modules/wiring.py",
+          "tldw_chatbook/UI/Screens/chat_screen.py"
+        ],
+        "combined": [
+          "tldw_chatbook/UI/Console_Modules/message.py",
+          "tldw_chatbook/UI/Console_Modules/skill.py",
+          "tldw_chatbook/UI/Console_Modules/video.py",
+          "tldw_chatbook/UI/Console_Modules/wiring.py",
+          "tldw_chatbook/UI/Screens/chat_screen.py"
+        ]
+      },
+      "introduced_format_failures": []
+    },
+    "bandit": {
+      "paths": [
+        "tldw_chatbook/UI/Console_Modules/command_draft.py",
+        "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+        "tldw_chatbook/UI/Console_Modules/image.py",
+        "tldw_chatbook/UI/Console_Modules/message.py",
+        "tldw_chatbook/UI/Console_Modules/prompts.py",
+        "tldw_chatbook/UI/Console_Modules/skill.py",
+        "tldw_chatbook/UI/Console_Modules/video.py",
+        "tldw_chatbook/UI/Console_Modules/wiring.py",
+        "tldw_chatbook/UI/Screens/chat_screen.py"
+      ],
+      "dev_count": 13,
+      "combined_count": 13,
+      "introduced": []
+    },
+    "compiled_incoming_modules": 9,
+    "backlog_unique_readable": 4999,
+    "profile_paths": "54/22/51",
+    "diagnostics": "650/1431/56/7617/16",
+    "whitespace": "pass"
+  },
+  "independent_review": "No actionable compatibility findings. Buddy submits remain app-owned and target-bound; command workers retain origin routing and existing Resume/shutdown guards.",
+  "previous_hosted_ci": {
+    "head": "e1cfc73e6611ff9e39d3c5d94080f7792ef6e6e7",
+    "derived_run": 37240371461,
+    "all_four_test_lanes": "success",
+    "ui_job_durations_seconds": [
+      334,
+      698,
+      950
+    ],
+    "derived_aggregate": "success, completed 2026-10-05T00:31:01Z",
+    "latency_guard": "success",
+    "source_attribution": "Passing gates on the earlier base; fresh gates apply to the new publication."
+  },
+  "human_UAT_repeated": false,
+  "provider_or_audio_calls": false,
+  "queue_mode": "unset/off; auto-merge remains disabled",
+  "fresh_hosted_gates": "pending publication",
+  "existing_ADRs": [
+    94,
+    139,
+    147,
+    97,
+    44,
+    103,
+    218
+  ]
+}

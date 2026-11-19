@@ -38,6 +38,7 @@ except ImportError:
 
 # Local imports
 from ..config import get_cli_setting
+from ..Utils.local_stt_providers import provider_release_deferral
 from ..STT.legacy_bridge import LegacyTranscriptionBridge
 from ..STT.contracts import BufferAudioSource
 from ..STT.dispatch_coordinator import (
@@ -316,8 +317,6 @@ class _LegacyTranscriptionBackend:
         if sys.platform == "darwin":
             if PARAKEET_MLX_AVAILABLE:
                 default_provider_fallback = "parakeet-mlx"
-            elif LIGHTNING_WHISPER_AVAILABLE:
-                default_provider_fallback = "lightning-whisper-mlx"
 
         # Set appropriate default model based on provider
         default_model = "base"
@@ -3080,8 +3079,8 @@ class _LegacyTranscriptionBackend:
                 # Add information about the error type
                 raise TranscriptionError(
                     f"Parakeet MLX transcription failed due to memory allocation error: {error_msg}\n"
-                    f"Consider using a different provider (e.g., 'faster-whisper' or 'lightning-whisper-mlx') "
-                    f"or processing smaller audio segments."
+                    "Consider using a different provider (e.g., 'faster-whisper') "
+                    "or processing smaller audio segments."
                 ) from e
             else:
                 raise TranscriptionError(
@@ -3129,7 +3128,7 @@ class _LegacyTranscriptionBackend:
                 _handle_progress_callback_error(e)
 
         # Get configuration
-        from ..config import get_cli_setting
+        from ..config import get_cli_setting, without_ciphertext
 
         remote_config = get_cli_setting("transcription.remote_whisper", {})
 
@@ -3142,7 +3141,9 @@ class _LegacyTranscriptionBackend:
             "api_endpoint", "http://localhost:8000/v1/audio/transcriptions"
         )
         api_key_env_var = remote_config.get("api_key_env_var", "REMOTE_WHISPER_API_KEY")
-        api_key = remote_config.get("api_key", "")
+        # TASK-34100.4 AC #10: a key still `enc:` reads as absent, so the env
+        # var below is used and ciphertext is never sent as the bearer.
+        api_key = without_ciphertext(remote_config.get("api_key", ""), "")
 
         # Get API key from environment if specified
         if api_key_env_var and not api_key:
@@ -3358,10 +3359,6 @@ class _LegacyTranscriptionBackend:
             providers.append("parakeet-mlx")
             logger.debug("parakeet-mlx is available (Real-time ASR for Apple Silicon)")
 
-        if LIGHTNING_WHISPER_AVAILABLE:
-            providers.append("lightning-whisper-mlx")
-            logger.debug("lightning-whisper-mlx is available (Apple Silicon optimized)")
-
         if FASTER_WHISPER_AVAILABLE:
             providers.append("faster-whisper")
             logger.debug("faster-whisper is available")
@@ -3396,26 +3393,6 @@ class _LegacyTranscriptionBackend:
             models["parakeet-mlx"] = [
                 "mlx-community/parakeet-tdt-0.6b-v2",  # Default model
                 # Additional models can be added here as they become available
-            ]
-
-        if LIGHTNING_WHISPER_AVAILABLE:
-            models["lightning-whisper-mlx"] = [
-                "tiny",
-                "tiny.en",
-                "base",
-                "base.en",
-                "small",
-                "small.en",
-                "medium",
-                "medium.en",
-                "large-v1",
-                "large-v2",
-                "large-v3",
-                "large",
-                "distil-large-v2",
-                "distil-medium.en",
-                "distil-small.en",
-                "distil-large-v3",
             ]
 
         if FASTER_WHISPER_AVAILABLE:
@@ -4208,6 +4185,8 @@ class TranscriptionService:
             ValueError: If a retained provider option is invalid.
         """
 
+        if reason := provider_release_deferral(provider or self.config["default_provider"]):
+            raise TranscriptionError(reason)
         return self._bridge.transcribe_legacy(
             audio_path,
             provider,
@@ -4236,6 +4215,8 @@ class TranscriptionService:
         """Transcribe PCM through shared Parakeet or the retained providers."""
 
         effective_provider = provider or self.config["default_provider"]
+        if reason := provider_release_deferral(effective_provider):
+            raise TranscriptionError(reason)
         if effective_provider == "parakeet-onnx":
             buffer_owner = self._local_buffer_owner or self._local_stt_dispatcher
             if buffer_owner is None:
@@ -4322,14 +4303,23 @@ class TranscriptionService:
     def get_available_providers(self) -> List[str]:
         """Return providers reported by the retained backend."""
 
-        return self._bridge.get_available_providers_legacy()
+        return [
+            provider for provider in self._bridge.get_available_providers_legacy()
+            if not provider_release_deferral(provider)
+        ]
 
     def list_available_models(
         self, provider: Optional[str] = None
     ) -> Dict[str, List[str]]:
         """Return models reported by the retained backend."""
 
-        return self._bridge.list_available_models_legacy(provider)
+        if reason := provider_release_deferral(provider):
+            raise TranscriptionError(reason)
+        return {
+            name: models
+            for name, models in self._bridge.list_available_models_legacy(provider).items()
+            if not provider_release_deferral(name)
+        }
 
     def get_device_info(self) -> Dict[str, Any]:
         """Return retained backend device information."""
@@ -4370,6 +4360,8 @@ class TranscriptionService:
         """Create a retained-provider streaming transcriber when supported."""
 
         effective_provider = provider or self.config["default_provider"]
+        if reason := provider_release_deferral(effective_provider):
+            raise TranscriptionError(reason)
         if effective_provider == "parakeet-onnx":
             return None
 

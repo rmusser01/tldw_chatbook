@@ -190,11 +190,7 @@ class _PosixProcessGroupController:
             *argv,
             cwd=cwd,
             env=dict(environment),
-            stdin=(
-                asyncio.subprocess.PIPE
-                if stdin
-                else asyncio.subprocess.DEVNULL
-            ),
+            stdin=(asyncio.subprocess.PIPE if stdin else asyncio.subprocess.DEVNULL),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
@@ -279,9 +275,7 @@ class _WindowsJobObjectController:
         executable = arguments[0]
         drive, tail = ntpath.splitdrive(executable)
         if not drive or not tail.startswith(("\\", "/")):
-            raise ValueError(
-                "Windows process executable must be fully qualified"
-            )
+            raise ValueError("Windows process executable must be fully qualified")
         if os.name == "nt" and not os.path.isfile(executable):
             raise ValueError("Windows process executable must resolve to a file")
         return self._api.spawn_suspended_assigned(
@@ -318,9 +312,7 @@ class _WindowsJobObjectController:
             job_empty = not identity.assigned
             if identity.assigned:
                 try:
-                    job_empty = (
-                        self._api.active_processes(identity.job_handle) == 0
-                    )
+                    job_empty = self._api.active_processes(identity.job_handle) == 0
                 except OSError:
                     return False
             if direct_terminal and job_empty:
@@ -429,8 +421,7 @@ class _WindowsPipeReader:
             while True:
                 with self._condition:
                     while (
-                        not self._closed
-                        and self._buffered >= self._MAX_BUFFERED_BYTES
+                        not self._closed and self._buffered >= self._MAX_BUFFERED_BYTES
                     ):
                         self._condition.wait()
                     if self._closed:
@@ -833,6 +824,7 @@ class _WindowsAsyncChildProcess:
         if handle:
             self._kernel.terminate_process(handle, exit_code)
 
+
 class _WindowsKernel:
     """Typed ctypes calls needed for suspended Job Object admission."""
 
@@ -950,10 +942,7 @@ class _WindowsKernel:
                 and identity is not None
                 and (
                     identity.pid > 0
-                    or (
-                        fallback is not None
-                        and fallback.owns_native_process()
-                    )
+                    or (fallback is not None and fallback.owns_native_process())
                 )
             ):
                 raise ProcessTreeAdmissionError(
@@ -1062,9 +1051,7 @@ class _WindowsKernel:
             self.kernel32.CloseHandle(handle)
 
     def _create_job(self) -> int:
-        job_handle = self._handle_value(
-            self.kernel32.CreateJobObjectW(None, None)
-        )
+        job_handle = self._handle_value(self.kernel32.CreateJobObjectW(None, None))
         if not job_handle:
             raise self._last_error("CreateJobObjectW")
         limits = self.JobExtendedLimits()
@@ -1127,9 +1114,7 @@ class _WindowsKernel:
             0,
             self.ctypes.byref(attribute_size),
         )
-        attribute_buffer = self.ctypes.create_string_buffer(
-            attribute_size.value
-        )
+        attribute_buffer = self.ctypes.create_string_buffer(attribute_size.value)
         attribute_list = self.ctypes.cast(
             attribute_buffer,
             self.ctypes.c_void_p,
@@ -1141,9 +1126,7 @@ class _WindowsKernel:
             self.ctypes.byref(attribute_size),
         ):
             raise self._last_error("InitializeProcThreadAttributeList")
-        handle_array = (self.wintypes.HANDLE * len(child_handles))(
-            *child_handles
-        )
+        handle_array = (self.wintypes.HANDLE * len(child_handles))(*child_handles)
         try:
             if not self.kernel32.UpdateProcThreadAttribute(
                 attribute_list,
@@ -1189,8 +1172,8 @@ class _WindowsKernel:
                 fallback.detach_process_info()
                 raise self._last_error("CreateProcessW")
             try:
-                process_handle, thread_handle, pid = (
-                    self._process_info_values(process_info)
+                process_handle, thread_handle, pid = self._process_info_values(
+                    process_info
                 )
                 fallback.adopt(process_handle, pid)
                 identity.thread_handle = thread_handle

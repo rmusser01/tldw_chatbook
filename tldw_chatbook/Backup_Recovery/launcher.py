@@ -4,12 +4,230 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import io
 import json
+import os
+import sys
 import tomllib
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
+
+#: TASK-34100.4: preflight outcomes that are user choices, not recovery
+#: reasons. ``startup_unlock`` maps them; they never reach ``minimal_recovery``.
+UNLOCK_QUIT_REASON = "configuration_unlock_quit"
+UNLOCK_RESET_REASON = "configuration_unlock_reset"
+#: The typed password fails the verifier (or there is none) but reads every
+#: saved key: adopt it and repair the verifier (review round 2, R2-F5).
+UNLOCK_REKEY_REASON = "configuration_unlock_rekey"
+#: Recovery reasons with their own plain sentence (review round 1): a served
+#: (browser) child cannot prompt, and "no private terminal" is no longer the
+#: copy for every unexpected unlock failure.
+UNLOCK_SERVED_REASON = "configuration_unlock_served"
+UNLOCK_NO_TERMINAL_REASON = "configuration_unlock_no_terminal"
+
+#: One name for one password everywhere: "master password" (protect-summary-02
+#: found "Configuration password", "Unlock Configuration" and "master password"
+#: for the same secret).
+UNLOCK_INTRO = (
+    "Your saved API keys are encrypted. Enter the master password you set "
+    "during setup."
+)
+UNLOCK_PROMPT = "Master password (leave empty if you forgot it): "
+UNLOCK_MISMATCH = "That password didn't match. Try again."
+#: The password matches the verifier, but a saved key was encrypted under a
+#: different one (the stranded state an old second enable left behind). The
+#: user typed the RIGHT password; only a reset gets them past it.
+UNLOCK_STRANDED = (
+    "That password is right, but some saved keys were encrypted with a "
+    "different password and can't be read with it. If you set an earlier "
+    "master password, enter that one; otherwise leave the prompt empty to "
+    "reset the saved keys."
+)
+UNLOCK_VERIFIER_MISSING = (
+    "config.toml says its API keys are encrypted, but the check for the "
+    "master password is missing."
+)
+#: Encrypted keys exist, so the password that encrypted them still reads
+#: them: ask for it instead of offering only the reset (R2-F5).
+UNLOCK_VERIFIER_MISSING_ASK = (
+    UNLOCK_VERIFIER_MISSING + " Enter your master password to unlock the "
+    "keys and repair the check, or leave the prompt empty to reset them."
+)
+UNLOCK_REKEYED = (
+    "That password reads every saved key, so it is your master password "
+    "again. Use it each time chatbook starts."
+)
+UNLOCK_REKEY_FAILED = (
+    "Repairing the master-password check failed; config.toml was left as it "
+    "was."
+)
+UNLOCK_RESET_EXPLAINED = (
+    "Resetting removes the encrypted API keys from config.toml and turns "
+    "encryption off. Chats, notes and documents are not affected; you "
+    "re-enter your API keys afterwards in Settings."
+)
+UNLOCK_GIVE_UP = "Forgot your master password? " + UNLOCK_RESET_EXPLAINED
+UNLOCK_CHOICE_PROMPT = "[R]eset saved keys or [Q]uit: "
+UNLOCK_RESET_DONE = (
+    "Saved keys were reset and encryption is off. Re-enter your API keys in "
+    "Settings > Providers & Models."
+)
+UNLOCK_RESET_FAILED = (
+    "Resetting the saved keys failed; config.toml was left as it was."
+)
+#: Holds an outcome sentence on screen; the TUI would cover it within a
+#: second (review round 2, F-R2-4).
+UNLOCK_CONTINUE_PROMPT = "Press Enter to start chatbook. "
+
+#: The unlock's outcome for ``tldw_chatbook.config``, read once as config
+#: first loads (`take_startup_unlock`). Config's import-time load used to run
+#: before the password was installed and warned "no password is set" right
+#: after the RIGHT password (review round 2, R2-F6). ``(password,)`` installs
+#: the master password before that load; ``(None,)`` marks a reset or re-key
+#: that finishes right after the import, so the locked load is expected.
+_STARTUP_UNLOCK: tuple[str | None] | None = None
+
+
+def take_startup_unlock() -> tuple[str | None, bool]:
+    """Hand ``tldw_chatbook.config`` the startup unlock's outcome, once.
+
+    Returns:
+        ``(password, pending)``: the master password typed at startup, or
+        None; and whether a reset or re-key finishes the unlock after
+        config's import (config then logs its locked load quietly).
+    """
+    global _STARTUP_UNLOCK
+    slot, _STARTUP_UNLOCK = _STARTUP_UNLOCK, None
+    if slot is None:
+        return None, False
+    return slot[0], slot[0] is None
+
+
+#: Opening a profile hands the terminal to it; a browser session has none.
+PROFILE_OPEN_NEEDS_TERMINAL = (
+    "Opening a profile needs chatbook running in a terminal; it can't be "
+    "done from a browser session."
+)
+
+#: Plain sentences for the recovery host instead of a raw reason code.
+_UNLOCK_RECOVERY_COPY = {
+    "configuration_unlock_failed": (
+        "Checking the master password failed unexpectedly, so the encrypted "
+        "API keys were not unlocked. Nothing was changed. Quit, then relaunch "
+        "chatbook to try again."
+    ),
+    UNLOCK_NO_TERMINAL_REASON: (
+        "The master password could not be asked for: no private terminal was "
+        "available. Quit, then relaunch chatbook from a terminal window to "
+        "enter it."
+    ),
+    # Reached only when nothing is encrypted (encrypted keys ask for the
+    # password instead, which needs a private terminal of its own).
+    "configuration_unlock_unavailable": (
+        "config.toml says encryption is on, but the check for its master "
+        "password is missing. Quit, then relaunch chatbook from a terminal "
+        "window: it offers a reset that turns encryption off. Chats, notes "
+        "and documents are not affected."
+    ),
+    UNLOCK_SERVED_REASON: (
+        "This browser session can't ask for the master password, so the "
+        "encrypted API keys can't be unlocked here. Run chatbook in a "
+        "terminal instead, or turn encryption off there in Settings > "
+        "Privacy & Security before serving it."
+    ),
+}
+
+
+def _say(message: str) -> None:
+    """Write one pre-TUI line where getpass prompts (never stdout data)."""
+    print(message, file=sys.stderr, flush=True)
+
+
+def _open_tty():
+    """The controlling terminal, opened the way getpass opens it, or None.
+
+    None when there is no terminal (a service, CI, Windows). Not
+    ``open("/dev/tty", "r+")``: a terminal is not seekable, so the buffered
+    read-write text stream raises io.UnsupportedOperation (found live).
+    """
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except (OSError, AttributeError):
+        return None
+    try:
+        return io.TextIOWrapper(
+            io.FileIO(fd, "w+"),
+            encoding="utf-8",
+            errors="replace",
+            line_buffering=True,
+        )
+    except (OSError, ValueError):
+        os.close(fd)
+        return None
+
+
+def _choice(prompt: str) -> str:
+    """Ask a non-secret, echoed question before the TUI starts.
+
+    Reads standard input when it is a terminal, else the controlling terminal
+    -- where getpass already read the password. With stdin redirected
+    (``tldw-cli < /dev/null``, some IDE run configurations) a person is still
+    at the keyboard (review round 2, R2-F7). Without any terminal it falls
+    back to standard input.
+
+    Raises:
+        EOFError: Nothing more can be read.
+    """
+    terminal = None if _stdin_is_terminal() else _open_tty()
+    if terminal is None:
+        sys.stderr.write(prompt)
+        sys.stderr.flush()
+        line = sys.stdin.readline()
+    else:
+        with terminal:
+            terminal.write(prompt)
+            terminal.flush()
+            line = terminal.readline()
+    if not line:
+        raise EOFError
+    return line
+
+
+def _stdin_is_terminal() -> bool:
+    """Whether standard input is a terminal."""
+    try:
+        return bool(sys.stdin) and sys.stdin.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _can_answer() -> bool:
+    """Whether a person can answer an echoed question (stdin or the terminal)."""
+    if _stdin_is_terminal():
+        return True
+    terminal = _open_tty()
+    if terminal is None:
+        return False
+    terminal.close()
+    return True
+
+
+def _served_child() -> bool:
+    """Whether this process is a textual-serve (browser) session child.
+
+    Its stdin is the web driver's pipe, and getpass would open the SERVER
+    operator's controlling terminal (textual-serve spawns without setsid), so
+    the browser would hang while the prompt shows on the server's terminal.
+    """
+    return os.environ.get("CHATBOOK_SERVED_CHILD") == "1" or "web_driver" in (
+        os.environ.get("TEXTUAL_DRIVER") or ""
+    )
+
+
+class _PrivatePromptUnavailable(ValueError):
+    """No private terminal is available to ask for a password."""
 
 
 def _secret(prompt: str) -> str:
@@ -19,7 +237,9 @@ def _secret(prompt: str) -> str:
         try:
             return getpass.getpass(prompt)
         except getpass.GetPassWarning:
-            raise ValueError("private_password_prompt_unavailable") from None
+            raise _PrivatePromptUnavailable(
+                "private_password_prompt_unavailable"
+            ) from None
 
 
 def startup_preflight() -> tuple[str | None, str | None]:
@@ -49,22 +269,39 @@ def startup_preflight() -> tuple[str | None, str | None]:
             return None, None
         from tldw_chatbook.Utils.config_encryption import ConfigEncryption
 
+        if _served_child():
+            return UNLOCK_SERVED_REASON, None
         verifier = encryption.get("password_verifier")
         if not isinstance(verifier, str) or not verifier:
-            return "configuration_unlock_unavailable", None
-        password = _secret("Configuration password: ")
-        engine = ConfigEncryption()
-        if not password or not engine.verify_password(password, verifier):
-            return "configuration_unlock_failed", None
-        engine.decrypt_config_strict(document, password)
-        return None, password
+            if _has_saved_ciphertext(document):
+                # The password that encrypted the keys still reads them:
+                # ask for it, and repair the check (review round 2, R2-F5).
+                return _unlock_interactively(
+                    ConfigEncryption(),
+                    document,
+                    None,
+                    intro=UNLOCK_VERIFIER_MISSING_ASK,
+                )
+            # Nothing is encrypted, so no password matters and the reset
+            # loses nothing: offer it where someone can answer (review round
+            # 1; the old copy sent the user to hand-edit config.toml).
+            if not _can_answer():
+                return "configuration_unlock_unavailable", None
+            _say(UNLOCK_VERIFIER_MISSING)
+            return _give_up_choice(UNLOCK_RESET_EXPLAINED), None
+        return _unlock_interactively(ConfigEncryption(), document, verifier)
+    except KeyboardInterrupt:
+        # Ctrl+C anywhere before the TUI quits; it is not a recovery problem.
+        _say("")
+        return UNLOCK_QUIT_REASON, None
+    except _PrivatePromptUnavailable:
+        return UNLOCK_NO_TERMINAL_REASON, None
     except (
         OSError,
         ValueError,
         RuntimeError,
         ImportError,
         EOFError,
-        KeyboardInterrupt,
     ):
         reason = (
             "configuration_unlock_failed"
@@ -72,6 +309,198 @@ def startup_preflight() -> tuple[str | None, str | None]:
             else "configuration_invalid"
         )
         return reason, None
+
+
+def _unlock_interactively(
+    engine, document, verifier: str | None, *, intro: str = UNLOCK_INTRO
+) -> tuple[str | None, str | None]:
+    """Ask until the master password strict-decrypts, or the user gives up.
+
+    TASK-34100.4 (protect-summary-02): a wrong password re-prompts in place
+    instead of dropping the user into recovery mode. An empty entry gives up
+    and offers a reset or quit. There is no attempt cap: this guards a local
+    file, and each try already costs an scrypt derivation.
+
+    Args:
+        engine: The ConfigEncryption engine.
+        document: The parsed config.toml.
+        verifier: The saved password verifier, or None when it is missing.
+        intro: The sentence shown before the first prompt.
+
+    Returns:
+        ``(None, password)`` once every saved value decrypts;
+        ``(UNLOCK_REKEY_REASON, password)`` when the password fails the
+        verifier (or there is none) but reads every saved key; or
+        ``(UNLOCK_RESET_REASON | UNLOCK_QUIT_REASON, None)``.
+
+    Raises:
+        ValueError: No private terminal is available to ask for the password.
+    """
+    _say(intro)
+    while True:
+        try:
+            password = _secret(UNLOCK_PROMPT)
+        except (EOFError, KeyboardInterrupt):
+            _say("")
+            return UNLOCK_QUIT_REASON, None
+        if not password:
+            return _give_up_choice(), None
+        try:
+            # Ctrl+C after Enter lands here, while scrypt runs: still a quit.
+            outcome = _check_password(engine, document, verifier, password)
+        except (EOFError, KeyboardInterrupt):
+            _say("")
+            return UNLOCK_QUIT_REASON, None
+        if outcome is None or outcome == UNLOCK_REKEY_REASON:
+            return outcome, password
+        password = None
+        _say(outcome)
+
+
+def _check_password(engine, document, verifier, password: str) -> str | None:
+    """None to unlock, UNLOCK_REKEY_REASON to adopt, else what to tell the user.
+
+    A password that fails the verifier is still tried against the saved keys
+    (review round 2, R2-F5): in the stranded state the user's EARLIER
+    password reads them all, and refusing it left only a reset that deleted
+    keys it could read. AES-GCM authenticates, so a wrong password cannot
+    "decrypt" a value.
+    """
+    verified = verifier is not None and engine.verify_password(password, verifier)
+    if verified and _decrypts(engine, document, password):
+        return None
+    if _reads_every_saved_key(engine, document, password):
+        return UNLOCK_REKEY_REASON
+    return UNLOCK_STRANDED if verified else UNLOCK_MISMATCH
+
+
+def _saved_values(document) -> dict:
+    """The document without its ``[encryption]`` table (the saved keys)."""
+    return {key: value for key, value in document.items() if key != "encryption"}
+
+
+def _has_saved_ciphertext(value) -> bool:
+    """Whether any saved value outside ``[encryption]`` is ``enc:`` ciphertext."""
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    pending = [_saved_values(value)]
+    while pending:
+        current = pending.pop()
+        for item in current.values():
+            if isinstance(item, dict):
+                pending.append(item)
+            elif isinstance(item, str) and item.startswith(
+                ConfigEncryption.ENCRYPTION_PREFIX
+            ):
+                return True
+    return False
+
+
+def _reads_every_saved_key(engine, document, password: str) -> bool:
+    """Every saved ``enc:`` value decrypts with ``password`` -- and there is at
+    least one, or any guess would pass."""
+    if not _has_saved_ciphertext(document):
+        return False
+    return _decrypts(engine, _saved_values(document), password)
+
+
+def _decrypts(engine, document, password: str) -> bool:
+    """Strict decrypt: a password that passes the verifier but cannot read
+    every saved key (the stranded state a second enable used to produce) is
+    not an unlock -- the app would otherwise start with ciphertext as keys.
+    The failure is reported to the user, so it is not logged as an error."""
+    try:
+        engine.decrypt_config_strict(document, password, log_failure=False)
+    except ValueError:
+        return False
+    return True
+
+
+def _give_up_choice(intro: str = UNLOCK_GIVE_UP) -> str:
+    """Offer the forgotten-password exits until one is chosen."""
+    _say(intro)
+    while True:
+        try:
+            answer = _choice(UNLOCK_CHOICE_PROMPT).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return UNLOCK_QUIT_REASON
+        if answer in {"r", "reset"}:
+            return UNLOCK_RESET_REASON
+        if answer in {"q", "quit"}:
+            return UNLOCK_QUIT_REASON
+
+
+def startup_unlock() -> int | None:
+    """The one startup unlock, shared by ``tldw-cli`` and ``python -m tldw_chatbook.app``.
+
+    Runs the isolated pre-TUI preflight (strict decrypt), then admits startup
+    and installs the master password -- or performs the forgotten-password
+    reset -- through the normal config owner.
+
+    Returns:
+        None when ordinary startup may continue, else the exit status the
+        caller returns (a quit, a failed reset, or the recovery host's).
+    """
+    global _STARTUP_UNLOCK
+    reason, password = startup_preflight()
+    if reason == UNLOCK_QUIT_REASON:
+        return 0
+    if reason is not None and reason not in (UNLOCK_RESET_REASON, UNLOCK_REKEY_REASON):
+        return minimal_recovery(reason)
+    from .storage_admission import admit_startup
+
+    admit_startup()
+    if reason is None and password is None:
+        return None  # encryption is off: nothing to unlock
+    _STARTUP_UNLOCK = (password if reason is None else None,)
+    try:
+        if reason == UNLOCK_RESET_REASON:
+            from tldw_chatbook.config import reset_encrypted_config_values
+
+            if not reset_encrypted_config_values():
+                _say(UNLOCK_RESET_FAILED)
+                return 1
+            _say(UNLOCK_RESET_DONE)
+            return _paused()
+        if reason == UNLOCK_REKEY_REASON:
+            from tldw_chatbook.config import rekey_encryption_verifier
+
+            # Re-encrypts under this password with a new verifier and
+            # installs it for the session, through the normal config writer.
+            if not rekey_encryption_verifier(password):
+                _say(UNLOCK_REKEY_FAILED)
+                return 1
+            _say(UNLOCK_REKEYED)
+            return _paused()
+        from tldw_chatbook.config import (
+            get_encryption_password,
+            set_encryption_password,
+        )
+
+        # Normally config already took the password as it loaded; this
+        # covers a config module that was imported earlier.
+        if get_encryption_password() != password:
+            set_encryption_password(password)
+        return None
+    finally:
+        _STARTUP_UNLOCK = None
+        password = None
+
+
+def _paused() -> int | None:
+    """Wait for Enter so an outcome sentence is read before the TUI starts.
+
+    Returns:
+        None to start the app, or 0 when the user quits here instead.
+    """
+    try:
+        _choice(UNLOCK_CONTINUE_PROMPT)
+    except EOFError:
+        pass
+    except KeyboardInterrupt:
+        _say("")
+        return 0
+    return None
 
 
 def recovery_app(reason: str, *, restart_request=None):
@@ -120,14 +549,19 @@ def recovery_app(reason: str, *, restart_request=None):
         def compose(self):
             yield Static(
                 "Recovery mode — review replacement" if reason == "replacement_requested"
-                else "Recovery required: " + reason,
+                else _UNLOCK_RECOVERY_COPY.get(reason, "Recovery required: " + reason),
+                id="minimal-recovery-reason",
                 markup=False,
             )
             yield Button("Open Backup & Restore", id="minimal-recovery-open")
             yield Button("Exit", id="minimal-recovery-exit")
 
         def on_mount(self):
-            self.action_backup_restore()
+            # TASK-34100.4: an unlock problem is not a restore problem. Say
+            # what happened and let the user choose; Backup & Restore stays
+            # one button away.
+            if reason not in _UNLOCK_RECOVERY_COPY:
+                self.action_backup_restore()
 
         @on(Button.Pressed, "#minimal-recovery-open")
         def action_backup_restore(self):
@@ -144,15 +578,38 @@ def recovery_app(reason: str, *, restart_request=None):
 
         @work(group="recovery-profile-launch")
         async def open_recovery_profile(self, profile_id):
-            current = self.recovery_service.current()
+            # Mirrors TldwCli.open_recovery_profile (app_lifecycle.py), which
+            # this host cannot import. TASK-34100.4 review round 2: a served
+            # (browser) session reaches this host, and the web driver cannot
+            # suspend -- an uncaught SuspendNotSupported in this default
+            # exit_on_error worker ended the whole session.
+            from textual.app import SuspendNotSupported
+
+            service = self.recovery_service
+            current = service.current()
             if current is not None and current["state"] == "running":
                 self.notify(
                     "Another recovery operation is running.", severity="warning"
                 )
                 return
-            with self.suspend():
-                operation = self.recovery_service.start_open_profile(profile_id)
-                await settle(self.recovery_service.wait, operation)
+            failure = None
+            try:
+                with self.suspend():
+                    try:
+                        operation = service.start_open_profile(profile_id)
+                        await settle(service.wait, operation)
+                    except (OSError, RuntimeError, ValueError) as error:
+                        failure = error
+            except SuspendNotSupported:
+                self.notify(PROFILE_OPEN_NEEDS_TERMINAL, severity="error")
+                return
+            except (OSError, RuntimeError, ValueError) as error:
+                failure = error
+            if failure is not None:
+                self.notify(
+                    "Profile opening failed: " + service.issue_code(failure),
+                    severity="error",
+                )
 
         async def on_unmount(self):
             await settle(self.recovery_service.close)

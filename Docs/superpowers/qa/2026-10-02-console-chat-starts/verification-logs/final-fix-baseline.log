@@ -1,0 +1,34 @@
+BASE 459e666970ef9e7aa4e148705cddafb9621a72d1; all 6615 tracked production/tests/pyproject blobs verified against Git object hashes
+CWD /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/final-fix-baseline
+COMMAND ['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python', '-m', 'pytest', 'Tests/Chat/test_console_chat_fork.py', 'Tests/Agents/test_agent_chat_create_tools.py', '-q', '--tb=short', '-k', 'configuration_and_leaf_writers_block or new_chat_schema_shape', '--basetemp', '/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-fix-baseline']
+F.F                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_configuration_and_leaf_writers_block_fork_through_live_publication[active_leaf] _
+Tests/Chat/test_console_chat_fork.py:1868: in test_configuration_and_leaf_writers_block_fork_through_live_publication
+    assert failures == []
+E   AssertionError: assert [RuntimeError...as refused.')] == []
+E
+E     Left contains one more item: RuntimeError('Conversation cursor change was refused.')
+E     Use -v to get more diff
+---------------------------- Captured stderr setup -----------------------------
+2026-10-02 23:06:05.867 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:632 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-02 23:06:06.021 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-02 23:06:06.078 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-02 23:06:06.079 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+__________________________ test_new_chat_schema_shape __________________________
+Tests/Agents/test_agent_chat_create_tools.py:31: in test_new_chat_schema_shape
+    assert set(props) == {"title", "opening_prompt", "instructions"}
+E   AssertionError: assert {'destination...mpt', 'title'} == {'instruction...mpt', 'title'}
+E
+E     Extra items in the left set:
+E     'mode'
+E     'destination'
+E     Use -v to get more diff
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_chat_fork.py::test_configuration_and_leaf_writers_block_fork_through_live_publication[active_leaf]
+FAILED Tests/Agents/test_agent_chat_create_tools.py::test_new_chat_schema_shape
+2 failed, 1 passed, 237 deselected in 0.81s
+EXIT 1

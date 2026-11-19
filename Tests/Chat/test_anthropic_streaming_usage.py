@@ -5,6 +5,8 @@ chunks (message_start -> input/cache buckets; end of stream -> output)."""
 import json
 from unittest.mock import Mock, patch
 
+import pytest
+
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
 
@@ -62,6 +64,8 @@ def _usage_chunks(raw_chunks):
     return found
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_emits_input_then_output_usage_chunks(mock_post):
     mock_response = Mock()
@@ -95,6 +99,8 @@ def test_streaming_emits_input_then_output_usage_chunks(mock_post):
     assert chunks[-1].strip() == "data: [DONE]"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_without_usage_events_emits_no_usage_chunk(mock_post):
     lines = [
@@ -124,6 +130,8 @@ def test_streaming_without_usage_events_emits_no_usage_chunk(mock_post):
     assert _usage_chunks(list(generator)) == []
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_truncated_after_message_start_emits_only_input_usage(mock_post):
     """A proxy that cleanly truncates the SSE stream between message_start
@@ -173,6 +181,8 @@ def test_streaming_truncated_after_message_start_emits_only_input_usage(mock_pos
     assert usages[0]["input_tokens"] == 3571
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.usefixtures("owned_mocked_provider_pool")
 @patch("requests.Session.post")
 def test_streaming_malformed_message_start_does_not_break_stream(mock_post):
     """A malformed usage payload (e.g. "message" is a non-dict) must never

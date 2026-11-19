@@ -40,7 +40,7 @@ from tldw_chatbook import config
 from tldw_chatbook.Widgets import emoji_picker
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore,RuntimeSourceState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.Backup_Recovery.async_file_participants import _FileJob
+from tldw_chatbook.Backup_Recovery.async_file_participants import FileJob
 from tldw_chatbook.Backup_Recovery import raw_participants as raw
 home=Path.home();selector=Path(os.environ['TLDW_CONFIG_PATH']);parent=selector.parent
 owner=sys.argv[1]
@@ -76,14 +76,14 @@ else:
  path=parent/'ui_state.toml';owner_id='ui.state';screen=object.__new__(ChatScreen)
  def write(value):
   async def save():
-   with _FileJob(screen,'sidebar_state') as job:
+   with FileJob(screen,'sidebar_state') as job:
     outcome=await job.run({'collapsible_states':{},'search_query':value,'last_active_section':'notes'})
     if outcome.error:raise outcome.error
   asyncio.run(save())
  def read():
   import toml
-  with raw._scope(screen,'sidebar_state') as operation:
-   with raw._file(operation,raw._selected(operation),'r') as stream:return toml.load(stream)['sidebar']['search_query']
+  with raw.scope(screen,'sidebar_state') as operation:
+   with raw.file(operation,raw.selected_target(operation),'r') as stream:return toml.load(stream)['sidebar']['search_query']
 write('before-capture');first=read()
 assert path.is_file() and bootstrap._registry(root)==registry_before
 storage._shutdown()

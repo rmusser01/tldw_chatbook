@@ -27,6 +27,7 @@ from .validation import handler_phase, parse_event
 _teardown_continuation = contextvars.ContextVar(
     "hook_teardown_continuation", default=None
 )
+_current_delivery = contextvars.ContextVar("hook_current_delivery", default=None)
 
 
 def _envelope(event: HookEvent) -> dict:
@@ -158,8 +159,10 @@ class HookEngine:
         budget_owner: HookBudgetOwner,
         *,
         process_owner: HookProcessOwner | None = None,
+        process_owner_for: Callable | None = None,
         environment: Callable | None = None,
         host_environment: Callable | None = None,
+        command_launch: Callable | None = None,
         invalid_admissions: tuple = (),
         dependency_required: Callable | None = None,
         enabled: bool = True,
@@ -185,7 +188,9 @@ class HookEngine:
         self.invalid_admissions = tuple(invalid_admissions)
         self._environment = environment
         self._host_environment = host_environment
+        self._process_owner_for = process_owner_for
         self._event_projector = event_projector
+        self._command_launch = command_launch
         self._dependency_required = dependency_required or (lambda *_: False)
         self._lock = RLock()
         self._scope_issuer = object()
@@ -217,6 +222,7 @@ class HookEngine:
         # Ambient host-owned roots cannot leak into an unrelated hook launch.
         result.pop("PLUGIN_ROOT", None)
         result.pop("PLUGIN_DATA", None)
+        result.pop("CHATBOOK_WORKSPACE_DATA", None)
         references = self._environment(handler, event) if self._environment else {}
         for key, value in (handler.env or {}).items():
             resolved = (
@@ -227,7 +233,11 @@ class HookEngine:
             result[key] = resolved
         if self._host_environment:
             reserved = self._host_environment(handler, event)
-            if set(reserved) - {"PLUGIN_ROOT", "PLUGIN_DATA"}:
+            if set(reserved) - {
+                "PLUGIN_ROOT",
+                "PLUGIN_DATA",
+                "CHATBOOK_WORKSPACE_DATA",
+            }:
                 raise ValueError("invalid host environment")
             result.update(reserved)
         return result
@@ -243,6 +253,23 @@ class HookEngine:
         ):
             return state
         return None
+
+    def _delivery_current(self, execution, source_event, event) -> bool:
+        """Authenticate this delivery's trusted projection of an exact host event."""
+        current = _current_delivery.get()
+        state = self._execution_state(execution)
+        if not isinstance(current, tuple) or len(current) != 5 or state is None:
+            return False
+        with self._lock:
+            return bool(
+                current[0] is self
+                and current[1] in self._deliveries
+                and not current[1].cancel.is_set()
+                and current[2] is state
+                and current[3] is source_event
+                and current[4] is event
+                and self._current_continuation() is state
+            )
 
     @contextlib.contextmanager
     def _continuation_scope(self, execution):
@@ -587,9 +614,17 @@ class HookEngine:
             state.busy = False
 
     async def _deliver(self, delivery, handler, event, execution, value):
+        with self._continuation_scope(execution):
+            return await self._deliver_current(
+                delivery, handler, event, execution, value
+            )
+
+    async def _deliver_current(self, delivery, handler, event, execution, value):
         ticket = delivery.ticket
         failure = None
         job = None
+        source_event = event
+        token = _current_delivery.set(None)
         try:
             acquire = asyncio.create_task(ticket.acquire())
             cancelled = asyncio.create_task(delivery.cancel.wait())
@@ -617,6 +652,7 @@ class HookEngine:
                 except (ValueError, PermissionError):
                     failure = "owner_projection_refused"
             if failure is None:
+                _current_delivery.set((self, delivery, execution, source_event, event))
                 authorized, callback_failure = await self._authority_status(
                     handler, event, "admission"
                 )
@@ -689,6 +725,12 @@ class HookEngine:
                 self.authority_check,
                 self._env,
                 deadline,
+                command_launch=self._command_launch,
+                process_owner_factory=(
+                    (lambda cancel: self._process_owner_for(handler, event, cancel))
+                    if self._process_owner_for is not None
+                    else None
+                ),
             )
             result = await self.processes.wait(job, deadline)
             execution.active_seconds += result.duration
@@ -722,6 +764,7 @@ class HookEngine:
                 )
             return HookEventOutcome(accepted=((handler.id, result.result),))
         finally:
+            _current_delivery.reset(token)
             if job is None:
                 ticket.release()
             with self._lock:
@@ -760,15 +803,30 @@ class HookEngine:
     def notify(self, event: HookEvent) -> bool:
         return self._notify(event, teardown=False)
 
-    def notify_teardown(self, event: HookEvent) -> bool:
-        return self._notify(event, teardown=True)
+    def notify_teardown(
+        self, event: HookEvent, *, _execution: HookEventExecution | None = None
+    ) -> bool:
+        return self._notify(event, teardown=True, execution=_execution)
 
-    def _notify(self, event, *, teardown, planned=None):
+    def _notify(self, event, *, teardown, planned=None, execution=None):
         # Reserve every matching handler synchronously so queue capacity bounds
         # submissions even when called faster than the owner loop can dispatch.
         try:
-            execution = self.begin_event(event, teardown=teardown)
+            if execution is None:
+                execution = self.begin_event(event, teardown=teardown)
             value = _envelope(event)
+            parse_event(value)
+            state = self._execution_state(execution)
+            if (
+                state is None
+                or state.closed
+                or state.busy
+                or teardown
+                and not state.teardown
+                or state.identity
+                != tuple((k, v) for k, v in value.items() if k != "data")
+            ):
+                return False
             if planned is not None:
                 previous = self._execution_state(planned)
                 if previous is None or previous.closed:
@@ -792,7 +850,9 @@ class HookEngine:
         with self._lock:
             continuation = self._execution_state(execution).continuation_of
             if (
-                (self._teardown_closed and continuation is None)
+                state.closed
+                or state.busy
+                or (self._teardown_closed and continuation is None)
                 or (self._sealed_at is not None and not execution.teardown)
                 or self.invalid_admissions
                 or not self.enabled
@@ -800,6 +860,8 @@ class HookEngine:
                 return False
             if time.monotonic() >= execution.deadline:
                 return False
+            # One host-issued notification scope cannot mint a second delivery.
+            state.busy = True
             for handler in self.definitions:
                 try:
                     if not matches_handler(handler, event):

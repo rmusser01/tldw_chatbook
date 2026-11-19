@@ -106,6 +106,7 @@ class TestXXEProtection:
 class TestReDoSProtection:
     """Test protection against Regular Expression Denial of Service (ReDoS) attacks."""
 
+    @pytest.mark.bootstrap_profile
     def test_complex_regex_timeout(self):
         """Test that complex regex patterns have reasonable timeouts."""
         chunker = Chunker()
@@ -123,13 +124,21 @@ class TestReDoSProtection:
 
         # This should either timeout or handle gracefully, not hang
         with pytest.raises((InvalidInputError, ChunkingError, re.error)) as exc_info:
-            chunker.chunk_text(text, method="ebook_chapters", custom_chapter_pattern=evil_pattern, max_size=100)
+            chunker.chunk_text(
+                text,
+                method="ebook_chapters",
+                custom_chapter_pattern=evil_pattern,
+                max_size=100,
+            )
 
         elapsed_time = time.time() - start_time
 
         # Should fail or timeout within reasonable time (not hang for minutes)
-        assert elapsed_time < 5.0, "Regex processing took too long, possible ReDoS vulnerability"
+        assert elapsed_time < 5.0, (
+            "Regex processing took too long, possible ReDoS vulnerability"
+        )
 
+    @pytest.mark.bootstrap_profile
     def test_regex_complexity_limit(self):
         """Test that overly complex regex patterns are rejected."""
         chunker = Chunker()
@@ -146,7 +155,12 @@ class TestReDoSProtection:
         for pattern in complex_patterns:
             # Should either reject the pattern or handle it safely
             try:
-                result = chunker.chunk_text(text, method="ebook_chapters", custom_chapter_pattern=pattern, max_size=100)
+                result = chunker.chunk_text(
+                    text,
+                    method="ebook_chapters",
+                    custom_chapter_pattern=pattern,
+                    max_size=100,
+                )
                 # If it doesn't raise an error, it should at least complete quickly
                 assert isinstance(result, list)
             except (InvalidInputError, ChunkingError):
@@ -157,6 +171,7 @@ class TestReDoSProtection:
 class TestInputSanitization:
     """Test input sanitization and validation."""
 
+    @pytest.mark.bootstrap_profile
     def test_null_byte_injection_prevented(self):
         """Test that null byte injection is handled safely."""
         chunker = Chunker()
@@ -169,8 +184,11 @@ class TestInputSanitization:
 
         # Null bytes should be handled (removed or escaped)
         for chunk in result:
-            assert "\x00" not in chunk or chunk.count("\x00") == malicious_text.count("\x00")
+            assert "\x00" not in chunk or chunk.count("\x00") == malicious_text.count(
+                "\x00"
+            )
 
+    @pytest.mark.bootstrap_profile
     def test_unicode_normalization(self):
         """Test that unicode is properly normalized to prevent bypasses."""
         chunker = Chunker()
@@ -189,6 +207,7 @@ class TestInputSanitization:
         # Both should produce consistent results
         assert len(results[0]) == len(results[1])
 
+    @pytest.mark.bootstrap_profile
     def test_oversized_input_rejected(self):
         """Test that oversized inputs are rejected to prevent DoS."""
         chunker = Chunker()
@@ -201,7 +220,9 @@ class TestInputSanitization:
 
     def test_deeply_nested_json_limited(self):
         """Test that deeply nested JSON has depth limits."""
-        from tldw_chatbook.Chunking.engine.strategies.json_xml import JSONChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.json_xml import (
+            JSONChunkingStrategy,
+        )
 
         strategy = JSONChunkingStrategy()
 
@@ -223,6 +244,7 @@ class TestInputSanitization:
 class TestResourceLimits:
     """Test that resource limits are properly enforced."""
 
+    @pytest.mark.bootstrap_profile
     def test_memory_limit_enforcement(self):
         """Test that memory usage is limited."""
         chunker = Chunker()
@@ -243,8 +265,8 @@ class TestResourceLimits:
         pytest.importorskip(
             "tldw_chatbook.Chunking.engine.async_chunker",
             reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
-                    "§4.2: server http_client/exceptions deps; chatbook "
-                    "chunks in-process — no consumer)",
+            "§4.2: server http_client/exceptions deps; chatbook "
+            "chunks in-process — no consumer)",
         )
         from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
         import asyncio
@@ -275,6 +297,7 @@ class TestResourceLimits:
 class TestSecurityHeaders:
     """Test security-related configurations and headers."""
 
+    @pytest.mark.bootstrap_profile
     def test_default_safe_configuration(self):
         """Test that default configuration is secure."""
         chunker = Chunker()

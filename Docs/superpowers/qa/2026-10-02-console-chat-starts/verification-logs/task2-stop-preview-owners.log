@@ -1,0 +1,6 @@
+..............................                                           [100%]
+============================= slowest 25 durations =============================
+1.57s call     Tests/UI/test_console_project_instructions.py::test_disposable_preview_matches_live_exact_request_when_source_is_omitted
+
+(24 durations < 1s hidden.)
+30 passed, 142 deselected in 14.72s

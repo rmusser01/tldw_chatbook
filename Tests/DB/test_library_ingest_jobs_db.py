@@ -831,3 +831,16 @@ def test_local_and_server_completion_id_spaces_remain_disjoint():
 
     assert registry.mark_remote_done(local.job_id, remote_media_id="900") is None
     assert registry.mark_done(server.job_id, media_id=900) is None
+
+
+def test_connections_enable_foreign_key_enforcement(tmp_path):
+    """task-19566 F11: the per-connection FK pragma is ON (inert today -- the
+    schema declares no FKs -- so the next one that appears is enforced)."""
+    from tldw_chatbook.DB.Library_Ingest_Jobs_DB import LibraryIngestJobsDB
+
+    db = LibraryIngestJobsDB(str(tmp_path / "ingest_jobs.db"))
+    try:
+        state = db._get_connection().execute("PRAGMA foreign_keys").fetchone()[0]
+        assert state == 1, f"foreign_keys pragma is {state}, expected 1 (ON)"
+    finally:
+        db.close()

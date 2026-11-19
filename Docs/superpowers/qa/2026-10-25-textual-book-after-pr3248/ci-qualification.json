@@ -1,0 +1,242 @@
+{
+  "head": "42243f8efcfd40996051c3359bfd3599fbc4d1f1",
+  "runs": [
+    {
+      "id": 40241711952,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952",
+      "conclusion": "success",
+      "jobs": 25
+    },
+    {
+      "id": 40241711939,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711939",
+      "conclusion": "success",
+      "jobs": 1
+    }
+  ],
+  "new_ui_cases_executed": 26,
+  "ui_shards": [
+    {
+      "name": "UI Fast Lane (4)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713726",
+      "seconds": 868.0,
+      "sha256": "a056ac3560df225dbaaef5622bd157896cca6540fd966fe711f1d47776215fb3",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[workspace-B-inner]": [
+          6.73
+        ],
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-section-away-back]": [
+          8.57
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (16)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713836",
+      "seconds": 927.0,
+      "sha256": "183b57e2f2411aa4a48b429de173c8981c569d0f68d31991f2af51b8e9a5505b",
+      "cases": {
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-section-away-back]": [
+          10.22
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (1)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713839",
+      "seconds": 968.0,
+      "sha256": "67c6a53e1e01cdfd2e9de80394750ea95dc764bbe1a0fbba1ba5437d5a90c0c3",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-local-shell]": [
+          8.02
+        ],
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-query-away-back]": [
+          10.02
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (8)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713889",
+      "seconds": 1081.0,
+      "sha256": "7d306b39bfc1955338b955602a1c8bdb0368437af36b6e8e4c15053e6144eef8",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_failed_start_reports_the_previous_context_and_allows_retry[runtime-away-back]": [
+          8.34
+        ],
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[k]": [
+          10.56
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (2)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713894",
+      "seconds": 861.0,
+      "sha256": "f3ccd44a7002da8a507782cc0d18c193080f2c9df0fc525c0f8fe67c625cf471",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-local-inner]": [
+          6.45
+        ],
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-page-away-back]": [
+          8.21
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (5)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713902",
+      "seconds": 976.0,
+      "sha256": "aaf6597ed6bbb7fdc73c4d38252c6473dc90620f98e8e1cbbab10e7fe9a20045",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-away-back-shell]": [
+          8.86
+        ],
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-unmount]": [
+          10.73
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (17)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713904",
+      "seconds": 973.0,
+      "sha256": "f893f8638fd8fc8875a1ce89a1a0d70091977b1e728201f58639ff9e0477f213",
+      "cases": {
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-unmount]": [
+          9.82
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (3)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713906",
+      "seconds": 944.0,
+      "sha256": "bcca8c79ca1282456fe4cb994964691c8f239ea6fa3498577428076dad71edc4",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[workspace-B-shell]": [
+          8.0
+        ],
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-failure-backend-away-back]": [
+          10.36
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (15)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713936",
+      "seconds": 963.0,
+      "sha256": "5364a3e521c6e32815d1d2d714ebde7b0a4df3f2d249744c1bfd0a90728da796",
+      "cases": {
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-backend-away-back]": [
+          10.13
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (12)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713950",
+      "seconds": 916.0,
+      "sha256": "ff40c3779c49d0329fe576c3f54250d13e744c77fe8a821ca0f3f59cc24232c0",
+      "cases": {
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_enabled_section_navigation_runs_during_body_read": [
+          10.0
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (6)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713959",
+      "seconds": 795.0,
+      "sha256": "8706575c7474e131ffcf258741e186a0b4049f79a6140bb2f25562ff294cff3a",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_cannot_adopt_a_reset_context[runtime-away-back-inner]": [
+          6.25
+        ],
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_current_body_failure_reports_and_later_selection_can_retry": [
+          8.01
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (14)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713966",
+      "seconds": 953.0,
+      "sha256": "866ca3491ce58fbbff25be02445343185c23cb59435bed95a93644c6a68b53bf",
+      "cases": {
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-page-away-back]": [
+          10.03
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (11)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713973",
+      "seconds": 980.0,
+      "sha256": "6dc8eb6fc68c948a0082e6a7cb103158c14aee8c221dc5a273c0edcd0f8eef86",
+      "cases": {
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_newer_selection_reads_before_older_body_finishes[late-failure]": [
+          10.01
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (7)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314713974",
+      "seconds": 880.0,
+      "sha256": "c92e7722b2fdac80ac6808c351d543e1bc8737cd48d06efd0fc446ea827ec813",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_failed_start_reports_the_previous_context_and_allows_retry[runtime-local]": [
+          6.64
+        ],
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[j]": [
+          8.91
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (9)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314714028",
+      "seconds": 776.0,
+      "sha256": "d12c5a542b21f0c007b1214963d809eacd35228d01606e1cf48536454b483d01",
+      "cases": {
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_ordinary_reader_publishes_one_hydrated_shared_row": [
+          7.58
+        ],
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_keyboard_navigation_follows_pending_selection[space]": [
+          7.61
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (13)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314714069",
+      "seconds": 878.0,
+      "sha256": "a2f306042aadc880b1c655f4c7a97025437a9d09dbae59a63c04ebc2f086b017",
+      "cases": {
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_retired_reader_context_cannot_mutate_or_report[late-success-query-away-back]": [
+          9.66
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (10)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40241711952/job/121314714070",
+      "seconds": 848.0,
+      "sha256": "ae416a22e937a612dece61b2e2af98dacf2d25ff1623e47ec21d24ad943857cb",
+      "cases": {
+        "Tests/UI/test_watchlists_reader_responsiveness.py::test_newer_selection_reads_before_older_body_finishes[late-success]": [
+          8.22
+        ]
+      }
+    }
+  ],
+  "maximum_ui_seconds": 1081.0,
+  "canvas": [
+    {
+      "job": "Derived artifacts reproduce from their sources",
+      "step": "Canvas Mermaid assets reproduce from pinned public inputs",
+      "conclusion": "success"
+    }
+  ]
+}

@@ -27,6 +27,7 @@ from __future__ import annotations
 import pytest
 from loguru import logger as loguru_logger
 
+from Tests.private_profile import private_profile_test
 from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -95,7 +96,10 @@ def _controller_with_failing_commit():
 
 
 @pytest.mark.asyncio
-async def test_a_failed_durable_commit_records_the_exception_type() -> None:
+@private_profile_test
+async def test_a_failed_durable_commit_records_the_exception_type(
+    request: pytest.FixtureRequest,
+) -> None:
     """The refusal is attributable from logs alone, with no product edit."""
     controller, _store = _controller_with_failing_commit()
 
@@ -117,7 +121,10 @@ async def test_a_failed_durable_commit_records_the_exception_type() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_failure_log_does_not_leak_the_exception_message() -> None:
+@private_profile_test
+async def test_the_failure_log_does_not_leak_the_exception_message(
+    request: pytest.FixtureRequest,
+) -> None:
     """Type only. A commit exception can name a conversation or workspace."""
     controller, _store = _controller_with_failing_commit()
 

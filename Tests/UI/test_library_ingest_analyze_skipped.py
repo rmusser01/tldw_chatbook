@@ -55,6 +55,7 @@ def _unready_provider(monkeypatch) -> None:
 # --- visibility gate (×2) -----------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_skipped_action_absent_without_a_ready_provider(monkeypatch):
     """A skipped row alone is not enough -- Task 1's reason must be empty."""
@@ -69,6 +70,7 @@ async def test_analyze_skipped_action_absent_without_a_ready_provider(monkeypatc
         assert not screen.query("#library-ingest-analyze-skipped")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_skipped_action_appears_with_skipped_items_and_ready_provider(
     monkeypatch,
@@ -91,6 +93,7 @@ async def test_analyze_skipped_action_appears_with_skipped_items_and_ready_provi
 # --- ids passed ------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_analyze_skipped_runs_the_worker_over_exactly_those_ids(
     monkeypatch,
@@ -145,6 +148,7 @@ def _job_done_and_analyzed(**overrides) -> LibraryIngestJob:
 # --- outcome rendering -------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_skipped_run_paints_per_item_outcomes_on_their_own_rows(
     monkeypatch,
@@ -217,6 +221,7 @@ async def test_analyze_skipped_run_paints_per_item_outcomes_on_their_own_rows(
 # --- rulings: second press, select-mode no-op --------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_second_analyze_skipped_press_while_running_gets_the_existing_notice(
     monkeypatch,
@@ -287,6 +292,7 @@ async def test_second_analyze_skipped_press_while_running_gets_the_existing_noti
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_analyze_skipped_does_not_toggle_media_select_mode(
     monkeypatch,
@@ -328,6 +334,7 @@ async def test_pressing_analyze_skipped_does_not_toggle_media_select_mode(
 # I-3 (origin-aware unmount notice) --------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_press_over_a_mixed_set_auto_skips_already_analysed_and_notifies(
     monkeypatch,
@@ -391,6 +398,7 @@ async def test_press_over_a_mixed_set_auto_skips_already_analysed_and_notifies(
         ), notices
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_press_over_an_entirely_already_analysed_set_notifies_and_runs_nothing(
     monkeypatch,
@@ -438,6 +446,7 @@ async def test_press_over_an_entirely_already_analysed_set_notifies_and_runs_not
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_analyze_outcome_reports_a_raised_exceptions_own_message(monkeypatch):
     """I-1: a raised exception's own text is the reason, not the generic
@@ -487,6 +496,7 @@ async def test_analyze_outcome_reports_a_raised_exceptions_own_message(monkeypat
         assert "✗ analysis failed · flaky.txt · provider timeout" in canvas_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_run_that_dies_with_the_screen_names_the_import_run(
     monkeypatch,
@@ -560,6 +570,7 @@ async def test_import_run_that_dies_with_the_screen_names_the_import_run(
         assert notices[0][1].get("severity") == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_structural_change_during_a_no_fallback_repaint_still_repaints(
     monkeypatch,
@@ -612,6 +623,7 @@ def test_analyze_origin_values_are_named_constants():
     assert library_screen_module._ANALYZE_ORIGIN_IMPORT == "import"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_finished_prunes_the_stale_outcome_for_a_reused_media_id(
     monkeypatch,
@@ -675,6 +687,7 @@ async def test_clear_finished_prunes_the_stale_outcome_for_a_reused_media_id(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_auto_skipped_ids_are_resolved_not_left_actionable_forever(
     monkeypatch,

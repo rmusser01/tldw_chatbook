@@ -1,4 +1,4 @@
-"""F9 Settings custom endpoint management seams (ADR-146, task-7).
+"""F9 Settings custom endpoint management seams (ADR-343, task-7).
 
 The four brief-verbatim tests exercise the panel-action seams in
 ``settings_provider_view_model``: overview rows render safe endpoint

@@ -89,6 +89,7 @@ def test_subscriptions_db_basic_add_and_list():
                 tags=["news", "tech"],
                 priority=3,
                 folder="Smoke",
+                auto_pause_threshold=10,
             )
             assert isinstance(sub_id, int) and sub_id > 0
 

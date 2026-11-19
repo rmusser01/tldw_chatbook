@@ -262,6 +262,7 @@ def test_pid_alive_current_and_bogus():
     assert pid_alive(999999999) is False
 
 
+@pytest.mark.bootstrap_profile
 def test_share_root_dir_under_user_data():
     assert share_root_dir().name == "share"
     assert share_root_dir().parent.name != ""  # anchored under the user data dir

@@ -101,6 +101,7 @@ async def _show_preview(screen, pilot):
 # -- task-32249: the preview is the reading surface -----------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_wide_preview_fills_the_work_pane_at_the_critique_width():
     """235x52: no 20-row cap, the compact layout's `1fr` shape both ways.
@@ -128,6 +129,7 @@ async def test_the_wide_preview_fills_the_work_pane_at_the_critique_width():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_activating_preview_focuses_its_scroll_owner():
     """The footer's `pgup/pgdn scroll` promise is true without a click.
@@ -236,6 +238,7 @@ def test_a_nested_callout_and_an_acronym_type_survive_the_rewrite():
     assert render_obsidian_callouts("> [!todo]\n") == "> **Todo**  \n"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_preview_body_renders_the_callout_not_its_marker():
     """The rewrite reaches the mounted Markdown, on compose and on sync."""
@@ -255,6 +258,7 @@ async def test_the_preview_body_renders_the_callout_not_its_marker():
         assert "[!note]" not in painted, "the preview still paints the raw marker"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_status_line_stops_promising_autosave_while_preview_shows():
     """Preview is read-only, so "changes save automatically" is not true."""
@@ -281,6 +285,7 @@ async def test_the_status_line_stops_promising_autosave_while_preview_shows():
 # -- task-32270: the cue the guide describes ------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_return_cue_stays_off_the_strip_in_wide_database_notes():
     """`library_browse_route_swap` can never display it in this state.
@@ -488,6 +493,7 @@ async def test_the_compact_select_strip_paints_every_action_inside_the_pane():
         assert status.region.y != toggle.region.y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_compact_select_strip_counts_the_row_the_reader_just_checked():
     """task-32261 AC#2, review finding F1: the SURVIVING counter must move.
@@ -566,6 +572,7 @@ async def test_the_notes_select_strip_uses_the_library_glyph_legend():
                 assert button.tooltip, f"{button.id} has no reason beside its marker"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_notes_pane_grips_carry_an_accessible_name():
     """task-32261 AC#4: on the Notes route, not only Conversations."""

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 
 from tldw_chatbook.Agents.agent_models import ApprovalDecision
 
@@ -128,3 +132,28 @@ def append_denial_reason(refusal: str, decisions: Mapping[str, str], key: str) -
     if not reason:
         return refusal
     return f"{refusal}\nDenial reason (from user, untrusted text): {json.dumps(reason, ensure_ascii=False)}"
+
+
+def approval_was_unanswered(
+    row: MCPPendingCall,
+    decisions: Mapping[str, str],
+    *,
+    read_global_approval_key_unanswered: Callable[[], Any],
+    read_global_selected_approval_key: Callable[[], Any],
+) -> bool:
+    """True when ``row``'s deny came from a Stop/revoke, not from the user.
+
+    Args:
+        row: The pending call whose verdict is being recorded.
+        decisions: The map ``request_mcp_approvals`` returned -- an
+            `ApprovalDecisions` in production, a bare dict in tests and in
+            any other `request_approvals` shape (which then reports
+            "answered", the pre-fix behaviour).
+
+    Returns:
+        Whether the verdict for ``row`` was defaulted by an unresolved round.
+    """
+    key = read_global_selected_approval_key()(
+        decisions, str(getattr(row, "call_id", "") or ""), row.llm_name
+    )
+    return read_global_approval_key_unanswered()(decisions, key)

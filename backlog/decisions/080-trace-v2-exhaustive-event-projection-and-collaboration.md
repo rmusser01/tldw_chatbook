@@ -3,13 +3,13 @@
 - Status: Accepted
 - Date: 2026-08-22
 - Spec: `Docs/superpowers/specs/2026-08-22-task-19907-trace-v2-exhaustive-collaboration-design.md`
-- Related: ADR-031, ADR-066, ADR-067; TASK-19907, TASK-19908, TASK-19910–TASK-19913
+- Related: ADR-299, ADR-066, ADR-313; TASK-19907, TASK-19908, TASK-19910–TASK-19913
 
 ## Context
 
 ADR-066 deliberately chose a v1 active-path trajectory assembled from normalized
 message history plus a local trajectory sidecar, and rejected a duplicate append-only
-all-events table. ADR-067 defined a redacted-by-default v1 JSON export. The implemented
+all-events table. ADR-313 defined a redacted-by-default v1 JSON export. The implemented
 screen is useful but does not expose every agent/runtime event, durable child lineage,
 approval/context causality, accessible narrow-terminal details, or a first-class export
 workflow.
@@ -67,14 +67,14 @@ read-only, local-ownership, and legacy compatibility guarantees.
     integrity/privacy metadata, and an ephemeral `trace_import` operation event for the
     read-only screen; none are persisted locally.
 
-## Compatibility with ADR-066 and ADR-067
+## Compatibility with ADR-066 and ADR-313
 
 - ADR-066's local-only sidecar, TOOL-marker invariant, nullable timing, pure projection,
   active-path legacy behavior, and read-only screen remain accepted.
 - ADR-066's v1 event coverage is superseded by the exhaustive adapter contract above.
-- ADR-067's redaction default, explicit full opt-in, atomic single-file write, and
+- ADR-313's redaction default, explicit full opt-in, atomic single-file write, and
   read-only import remain accepted.
-- ADR-067's version-1 document shape remains supported for reading; v2 writes use the
+- ADR-313's version-1 document shape remains supported for reading; v2 writes use the
   new Trace bundle contract.
 
 ## Alternatives considered

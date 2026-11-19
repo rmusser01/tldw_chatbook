@@ -7,7 +7,7 @@ import sys
 from contextlib import nullcontext
 from pathlib import Path
 from threading import Event
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 from uuid import uuid4
 
 _selected_installation: str | None = None
+_selected_profile: tuple[str, Path] | None = None
 
 
 def installation_client_id() -> str:
@@ -29,8 +30,29 @@ def installation_client_id() -> str:
     return replacement_installation_id() or "tldw_cli_local_instance_v1"
 
 
+def verified_data_identity() -> tuple[str, str]:
+    """Export only an owner-verified installation and activation generation.
+
+    Caller retains storage/activation admission. This reads durable evidence and
+    must run outside index registry/cache fences, never on the UI thread.
+    """
+    if _selected_profile is not None:
+        entry, witness = _launch_state(*_selected_profile)
+        if entry.installation_id != _selected_installation:
+            raise ValueError("isolated_identity_changed")
+        return entry.installation_id, witness["generation"]
+    from .activation import replacement_data_identity
+
+    return replacement_data_identity() or ("tldw_cli_local_instance_v1", "ordinary")
+
+
 def restore_isolated(
-    archive: SealedArchive, plan: RestorePlan, control_root: Path, cancel: Event
+    archive: SealedArchive,
+    plan: RestorePlan,
+    control_root: Path,
+    cancel: Event,
+    *,
+    on_staged: Callable[[], None] | None = None,
 ) -> str:
     """Publish explicit new roots; retain fences through catalog durability.
 
@@ -140,11 +162,20 @@ def restore_isolated(
                 raise ValueError("isolated_stage_selection_changed")
     # Retire the selected source lease before publication can drain that scope.
     reader._check(cancel)
+    # The receipt is durable and the source lease retired. No publication or
+    # namespace registration may precede the caller's outer transaction record.
+    if on_staged is not None:
+        on_staged()
     names = ("isolated." + operation_id,)
     authority.register(names[0], tuple(ancestors))
     selectors = tuple(Path(row["config"]) for row in profiles)
     _finish_isolated(
-        candidate, plan, journal, names, operation_id, cancel,
+        candidate,
+        plan,
+        journal,
+        names,
+        operation_id,
+        cancel,
         initial_selectors=selectors,
     )
     return profiles[0]["profile_id"]
@@ -192,7 +223,9 @@ def _finish_isolated(
             from .native_files import pinned_directory
 
             with pinned_directory(candidate) as parent:
-                descriptor = _read(parent, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES)
+                descriptor = _read(
+                    parent, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES
+                )
             journal.prepare_publication(
                 candidate,
                 plan,
@@ -341,7 +374,12 @@ def _launch_environment() -> dict[str, str]:
         "LC_CTYPE",
         "SYSTEMROOT",
         "WINDIR",
+        "TEMP",
+        "TMP",
         "TMPDIR",
+        "CHATBOOK_WEZTERM_HOME",
+        "CHATBOOK_WEZTERM_DATA_DIR",
+        "CHATBOOK_WEZTERM_RUNTIME_DIR",
     )
     env = {name: os.environ[name] for name in allowed if name in os.environ}
     env.update(
@@ -357,11 +395,19 @@ def _launch_environment() -> dict[str, str]:
     return env
 
 
+def _profile_launch_environment(entry, control_root: Path) -> dict[str, str]:
+    from .portable_relocation import _selected_environment
+
+    env = _launch_environment()
+    env.update(_selected_environment(entry, control_root))
+    return env
+
+
 def select_profile(
     profile_id: str, control_root: Path, *, launch_attempt: str | None = None
 ) -> None:
     """Select once at process startup, before config/services or admission imports."""
-    global _selected_installation
+    global _selected_installation, _selected_profile
     if _selected_installation is not None or "tldw_chatbook.config" in sys.modules:
         raise ValueError("profile_requires_fresh_process")
     entry = _launch_descriptor(profile_id, control_root)
@@ -369,7 +415,7 @@ def select_profile(
         from .profile_open import _select
 
         _select(profile_id, control_root, launch_attempt)
-    env = _launch_environment()
+    env = _profile_launch_environment(entry, control_root)
     env["TLDW_CONFIG_PATH"] = entry.config
     os.environ.clear()
     os.environ.update(env)
@@ -379,6 +425,7 @@ def select_profile(
 
     keyring.set_keyring(Keyring())
     _selected_installation = entry.installation_id
+    _selected_profile = (profile_id, control_root)
 
 
 def launch_profile(
@@ -407,5 +454,5 @@ def launch_profile(
             *extra,
         ],
         cwd=Path(entry.config).parent,
-        env=_launch_environment(),
+        env=_profile_launch_environment(entry, control_root),
     )

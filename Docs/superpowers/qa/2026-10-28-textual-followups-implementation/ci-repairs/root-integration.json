@@ -1,0 +1,430 @@
+{
+  "fix_base": "3e414ff824f88bf8e13a5aef1003be3525481a87",
+  "fix_head": "a27f09d930f515405f28c63e3521697a835aa331",
+  "source_changes": [
+    "Tests/UI/library_note_links_support.py",
+    "Tests/UI/test_library_media_reader_controls_in_list_view.py",
+    "Tests/UI/test_library_note_links_picker_and_preview.py"
+  ],
+  "product_workflow_census_privacy_timeout_changes": false,
+  "tasks": [
+    {
+      "id": 37266,
+      "status": "Done",
+      "checked_acs": 4
+    },
+    {
+      "id": 37267,
+      "status": "Done",
+      "checked_acs": 5
+    },
+    {
+      "id": 37268,
+      "status": "Done",
+      "checked_acs": 4
+    }
+  ],
+  "owner_note_transactions": [
+    {
+      "id": "34000.11",
+      "history_preserved": true,
+      "append_count": 1,
+      "status": "Done"
+    },
+    {
+      "id": "34000.18",
+      "history_preserved": true,
+      "append_count": 1,
+      "status": "Done"
+    }
+  ],
+  "deferred_followups": [
+    {
+      "id": 37330,
+      "status": "To Do"
+    },
+    {
+      "id": 37360,
+      "status": "To Do"
+    }
+  ],
+  "ruling_count": 13,
+  "checked_links": [
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-local-evidence.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-local-receipts.tar.gz"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-implementation-report.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-fix1-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-local-evidence.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-local-receipts.tar.gz"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-implementation-report.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-local-evidence.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-local-receipts.tar.gz"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-implementation-report.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/parameter-id-collection.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/capacity-replay.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/hosted-source-head.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/final-review.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/decision-ledger.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/integration-local-evidence.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/integration-local-receipts.tar.gz"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/backlog-closure.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/diagnostic-inventory.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/artifact-followup-ownership.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/failed-metadata-head.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/media-typing-ownership.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/media-filter-investigation.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/note-open-investigation.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/native-investigations.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave-report.md"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave.json"
+    },
+    {
+      "source": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave-review.md"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md",
+      "target": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md",
+      "target": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md",
+      "target": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md"
+    },
+    {
+      "source": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "backlog/tasks/task-37142 - Preserve-newer-Evals-bench-input-when-queued-Save-completes.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "backlog/tasks/task-1610 - Run-completion-must-not-destroy-a-dirty-bench-editor.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "backlog/tasks/task-1484 - Rename-affordances-for-Evals-benches-and-datasets.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "backlog/tasks/task-1912 - Duplicate-a-character-probe-bench.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "backlog/tasks/task-1913 - Character-probe-Phase-2-review-hygiene-batch.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "backlog/decisions/011-chatbook-workbench-ui-system.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "backlog/decisions/033-application-session-state-ownership.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "backlog/decisions/150-design-token-system-and-design-language.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "backlog/decisions/161-component-pattern-library.md"
+    },
+    {
+      "source": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/tasks/task-16486 - Auto-refresh-the-selected-research-run-in-the-window.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/tasks/task-21127 - Research runs - per-op leaked connects and loop-side periodic reads-writes while a run is active.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/tasks/task-19300 - Make-research-runs-durable-resumable-jobs.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/tasks/task-21507 - Add-Research-shell-authority-and-responsive-workspace-foundation.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/tasks/task-21511 - Add-Research-Copy-sharing-and-Deep-Research-return.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/tasks/task-2306 - Run selection populates the run detail region.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/decisions/033-application-session-state-ownership.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/decisions/068-local-research-execution-engine.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/decisions/070-research-run-lease-and-durability.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md"
+    },
+    {
+      "source": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md"
+    },
+    {
+      "source": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md"
+    },
+    {
+      "source": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "target": "backlog/tasks/task-37033 - Keep-saved-Prompt-export-writes-off-the-UI-loop.md"
+    },
+    {
+      "source": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "target": "backlog/tasks/task-34000.3 - Library-export-note-and-prompt-exports-ask-before-replacing-an-existing-file.md"
+    },
+    {
+      "source": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "target": "backlog/tasks/task-2834 - Guard-against-blocking-IO-reachable-from-a-Textual-message-handler.md"
+    },
+    {
+      "source": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "target": "backlog/tasks/task-33280 - PERF-21-Library-screen---targeted-updates-ingest-O-N-2-Folder-Files-poll.md"
+    },
+    {
+      "source": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "target": "backlog/decisions/033-application-session-state-ownership.md"
+    },
+    {
+      "source": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "target": "backlog/decisions/036-application-service-composition-lifecycle.md"
+    },
+    {
+      "source": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "target": "backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md"
+    },
+    {
+      "source": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md"
+    },
+    {
+      "source": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+      "target": "backlog/tasks/task-16483 - Readable-bundle-and-artifact-inspection-in-the-Research-window.md"
+    },
+    {
+      "source": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+      "target": "backlog/tasks/task-21127 - Research runs - per-op leaked connects and loop-side periodic reads-writes while a run is active.md"
+    },
+    {
+      "source": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+      "target": "backlog/tasks/task-19300 - Make-research-runs-durable-resumable-jobs.md"
+    },
+    {
+      "source": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+      "target": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md"
+    },
+    {
+      "source": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+      "target": "backlog/decisions/033-application-session-state-ownership.md"
+    },
+    {
+      "source": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+      "target": "backlog/decisions/068-local-research-execution-engine.md"
+    },
+    {
+      "source": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+      "target": "backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/media-filter-investigation.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/tasks/task-32350 - Library-Media-list-the-filter-box-and-the-applied-filter-can-disagree-\u2014-add-a-persistent-scope-line.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/tasks/task-28013 - Library-media-list-in-canvas-filter-input-and-sort-control.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/tasks/task-15457 - Library---convert-per-click-whole-screen-recomposes-to-canvas-scoped-sync.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/tasks/task-281 - Library-targeted-updates-instead-of-whole-screen-recompose.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/tasks/task-34230 - Media-focus-guard-is-released-before-the-recompose-it-covers-when-canvas-sync-falls-back-to-a-whole-screen-recompose.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/tasks/task-34000.18 - Library-Media-Read-later-trash-and-Edit-metadata-act-on-the-item-opened-by-link-not-row-1.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/tasks/task-34000.37 - Library-keyboard-focus-survives-dialogs-and-filter-submits-F6-reaches-every-canvas-F1.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/decisions/033-application-session-state-ownership.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/decisions/086-library-adaptive-reader-shell.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/decisions/150-agent-chat-fork-and-spawn.md"
+    },
+    {
+      "source": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "target": "backlog/decisions/161-component-pattern-library.md"
+    }
+  ],
+  "review_sha256": "8f31103b82026a3c9575986b0e7a2e96578eb190faf30252338b2045c560b4eb",
+  "actual_xml_and_hash_verification": {
+    "xml_files": 16,
+    "artifacts_and_sources": 74
+  },
+  "backlog_hygiene": {
+    "exit_code": 0,
+    "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-30d39ada990f487fba6db7ac017d71b9",
+    "reports": [
+      {
+        "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37266-37268\\ci-repair-backlog-hygiene\\result.xml",
+        "sha256": "ad18a6e6c1905d1847daa6a042b97f5ed70be8c6af34d999b2c9c5f409687b5f",
+        "cases": 3,
+        "failures": 0,
+        "errors": 0,
+        "skips": 0
+      }
+    ]
+  },
+  "qualification": "Root read actual XML outcomes and hashes, selected native boundary traces, raw static receipts and full scoped review. Six latest qualified journey passes span distinct runs, not an all-green batch. Final actual hosted current-head success remains a delivery gate recorded in the PR description. Metadata follows only this bounded test repair; no product-gesture repair is claimed."
+}

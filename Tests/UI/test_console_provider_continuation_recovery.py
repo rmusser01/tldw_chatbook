@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
+    ContinuationRestoreTarget,
     ContinuationRound,
     ProviderContinuationCheckpoint,
 )
@@ -35,6 +36,15 @@ from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     ProviderContinuationRecoveryCallout,
     ProviderContinuationTranscriptRegion,
     provider_continuation_recovery_state,
+)
+
+
+_MOONSHOT_TARGET = ContinuationRestoreTarget(
+    provider="moonshot",
+    protocol="chat_completions",
+    model="kimi-k2",
+    api_base_url="https://api.moonshot.ai/v1",
+    selected_provider="moonshot",
 )
 
 
@@ -428,7 +438,8 @@ async def test_invalid_private_hydration_shows_safe_warning_without_actions() ->
                 ContinuationEventContext(owner.id, "run", "primary", "persistent"),
                 _message().provider_continuation,
                 None,
-            )
+            ),
+            continuation_target=_MOONSHOT_TARGET,
         )
         original_getter = database.get_messages_for_conversation
 
@@ -528,7 +539,8 @@ async def test_real_region_hides_live_owner_then_exposes_interruption() -> None:
                 ContinuationEventContext(owner.id, "run", "primary", "persistent"),
                 _message().provider_continuation,
                 None,
-            )
+            ),
+            continuation_target=_MOONSHOT_TARGET,
         )
         controller = ConsoleChatController(
             store=store,
@@ -568,6 +580,7 @@ async def test_real_region_hides_live_owner_then_exposes_interruption() -> None:
         database.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_real_screen_sync_mounts_updates_and_clears_recovery_callout() -> None:
     database = CharactersRAGDB(":memory:", "console-continuation-reactive-ui")
     app_instance = _build_test_app()
@@ -615,7 +628,8 @@ async def test_real_screen_sync_mounts_updates_and_clears_recovery_callout() -> 
                     ),
                     _message().provider_continuation,
                     None,
-                )
+                ),
+                continuation_target=_MOONSHOT_TARGET,
             )
             controller = console._ensure_console_chat_controller()
             controller._active_assistant_message_ids[session_id] = owner.id

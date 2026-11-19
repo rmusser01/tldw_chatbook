@@ -188,6 +188,7 @@ async def test_server_runtime_service_direct_client_takes_precedence_over_provid
     assert client.calls == [("get_server_health",)]
 
 
+@pytest.mark.bootstrap_profile
 def test_server_runtime_service_from_config_delegates_through_provider_seam():
     service = ServerRuntimeService.from_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
@@ -204,6 +205,7 @@ def test_server_runtime_service_from_config_delegates_through_provider_seam():
     assert service.client_provider.build_client() is client
 
 
+@pytest.mark.bootstrap_profile
 def test_server_runtime_service_from_app_config_delegates_through_provider_seam():
     service = ServerRuntimeService.from_app_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}

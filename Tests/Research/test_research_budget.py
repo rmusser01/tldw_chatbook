@@ -1,4 +1,4 @@
-"""Research budget ledger (task-16323, extends ADR-068's engine contract).
+"""Research budget ledger (task-16323, extends ADR-315's engine contract).
 
 Port of the reserve-and-settle pattern (mole's enforced budgets +
 tldw_server limits.py's structured research_limit_exceeded errors) onto the
@@ -134,6 +134,7 @@ def test_invalid_limit_values_fall_back_to_unlimited():
 
 # --- token enforcement (task-16329) ----------------------------------------------
 
+
 def test_check_tokens_raises_once_settled_usage_reaches_budget():
     ledger = BudgetLedger.from_limits({"max_tokens": 100})
 
@@ -162,6 +163,7 @@ def test_snapshot_marks_tokens_as_estimates():
 
 
 # --- Qodo remediation (task-16814) ------------------------------------------------
+
 
 def test_allot_docs_zero_batch_returns_zero_even_with_exhausted_budget():
     ledger = BudgetLedger.from_limits({"max_fetched_docs": 0})

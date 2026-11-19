@@ -16,6 +16,7 @@ def __getattr__(name: str):
         return NotesOrganizationSyncAdapter
     raise AttributeError(name)
 
+
 __all__ = [
     "ChatSyncAdapter",
     "MediaSyncAdapter",

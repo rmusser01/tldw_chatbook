@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/private/tmp/pr2995-task15/red-extra",
+    "Tests/DB/test_automatic_chat_starts.py::test_missing_start_confirmation_requires_successful_owned_transaction[foreign_attempt]",
+    "Tests/Chat/test_console_chat_start.py::test_contended_preparation_confirms_absence_after_writer_exits",
+    "Tests/Chat/test_console_chat_start.py::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-15-safe-evidence/red-extra.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "PYTHONPATH": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "head": "100fa9d8191620645e003b2e9ec5e076b7763ad2",
+  "source_hashes": {
+    "tldw_chatbook/Chat/console_chat_start.py": "d0cd0a4da8dd3a4cd2f185b2323d26a3517a975bc2860cf815f8437cea300c0a",
+    "tldw_chatbook/DB/automatic_work.py": "53e3cc87df9d6029aa34076b2456a9333a041caac8ed558342c88bb797ba6f1c",
+    "tldw_chatbook/Chat/console_chat_fork.py": "55a16b1eefe7d9d50ef46644f4dbb7a760c7fc7a13c64ee1a088570c7d1cbc72",
+    "Tests/Chat/test_console_chat_start.py": "d7dc8f35e4b11d039e418c5cdda7f9cbe8c4911ebf54e08fec825012bc54abfb",
+    "Tests/DB/test_automatic_chat_starts.py": "ae4c73fe3146bfd79f1b95b16c0cc28004f619b7b58395d6dbd489b0cd27031c"
+  }
+}

@@ -28,6 +28,7 @@ def _ghost_row(console) -> Button:
     return rows[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_resume_marks_row_broken_with_honest_single_toast() -> None:
     app = _build_test_app()

@@ -1,0 +1,45 @@
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+            ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+            ▊                                                                                                                                      ▎ │
+   Terminal ▊  Prompt Workbench                                                                                                                    ▎ │
+ ───────────▊  Prompts / Mix-ins                                                                                                                   ▎ │
+ Workspaces ▊  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  ▎ │
+ ───────────▊                                                                                                                                      ▎ │
+ Conversatio▊  Mix-ins · 1 enabled                                                                                                                 ▎ │
+     Archive▊  Before / your message / After. Changes apply to future sends.                                                                       ▎ │
+      Archiv▊   Browse Prompts / Recipes  Preview next send                                                                                        ▎ │
+     Search ▊  Enabled mix-ins unavailable; disable, remove or recover them to send.                                                               ▎ │
+   Describe ▊                                                                                                                                      ▎ │
+   scene.   ▊  Before                                                                                                                              ▎ │
+            ▊  ▐X▌ Brief                                                                                                                           ▎ │
+  ▊▔▔▔▔▔▔▔▔▔▊   Inspect / Edit  Move up  Move down  Remove                                                                                         ▎ │
+  ▊  Filter ▊                                                                                                                                      ▎ │
+  ▊▁▁▁▁▁▁▁▁▁▊  ▐X▌ Scene · unavailable                                                                                                             ▎ │
+            ▊   Inspect / Edit  Move up  Move down  Remove                                                                                         ▎ │
+   New conve▊                                                                                                                                      ▎ │
+  Chats     ▊  After                                                                                                                               ▎ │◂ Inspect
+    Today   ▊                                                                                                                                      ▎ │
+   Chat 1   ▊                                                                                                                                      ▎ │
+   Describe ▊  None selected                                                                                                                       ▎ │
+            ▊                                                                                                                                      ▎ │
+ ───────────▊  Add from Local Library                                                                                                              ▎ │
+ Character ·▊                                                                                                                                      ▎ │
+ ───────────▊                                                                                                                                      ▎ │
+ Model      ▊  Server mix-ins cannot be enabled: revision snapshots are unsupported.                                                               ▎ │
+ ───────────▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ▎ │
+ Agent      ▊  ▊  Search mix-ins                                                                                                                ▎  ▎ │
+ ───────────▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ▎ │
+ Details    ▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Add  Search   ▎ │
+            ▊  ▊  Choose a mix-in                                                                                               ▼  ▎               ▎ │
+            ▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎               ▎ │
+            ▊   Previous Page 1 of 1                                                                                                        Next   ▎ │
+            ▊                                                                                                                                      ▎ │
+            ▊  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  ▎ │
+            ▊                                                                                                                            ┏━━━━━━┓  ▎ │
+────────────▊                                                                                                                      Back  ┃Close ┃  ▎────────────
+ Provider: O▊                                                                                                                                      ▎· Curre◀ ▶
+            ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+█  Composer ▾  Menu  Preserve this unsent source-loss draft.▌                                                          Send | $       Dictate
+
+  Ctrl+P palette | Ctrl+Q quit

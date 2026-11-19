@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│   a  │ Library notes · ⚠ A sync folder needs attention ·      │  o                                                   │
+│   v  │ Next: Open Manage sync folders.                        │  t                                                   │
+│      │ Notes (132)                                            │  e                                                   │
+│      │ These notes live in the Library's own database — for   │  s                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │                                                      │
+│      │ files. To copy or keep a folder synced, choose Add     │                                                      │
+│      │ from files.                                            │                                                      │
+│      │                                                        │                                                      │
+│ ---> │ Filter                                                 │                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│      │ ▊ Filter notes… (Enter)                              ▎ │                                                      │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│      │                                                        │<---                                                  │
+│      │    New     Sort: Newest     Select                     │                                                      │
+│      │    Add from files…     Export     Manage sync folders  │                                                      │
+│      │ Folders & placement                                    │                                                      │
+│      │    New folder     Add to folder     ○ Move note        │                                                      │
+│ ---> │    ○ Remove placement                                  │                                                      │
+│      │                                                        │                                                      │
+│      │                                                        │                                                      │
+│      │  ▸ Agent_Lessons                                       │                                                      │
+│      │  ▸ Journal                                             │                                                      │
+│      │  ▸ Meetings                                            │                                                      │
+│      │  ▸ Projects                                            │                                                      │
+│      │  ▸ Recipes                                             │                                                      │
+│      │  ▸ Research                                            │                                                      │
+│      └────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  n new note | / find note | g go to folder | esc focus rail | F1 · F6 · Ctrl+P · Ctrl+Q

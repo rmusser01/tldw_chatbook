@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+──────────────────────────────────────────╭──────────────────────────────────────────────────────────────────────────╮──────────────────────────────────────────
+ Library | Local                          │                                                                          │
+  Library notes  |  Folder files          │  Library Shortcuts — Notes                                               │
+┌─────────────────────────────────────────│  Shortcuts:                                                              │─────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────│  - : typing in field                                                     │ges save automatically.                  │
+│   a  │ Library notes · Ready            │  - esc: back to list                                                     │                                         │
+│   v  │ Notes (122)                      │  - F6: next pane                                                         │                                         │
+│      │ These notes live in the Library's│  - shift+f6: Previous pane                                               │                                         │
+│      │ that live in a folder on disk, sw│  - ctrl+n: New note                                                      │ disk                                    │
+│      │ copy or keep a folder synced, cho│  │                                                                    │  │                                         │
+│      │                                  │  │                                                                    │  │                                         │
+│      │ Filter                           │  │                                                                    │  │                                         │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔│  │                                                                    │  │                                         │
+│      │ ▊ Filter notes… (Enter)          │  │                                                                    │  │▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁│  │                                                                    │  │                                       ▎ │
+│      │                                  │  │                                                                    │  │▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Selec│  │                                                                    │  │                                         │
+│ ---> │    Add from files…     Export    │  │                                                                    │  │                                         │
+│      │ Folders & placement              │  │                                                                    │  │▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder  │  │                                                                    │  │                                       ▎ │
+│      │    ○ Remove placement            │  │                                                                    │  │▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                  │  │                                                                    │  │                                         │
+│      │                                  │  │                                                                    │  │                                         │
+│      │  ▸ Agent_Lessons                 │  │                                                                    │  │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Journal                       │  │                                                                    │  │                                       ┃ │
+│      │  ▸ Meetings                      │  │                                                                    │  │                                       ┃ │
+│      │  ▸ Projects                      │  │                                                                    │  │                                       ┃ │
+│ ---> │  ▸ Recipes                       │  │                                                                    │  │-before-palette typed-before-hold      ┃ │
+│      │  ▸ Research                      │  │                                                                    │  │                                       ┃ │
+│      │  ▸ Study                         │  │                                                                    │  │                                       ┃ │
+│      │  ▾ Unfiled                       │  │                                                                    │  │                                       ┃ │
+│      │    Gardening log · now           │  │                                                                    │  │                                       ┃ │
+│      │    Quotes · 2m                   │  │                                                                    │  │                                       ┃ │
+│      │    Scratch · 2m                  │  │                                                                    │  │                                       ┃ │
+│      │    Untitled · 2m                 │  │                                                                    │  │                                       ┃ │
+│      │    A very long note title that ke│  └────────────────────────────────────────────────────────────────────┘  │                                       ┃ │
+│      │    📚 Reading queue 2026 ✨ · 2m │                                                                          │                                       ┃ │
+│      │    Meeting Notes 2026-09-30 · 2m │       Close                                                              │                                       ┃ │
+│      │    Index — start here · 2m       │                                                                          │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │    Reading list · 2m             ╰──────────────────────────────────────────────────────────────────────────╯                                         │
+│      └──────────────────────────────────────────────────────────────┘                                                                        8 words · 4:74  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

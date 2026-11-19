@@ -1,0 +1,13 @@
+{
+  "before_count": 8,
+  "after_count": 7,
+  "new_findings": [],
+  "removed_findings": [
+    [
+      "Tests/Chat/test_console_project_instruction_provider_grammar.py",
+      "I001",
+      "Import block is un-sorted or un-formatted"
+    ]
+  ],
+  "all_changed_python_parses": true
+}

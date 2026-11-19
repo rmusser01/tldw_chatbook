@@ -53,9 +53,7 @@ def _seed(db: MediaDatabase, *, legacy: int, stamped: int) -> None:
         version = None if media_id <= legacy else "parity-1@385afa95"
         for index in range(2):
             n += 1
-            rows.append(
-                (n, media_id, f"c{n}", index, "words", f"u{n}", now, version)
-            )
+            rows.append((n, media_id, f"c{n}", index, "words", f"u{n}", now, version))
     conn.executemany(
         "INSERT INTO UnvectorizedMediaChunks (id, media_id, chunk_text, "
         "chunk_index, chunk_type, uuid, last_modified, chunk_engine_version, "
@@ -102,7 +100,7 @@ async def test_census_runs_on_a_worker_thread(media_db):
 
     assert threads, "the census never touched the media DB at all"
     assert loop_thread not in threads, (
-        "the census ran on the event-loop thread: " f"{threads} vs {loop_thread}"
+        f"the census ran on the event-loop thread: {threads} vs {loop_thread}"
     )
     # The work still happened AND produced the right answer.
     assert payload["legacy_chunk_report"] == "Chunked by an older engine: 3 items"
@@ -174,9 +172,12 @@ async def test_memory_backed_db_still_reports_the_real_counts():
 
 
 async def test_file_backed_db_declares_itself_thread_safe(media_db):
-    assert LocalRAGAdminService(
-        media_db, chunking_service=object()
-    ).diagnostics_are_thread_safe() is True
+    assert (
+        LocalRAGAdminService(
+            media_db, chunking_service=object()
+        ).diagnostics_are_thread_safe()
+        is True
+    )
 
 
 async def test_no_media_db_is_thread_safe_and_reports_nothing():
@@ -261,8 +262,15 @@ async def test_concurrent_censuses_never_tear_against_a_live_writer(media_db):
             "INSERT INTO Media (id, title, type, content, content_hash, uuid, "
             "last_modified, version, client_id, deleted) "
             "VALUES (?,?,?,?,?,?,?,1,'test',0)",
-            (media_id, f"doc {media_id}", "document", "b", f"h{media_id}",
-             f"m{media_id}", now),
+            (
+                media_id,
+                f"doc {media_id}",
+                "document",
+                "b",
+                f"h{media_id}",
+                f"m{media_id}",
+                now,
+            ),
         )
         conn.execute(
             "INSERT INTO UnvectorizedMediaChunks (id, media_id, chunk_text, "

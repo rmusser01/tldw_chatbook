@@ -1,0 +1,166 @@
+{
+  "_provenance": "Recorded live 2026-10-30 against https://api.minimax.io (TASK-33621.50) with a pure-httpx probe that sent the MiniMax adapter's exact cancel request: DELETE /v2/video_generation/{task_id} with Authorization: Bearer + Content-Type: application/json and no body. Bodies are verbatim except the expiring CDN URL. Docs: https://platform.minimax.io/docs/api-reference/video-generation-v2-delete",
+  "cancel_request_headers_sent": [
+    "accept",
+    "accept-encoding",
+    "connection",
+    "content-type",
+    "host",
+    "user-agent",
+    "authorization(redacted)"
+  ],
+  "cancel_accepted_just_after_submit": {
+    "note": "DELETE ~1 s after submit, status not read first",
+    "method": "DELETE",
+    "url": "https://api.minimax.io/v2/video_generation/458144599040530",
+    "http_status": 200,
+    "body": {
+      "task_id": "458144599040530",
+      "action": "cancelled",
+      "status": "cancelled"
+    }
+  },
+  "query_after_accepted_cancel": {
+    "note": "the cancelled task: status cancelled, usage empty (nothing billed)",
+    "method": "GET",
+    "url": "https://api.minimax.io/v2/query/video_generation/458144599040530",
+    "http_status": 200,
+    "body": {
+      "task": {
+        "id": "458144599040530",
+        "model": "MiniMax-H3",
+        "status": "cancelled",
+        "created_at": 1793405089,
+        "updated_at": 1793405090,
+        "resolution": "768P",
+        "duration": 4,
+        "usage": {},
+        "ratio": "16:9",
+        "task_type": "generation"
+      }
+    }
+  },
+  "poll_running_at_submit": {
+    "note": "a poll 0 s after submit already reads status=running",
+    "method": "GET",
+    "url": "https://api.minimax.io/v2/query/video_generation/458144930017621",
+    "http_status": 200,
+    "body": {
+      "task": {
+        "id": "458144930017621",
+        "model": "MiniMax-H3",
+        "status": "running",
+        "created_at": 1793405097,
+        "updated_at": 1793405097,
+        "resolution": "768P",
+        "duration": 4,
+        "usage": {},
+        "ratio": "16:9",
+        "task_type": "generation"
+      }
+    }
+  },
+  "cancel_accepted_while_running_0s": {
+    "note": "DELETE right after that poll read status=running",
+    "method": "DELETE",
+    "url": "https://api.minimax.io/v2/video_generation/458144930017621",
+    "http_status": 200,
+    "body": {
+      "task_id": "458144930017621",
+      "action": "cancelled",
+      "status": "cancelled"
+    }
+  },
+  "cancel_refused_while_running_43s": {
+    "note": "DELETE 43 s into status=running: refused",
+    "method": "DELETE",
+    "url": "https://api.minimax.io/v2/video_generation/458139352822266",
+    "http_status": 400,
+    "body": {
+      "type": "error",
+      "error": {
+        "type": "bad_request_error",
+        "message": "invalid params, task in current status can not be cancelled or deleted (2013)",
+        "http_code": "400"
+      },
+      "request_id": "073463ea32028fed47abb0f13ee5b6cd"
+    }
+  },
+  "query_after_refused_cancel": {
+    "note": "the refused task keeps running",
+    "method": "GET",
+    "url": "https://api.minimax.io/v2/query/video_generation/458139352822266",
+    "http_status": 200,
+    "body": {
+      "task": {
+        "id": "458139352822266",
+        "model": "MiniMax-H3",
+        "status": "running",
+        "created_at": 1793405119,
+        "updated_at": 1793405129,
+        "resolution": "768P",
+        "duration": 4,
+        "usage": {},
+        "ratio": "16:9",
+        "task_type": "generation"
+      }
+    }
+  },
+  "refused_task_final": {
+    "note": "the refused task finished ~93 s after submit, billed output_seconds=4",
+    "method": "GET",
+    "url": "https://api.minimax.io/v2/query/video_generation/458139352822266",
+    "http_status": 200,
+    "body": {
+      "task": {
+        "id": "458139352822266",
+        "model": "MiniMax-H3",
+        "status": "succeeded",
+        "created_at": 1793405119,
+        "updated_at": 1793405212,
+        "content": {
+          "url": "<expiring CDN URL redacted>"
+        },
+        "resolution": "768P",
+        "duration": 4,
+        "usage": {
+          "total_seconds": 4,
+          "input_seconds": 0,
+          "output_seconds": 4,
+          "input_image_count": 0,
+          "total_tokens": 130196,
+          "prompt_tokens": 0,
+          "completion_tokens": 130196
+        },
+        "ratio": "16:9",
+        "task_type": "generation"
+      }
+    }
+  },
+  "delete_on_cancelled": {
+    "note": "DELETE on an already-cancelled task: refused",
+    "method": "DELETE",
+    "url": "https://api.minimax.io/v2/video_generation/458144599040530",
+    "http_status": 400,
+    "body": {
+      "type": "error",
+      "error": {
+        "type": "bad_request_error",
+        "message": "invalid params, task in current status can not be cancelled or deleted (2013)",
+        "http_code": "400"
+      },
+      "request_id": "073463a239a9a36c7036d820598507ff"
+    }
+  },
+  "delete_on_succeeded": {
+    "note": "DELETE on a succeeded task: the record is deleted",
+    "method": "DELETE",
+    "url": "https://api.minimax.io/v2/video_generation/458139352822266",
+    "http_status": 200,
+    "body": {
+      "task_id": "458139352822266",
+      "action": "deleted",
+      "status": "deleted"
+    }
+  }
+}

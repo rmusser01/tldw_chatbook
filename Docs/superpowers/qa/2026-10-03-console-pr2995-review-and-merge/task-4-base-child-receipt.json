@@ -1,0 +1,24 @@
+{
+  "revision": "fc1627e99b8722a0a69812530d950410e8356ba0",
+  "cwd": "/private/tmp/task-4-base-source-o82jlo5y",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Agents/test_automatic_child_scope.py",
+    "--basetemp=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj/pytest",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child.xml"
+  ],
+  "environment": {
+    "TLDW_TEST_CONFIG_ROOT": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-base-child-profile-r9dpd2kj"
+  },
+  "exit": 1,
+  "elapsed_seconds": 28.46355358301662,
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_chat_start.py": "fa456ab892bc7644ab75c7a1a1c8b5a4b17093b2e9fafe470b6e04bf5315ed20",
+    "tldw_chatbook/Chat/console_chat_controller.py": "65b4a2effa969439b0848584bb103bea7273c6def9310408c99bd35bc40c777d",
+    "tldw_chatbook/DB/automatic_work.py": "ee998835558e8e5842fb66f9692a4af66d5af2099ddbb838074827bda3a2113b"
+  },
+  "test_sha256": "52fe0a519a1f4d05c3931e9520c03362597106795b9518ca8c239687e95f1246"
+}

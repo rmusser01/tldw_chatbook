@@ -142,6 +142,7 @@ def test_the_cap_is_at_least_two_so_a_previous_snapshot_can_exist():
     assert _cap() >= 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_churning_url_keeps_exactly_the_newest_n_snapshots(monkeypatch):
     """AC#1, end to end through the real producer.
@@ -189,6 +190,7 @@ async def test_a_churning_url_keeps_exactly_the_newest_n_snapshots(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_store_snapshot_prunes_within_its_own_transaction(monkeypatch):
     """AC#1 at the write chokepoint, with no fetch in the way.
@@ -213,6 +215,7 @@ async def test_store_snapshot_prunes_within_its_own_transaction(monkeypatch):
     assert bodies == [f"revision {i}" for i in range(n + 4, n + 4 - n, -1)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_pre_existing_backlog_collapses_on_the_very_next_write(monkeypatch):
     """Every database in the field already holds an unpruned backlog.
@@ -264,6 +267,7 @@ async def test_a_pre_existing_backlog_collapses_on_the_very_next_write(monkeypat
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shadow_mode_writes_nothing_and_therefore_prunes_nothing(monkeypatch):
     """A dry run must not delete the user's snapshots.
@@ -306,6 +310,7 @@ async def test_shadow_mode_writes_nothing_and_therefore_prunes_nothing(monkeypat
 # --- AC#2: never key the prune per subscription ---------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_quiet_urls_baseline_survives_a_busy_siblings_churn(monkeypatch):
     """AC#2, the review-established constraint, on the real `url_list` arm.
@@ -368,9 +373,7 @@ async def test_a_quiet_urls_baseline_survives_a_busy_siblings_churn(monkeypatch)
     assert "Beta has not been touched" in b_rows[0]["extracted_content"], (
         "B's surviving row must be B's own content, not a sibling URL's"
     )
-    assert len(_snapshots(db, source_id, _URL_A)) == n, (
-        "A is capped independently of B"
-    )
+    assert len(_snapshots(db, source_id, _URL_A)) == n, "A is capped independently of B"
 
     final = await _check(service, source_id)
     assert dict(final["stats"]["dispositions"]) == _counts(changed=1, unchanged=1), (
@@ -378,6 +381,7 @@ async def test_a_quiet_urls_baseline_survives_a_busy_siblings_churn(monkeypatch)
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pruning_one_url_never_touches_another_urls_rows(monkeypatch):
     """AC#2 at the chokepoint: the DELETE's blast radius is one URL.
@@ -410,6 +414,7 @@ async def test_pruning_one_url_never_touches_another_urls_rows(monkeypatch):
 # --- AC#3: the [previous snapshot] affordance's data survives -------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_second_newest_snapshot_survives_heavy_churn(monkeypatch):
     """AC#3: after churn, the URL still has a snapshot BEFORE its baseline.
@@ -446,6 +451,7 @@ async def test_the_second_newest_snapshot_survives_heavy_churn(monkeypatch):
 # --- the survivor set and the baseline SELECT must agree ------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_after_pruning_an_unchanged_page_still_reports_unchanged(monkeypatch):
     """The prune's survivors and the baseline SELECT are the same ordering.
@@ -493,6 +499,7 @@ async def test_after_pruning_an_unchanged_page_still_reports_unchanged(monkeypat
 # --- TASK-1361's same-second tie window -----------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_two_snapshots_sharing_a_created_at_both_survive_under_the_cap(
     monkeypatch,
@@ -531,6 +538,7 @@ async def test_two_snapshots_sharing_a_created_at_both_survive_under_the_cap(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_tie_break_decides_which_tied_row_is_pruned(monkeypatch):
     """Over the cap, the `id` tie-break makes the outcome deterministic.
@@ -592,6 +600,7 @@ async def test_the_tie_break_decides_which_tied_row_is_pruned(monkeypatch):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prune_diagnostic_omits_the_monitored_url(monkeypatch) -> None:
     from types import SimpleNamespace

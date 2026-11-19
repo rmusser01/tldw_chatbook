@@ -234,7 +234,7 @@ import asyncio,json,os
 from pathlib import Path
 from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery import bootstrap,raw_participants as raw
-from tldw_chatbook.Backup_Recovery.async_file_participants import _FileJob
+from tldw_chatbook.Backup_Recovery.async_file_participants import FileJob
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets import emoji_picker
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore,RuntimeSourceState
@@ -248,13 +248,13 @@ store.save(RuntimeSourceState(last_known_server_label='ordinary-reopen'))
 assert store.load().last_known_server_label=='ordinary-reopen'
 screen=object.__new__(ChatScreen)
 async def save():
- with _FileJob(screen,'sidebar_state') as job:
+ with FileJob(screen,'sidebar_state') as job:
   outcome=await job.run({'collapsible_states':{},'search_query':'ordinary-reopen','last_active_section':'notes'})
   if outcome.error:raise outcome.error
 asyncio.run(save())
 import toml
-with raw._scope(screen,'sidebar_state') as operation:
- with raw._file(operation,raw._selected(operation),'r') as stream:assert toml.load(stream)['sidebar']['search_query']=='ordinary-reopen'
+with raw.scope(screen,'sidebar_state') as operation:
+ with raw.file(operation,raw.selected_target(operation),'r') as stream:assert toml.load(stream)['sidebar']['search_query']=='ordinary-reopen'
 assert bootstrap._records(root)[1]==before and bootstrap._registry(root)==registry
 print('ACTUAL_DEFAULT_OWNER_REOPEN_COMPLETE')
 """

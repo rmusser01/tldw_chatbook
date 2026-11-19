@@ -34,6 +34,7 @@ async def _tab_to(screen, host, pilot, selector, label):
     await _focus(screen, host, pilot, selector, label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])

@@ -123,7 +123,7 @@ def _require_idle(store: Any, controller: Any, session: Any) -> None:
         or any(not task.done() for task in lifecycle.tasks)
     ):
         raise ValueError(
-            "Conversation settings are still saving. Retry the Persona change afterwards."
+            "Chat settings are still saving. Retry the Persona change afterwards."
         )
 
 

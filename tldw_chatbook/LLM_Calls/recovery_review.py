@@ -226,7 +226,9 @@ def _selection(path, auth_source=None, *, resolve=False):
             or not value.strip()
             or value.strip()
             in {"<API_KEY_HERE>", "YOUR_KEY", "your_key", "your-api-key"}
-            or value.startswith(("ENC:", "encrypted:", "recovery:"))
+            # TASK-34100.4: the encryption engine writes a lowercase "enc:"
+            # prefix; only "ENC:" was refused, so ciphertext became a key.
+            or value.strip().lower().startswith(("enc:", "encrypted:", "recovery:"))
         ):
             raise ProviderReconnectRequired()
         secret = value.strip()
@@ -287,6 +289,35 @@ def prepare_openai_reconnect(*, auth_source=None):
             tuple(sorted({row["generation"] for row in history})),
             str(path),
         )
+
+
+def openai_reconnect_pending() -> bool | None:
+    """Whether a restored OpenAI connection awaits its review.
+
+    Restored generations exist (the history ``prepare_openai_reconnect``
+    reads) and no recorded review matches the current selection, so
+    ``openai_call`` would refuse a request.
+
+    Returns:
+        True only then; False when nothing was restored or a review matches.
+        None when it cannot tell (the history cannot be read, the storage
+        lease is refused): a caller must not keep that as "not pending".
+    """
+    path = bootstrap.effective_config_path()
+    try:
+        with acquire_storage(path) as lease:
+            restored = bool(_history(path, lease))
+    except (OSError, ValueError, RuntimeError):  # ProviderReconnectRequired too
+        return None
+    if not restored:
+        return False
+    try:
+        _Operation(path).close()
+    except ProviderReconnectRequired:
+        return True
+    except (OSError, ValueError, RuntimeError):
+        return None
+    return False
 
 
 def confirm_openai_reconnect(review):
@@ -442,20 +473,27 @@ class _Operation:
         if not any(item is resource for item in self.resources):
             self.resources.append(resource)
 
+    def close_resources(self):
+        error = None
+        for index in range(len(self.resources) - 1, -1, -1):
+            try:
+                self.resources[index].close()
+            except BaseException as failure:  # noqa: BLE001 - settle every native resource before propagating failure.
+                error = error or failure
+            else:
+                del self.resources[index]
+        if error is not None:
+            raise error  # Native source remains held when actual cleanup fails.
+
     def close(self):
         if self.closed:
             return
         if self.async_contexts:
             raise ProviderReconnectRequired()  # Native async cleanup did not settle.
-        error = None
-        for resource in reversed(self.resources):
-            try:
-                resource.close()
-            except BaseException as failure:  # noqa: BLE001 - settle every native resource before propagating failure.
-                error = error or failure
-        if error is not None:
-            raise error  # Native source remains held when actual cleanup fails.
+        self.close_resources()
         self.closed = True
+        if getattr(self.lease, "_retained_stream_operation", None) is self:
+            self.lease._retained_stream_operation = None
         self.lease.close()
 
 
@@ -480,6 +518,19 @@ def _using(operation):
         yield operation
     finally:
         _current.reset(token)
+
+
+def _own_ordinary_stream_transport(resource):
+    """Enroll a private transport before native work in an admitted call."""
+    active = _current.get()
+    if active is None or active[1] != _identity():
+        raise ProviderReconnectRequired()
+    operation = active[0]
+    if operation.closed or operation.history:
+        raise ProviderReconnectRequired()
+    operation.own(resource)
+    # The live lease keeps the exact operation reachable if retirement fails.
+    operation.lease._retained_stream_operation = operation
 
 
 class _OpenAIStream(Iterator):
@@ -525,6 +576,9 @@ class _OpenAIStream(Iterator):
         # Console cancellation may race a native next() in another thread.
         # That worker performs the actual close as soon as its I/O settles.
         if not self.lock.acquire(blocking=False):
+            request_abort = getattr(self.iterator, "_request_owned_read_abort", None)
+            if callable(request_abort):
+                request_abort()
             return
         try:
             if self.closed:
@@ -569,6 +623,23 @@ def openai_call[**P, R](function: Callable[P, R]) -> Callable[P, R | _OpenAIStre
     return call
 
 
+def _active_openai_operation():
+    active = _current.get()
+    if active is None or active[1] != _identity():
+        raise ProviderReconnectRequired()
+    return active[0]
+
+
+def openai_stream_session(
+    factory: Callable[[], "requests.Session"],
+) -> tuple["requests.Session", Callable[[], None]]:
+    """Enroll the private stream session before request validation."""
+    operation = _active_openai_operation()
+    session = factory()
+    operation.own(session)
+    return session, operation.close_resources
+
+
 def openai_post(
     session: "requests.Session", url: str, **kwargs: Any
 ) -> "requests.Response":
@@ -587,10 +658,7 @@ def openai_post(
         ProviderReconnectRequired: Admission, reviewed credentials, or the
             response redirect policy cannot be verified.
     """
-    active = _current.get()
-    if active is None or active[1] != _identity():
-        raise ProviderReconnectRequired()
-    operation = active[0]
+    operation = _active_openai_operation()
     key = kwargs.get("headers", {}).get("Authorization", "").removeprefix("Bearer ")
     operation.check_request(url, key)
     operation.own(session)

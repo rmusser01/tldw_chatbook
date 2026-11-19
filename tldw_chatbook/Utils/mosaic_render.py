@@ -17,13 +17,10 @@ little color precision for the doubled spatial detail.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from contextlib import ExitStack
 
 from PIL import Image as PILImage
 from rich.text import Text
-
-if TYPE_CHECKING:  # pragma: no cover
-    pass
 
 # Index = 4-bit subpixel mask: bit 0 = top-left, 1 = top-right,
 # 2 = bottom-left, 3 = bottom-right.
@@ -178,7 +175,7 @@ def mosaic_contain_cell_size(
 
 
 def mosaic_from_image(
-    image: "PILImage.Image",
+    image: PILImage.Image,
     box_cols: int,
     box_lines: int,
     *,
@@ -203,6 +200,9 @@ def mosaic_from_image(
         fit: "contain" (default) letterboxes the whole image inside the
             box; "cover" scales to FILL the box and center-crops the
             overflow (object-fit: cover) -- aspect is preserved either way.
+            "native" samples the supplied 2x2 pixel grid without resizing; it must
+            already fit the cell box. Native crops retain source pixel data,
+            while terminal glyph colours remain quantized approximations.
         monochrome: Render luminance as SHADE GLYPHS instead of colour. The
             colour path stores the whole image in background colour, so a
             terminal without colour shows a box of blank spaces rather than
@@ -213,94 +213,106 @@ def mosaic_from_image(
     Returns:
         A non-wrapping Rich ``Text`` renderable, one line per cell row.
     """
-    source = image
-    if source.mode != "RGB":
-        rgba = source.convert("RGBA")
-        base = PILImage.new("RGBA", rgba.size, (0, 0, 0, 255))
-        source = PILImage.alpha_composite(base, rgba).convert("RGB")
-    src_w, src_h = source.size
-    box_w = max(1, box_cols)
-    box_h = max(1, box_lines)
-    if fit == "cover":
-        scale = max(box_w / src_w, box_h * 2 / src_h)
-        grid_w = max(box_w * 2, round(src_w * scale * 2))
-        grid_h = max(box_h * 2, round(src_h * scale))
-        source = source.resize((grid_w, grid_h), PILImage.Resampling.LANCZOS)
-        left = (grid_w - box_w * 2) // 2
-        top = (grid_h - box_h * 2) // 2
-        source = source.crop((left, top, left + box_w * 2, top + box_h * 2))
-    else:
-        grid_w, grid_h = _mosaic_contain_grid_size(
-            src_w,
-            src_h,
-            box_w,
-            box_h,
-        )
-        source = source.resize((grid_w, grid_h), PILImage.Resampling.LANCZOS)
-    width, height = source.size
-    cell_cols = max(1, (width + 1) // 2)
-    cell_rows = max(1, (height + 1) // 2)
-    pixels = source.load()
-
-    def sample(x: int, y: int) -> tuple[int, int, int]:
-        # Clamp so odd-sized thumbnails repeat their edge pixel instead of
-        # reading out of bounds.
-        return pixels[min(x, width - 1), min(y, height - 1)]
-
-    mono_lo, mono_hi = 0.0, 255.0
-    if monochrome:
-        # One pass over the cell means to learn this image's actual range.
-        cell_means = [
-            sum(
-                _luminance(sample(c * 2 + dx, r * 2 + dy))
-                for dx in (0, 1)
-                for dy in (0, 1)
+    with ExitStack() as stack:
+        source = image
+        if source.mode != "RGB":
+            rgba = source.convert("RGBA")
+            stack.callback(rgba.close)
+            base = PILImage.new("RGBA", rgba.size, (0, 0, 0, 255))
+            stack.callback(base.close)
+            composited = PILImage.alpha_composite(base, rgba)
+            stack.callback(composited.close)
+            source = composited.convert("RGB")
+            stack.callback(source.close)
+        src_w, src_h = source.size
+        box_w = max(1, box_cols)
+        box_h = max(1, box_lines)
+        if fit == "native":
+            if src_w > box_w * 2 or src_h > box_h * 2:
+                raise ValueError("native_mosaic_exceeds_cell_box")
+        elif fit == "cover":
+            scale = max(box_w / src_w, box_h * 2 / src_h)
+            grid_w = max(box_w * 2, round(src_w * scale * 2))
+            grid_h = max(box_h * 2, round(src_h * scale))
+            source = source.resize((grid_w, grid_h), PILImage.Resampling.LANCZOS)
+            stack.callback(source.close)
+            left = (grid_w - box_w * 2) // 2
+            top = (grid_h - box_h * 2) // 2
+            source = source.crop((left, top, left + box_w * 2, top + box_h * 2))
+            stack.callback(source.close)
+        else:
+            grid_w, grid_h = _mosaic_contain_grid_size(
+                src_w,
+                src_h,
+                box_w,
+                box_h,
             )
-            / 4
-            for r in range(cell_rows)
-            for c in range(cell_cols)
-        ]
-        mono_lo, mono_hi = min(cell_means), max(cell_means)
+            source = source.resize((grid_w, grid_h), PILImage.Resampling.LANCZOS)
+            stack.callback(source.close)
+        width, height = source.size
+        cell_cols = max(1, (width + 1) // 2)
+        cell_rows = max(1, (height + 1) // 2)
+        pixels = source.load()
 
-    text = Text(no_wrap=True, end="")
-    for row in range(cell_rows):
-        if row:
-            text.append("\n")
-        for col in range(cell_cols):
-            cell = [
-                sample(col * 2, row * 2),
-                sample(col * 2 + 1, row * 2),
-                sample(col * 2, row * 2 + 1),
-                sample(col * 2 + 1, row * 2 + 1),
+        def sample(x: int, y: int) -> tuple[int, int, int]:
+            # Clamp so odd-sized thumbnails repeat their edge pixel instead of
+            # reading out of bounds.
+            return pixels[min(x, width - 1), min(y, height - 1)]
+
+        mono_lo, mono_hi = 0.0, 255.0
+        if monochrome:
+            # One pass over the cell means to learn this image's actual range.
+            cell_means = [
+                sum(
+                    _luminance(sample(c * 2 + dx, r * 2 + dy))
+                    for dx in (0, 1)
+                    for dy in (0, 1)
+                )
+                / 4
+                for r in range(cell_rows)
+                for c in range(cell_cols)
             ]
-            lums = [_luminance(c) for c in cell]
-            spread = max(lums) - min(lums)
-            if monochrome:
-                # One glyph per cell from the mean luminance: no colour is
-                # consulted at all, so the result survives a monochrome
-                # filter that would blank the coloured path entirely.
-                # Normalised to this image's own range (see `_shade_glyph`)
-                # so a dark portrait keeps its shape instead of flattening.
-                text.append(_shade_glyph(sum(lums) / len(lums), mono_lo, mono_hi))
-                continue
-            if spread < _FLAT_CELL_SPREAD:
-                r, g, b = _mean(cell)
-                text.append(" ", style=f"on rgb({r},{g},{b})")
-                continue
-            threshold = (max(lums) + min(lums)) / 2
-            mask = 0
-            fg_group: list[tuple[int, int, int]] = []
-            bg_group: list[tuple[int, int, int]] = []
-            for bit, (color, lum) in enumerate(zip(cell, lums)):
-                if lum >= threshold:
-                    mask |= 1 << bit
-                    fg_group.append(color)
-                else:
-                    bg_group.append(color)
-            fr, fg_, fb = _mean(fg_group)
-            br, bg_, bb = _mean(bg_group)
-            text.append(
-                QUADRANT_GLYPHS[mask],
-                style=f"rgb({fr},{fg_},{fb}) on rgb({br},{bg_},{bb})",
-            )
-    return text
+            mono_lo, mono_hi = min(cell_means), max(cell_means)
+
+        text = Text(no_wrap=True, end="")
+        for row in range(cell_rows):
+            if row:
+                text.append("\n")
+            for col in range(cell_cols):
+                cell = [
+                    sample(col * 2, row * 2),
+                    sample(col * 2 + 1, row * 2),
+                    sample(col * 2, row * 2 + 1),
+                    sample(col * 2 + 1, row * 2 + 1),
+                ]
+                lums = [_luminance(c) for c in cell]
+                spread = max(lums) - min(lums)
+                if monochrome:
+                    # One glyph per cell from the mean luminance: no colour is
+                    # consulted at all, so the result survives a monochrome
+                    # filter that would blank the coloured path entirely.
+                    # Normalised to this image's own range (see `_shade_glyph`)
+                    # so a dark portrait keeps its shape instead of flattening.
+                    text.append(_shade_glyph(sum(lums) / len(lums), mono_lo, mono_hi))
+                    continue
+                if spread < _FLAT_CELL_SPREAD:
+                    r, g, b = _mean(cell)
+                    text.append(" ", style=f"on rgb({r},{g},{b})")
+                    continue
+                threshold = (max(lums) + min(lums)) / 2
+                mask = 0
+                fg_group: list[tuple[int, int, int]] = []
+                bg_group: list[tuple[int, int, int]] = []
+                for bit, (color, lum) in enumerate(zip(cell, lums)):
+                    if lum >= threshold:
+                        mask |= 1 << bit
+                        fg_group.append(color)
+                    else:
+                        bg_group.append(color)
+                fr, fg_, fb = _mean(fg_group)
+                br, bg_, bb = _mean(bg_group)
+                text.append(
+                    QUADRANT_GLYPHS[mask],
+                    style=f"rgb({fr},{fg_},{fb}) on rgb({br},{bg_},{bb})",
+                )
+        return text

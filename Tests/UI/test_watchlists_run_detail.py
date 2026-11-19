@@ -235,6 +235,7 @@ def _logs_text(pane: RunsPane) -> str:
     return str(pane.query_one("#runs-detail-logs", Static).renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_a_run_row_fills_run_detail_items_and_logs():
     """AC#1/AC#2 (mouse): the whole UAT gesture, against the real table."""
@@ -275,6 +276,7 @@ async def test_clicking_a_run_row_fills_run_detail_items_and_logs():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyboard_selection_fills_run_detail_items_and_logs():
     """AC#1 (keyboard): the same, driven entirely from the cursor keys."""
@@ -300,6 +302,7 @@ async def test_keyboard_selection_fills_run_detail_items_and_logs():
         assert "fetched 7 items" in _logs_text(pane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_runs_items_never_outlive_the_run_they_belong_to():
     """Selecting a run with no items must EMPTY the table, not keep the last."""
@@ -328,6 +331,7 @@ async def test_a_runs_items_never_outlive_the_run_they_belong_to():
         assert "fetched 3 items" in _logs_text(pane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_detail_survives_a_workbench_rebuild():
     """A rebuilt `RunsPane` is re-seeded with the selection AND its detail."""
@@ -383,6 +387,7 @@ async def test_run_detail_survives_a_workbench_rebuild():
         assert "fetched 7 items" in _logs_text(fresh)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_detail_lands_when_the_push_happens_in_the_mount_window():
     """TASK-2200's window: `_is_mounted` is False while the DOM is queryable.
@@ -435,6 +440,7 @@ async def test_run_detail_lands_when_the_push_happens_in_the_mount_window():
         assert "fetched 7 items" in logs_in_window
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_deep_linked_run_arrives_with_its_detail():
     """The deep link cannot rely on `RunSelected` to trigger the detail load.
@@ -479,6 +485,7 @@ async def test_a_deep_linked_run_arrives_with_its_detail():
         assert "fetched 7 items" in _logs_text(live)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_the_selection_off_the_runs_tab_drops_the_mirrored_detail():
     """The screen's mirror is keyed to `selected_run` and must follow it.
@@ -540,6 +547,7 @@ def test_a_run_with_no_log_says_so_rather_than_rendering_blank():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_item_titles_reach_the_table_inert():
     """Item titles are remote content; `DataTable` markup-parses bare strings.
@@ -584,6 +592,7 @@ async def _select_second_run(pilot, pane) -> None:
     await _settle_until(pilot, lambda: pane.selected_run is not None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_run_whose_items_a_later_check_reclaimed_says_so():
     """The commonest blank, and the one that contradicts the counts above it.
@@ -618,6 +627,7 @@ async def test_a_run_whose_items_a_later_check_reclaimed_says_so():
         assert pane.query_one("#runs-detail-items-note", Static).display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_run_that_genuinely_found_nothing_is_not_blamed_on_a_later_check():
     """The discriminating half: `Found: 0` + no rows is not re-attribution."""
@@ -647,6 +657,7 @@ async def test_a_run_that_genuinely_found_nothing_is_not_blamed_on_a_later_check
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_server_backend_run_says_items_are_not_listed():
     """`WatchlistScopeService.list_items` refuses the server backend outright.
@@ -674,6 +685,7 @@ async def test_a_server_backend_run_says_items_are_not_listed():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_items_query_says_so_and_raises_a_toast():
     """Review wave, Important 2.
@@ -708,6 +720,7 @@ async def test_a_failed_items_query_says_so_and_raises_a_toast():
         assert kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_truncated_items_table_says_how_many_it_is_showing():
     """Review wave, Minor 2: `Found: 500` over exactly 200 rows, silently."""
@@ -738,6 +751,7 @@ async def test_a_truncated_items_table_says_how_many_it_is_showing():
         assert _note_text(pane) == f"Showing the first {limit} of 500 items."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_complete_items_table_carries_no_note():
     """The note is hidden, not merely empty, when there is nothing to say."""
@@ -758,6 +772,7 @@ async def test_a_complete_items_table_carries_no_note():
         assert pane.query_one("#runs-detail-items-note", Static).display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_items_note_does_not_outlive_the_run_it_describes():
     """Selecting another run must not leave the previous run's excuse on screen."""
@@ -814,6 +829,7 @@ def test_every_empty_items_cause_has_its_own_words():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_previous_runs_note_is_gone_before_the_loader_answers():
     """The pane clears its own note on selection, not just when told to.
@@ -862,6 +878,7 @@ async def test_the_previous_runs_note_is_gone_before_the_loader_answers():
 # --- Re-review, I1-b: the discriminator is `processed`, never `found` -------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_run_that_filtered_everything_is_not_blamed_on_a_later_check():
     """The re-review's measured scenario, at the UI.
@@ -905,6 +922,7 @@ async def test_a_run_that_filtered_everything_is_not_blamed_on_a_later_check():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_full_page_of_everything_the_run_stored_is_not_called_truncated():
     """The same bug in reverse (re-review, I1-b).
@@ -973,6 +991,7 @@ def _running_run() -> dict[str, Any]:
     return run
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_poll_tick_on_an_unchanged_run_schedules_no_detail_load():
     """`run_poll` fires once a second for up to a minute, with no user action.
@@ -1016,6 +1035,7 @@ async def test_a_poll_tick_on_an_unchanged_run_schedules_no_detail_load():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_running_runs_visible_stats_still_follow_it_across_ticks():
     """The other half: the throttle must not freeze a live run's detail.
@@ -1080,6 +1100,7 @@ async def test_a_running_runs_visible_stats_still_follow_it_across_ticks():
         assert str(row) == "completed"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_tick_for_a_run_the_user_has_left_does_nothing():
     """The tick races the user; the selection guard is what settles it."""
@@ -1120,6 +1141,7 @@ async def test_a_tick_for_a_run_the_user_has_left_does_nothing():
 # --- TASK-2331: authoritative, generation-checked Runs refresh ------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_replaces_rows_and_reloads_selected_fresh_detail_by_id():
     app = _build_test_app()
@@ -1197,6 +1219,7 @@ async def test_refresh_replaces_rows_and_reloads_selected_fresh_detail_by_id():
         assert screen._pending_runs_refresh_generation is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_fetches_and_appends_a_selected_run_outside_the_newest_100():
     app = _build_test_app()
@@ -1266,6 +1289,7 @@ async def test_refresh_fetches_and_appends_a_selected_run_outside_the_newest_100
         assert pane.run_items[0]["title"] == "Pinned item"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("backend", "missing_error"),
     [
@@ -1338,6 +1362,7 @@ async def test_refresh_authoritative_not_found_clears_selection_and_detail(
         ), "the authoritative clear must supersede older run-detail work"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure_stage", ["list", "pin"])
 @pytest.mark.asyncio
 async def test_refresh_transient_failure_preserves_the_complete_mounted_snapshot(
@@ -1387,6 +1412,7 @@ async def test_refresh_transient_failure_preserves_the_complete_mounted_snapshot
         assert screen._pending_runs_refresh_generation is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_switch_discards_a_gated_refresh_response():
     app = _build_test_app()
@@ -1426,6 +1452,7 @@ async def test_backend_switch_discards_a_gated_refresh_response():
         assert "No run selected" in _stats_text(pane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_switch_discards_a_stale_refresh_failure_silently():
     app = _build_test_app()
@@ -1465,6 +1492,7 @@ async def test_backend_switch_discards_a_stale_refresh_failure_silently():
         assert toasts == [], "obsolete backend work is discarded without an error toast"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_second_refresh_generation_supersedes_an_older_late_response():
     app = _build_test_app()
@@ -1540,6 +1568,7 @@ async def test_second_refresh_generation_supersedes_an_older_late_response():
         assert screen._pending_runs_refresh_generation is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_authoritative_runs_request_clears_pending_authority():
     app = _build_test_app()
@@ -1563,6 +1592,7 @@ async def test_cancelled_authoritative_runs_request_clears_pending_authority():
     assert screen._pending_runs_refresh_generation is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_later_user_clear_supersedes_an_older_run_detail_query():
     app = _build_test_app()
@@ -1614,6 +1644,7 @@ async def test_later_user_clear_supersedes_an_older_run_detail_query():
         assert "Stale resurrected item" not in str(pane.run_items)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_another_run_while_refresh_is_gated_keeps_that_selection():
     app = _build_test_app()
@@ -1656,6 +1687,7 @@ async def test_selecting_another_run_while_refresh_is_gated_keeps_that_selection
         assert screen.selected_run["id"] == pane.selected_run["id"] == RUNS[0]["id"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_selection_while_refresh_is_gated_stays_cleared():
     app = _build_test_app()
@@ -1688,6 +1720,7 @@ async def test_clearing_selection_while_refresh_is_gated_stays_cleared():
         assert screen._run_detail_items == pane.run_items == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_cannot_replace_a_source_selected_after_leaving_runs():
     app = _build_test_app()
@@ -1735,6 +1768,7 @@ async def test_refresh_cannot_replace_a_source_selected_after_leaving_runs():
         assert screen._loaded_runs == before_rows
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_newer_same_run_detail_request_owns_publication_when_older_finishes_last():
     app = _build_test_app()
@@ -1805,6 +1839,7 @@ async def test_newer_same_run_detail_request_owns_publication_when_older_finishe
         assert "Older same-run item" not in str(pane.run_items)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_aba_cannot_publish_an_old_same_backend_refresh():
     app = _build_test_app()
@@ -1842,6 +1877,7 @@ async def test_backend_aba_cannot_publish_an_old_same_backend_refresh():
         assert screen._loaded_runs == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_later_load_runs_intent_supersedes_an_older_refresh():
     app = _build_test_app()
@@ -1898,6 +1934,7 @@ async def test_later_load_runs_intent_supersedes_an_older_refresh():
         assert screen._loaded_runs[0]["source_title"] == "newer loader"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_preserves_a_mounted_legacy_selection_with_only_run_id():
     app = _build_test_app()
@@ -1943,6 +1980,7 @@ async def test_refresh_preserves_a_mounted_legacy_selection_with_only_run_id():
         assert pane.run_items[0]["title"] == "Fresh legacy detail"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("target_run", [RUNS[0], None], ids=["select", "clear"])
 @pytest.mark.asyncio
 async def test_immediate_pane_selection_blocks_an_older_refresh_before_mirroring(
@@ -2011,6 +2049,7 @@ async def test_immediate_pane_selection_blocks_an_older_refresh_before_mirroring
         ) == expected_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backend_switch_supersedes_a_gated_run_progress_tick():
     app = _build_test_app()
@@ -2055,6 +2094,7 @@ async def test_backend_switch_supersedes_a_gated_run_progress_tick():
         assert "stale pre-switch tick" not in screen._run_detail_logs
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_authoritative_refresh_supersedes_a_gated_run_progress_tick():
     app = _build_test_app()
@@ -2119,6 +2159,7 @@ async def test_authoritative_refresh_supersedes_a_gated_run_progress_tick():
         assert "stale tick that completed last" not in _logs_text(pane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_older_same_run_detail_error_is_silent_after_newer_success():
     app = _build_test_app()
@@ -2179,6 +2220,7 @@ async def test_older_same_run_detail_error_is_silent_after_newer_success():
         assert "newest successful log" in _logs_text(pane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_newer_same_run_tick_supersedes_an_older_cancellation_resistant_tick():
     app = _build_test_app()
@@ -2247,6 +2289,7 @@ async def test_newer_same_run_tick_supersedes_an_older_cancellation_resistant_ti
         assert "older tick completed last" not in _logs_text(pane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tick_during_an_authoritative_refresh_cannot_discard_its_rows():
     app = _build_test_app()
@@ -2314,6 +2357,7 @@ async def test_tick_during_an_authoritative_refresh_cannot_discard_its_rows():
         assert screen._pending_runs_refresh_generation is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selection_aba_supersedes_an_older_cancellation_resistant_tick():
     app = _build_test_app()

@@ -440,6 +440,7 @@ def test_persist_generation_message_rejects_null_bytes(store_with_session):
         store._persist_new_message(session_id=sid, message=msg)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.integration
 def test_generation_message_reload_round_trip_keeps_variant_and_hydrates_metadata(
     tmp_path,

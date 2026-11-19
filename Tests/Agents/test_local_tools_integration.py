@@ -1,5 +1,5 @@
 # Tests/Agents/test_local_tools_integration.py
-"""End-to-end local-tool integration (phases 1-2, ADR-032): a scripted model
+"""End-to-end local-tool integration (phases 1-2, ADR-300): a scripted model
 emits a ```tool_call fence for fs_list; the run must flow fence -> registry
 -> build_local_review_hook -> approval round trip -> LocalToolProvider.invoke
 -> fs_list core -> result appended back into the model's next turn.
@@ -451,8 +451,7 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
     # {name}: ..." line shape a success produces, so turn 2 can react to it.
     second_payload = chat.calls[1]["messages_payload"]
     assert any(
-        m["role"] == "user"
-        and m["content"] == f"Tool result for fs_list: {refusal}"
+        m["role"] == "user" and m["content"] == f"Tool result for fs_list: {refusal}"
         for m in second_payload
     )
 
@@ -463,7 +462,7 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
 # so fs_only_specs remains a compact direct-disclosure fixture. Do NOT add
 # newer fs_* tools here; update LOCAL_TOOL_NAMES below instead.
 FS_TOOL_NAMES = {"fs_list", "fs_read", "fs_write", "fs_edit", "fs_glob", "fs_grep"}
-# phase-3b-ii: read-only git tools (no risk tags per ADR-033).
+# phase-3b-ii: read-only git tools (no risk tags per ADR-302).
 GIT_TOOL_NAMES = {"git_status", "git_diff", "git_log", "git_blame", "git_branches"}
 LOCAL_TOOL_NAMES = (
     FS_TOOL_NAMES | {"fs_patch", "web_fetch", "web_search"} | GIT_TOOL_NAMES
@@ -515,9 +514,7 @@ def test_direct_disclosure_uses_complete_schema_cost(workspace):
     schemas = probe_initial_catalog(registry, allowed, 100, lambda _schemas: 99)
     assert schemas is not None
     assert {s.name for s in schemas} == FS_TOOL_NAMES | BUILTIN_TOOL_NAMES
-    assert (
-        probe_initial_catalog(registry, allowed, 100, lambda _schemas: 101) is None
-    )
+    assert probe_initial_catalog(registry, allowed, 100, lambda _schemas: 101) is None
 
 
 def test_mcp_registered_last_remains_reachable_through_discovery_and_approval(
@@ -574,7 +571,7 @@ def test_mcp_registered_last_remains_reachable_through_discovery_and_approval(
         agent_service, "catalog_schema_tokens", lambda *_args, **_kwargs: 1_001
     )
     monkeypatch.setattr(
-        agent_service, "_count_model_messages", lambda *_args, **_kwargs: 50
+        agent_service, "count_model_messages", lambda *_args, **_kwargs: 50
     )
     config = AgentConfig(
         model="test-model",
@@ -593,9 +590,11 @@ def test_mcp_registered_last_remains_reachable_through_discovery_and_approval(
     )
 
     assert outcome.status == RUN_DONE
-    assert [
-        step.tool_name for step in outcome.steps if step.kind == "tool_call"
-    ] == ["find_tools", "load_tools", mcp_name]
+    assert [step.tool_name for step in outcome.steps if step.kind == "tool_call"] == [
+        "find_tools",
+        "load_tools",
+        mcp_name,
+    ]
     assert mcp_name in next(
         step.result
         for step in outcome.steps
@@ -635,8 +634,8 @@ def test_raw_shell_provider_joins_the_local_registry_partition(workspace):
         initial_directory=lambda: workspace,
     )
 
-    registry, allowed, _builtin_names, local_names = (
-        _compose_run_registry_and_allowed({}, raw_shell_provider=provider)
+    registry, allowed, _builtin_names, local_names = _compose_run_registry_and_allowed(
+        {}, raw_shell_provider=provider
     )
 
     assert "shell_exec" in allowed

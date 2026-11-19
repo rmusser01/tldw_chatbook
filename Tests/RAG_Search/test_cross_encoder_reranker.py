@@ -458,9 +458,7 @@ async def test_batch_size_reaches_the_model(monkeypatch):
     _install(monkeypatch, stub)
 
     reranker = CrossEncoderReranker(_config(batch_size=3))
-    await reranker.rerank(
-        "q", _rows(*[(f"r{i}", 0.5, f"doc-{i}") for i in range(6)])
-    )
+    await reranker.rerank("q", _rows(*[(f"r{i}", 0.5, f"doc-{i}") for i in range(6)]))
 
     assert stub.batch_sizes == [3]
 
@@ -549,8 +547,13 @@ def test_a_local_model_path_is_not_replaced_by_the_default(tmp_path):
     assert _resolve_cross_encoder_model_name("~/models/local") == "~/models/local"
 
     # The chat-model fallback still fires for names that are not paths.
-    assert _resolve_cross_encoder_model_name("gpt-4o-mini") == DEFAULT_CROSS_ENCODER_MODEL
-    assert _resolve_cross_encoder_model_name("openai/gpt-4o") == DEFAULT_CROSS_ENCODER_MODEL
+    assert (
+        _resolve_cross_encoder_model_name("gpt-4o-mini") == DEFAULT_CROSS_ENCODER_MODEL
+    )
+    assert (
+        _resolve_cross_encoder_model_name("openai/gpt-4o")
+        == DEFAULT_CROSS_ENCODER_MODEL
+    )
     assert (
         _resolve_cross_encoder_model_name("BAAI/bge-reranker-base")
         == "BAAI/bge-reranker-base"

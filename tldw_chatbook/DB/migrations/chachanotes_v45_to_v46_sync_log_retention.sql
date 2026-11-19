@@ -374,7 +374,9 @@ END;
 -- Found by the direct-index witnesses added for task-19567. Five of the eight
 -- soft-deletable FTS `*_au` triggers guard their delete half with
 -- `WHERE old.deleted = 0` (`notes_au` was repaired earlier for exactly this
--- reason -- see `_ensure_notes_fts_update_trigger_handles_undelete`); three --
+-- reason -- by the runtime self-heal of the time; since v76 the guarded body
+-- ships as the chachanotes_v75_to_v76_notes_fts_undelete_guard migration);
+-- three --
 -- `messages_au`, `keyword_collections_au`, `world_books_au` -- issued the FTS
 -- `'delete'` unconditionally. Issuing it for a row that is NOT in an
 -- external-content index corrupts that index.

@@ -1,0 +1,246 @@
+{
+  "new_feature_metadata": [
+    "backlog/decisions/240-workspace-project-context-and-folder-bound-index.md",
+    "backlog/tasks/task-35930 - Guide-project-questions-toward-admitted-workspace-files.md",
+    "backlog/tasks/task-35931 - Allow-mixed-Console-grounding-without-forced-Library-attribution.md",
+    "backlog/tasks/task-35932 - Qualify-workspace-guidance-with-preserved-Library-choices.md",
+    "backlog/tasks/task-35962 - Match-full-native-Windows-identity-when-pinning-workspace-roots.md",
+    "backlog/tasks/task-36002 - Store-folder-bound-keyword-cache-and-durable-authority-contracts.md",
+    "backlog/tasks/task-36003 - Scan-project-folders-in-bounded-resumable-pages.md",
+    "backlog/tasks/task-36004 - Own-keyword-index-jobs-refresh-recovery-and-revocation.md",
+    "backlog/tasks/task-36005 - Search-keyword-indexes-through-admitted-read-only-file-tools.md",
+    "backlog/tasks/task-36006 - Manage-optional-keyword-indexes-in-Settings-and-qualify-release.md"
+  ],
+  "task_collisions": {},
+  "adr_collisions": {
+    "004": [
+      "backlog/decisions/004-personas-destination-native-workbench.md",
+      "backlog/decisions/004-settings-storage-defaults-restart-boundary.md"
+    ],
+    "005": [
+      "backlog/decisions/005-console-workspace-server-readiness.md",
+      "backlog/decisions/005-invest-in-local-rag-mirroring-tldw-server.md"
+    ],
+    "013": [
+      "backlog/decisions/013-library-ingest-ownership-and-job-lifecycle.md",
+      "backlog/decisions/013-media-search-plain-text-fts-boundary.md"
+    ],
+    "014": [
+      "backlog/decisions/014-library-ingest-service-authority-and-recovery.md",
+      "backlog/decisions/014-retire-legacy-navigation-chrome.md"
+    ],
+    "018": [
+      "backlog/decisions/018-local-server-hybrid-scheduled-tasks.md",
+      "backlog/decisions/018-watchlists-tui-screen.md"
+    ],
+    "026": [
+      "backlog/decisions/026-brand-asset-source-and-export-boundary.md",
+      "backlog/decisions/026-retire-chat-tab-conversation-entry-chain.md"
+    ],
+    "027": [
+      "backlog/decisions/027-default-workspace-chats-in-chats-section.md",
+      "backlog/decisions/027-portable-database-note-session-coordinator.md"
+    ],
+    "028": [
+      "backlog/decisions/028-character-tts-generation-profile-ownership.md",
+      "backlog/decisions/028-settings-workspaces-category-and-folder-roots.md",
+      "backlog/decisions/028-structured-prompts-and-auxiliary-improvement-calls.md"
+    ],
+    "029": [
+      "backlog/decisions/029-file-notes-disk-authority.md",
+      "backlog/decisions/029-local-private-data-boundary.md",
+      "backlog/decisions/029-versioned-prompt-artifacts-and-safe-improvement-transactions.md"
+    ],
+    "030": [
+      "backlog/decisions/030-derived-index-lifecycle-and-atomic-media-migrations.md",
+      "backlog/decisions/030-local-library-agent-tool-boundary.md"
+    ],
+    "031": [
+      "backlog/decisions/031-bounded-evaluation-and-tool-worker-execution.md",
+      "backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md"
+    ],
+    "032": [
+      "backlog/decisions/032-immutable-installed-distribution-assets.md",
+      "backlog/decisions/032-local-agent-tool-permission-boundary.md",
+      "backlog/decisions/032-textual-diff-view-for-tool-call-diff-rendering.md"
+    ],
+    "033": [
+      "backlog/decisions/033-application-session-state-ownership.md",
+      "backlog/decisions/033-local-agent-process-execution-boundary.md",
+      "backlog/decisions/033-settings-commit-models-three-honestly-labeled.md"
+    ],
+    "039": [
+      "backlog/decisions/039-file-notes-guarded-session-push.md",
+      "backlog/decisions/039-global-and-studio-tts-settings-ownership.md"
+    ],
+    "040": [
+      "backlog/decisions/040-profile-owned-state-and-shared-asset-paths.md",
+      "backlog/decisions/040-speech-lab-current-result-and-auto-play.md",
+      "backlog/decisions/040-versioned-prompt-artifacts-and-safe-improvement-transactions.md"
+    ],
+    "043": [
+      "backlog/decisions/043-console-rail-compact-collapse-yields-to-explicit-toggle.md",
+      "backlog/decisions/043-opml-watchlist-folder-mapping.md"
+    ],
+    "050": [
+      "backlog/decisions/050-audio-cpp-generated-model-setup-ownership.md",
+      "backlog/decisions/050-external-parakeet-roots-with-managed-vad.md"
+    ],
+    "052": [
+      "backlog/decisions/052-comfyui-h3-image-edit-provider-boundary.md",
+      "backlog/decisions/052-console-conversation-memory-and-compaction-policy.md"
+    ],
+    "053": [
+      "backlog/decisions/053-mcp-unified-standalone-runtime-boundary.md",
+      "backlog/decisions/053-prompt-variable-grammar-and-guarded-insertion.md"
+    ],
+    "066": [
+      "backlog/decisions/066-console-trajectory-view-and-trace-metadata.md",
+      "backlog/decisions/066-local-provider-thinking-controls.md"
+    ],
+    "067": [
+      "backlog/decisions/067-bundled-samira-visual-identity-pack.md",
+      "backlog/decisions/067-indefinite-human-approval-waits.md",
+      "backlog/decisions/067-library-top-level-pagination-contracts.md",
+      "backlog/decisions/067-trajectory-export-format.md"
+    ],
+    "068": [
+      "backlog/decisions/068-console-project-instruction-context-boundary.md",
+      "backlog/decisions/068-console-text-selection-and-annotations.md",
+      "backlog/decisions/068-local-research-execution-engine.md"
+    ],
+    "069": [
+      "backlog/decisions/069-console-project-instruction-local-state-and-preflight.md",
+      "backlog/decisions/069-project-skills-folder-convention.md"
+    ],
+    "073": [
+      "backlog/decisions/073-notes-sync-round-trip-and-interoperability-constraints.md",
+      "backlog/decisions/073-vendored-chunking-engine-parity.md"
+    ],
+    "077": [
+      "backlog/decisions/077-console-bounded-rail-section-scrolling.md",
+      "backlog/decisions/077-server-offloaded-scheduled-agent-tasks.md"
+    ],
+    "078": [
+      "backlog/decisions/078-chunking-template-convergence.md",
+      "backlog/decisions/078-defer-console-context-rail-content-until-first-refresh.md",
+      "backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md",
+      "backlog/decisions/078-structured-agent-tool-outcome-provenance.md"
+    ],
+    "079": [
+      "backlog/decisions/079-console-library-conversation-authority.md",
+      "backlog/decisions/079-daily-reports-surface-and-demo-seeding.md",
+      "backlog/decisions/079-network-tls-trust-policy.md",
+      "backlog/decisions/079-workspace-assistant-defaults.md",
+      "backlog/decisions/079-workspace-file-inspector-direct-user-authority-and-save-publication.md"
+    ],
+    "080": [
+      "backlog/decisions/080-model-machine-memory-fit-estimation.md",
+      "backlog/decisions/080-permission-request-context-summaries.md",
+      "backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md"
+    ],
+    "084": [
+      "backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md",
+      "backlog/decisions/084-library-media-reader-ia.md",
+      "backlog/decisions/084-mcp-profile-driven-rag-search-contract.md"
+    ],
+    "089": [
+      "backlog/decisions/089-console-full-semantic-capture-policy.md",
+      "backlog/decisions/089-console-per-turn-change-review-ownership.md"
+    ],
+    "090": [
+      "backlog/decisions/090-console-thinking-block-ownership-and-replay.md",
+      "backlog/decisions/090-permission-request-context-summaries.md"
+    ],
+    "092": [
+      "backlog/decisions/092-console-chat-fork-copy-and-authority-boundary.md",
+      "backlog/decisions/092-console-full-semantic-capture-policy.md",
+      "backlog/decisions/092-console-live-child-write-path-boundaries.md"
+    ],
+    "093": [
+      "backlog/decisions/093-offline-tiktoken-runtime-assets.md",
+      "backlog/decisions/093-raw-and-virtual-cli-execution-boundaries.md"
+    ],
+    "094": [
+      "backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md",
+      "backlog/decisions/094-raw-and-virtual-cli-execution-boundaries.md"
+    ],
+    "097": [
+      "backlog/decisions/097-boot-budget-ratchets.md",
+      "backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md"
+    ],
+    "098": [
+      "backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md",
+      "backlog/decisions/098-visible-bounded-console-prompt-queue.md"
+    ],
+    "099": [
+      "backlog/decisions/099-persistent-terminal-session-runtime-boundary.md",
+      "backlog/decisions/099-schedule-editor-shape.md"
+    ],
+    "102": [
+      "backlog/decisions/102-console-run-admitted-local-path-authority.md",
+      "backlog/decisions/102-personal-context-profile-authority-sync-and-encryption.md"
+    ],
+    "104": [
+      "backlog/decisions/104-library-media-return-settlement-boundary.md",
+      "backlog/decisions/104-token-budgeted-agent-tool-disclosure.md"
+    ],
+    "115": [
+      "backlog/decisions/115-local-versioned-canvas-artifacts-and-browser-sandbox.md",
+      "backlog/decisions/115-personas-demand-mounted-center-views.md"
+    ],
+    "146": [
+      "backlog/decisions/146-console-custom-endpoint-registry.md",
+      "backlog/decisions/146-independent-buddy-petdex-publication-and-character-creation.md"
+    ],
+    "147": [
+      "backlog/decisions/147-agent-provider-routing.md",
+      "backlog/decisions/147-conversation-archive-and-exact-resume.md"
+    ],
+    "148": [
+      "backlog/decisions/148-console-run-hooks.md",
+      "backlog/decisions/148-mcp-hub-rail-ia-and-responsive-triad.md"
+    ],
+    "149": [
+      "backlog/decisions/149-console-persona-session-identity.md",
+      "backlog/decisions/149-offer-first-canvas-guide-and-inline-skill.md"
+    ],
+    "150": [
+      "backlog/decisions/150-agent-chat-fork-and-spawn.md",
+      "backlog/decisions/150-design-token-system-and-design-language.md",
+      "backlog/decisions/150-mcp-hub-bulk-permission-actions.md"
+    ],
+    "172": [
+      "backlog/decisions/172-library-artifacts-browse-and-navigation.md",
+      "backlog/decisions/172-skill-eval-sub-harness.md"
+    ],
+    "184": [
+      "backlog/decisions/184-agent-task-server-execution-message-refs-and-approval-escalation.md",
+      "backlog/decisions/184-local-console-prompt-draft-shelf.md"
+    ],
+    "218": [
+      "backlog/decisions/218-file-notes-replica-retention.md",
+      "backlog/decisions/218-in-repo-merge-queue.md"
+    ],
+    "220": [
+      "backlog/decisions/220-console-human-decision-coordination-ownership.md",
+      "backlog/decisions/220-evaluation-defaults-and-private-overrides.md"
+    ],
+    "228": [
+      "backlog/decisions/228-config-encryption-derived-key-memoization.md",
+      "backlog/decisions/228-sqlite-store-kernel.md"
+    ],
+    "240": [
+      "backlog/decisions/240-mcp-destination-retirement-tools-hub-in-settings.md",
+      "backlog/decisions/240-workspace-project-context-and-folder-bound-index.md"
+    ]
+  },
+  "head_adr_max": 240,
+  "local_all_ref_history_adr_max": 240,
+  "local_all_ref_history_high_adrs": {
+    "240": [
+      "backlog/decisions/240-mcp-destination-retirement-tools-hub-in-settings.md",
+      "backlog/decisions/240-workspace-project-context-and-folder-bound-index.md"
+    ]
+  }
+}

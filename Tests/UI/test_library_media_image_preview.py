@@ -216,9 +216,9 @@ class PreviewMediaService(StaticLibraryMediaScopeService):
         self.download_calls.append({"media_id": media_id, **kwargs})
         if media_id in self.blocked_downloads:
             self.download_entered.setdefault(media_id, threading.Event()).set()
-            if not self.download_release.setdefault(
-                media_id, threading.Event()
-            ).wait(5):
+            if not self.download_release.setdefault(media_id, threading.Event()).wait(
+                5
+            ):
                 raise RuntimeError("preview download gate timed out")
         outcome = self.download_outcomes.get(media_id, _image_bytes(width=media_id + 3))
         if isinstance(outcome, BaseException):
@@ -254,6 +254,7 @@ def _preview_app():
     return app, service
 
 
+@pytest.mark.bootstrap_profile
 def test_preview_cache_evicts_oldest_image_and_related_session_state() -> None:
     app, _service = _preview_app()
     screen = LibraryScreen(app, preview_widget_factory=_fake_preview_factory([]))
@@ -282,6 +283,7 @@ def _fake_preview_factory(calls):
     return factory
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_mounts_above_byte_for_byte_unchanged_complete_text() -> None:
     app, service = _preview_app()
@@ -319,6 +321,7 @@ async def test_preview_mounts_above_byte_for_byte_unchanged_complete_text() -> N
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_capability_off_keeps_complete_stored_text_without_file_calls() -> None:
     app, service = _preview_app()
@@ -345,6 +348,7 @@ async def test_capability_off_keeps_complete_stored_text_without_file_calls() ->
         assert service.download_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("source_url", "content_type", "expected_check_count"),
@@ -379,6 +383,7 @@ async def test_remote_and_unsupported_images_never_reach_download(
         assert not screen.query("#library-media-image-preview")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_render_failure_preserves_text_fallback() -> None:
     app, _service = _preview_app()
@@ -407,6 +412,7 @@ async def test_preview_render_failure_preserves_text_fallback() -> None:
         assert not screen.query("#library-media-image-preview")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hide_show_is_per_item_session_state_and_does_not_reload_detail() -> None:
     app, service = _preview_app()
@@ -437,6 +443,7 @@ async def test_hide_show_is_per_item_session_state_and_does_not_reload_detail() 
         assert (len(service.check_calls), len(service.download_calls)) == file_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_failure_keeps_item_loaded_and_retry_is_item_local() -> None:
     app, service = _preview_app()
@@ -466,6 +473,7 @@ async def test_preview_failure_keeps_item_loaded_and_retry_is_item_local() -> No
         assert len(service.download_calls) == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_late_preview_for_a_cannot_mount_over_loaded_b() -> None:
     app, service = _preview_app()

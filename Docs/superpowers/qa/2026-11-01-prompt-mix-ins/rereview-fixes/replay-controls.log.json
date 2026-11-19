@@ -1,0 +1,4 @@
+{
+  "sha256": "45c1520e6fd1a1d73d8370fbae6a0c5d6d434f92b34266a4bf911d8476f3ee4f",
+  "raw_text": "......................                                                   [100%]\n============================= slowest 25 durations =============================\n1.36s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_frozen_replay_cannot_roll_current_accepted_layout_back[supplied_queue]\n1.32s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_frozen_replay_cannot_roll_current_accepted_layout_back[supplied_send]\n1.32s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[True]\n1.18s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history[False]\n1.12s call     Tests/Chat/test_console_prompt_mixin_retry.py::test_frozen_replay_cannot_roll_current_accepted_layout_back[retry]\n\n(20 durations < 1s hidden.)\n22 passed in 25.96s\n"
+}

@@ -38,13 +38,27 @@ import pytest
 
 
 # The only tldw_api submodule an `import tldw_chatbook.app` may still load.
-# `kanban_schemas` is a deliberate, documented exception: server_kanban_service.py
-# keeps a module-scope `KANBAN_OPERATION_SPECS` dict mapping action names to
-# real schema *classes* (not strings) for runtime dispatch -- a genuine
-# module-scope need, not an oversight (task-285 phase 2 Implementation Notes).
+# TASK-21107 closed the last exception: `kanban_schemas` used to ride the
+# app import via `Kanban_Interop/server_kanban_service.py`'s module-scope
+# 31-name import from `..tldw_api` (a genuine module-scope need inside that
+# package -- `KANBAN_OPERATION_SPECS` maps action names to real schema
+# classes), reached because `app_service_wiring.py` imported Kanban_Interop
+# at module scope to construct the services at boot. TASK-21239 made the
+# trio lazy (first-use properties), which took the whole package --
+# including `kanban_schemas`' 76 pydantic models -- off the boot path
+# without touching the spec table. The allowlist is now empty beyond the
+# package facade itself.
 ALLOWED_SCHEMA_SUBMODULES = {
     "tldw_chatbook.tldw_api",
-    "tldw_chatbook.tldw_api.kanban_schemas",
+    # `exceptions` is a deliberate exception (pre-existing, re-verified
+    # 2026-10-11): `Audio_Services_Interop/server_audio_services_service.py`
+    # imports two of its exception types at module scope for runtime
+    # `except` clauses across a dozen methods. The module is a handful of
+    # stdlib-only exception classes -- no pydantic, no schemas -- so the
+    # deferral win of moving every except site to function-local imports is
+    # negligible next to the churn. Named here so it is a reviewed entry,
+    # not a silent pass.
+    "tldw_chatbook.tldw_api.exceptions",
 }
 
 
@@ -174,3 +188,43 @@ def test_server_kanban_service_allowlisted_module_still_works_end_to_end():
         asyncio.run(
             service.create_board(request_data={"name": "Board", "client_id": "c1"})
         )
+
+
+def test_kanban_schemas_absent_from_app_import_closure():
+    """TASK-21107 AC: the 76-model kanban_schemas module stays off app import.
+
+    A fresh-process import of the app module must not load
+    ``tldw_chatbook.tldw_api.kanban_schemas`` -- pinned as its own test (not
+    just allowlist membership) so the win is named and a re-eagering of the
+    Kanban chain fails with the offender in the message.
+    """
+    import importlib
+    import subprocess
+
+    code = (
+        "import tldw_chatbook.app\n"
+        "import sys\n"
+        "assert 'tldw_chatbook.tldw_api.kanban_schemas' not in sys.modules, "
+        "'kanban_schemas re-eagered on the app import path'\n"
+        "assert not any('Kanban_Interop' in m for m in sys.modules), "
+        "'Kanban_Interop re-eagered on the app import path'\n"
+        "print('CLEAN')\n"
+    )
+    repo_root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PYTHONPATH": str(repo_root),
+        },
+        check=False,
+        timeout=120,
+    )
+    assert result.returncode == 0 and "CLEAN" in result.stdout, (
+        f"kanban import leak: {result.stderr[-2000:]}"
+    )
+    # importlib import kept for parity with the module's other helpers
+    del importlib

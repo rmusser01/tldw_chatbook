@@ -1,0 +1,21 @@
+{
+  "after1": {
+    "main_thread_samples": 451,
+    "inclusive_frames": {
+      "apply": 24,
+      "_config_file_posture": 4,
+      "_sync_console_workbench_actions_from_draft": 1,
+      "_sync_native_console_chat_ui": 4,
+      "_check_subject_pseudo_classes": 1
+    }
+  },
+  "after2": {
+    "main_thread_samples": 362,
+    "inclusive_frames": {
+      "apply": 27,
+      "_check_subject_pseudo_classes": 6,
+      "_sync_native_console_chat_ui": 8,
+      "_config_file_posture": 9
+    }
+  }
+}

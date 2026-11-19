@@ -65,12 +65,14 @@ class TestBareNameResolutionIsGone:
 class TestPreResolvedTemplateDict:
     """AC 32: a pre-resolved dict works and follows the legacy precedence."""
 
+    @pytest.mark.bootstrap_profile
     def test_pre_resolved_dict_works(self):
         pre = {"chunking": {"method": "words", "config": {"max_size": 3}}}
         chunks = Chunk_Lib.Chunker(template=pre).chunk_text("a b c d e")
         assert chunks
         assert all(isinstance(chunk, str) for chunk in chunks)
 
+    @pytest.mark.bootstrap_profile
     def test_template_options_beat_defaults_and_lose_to_explicit(self):
         # Legacy precedence: defaults <- template <- explicit options.
         chunker = Chunk_Lib.Chunker(
@@ -80,6 +82,7 @@ class TestPreResolvedTemplateDict:
         assert chunker.options["method"] == "sentences"
         assert chunker.options["max_size"] == 8
 
+    @pytest.mark.bootstrap_profile
     def test_template_dict_with_pre_post_blocks_accepted(self):
         # resolve_template returns the WHOLE template body, pre/post blocks
         # included. The shim must accept it (applying the chunk-stage
@@ -104,6 +107,7 @@ class TestPreResolvedTemplateDict:
 class TestTemplateManagerAcceptedAndIgnored:
     """AC 32: template_manager= is accepted and ignored (pinned)."""
 
+    @pytest.mark.bootstrap_profile
     def test_template_manager_accepted_and_ignored(self):
         sentinel = object()
         with_manager = Chunk_Lib.Chunker(
@@ -117,6 +121,7 @@ class TestTemplateManagerAcceptedAndIgnored:
         # store is consulted, no directory is created.
         assert with_manager.template_manager is sentinel
 
+    @pytest.mark.bootstrap_profile
     def test_template_manager_ignored_alongside_dict_template(self):
         chunks = Chunk_Lib.Chunker(
             template=WORDS_TEMPLATE, template_manager=object()
@@ -168,6 +173,7 @@ class TestTemplateExecutionViaRuntime:
     """Live template behavior (old pipeline/Chunker tests), rewritten
     against ``template_runtime`` + the vendored processor."""
 
+    @pytest.mark.bootstrap_profile
     def test_simple_template_execution(self):
         from tldw_chatbook.Chunking.template_runtime import apply_template
 
@@ -184,6 +190,7 @@ class TestTemplateExecutionViaRuntime:
         assert all("metadata" in r for r in results)
         assert all(r["metadata"].get("offset_basis") for r in results)
 
+    @pytest.mark.bootstrap_profile
     def test_template_with_pre_and_post_operations(self):
         from tldw_chatbook.Chunking.template_runtime import apply_template
 
@@ -203,10 +210,10 @@ class TestTemplateExecutionViaRuntime:
         assert all(len(r["text"]) >= 10 for r in results)
         # A pre operation rewrote the text, so offsets are preprocessed-based.
         assert all(
-            r["metadata"]["offset_basis"].startswith("preprocessed:")
-            for r in results
+            r["metadata"]["offset_basis"].startswith("preprocessed:") for r in results
         )
 
+    @pytest.mark.bootstrap_profile
     def test_chunker_template_options_apply(self):
         chunker = Chunk_Lib.Chunker(template=SENTENCES_TEMPLATE)
         text = "First sentence here. Second sentence follows. Third one now."
@@ -214,6 +221,7 @@ class TestTemplateExecutionViaRuntime:
         assert len(chunks) > 0
         assert all(isinstance(chunk, str) for chunk in chunks)
 
+    @pytest.mark.bootstrap_profile
     def test_improved_process_with_pre_resolved_template(self):
         text = "This is a test document. " * 50
         results = Chunk_Lib.improved_chunking_process(

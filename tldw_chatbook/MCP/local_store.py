@@ -3,13 +3,14 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (spawn_guard imports at the save-time check.)
 from datetime import datetime, timezone
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from types import MappingProxyType, MethodType
+from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -1084,6 +1085,35 @@ class LocalMCPStore:
         return state
 
     @mcp_sources.guarded
+    def catalog_fingerprint(self) -> tuple:
+        """Identify exactly what :meth:`load` would read now, without parsing.
+
+        TASK-33620.15.1: the same admission scope and recovery readability
+        check as ``load()`` (a refusal raises as ``load()`` would), then a hash
+        of the bytes ``load()`` would parse.
+
+        Returns:
+            ``("inactive",)`` or ``("missing",)`` when ``load()`` reads no file;
+            otherwise ``("file", sha256, stamp)``, ``stamp`` being the read
+            file's ``(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)``.
+        """
+        import hashlib
+        import os
+
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.local"):
+            return ("inactive",)
+        try:
+            with mcp_sources.reader(self) as handle:
+                raw = handle.buffer.read()
+                info = os.fstat(handle.fileno())
+        except FileNotFoundError:
+            return ("missing",)
+        stamp = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        return ("file", hashlib.sha256(raw).hexdigest(), stamp)
+
+    @mcp_sources.guarded
     def save(self, state: LocalMCPStoreState) -> None:
         self._write_payload(state.to_dict())
 
@@ -1327,7 +1357,11 @@ class LocalMCPStore:
         return profile_runtime_state[normalized_profile_id]
 
     @mcp_sources.guarded
-    def get_catalog_bundle(self) -> dict[str, Any]:
+    def get_catalog_bundle(
+        self,
+        *,
+        _captured_load: Callable[[], LocalMCPStoreState] | None = None,
+    ) -> dict[str, Any]:
         """Return the catalog-relevant state in one read.
 
         Batches the profile list, discovery snapshots, and lifecycle-attempt
@@ -1337,12 +1371,28 @@ class LocalMCPStore:
         (2N+1 total loads across N profiles) can use this single-`load()`
         accessor instead.
 
+        Args:
+            _captured_load: Private finite-worker input naming this exact
+                receiver's original guarded load. Default calls retain dynamic
+                load resolution; this reference supplies no native authority.
+
         Returns:
             Mapping with `profiles` (list of profile dicts via `to_dict()`),
             `discovery_snapshots` (profile_id -> snapshot dict), and
             `profile_runtime_state` (profile_id -> lifecycle record dict).
         """
-        state = self.load()
+        reader = self.load if _captured_load is None else _captured_load
+        if _captured_load is not None and not (
+            type(self) is LocalMCPStore
+            and isinstance(reader, MethodType)
+            and reader.__func__ is _CONSOLE_STANDARD_LOAD
+            and reader.__self__ is self
+        ):
+            from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+            raise RecoveryRequired("mcp_source_selection_changed")
+        # Both this accessor and a captured reader retain their original guards.
+        state = reader()
         return {
             "profiles": [profile.to_dict() for profile in state.profiles],
             "discovery_snapshots": dict(state.discovery_snapshots),
@@ -1670,3 +1720,39 @@ class LocalMCPStore:
             profile.args,
             tuple(sorted(profile.env.items())),
         )
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_LOAD = LocalMCPStore.load
+_CONSOLE_STANDARD_METHODS = (
+    ("load", _CONSOLE_STANDARD_LOAD),
+    ("get_external_catalog", LocalMCPStore.get_external_catalog),
+    ("get_catalog_bundle", LocalMCPStore.get_catalog_bundle),
+)
+
+
+# Pin only catalog callbacks whose bodies the joined Console reader consumes.
+# Keep the original guarded body as well as its public wrapper.
+_CONSOLE_STANDARD_BODY_BINDINGS = tuple(
+    (
+        name,
+        callback,
+        getattr(callback, "__wrapped__", None),
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                (
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+                ),
+            )
+            for function in (callback,)
+            + ((callback.__wrapped__,) if hasattr(callback, "__wrapped__") else ())
+        ),
+    )
+    for name, callback in _CONSOLE_STANDARD_METHODS
+)

@@ -14,6 +14,7 @@ from playwright.async_api import async_playwright, expect
 from Tests.Canvas.browser.canvas_live_harness import (
     chromium_executable,
     reserve_loopback_port,
+    terminal_observer,
 )
 from Tests.Canvas.browser.test_canvas_served_flow import (
     _login_live_page,
@@ -151,9 +152,7 @@ async def test_owned_parent_and_all_children_restart_revokes_exact_durable_v2(tm
             pages = [await context.new_page() for context in contexts]
             for page in pages:
                 await _login_live_page(page, origin=first["origin"], access_token=token)
-                await expect(page.locator("#terminal")).to_contain_text(
-                    "Composer", timeout=45_000
-                )
+                await terminal_observer(page).wait_for_text("Composer", timeout_ms=45_000)
             page = pages[0]
             data = Path(first["data"])
             await _send_console_prompt(
@@ -161,8 +160,8 @@ async def test_owned_parent_and_all_children_restart_revokes_exact_durable_v2(tm
                 "Create the requested Canvas",
                 data / "canvas-live-composer-focused",
             )
-            await expect(page.locator("#terminal")).to_contain_text(
-                "CHATBOOK_CANVAS_CREATED", timeout=45_000
+            await terminal_observer(page).wait_for_text(
+                "CHATBOOK_CANVAS_CREATED", timeout_ms=45_000
             )
             shell = page.frame_locator("#served-canvas-frame")
             preview = shell.frame_locator("#canvas-preview")
@@ -222,9 +221,7 @@ async def test_owned_parent_and_all_children_restart_revokes_exact_durable_v2(tm
             replacement_workers = []
             page.on("worker", lambda worker: replacement_workers.append(worker.url))
             await _login_live_page(page, origin=second["origin"], access_token=token)
-            await expect(page.locator("#terminal")).to_contain_text(
-                "Composer", timeout=45_000
-            )
+            await terminal_observer(page).wait_for_text("Composer", timeout_ms=45_000)
             assert (await page.request.get(second["origin"] + old_url)).status == 404
             assert (
                 await page.request.get(second["origin"] + old_renderer_url)
@@ -277,8 +274,8 @@ async def test_owned_parent_and_all_children_restart_revokes_exact_durable_v2(tm
             await _send_console_prompt(
                 page, "Create a new Canvas", data / "canvas-live-composer-focused"
             )
-            await expect(page.locator("#terminal")).to_contain_text(
-                "CHATBOOK_CANVAS_CREATED", timeout=45_000
+            await terminal_observer(page).wait_for_text(
+                "CHATBOOK_CANVAS_CREATED", timeout_ms=45_000
             )
             try:
                 await expect(

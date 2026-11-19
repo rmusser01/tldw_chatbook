@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "ruff",
+    "format",
+    "--check",
+    "--stdin-filename",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "-"
+  ],
+  "stdin_base_commit": "75b671c001e84bf2713c380e30de3e587bcc8ae0",
+  "exit": 1,
+  "source_sha256": "0652d3fe258d974c06680889f558a2a993de75ed8da7300cba970d471d932a7a"
+}

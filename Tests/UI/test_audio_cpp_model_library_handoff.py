@@ -14,6 +14,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from Tests.app_module_patches import set_app_global
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    wait_for_background_signal,
+)
 from tldw_chatbook.UI.Navigation.audio_cpp_model_handoff import (
     AudioCppModelInstallOwner,
     AudioCppModelLibraryRequest,
@@ -250,48 +254,57 @@ async def test_guided_save_holds_before_after_managed_union_without_activation(
     app = _StyledPanelHarness(state=state, configure_provider="audio_cpp")
     owner = AudioCppModelInstallOwner()
     app.audio_cpp_model_install_owner = owner
-    async with app.run_test(size=(170, 80)) as pilot:
-        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
-        panel.state.providers["audio_cpp"]["guided_packages"] = [
-            packages[1].model_dump(mode="json")
-        ]
-        panel.state.providers["audio_cpp"]["guided_default_model_id"] = packages[
-            1
-        ].public_model_id
-        panel.refresh(recompose=True)
-        await pilot.pause()
+    publication = None
+    try:
+        async with app.run_test(size=(170, 80)) as pilot:
+            panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+            panel.state.providers["audio_cpp"]["guided_packages"] = [
+                packages[1].model_dump(mode="json")
+            ]
+            panel.state.providers["audio_cpp"]["guided_default_model_id"] = packages[
+                1
+            ].public_model_id
+            panel.refresh(recompose=True)
+            await pilot.pause()
 
-        request_id = panel.request_save()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
+            request_id = panel.request_save()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
 
-        assert request_id is not None
-        assert len(app.events) == 1
-        assert all(active.values())
-        assert close_calls == {}
-        assert acquire_calls == sorted(active)
-        save_event = app.events[0]
-        assert panel._managed_lease_hold is None
-        assert save_event.publication_lease is not None
+            assert request_id is not None
+            assert len(app.events) == 1
+            assert all(active.values())
+            assert close_calls == {}
+            assert acquire_calls == sorted(active)
+            save_event = app.events[0]
+            assert panel._managed_lease_hold is None
+            assert save_event.publication_lease is not None
 
-        save_event.publication_lease.adopt()
-        await save_event.publication_lease.release()
+            publication = save_event.publication_lease
+            publication.adopt()
+            await publication.release()
+            publication = None
 
-        panel.receive_stts_settings_save_result(
-            STTSSettingsSaveResult(
-                request_id=request_id,
-                persisted=persisted,
-                provider_statuses={"audio_cpp": "pending"},
-                provider_configuration_revisions={"audio_cpp": 2},
-                provider_runtime_revisions={"audio_cpp": 1},
-                staged_provider_ids=frozenset({"audio_cpp"}),
+            panel.receive_stts_settings_save_result(
+                STTSSettingsSaveResult(
+                    request_id=request_id,
+                    persisted=persisted,
+                    provider_statuses={"audio_cpp": "pending"},
+                    provider_configuration_revisions={"audio_cpp": 2},
+                    provider_runtime_revisions={"audio_cpp": 1},
+                    staged_provider_ids=frozenset({"audio_cpp"}),
+                )
             )
-        )
-        await owner.wait_until_idle()
+            await owner.wait_until_idle()
 
-        assert not any(active.values())
-        assert set(close_calls.values()) == {1}
-
+            assert not any(active.values())
+            assert set(close_calls.values()) == {1}
+    finally:
+        try:
+            if publication is not None:
+                await publication.release()
+        finally:
+            await owner.shutdown()
 
 def test_save_post_failure_abandons_transferred_publication_hold() -> None:
     """A synchronous event handoff failure returns the token to app cleanup."""
@@ -299,7 +312,7 @@ def test_save_post_failure_abandons_transferred_publication_hold() -> None:
     from types import SimpleNamespace
 
     from tldw_chatbook.TTS.TTS_Generation import TTSPreferencesSnapshot
-    from tldw_chatbook.UI.Screens.settings_speech_tts import (
+    from tldw_chatbook.UI.Speech.settings_speech_tts import (
         GlobalSpeechTTSSaveProposal,
     )
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
@@ -418,50 +431,52 @@ async def test_identity_changing_draft_action_holds_managed_union(
     app = _StyledPanelHarness(state=state)
     owner = AudioCppModelInstallOwner()
     app.audio_cpp_model_install_owner = owner
-    async with app.run_test(size=(150, 55)) as pilot:
-        panel = app.query_one("#panel")
-        await pilot.pause()
-        if action == "revert":
-            panel.original_state.providers["audio_cpp"].update(
-                {
-                    "mode": "managed",
-                    "managed_setup_source": "guided",
-                    "guided_packages": [before.model_dump(mode="json")],
-                    "guided_default_model_id": before.public_model_id,
-                }
-            )
-        real_recompose = panel.recompose
-        recomposed = 0
+    try:
+        async with app.run_test(size=(150, 55)) as pilot:
+            panel = app.query_one("#panel")
+            await pilot.pause()
+            if action == "revert":
+                panel.original_state.providers["audio_cpp"].update(
+                    {
+                        "mode": "managed",
+                        "managed_setup_source": "guided",
+                        "guided_packages": [before.model_dump(mode="json")],
+                        "guided_default_model_id": before.public_model_id,
+                    }
+                )
+            real_recompose = panel.recompose
+            recomposed = 0
 
-        async def checked_recompose() -> None:
-            nonlocal recomposed
-            recomposed += 1
-            assert len(active) == (2 if action == "revert" else 1)
-            await real_recompose()
+            async def checked_recompose() -> None:
+                nonlocal recomposed
+                recomposed += 1
+                assert len(active) == (2 if action == "revert" else 1)
+                await real_recompose()
 
-        monkeypatch.setattr(panel, "recompose", checked_recompose)
-        if action == "remove":
-            event = SimpleNamespace(
-                button=SimpleNamespace(
-                    id=(
-                        "settings-speech-audio-cpp-guided-package-remove-"
-                        f"{before.package_uuid}"
-                    )
-                ),
-                stop=lambda: None,
-            )
-            await panel.handle_audio_cpp_remove_package(event)
-        elif action == "revert":
-            await panel.revert_to_saved()
-        else:
-            event = SimpleNamespace(stop=lambda: None)
-            await panel.handle_restore_defaults(event)
+            monkeypatch.setattr(panel, "recompose", checked_recompose)
+            if action == "remove":
+                event = SimpleNamespace(
+                    button=SimpleNamespace(
+                        id=(
+                            "settings-speech-audio-cpp-guided-package-remove-"
+                            f"{before.package_uuid}"
+                        )
+                    ),
+                    stop=lambda: None,
+                )
+                await panel.handle_audio_cpp_remove_package(event)
+            elif action == "revert":
+                await panel.revert_to_saved()
+            else:
+                event = SimpleNamespace(stop=lambda: None)
+                await panel.handle_restore_defaults(event)
 
-        await owner.wait_until_idle()
-        assert recomposed == 1
-        assert len(acquired) == (2 if action == "revert" else 1)
-        assert not active
-
+            await owner.wait_until_idle()
+            assert recomposed == 1
+            assert len(acquired) == (2 if action == "revert" else 1)
+            assert not active
+    finally:
+        await owner.shutdown()
 
 @pytest.mark.parametrize(
     "hostile",
@@ -576,6 +591,7 @@ def test_panel_snapshot_roundtrips_invalid_url_but_strips_credential_metadata() 
     assert "invalid.example" not in repr(snapshot)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("selector", "widget_type", "value"),
@@ -625,6 +641,7 @@ async def test_one_mounted_draft_action_advances_revision_exactly_once(
         assert panel.draft_snapshot().draft_revision == after
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_value_identical_widget_echo_does_not_advance_revision() -> None:
     """A framework echo of an unchanged value is not a semantic action."""
@@ -648,6 +665,7 @@ async def test_value_identical_widget_echo_does_not_advance_revision() -> None:
         assert panel.draft_snapshot().draft_revision == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("selector", "value"),
@@ -689,6 +707,7 @@ async def test_exact_model_or_voice_action_advances_revision_once(
         assert panel.draft_snapshot().draft_revision == before + 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ("revert", "restore_defaults"))
 async def test_reset_action_advances_revision_exactly_once(action: str) -> None:
@@ -1206,27 +1225,31 @@ async def test_panel_unmount_transfers_hold_and_replacement_mount_retries(
             raise AssertionError("Lease fencing must not activate a package")
 
     monkeypatch.setattr(panel_module, "managed_service", Service)
-    first_app = _StyledPanelHarness(state=_audio_cpp_state(saved_provider=True))
-    first_app.audio_cpp_model_install_owner = owner
-    async with first_app.run_test(size=(150, 55)):
-        panel = first_app.query_one("#panel", SpeechTTSSettingsPanel)
-        assert await panel._acquire_managed_refs({reference})
-        assert owner.cleanup_pending
+    try:
+        first_app = _StyledPanelHarness(state=_audio_cpp_state(saved_provider=True))
+        first_app.audio_cpp_model_install_owner = owner
+        async with first_app.run_test(size=(150, 55)):
+            panel = first_app.query_one("#panel", SpeechTTSSettingsPanel)
+            assert await panel._acquire_managed_refs({reference})
+            assert owner.cleanup_pending
 
-    await owner.wait_until_idle()
-    assert owner.cleanup_pending
-    assert len(close_threads) == 1
-
-    replacement_app = _StyledPanelHarness(state=_audio_cpp_state(saved_provider=True))
-    replacement_app.audio_cpp_model_install_owner = owner
-    async with replacement_app.run_test(size=(150, 55)) as pilot:
-        await pilot.pause()
         await owner.wait_until_idle()
-        assert not owner.cleanup_pending
+        assert owner.cleanup_pending
+        assert len(close_threads) == 1
 
-    assert len(close_threads) == 2
-    assert all(thread_id != ui_thread for thread_id in close_threads)
+        replacement_app = _StyledPanelHarness(
+            state=_audio_cpp_state(saved_provider=True)
+        )
+        replacement_app.audio_cpp_model_install_owner = owner
+        async with replacement_app.run_test(size=(150, 55)) as pilot:
+            await pilot.pause()
+            await owner.wait_until_idle()
+            assert not owner.cleanup_pending
 
+        assert len(close_threads) == 2
+        assert all(thread_id != ui_thread for thread_id in close_threads)
+    finally:
+        await owner.shutdown()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ("save", "remove"))
@@ -1285,57 +1308,69 @@ async def test_cancelled_settings_identity_worker_releases_app_owned_hold(
     app.audio_cpp_model_install_owner = owner
     blocked = asyncio.Event()
     entered = asyncio.Event()
-    async with app.run_test(size=(150, 55)):
-        panel = app.query_one("#panel", SpeechTTSSettingsPanel)
-        if operation == "save":
+    try:
+        async with app.run_test(size=(150, 55)):
+            panel = app.query_one("#panel", SpeechTTSSettingsPanel)
+            if operation == "save":
 
-            async def wait_for_cancel(_packages: object) -> tuple[()]:
-                entered.set()
-                await blocked.wait()
-                return ()
+                async def wait_for_cancel(_packages: object) -> tuple[()]:
+                    entered.set()
+                    await blocked.wait()
+                    return ()
 
-            monkeypatch.setattr(
-                panel_module,
-                "revalidate_audio_cpp_guided_packages",
-                wait_for_cancel,
-            )
-            panel._latest_request_id = 1
-            task = asyncio.create_task(
-                panel._revalidate_guided_save(
-                    request_id=1,
-                    packages=(package,),
-                    lease_refs={reference},
-                    proposal=MagicMock(),
-                    realtime_payload=None,
+                monkeypatch.setattr(
+                    panel_module,
+                    "revalidate_audio_cpp_guided_packages",
+                    wait_for_cancel,
                 )
-            )
-        else:
-
-            async def wait_for_cancel() -> None:
-                entered.set()
-                await blocked.wait()
-
-            monkeypatch.setattr(panel, "recompose", wait_for_cancel)
-            event = SimpleNamespace(
-                button=SimpleNamespace(
-                    id=(
-                        "settings-speech-audio-cpp-guided-package-remove-"
-                        f"{package.package_uuid}"
+                panel._latest_request_id = 1
+                task = asyncio.create_task(
+                    panel._revalidate_guided_save(
+                        request_id=1,
+                        packages=(package,),
+                        lease_refs={reference},
+                        proposal=MagicMock(),
+                        realtime_payload=None,
                     )
-                ),
-                stop=lambda: None,
-            )
-            task = asyncio.create_task(panel.handle_audio_cpp_remove_package(event))
+                )
+            else:
 
-        await asyncio.wait_for(entered.wait(), timeout=2)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        await owner.wait_until_idle()
+                async def wait_for_cancel() -> None:
+                    entered.set()
+                    await blocked.wait()
 
-        assert closed.is_set()
-        assert not owner.cleanup_pending
+                monkeypatch.setattr(panel, "recompose", wait_for_cancel)
+                event = SimpleNamespace(
+                    button=SimpleNamespace(
+                        id=(
+                            "settings-speech-audio-cpp-guided-package-remove-"
+                            f"{package.package_uuid}"
+                        )
+                    ),
+                    stop=lambda: None,
+                )
+                task = asyncio.create_task(panel.handle_audio_cpp_remove_package(event))
 
+            try:
+                await wait_for_background_signal(
+                    entered, task, what="managed Settings hold", timeout=2
+                )
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    async with asyncio.timeout(BACKGROUND_SIGNAL_TIMEOUT_SECONDS):
+                        await asyncio.shield(task)
+            finally:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+                blocked.set()
+                async with asyncio.timeout(BACKGROUND_SIGNAL_TIMEOUT_SECONDS):
+                    await asyncio.shield(asyncio.gather(task, return_exceptions=True))
+            await owner.wait_until_idle()
+
+            assert closed.is_set()
+            assert not owner.cleanup_pending
+    finally:
+        await owner.shutdown()
 
 async def _wait_for(condition, pilot, *, attempts: int = 160) -> bool:
     deadline = time.monotonic() + max(30.0, attempts * 0.02)
@@ -1366,12 +1401,13 @@ async def _open_speech_tts_category(screen, pilot) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from textual.widgets import Button
+    from textual.widgets import Button, Static
 
     from Tests.UI.app_factory import _build_test_app
     from Tests.UI.test_model_curated_view import _descriptor, _registry_with
@@ -1461,11 +1497,15 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
     )
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
 
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("mounted-request", 9)
@@ -1511,12 +1551,19 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
             if not button.disabled and button in app.screen._compositor.visible_widgets
         )
         install.press()
+        # TASK-34100.14: the details text mounts inside the plan's collapsed
+        # "Details" section, a compose cycle after the confirm button.
         assert await _wait_for(
-            lambda: bool(app.screen.query("#model-install-confirm")), pilot
+            lambda: bool(app.screen.query("#model-install-confirm"))
+            and bool(app.screen.query(".model-plan-details-text")),
+            pilot,
         )
         modal = app.screen
         modal_text = "\n".join(
-            str(item.renderable) for item in modal.query(".model-plan-panel")
+            # TASK-34100.14: hashes and pinned URLs sit under the plan's
+            # collapsed "Details" section.
+            str(item.renderable)
+            for item in modal.query(".model-plan-details-text").results(Static)
         )
         for artifact_file in descriptor.files:
             assert f"Path: {artifact_file.path}" in modal_text
@@ -1574,6 +1621,7 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
     app.set_default_model.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_worker_cancel_on_screen_unmount_drains_before_request_release(
     monkeypatch,
@@ -1593,11 +1641,15 @@ async def test_real_worker_cancel_on_screen_unmount_drains_before_request_releas
     )
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("cancel-request", 3)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1655,6 +1707,7 @@ async def test_real_worker_cancel_on_screen_unmount_drains_before_request_releas
     assert executor_finished.is_set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_already_installed_audio_cpp_returns_exact_leased_root(
     monkeypatch,
@@ -1686,11 +1739,15 @@ async def test_mounted_already_installed_audio_cpp_returns_exact_leased_root(
         "_ollama_api_available",
         lambda _self: asyncio.sleep(0, result=False),
     )
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("installed-request", 11)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1727,6 +1784,7 @@ async def test_mounted_already_installed_audio_cpp_returns_exact_leased_root(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_app_shutdown_drains_audio_cpp_owner_executor(
     monkeypatch,
@@ -1734,11 +1792,15 @@ async def test_real_app_shutdown_drains_audio_cpp_owner_executor(
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     started = threading.Event()
     finished = threading.Event()
@@ -1760,6 +1822,7 @@ async def test_real_app_shutdown_drains_audio_cpp_owner_executor(
     assert app.audio_cpp_model_install_owner.active_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
     monkeypatch,
@@ -1779,11 +1842,15 @@ async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
         "_ollama_api_available",
         lambda _self: asyncio.sleep(0, result=False),
     )
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("preflight-cancel", 12)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1862,6 +1929,7 @@ async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation(
     monkeypatch,
@@ -1879,11 +1947,15 @@ async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation
         "_ollama_api_available",
         lambda _self: asyncio.sleep(0, result=False),
     )
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("consent-cancel", 13)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1944,6 +2016,7 @@ async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
     monkeypatch,
@@ -2047,6 +2120,7 @@ async def test_rapid_away_back_reclaims_request_after_old_operation_drains(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_retry(
     monkeypatch,
@@ -2058,11 +2132,13 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
-            False
-            if section == "splash_screen" and key == "enabled"
-            else default
-        ))
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            False if section == "splash_screen" and key == "enabled" else default
+        ),
+    )
 
     monkeypatch.setattr(
         LLMManagementWindow,
@@ -2116,11 +2192,17 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
         assert screen._audio_cpp_model_request_claim.value == request
 
 
+# Laned (scripts/ui_pr_gate_census.txt): mounts the real Settings screen,
+# whose config readers are bound to the collection-time profile.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Real Settings save/restore retains global, provider, and Realtime drafts."""
+    """Real Settings save/restore retains global, provider, Realtime and
+    pipeline voice drafts. save_state and restore_state copied six fields by
+    hand and dropped the pipeline voice pair, so its edit came back as the
+    default with nothing unsaved (TASK-33007)."""
 
     from textual.widgets import Input, Select, Switch
 
@@ -2130,7 +2212,7 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
         _build_test_app,
         _wait_for_selector,
     )
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
     from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
         SpeechTTSSettingsPanel,
     )
@@ -2167,11 +2249,18 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
             "#settings-speech-realtime-model", Input
         ).value = "gpt-realtime-draft"
         screen.query_one("#settings-speech-realtime-voice", Input).value = "cedar"
+        eagerness = "#settings-speech-pipeline-response-eagerness-ms"
+        pipeline_edit = "2000"  # the saved default is 700
+        screen.query_one(eagerness, Input).value = pipeline_edit
         await pilot.pause()
 
         before = panel.draft_snapshot()
         saved = screen.save_state()
 
+    assert before.pipeline_voice_draft != before.pipeline_voice_original
+    assert saved["speech_tts_panel_draft"].pipeline_voice_draft == (
+        before.pipeline_voice_draft
+    ), "save_state dropped the pipeline voice edit"
     assert saved["speech_tts_panel_draft"] == before
     assert "18081" not in repr(saved["speech_tts_panel_draft"])
 
@@ -2205,8 +2294,14 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
             restored_screen.query_one("#settings-speech-realtime-voice", Input).value
             == "cedar"
         )
+        assert restored_screen.query_one(eagerness, Input).value == pipeline_edit
+        assert restored_panel.has_unsaved_changes()
+        assert restored_screen._category_has_unsaved_changes(
+            SettingsCategoryId.SPEECH_TTS
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_settings_stages_exact_request_after_collecting_widgets() -> None:
     """The explicit Library action captures the post-collection draft revision."""
@@ -2264,6 +2359,7 @@ async def test_mounted_settings_stages_exact_request_after_collecting_widgets() 
         assert await screen.flush_pending_work() is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_settings_navigation_preserves_detached_tts_draft_for_removal(
     monkeypatch: pytest.MonkeyPatch,
@@ -2343,6 +2439,7 @@ async def test_real_settings_navigation_preserves_detached_tts_draft_for_removal
         assert draft.state.defaults.model_mode == "first_available"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_real_settings_return_acknowledges_before_draft_remount(
     tmp_path: Path,
@@ -2609,6 +2706,7 @@ async def test_real_settings_return_acknowledges_before_draft_remount(
         assert realtime_sections["realtime"]["voice"] == "unrelated-draft-voice"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure",
@@ -2693,6 +2791,7 @@ async def test_model_library_route_token_is_cleared_when_dispatch_fails(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_route_cleanup_retries_after_foreign_request_claim_settles(
     monkeypatch: pytest.MonkeyPatch,
@@ -2745,6 +2844,7 @@ async def test_failed_route_cleanup_retries_after_foreign_request_claim_settles(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_route_cleanup_preserves_value_identical_newer_successor(
     monkeypatch: pytest.MonkeyPatch,
@@ -2795,6 +2895,7 @@ async def test_failed_route_cleanup_preserves_value_identical_newer_successor(
         assert successor.value.draft_revision == snapshot.draft_revision
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("unrelated_first", (True, False))
 async def test_model_library_leave_bypass_is_fifo_route_exclusive(
@@ -2857,6 +2958,7 @@ async def test_model_library_leave_bypass_is_fifo_route_exclusive(
         assert panel.confirm_leave.await_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_settings_reviews_and_merges_return_under_exact_lease(
     tmp_path: Path,
@@ -3029,6 +3131,7 @@ async def test_mounted_settings_reviews_and_merges_return_under_exact_lease(
     assert save_config.call_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_return_is_stale_after_edits_in_every_draft_family(
     tmp_path: Path,
@@ -3129,6 +3232,7 @@ async def test_mounted_return_is_stale_after_edits_in_every_draft_family(
         assert scanner.call_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_foreign_result_preserves_expected_request_for_later_exact_result(
     tmp_path: Path,
@@ -3202,6 +3306,7 @@ async def test_foreign_result_preserves_expected_request_for_later_exact_result(
         assert reviewed == [exact]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ack_failure", ("false", "raise"))
 @pytest.mark.parametrize("release_failure", ("false", "raise"))
@@ -3315,6 +3420,7 @@ async def test_foreign_result_cleanup_retries_without_touching_current_request(
         assert screen._audio_cpp_result_cleanup is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_same_token_revision_mismatch_terminally_clears_expected_request(
     tmp_path: Path,
@@ -3374,6 +3480,7 @@ async def test_same_token_revision_mismatch_terminally_clears_expected_request(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "transaction_failure",
@@ -3985,6 +4092,154 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
         assert replay is not None and replay.value == result
 
 
+# Laned (scripts/ui_pr_gate_census.txt): mounts the real Settings screen,
+# whose config readers are bound to the collection-time profile.
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("forced", (False, True), ids=("undo", "forced_teardown"))
+async def test_review_merge_undo_keeps_a_pipeline_voice_edit(
+    tmp_path: Path,
+    forced: bool,
+) -> None:
+    """Undoing an audio.cpp review merge keeps a later pipeline voice edit.
+
+    Both undo paths rebuilt the draft from six named fields and dropped the
+    pipeline voice pair, and the forced one (screen teardown, after a newer
+    package edit overlaps the merge) called the draft unchanged when only the
+    pipeline voice differed and handed back the pre-merge draft (TASK-33007).
+    """
+
+    import struct
+
+    from textual.widgets import Input, Select
+
+    from Tests.UI.test_destination_shells import (
+        DestinationHarness,
+        _active_destination_screen,
+        _build_test_app,
+        _wait_for_selector,
+    )
+    from tldw_chatbook.TTS.audio_cpp_artifact_catalog import (
+        AUDIO_CPP_ARTIFACT_COMMIT,
+    )
+    from tldw_chatbook.TTS.audio_cpp_guided_config import (
+        AudioCppManagedArtifactIdentity,
+    )
+    from tldw_chatbook.TTS.audio_cpp_package_scanner import (
+        scan_audio_cpp_package_root,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
+        SpeechTTSPanelDraftSnapshot,
+        SpeechTTSSettingsPanel,
+    )
+
+    root = (tmp_path / "pipeline-voice-package").resolve()
+    root.mkdir()
+    (root / "supertonic-3-orig.gguf").write_bytes(b"GGUF" + struct.pack("<I", 3))
+    identity = AudioCppManagedArtifactIdentity(
+        artifact_id="audio-cpp-supertonic-3-orig",
+        revision=AUDIO_CPP_ARTIFACT_COMMIT,
+        variant="orig",
+    )
+    scan = scan_audio_cpp_package_root(
+        root,
+        expected_managed_artifact=identity,
+        expected_canonical_root=str(root),
+    )
+    package = scan.discoveries[0].match.candidates[0].accept(managed_artifact=identity)
+
+    app_instance = _build_test_app()
+    host = DestinationHarness(app_instance, "settings")
+    async with host.run_test(size=(190, 55)) as pilot:
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        await _open_speech_tts_category(screen, pilot)
+        await _wait_for_selector(
+            screen, pilot, "#settings-speech-tts-panel", timeout=8.0
+        )
+        screen.query_one(
+            "#settings-speech-configure-provider", Select
+        ).value = "audio_cpp"
+        await pilot.pause()
+        screen.query_one("#settings-speech-audio_cpp-mode", Select).value = "managed"
+        await pilot.pause()
+        screen.query_one(
+            "#settings-speech-audio_cpp-managed-setup-source", Select
+        ).value = "guided"
+        await pilot.pause()
+        panel = screen.query_one(SpeechTTSSettingsPanel)
+        before = panel.draft_snapshot()
+        request = AudioCppModelLibraryRequest(
+            "pipeline-voice-request", before.draft_revision
+        )
+        result = AudioCppModelLibraryResult(
+            token=request.token,
+            draft_revision=request.draft_revision,
+            artifact_id=identity.artifact_id,
+            revision=identity.revision,
+            variant=identity.variant,
+            canonical_root=str(root),
+        )
+        app_instance._audio_cpp_settings_model_library_request = request
+        app_instance.pending_handoffs.stage(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT, result
+        )
+        claim = app_instance.pending_handoffs.claim(
+            HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_RESULT
+        )
+        assert claim is not None
+        screen._begin_audio_cpp_result_cleanup(
+            claim,
+            request,
+            panel=panel,
+            before=before,
+            before_result_text=panel.result_text,
+            release_only=False,
+        )
+        merged = screen._merge_and_ack_audio_cpp_model_library_result(
+            claim, result, package, False
+        )
+        assert type(merged) is SpeechTTSPanelDraftSnapshot
+        await pilot.pause()
+
+        eagerness = "#settings-speech-pipeline-response-eagerness-ms"
+        pipeline_edit = "2000"  # the saved default is 700
+        screen.query_one(eagerness, Input).value = pipeline_edit
+        await pilot.pause()
+        if forced:
+            # A newer package edit overlaps the merge, so only teardown's
+            # forced undo may still remove the review's delta.
+            panel.state.providers["audio_cpp"]["guided_packages"] = []
+            panel._synchronize_draft_revision()
+            screen._retry_audio_cpp_result_cleanup(force_overlap=True)
+        else:
+            settled = screen._ack_merged_audio_cpp_model_library_result(
+                claim,
+                panel,
+                before,
+                panel.result_text,
+                request,
+                result,
+                merged,
+            )
+            assert settled is False
+        await pilot.pause()
+
+        kept = screen._speech_tts_draft_snapshot
+        assert screen._audio_cpp_result_cleanup is None
+        assert kept.pipeline_voice_draft.response_eagerness_ms == pipeline_edit, (
+            "undoing the review merge dropped the pipeline voice edit"
+        )
+        assert kept.pipeline_voice_original == before.pipeline_voice_original
+        assert screen.query_one(eagerness, Input).value == pipeline_edit
+        assert kept.state.providers["audio_cpp"].get("guided_packages") == (
+            before.state.providers["audio_cpp"].get("guided_packages")
+        )
+        assert panel.has_unsaved_changes()
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ("restore", "release"))
 async def test_result_cleanup_retries_after_one_owner_failure(
@@ -4098,6 +4353,7 @@ async def test_result_cleanup_retries_after_one_owner_failure(
         assert screen._audio_cpp_result_cleanup is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_worker_call_from_thread_failure_retries_exact_cleanup(
     tmp_path: Path,

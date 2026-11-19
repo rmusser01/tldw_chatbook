@@ -1,0 +1,50 @@
+[
+  {
+    "file": "Tests/Character_Chat/test_prompt_cache_review_regressions.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "file": "Tests/Chat/test_anthropic_caching_degrade.py",
+    "baseline": 3,
+    "current": 3,
+    "new": []
+  },
+  {
+    "file": "Tests/Chat/test_cache_usage_metrics.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "file": "Tests/Chat/test_console_prompt_mixin_caching.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/Chat_Functions.py",
+    "baseline": 204,
+    "current": 204,
+    "new": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_prepared_request.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_provider_gateway.py",
+    "baseline": 66,
+    "current": 66,
+    "new": []
+  },
+  {
+    "file": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
+    "baseline": 248,
+    "current": 248,
+    "new": []
+  }
+]

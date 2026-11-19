@@ -261,9 +261,7 @@ def test_stream_publishes_runs_not_characters(
         calls["count"] += 1
         return real_utf16_length(value)
 
-    monkeypatch.setattr(
-        emote_directives_module, "utf16_length", counting_utf16_length
-    )
+    monkeypatch.setattr(emote_directives_module, "utf16_length", counting_utf16_length)
 
     paragraph = (
         "The rain had not stopped since morning, and the streets shone like "

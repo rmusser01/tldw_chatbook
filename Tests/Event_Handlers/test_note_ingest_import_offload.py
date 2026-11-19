@@ -367,8 +367,7 @@ async def test_import_worker_completes_over_snapshot_when_list_mutated_mid_impor
     results = await worker_callable()
 
     assert app.selected_note_files_for_import == [], (
-        "the mid-import mutation itself did not take effect -- test setup "
-        "is broken"
+        "the mid-import mutation itself did not take effect -- test setup is broken"
     )
     successes = [r for r in results if r.get("status") == "success"]
     assert len(successes) == 6, (
@@ -463,9 +462,7 @@ async def test_import_cancellation_stops_at_a_note_boundary_with_honest_accounti
     # Honest accounting: a cancelled import must never report the false
     # "N imported" success summary `on_import_success_notes` produces --
     # that summary is for a batch that actually finished.
-    notify_messages = [
-        str(c.args[0]) for c in app.notify.call_args_list if c.args
-    ]
+    notify_messages = [str(c.args[0]) for c in app.notify.call_args_list if c.args]
     assert not any("import finished" in msg.lower() for msg in notify_messages), (
         f"a cancelled import fired the completed-import notification "
         f"anyway: {notify_messages}"

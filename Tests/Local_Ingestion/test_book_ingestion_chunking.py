@@ -90,6 +90,7 @@ def _assert_no_chunking_failure(result: dict) -> None:
 
 
 class TestFb2ChunkingExecutes:
+    @pytest.mark.bootstrap_profile
     def test_explicit_sentences_options_chunk_for_real(self, tmp_path: Path):
         source = _write_fb2(tmp_path / "book.fb2")
 
@@ -110,6 +111,7 @@ class TestFb2ChunkingExecutes:
             assert chunk["text"].strip()
             assert chunk["metadata"]["chunk_method"] == "sentences"
 
+    @pytest.mark.bootstrap_profile
     def test_default_options_use_a_real_method_not_recursive(self, tmp_path: Path):
         """No chunk_options at all: the processor's own default must be a
         method some chunker actually dispatches ('recursive' is not one)."""
@@ -163,6 +165,7 @@ def epub_extraction_stubbed(monkeypatch: pytest.MonkeyPatch):
 
 
 class TestEpubChunkingExecutes:
+    @pytest.mark.bootstrap_profile
     def test_default_chapters_method_chunks_by_chapter(
         self, tmp_path: Path, epub_extraction_stubbed
     ):
@@ -178,6 +181,7 @@ class TestEpubChunkingExecutes:
         )
         assert chunks[0]["metadata"]["chunk_method"] == "ebook_chapters"
 
+    @pytest.mark.bootstrap_profile
     def test_words_method_tracks_word_budget(
         self, tmp_path: Path, epub_extraction_stubbed
     ):
@@ -386,9 +390,7 @@ def test_direct_epub_reader_rejects_unsafe_path_before_ebooklib(
     monkeypatch.setattr(
         Book_Ingestion_Lib,
         "epub",
-        SimpleNamespace(
-            read_epub=lambda file_path: ebooklib_calls.append(file_path)
-        ),
+        SimpleNamespace(read_epub=lambda file_path: ebooklib_calls.append(file_path)),
     )
     unsafe_path = tmp_path / ".." / ".." / "untrusted.epub"
 

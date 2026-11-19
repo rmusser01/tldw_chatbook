@@ -115,6 +115,7 @@ def _test_cli_setting(section: str, key: str, default=None):
     return default
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_time_shell_replay_exposes_home_console_and_orientation_paths() -> (
     None
@@ -175,7 +176,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "PersonasScreen",
                     (
                         "Roleplay",
-                        "Author the pieces that shape a chat",
+                        "who the AI plays",  # Roleplay frame B1: the purpose line
                         "Characters",
                         "Lore",
                     ),

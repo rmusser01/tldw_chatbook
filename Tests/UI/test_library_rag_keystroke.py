@@ -48,6 +48,7 @@ def _spy(monkeypatch, screen, method_name: str) -> list[bool]:
     return calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_query_edit_never_touches_results_or_history_widgets(monkeypatch):
     """AC#1: Input.Changed updates only the run-button/status line."""
@@ -89,6 +90,7 @@ async def test_query_edit_never_touches_results_or_history_widgets(monkeypatch):
         await _wait_for_library_rag_query_ready(screen, pilot, "policy question")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_query_edit_leaves_landed_results_visible_and_in_sync(monkeypatch):
     """Typing a new (unsubmitted) query must not desync the visible Evidence
@@ -148,6 +150,7 @@ async def test_query_edit_leaves_landed_results_visible_and_in_sync(monkeypatch)
         assert screen.query_one("#library-rag-result-0") is result_widget_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_query_edit_unsticks_run_gate_after_prior_search_settles(monkeypatch):
     """The narrower in-flight-status reset must still un-stick the run gate:
@@ -198,6 +201,7 @@ async def test_query_edit_unsticks_run_gate_after_prior_search_settles(monkeypat
         assert len(screen._rag_search_state.results) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_input_submitted_still_runs_the_full_refresh(monkeypatch):
     """AC#1 (contrast case): Submitted must still rebuild results/history."""
@@ -246,6 +250,7 @@ def test_refresh_search_rag_panel_state_widgets_skips_results_and_history_when_a
     assert signature.parameters["include_results_and_history"].default is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rag_mode_query_edit_never_remounts_the_landed_answer(monkeypatch):
     """AC#1, extended to PR-3's Answer region (Task 4 review).

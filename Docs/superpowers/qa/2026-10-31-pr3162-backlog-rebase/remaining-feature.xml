@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="56.455" timestamp="2026-10-31T12:55:20.987531-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.UI.test_console_archive_recovery_flow" name="test_stock_received_send_keeps_exact_recovery_user_proof[enter]" time="44.213"><failure message="assert False">Tests\UI\test_console_archive_recovery_flow.py:1878: in test_stock_received_send_keeps_exact_recovery_user_proof
+    record = await _held_received_record(case)
+Tests\UI\test_console_received_intent_feedback.py:318: in _held_received_record
+    assert await _until(case.probe.entered.is_set, 10)
+E   assert False</failure></testcase></testsuite></testsuites>

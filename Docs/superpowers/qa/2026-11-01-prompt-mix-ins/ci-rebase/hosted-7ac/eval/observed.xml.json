@@ -1,0 +1,4 @@
+{
+  "sha256": "8331579ff07ea6bb82fc476e5f221d74b69f890a09d58c2960086f96d8f46523",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"44.456\" timestamp=\"2026-11-02T08:45:10.549702-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\"><testcase classname=\"Tests.Backup_Recovery.test_eval_retained_definitions\" name=\"test_complete_rebackup_retains_eval_after_source_and_candidate_removal\" time=\"44.336\" /></testsuite></testsuites>"
+}

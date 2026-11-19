@@ -60,7 +60,8 @@ def test_skill_text_names_the_registered_tools_and_the_hub_allow_advice_once():
     text = (bs.builtin_skill_dir(NAME) / "SKILL.md").read_text(encoding="utf-8")
     for tool in ("character_search", "character_get", "character_save"):
         assert f"`{tool}`" in text
-    assert text.count("MCP hub") == 1
+    # TASK-36519: the hub is Settings ▸ Tools & MCP (there is no MCP hub).
+    assert text.count("Settings ▸ Tools & MCP ▸ Permissions") == 1
     advice = " ".join(text.split("## Permissions", 1)[1].split("##", 1)[0].split())
     assert "tell them once" in advice and "set those two read tools to Allow" in advice
 
@@ -348,39 +349,17 @@ def test_explicit_customize_copies_a_disabled_builtin(tmp_path):
 def test_persisted_disabled_builtins_reach_app_config_after_restart(tmp_path, monkeypatch):
     """Live-check finding: load_settings dropped [skills], so a built-in turned
     off in the Library came back after a restart."""
-    import tldw_chatbook.config as app_config
+    from Tests.Backup_Recovery.config_test_support import select_config_source
 
-    saved = {
-        name: getattr(app_config, name)
-        for name in (
-            "_CONFIG_CACHE",
-            "_CONFIG_CACHE_SOURCE",
-            "_SETTINGS_CACHE",
-            "_SETTINGS_CACHE_SOURCE",
-            "settings",
-            "_CONFIG_GENERATION",
-            "_LAST_CONFIG_LOAD_FAILURE",
-        )
-    }
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         '[skills]\ndisabled_builtins = ["character-creator"]\n', encoding="utf-8"
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    for name in ("_CONFIG_CACHE", "_CONFIG_CACHE_SOURCE", "_SETTINGS_CACHE",
-                 "_SETTINGS_CACHE_SOURCE", "_LAST_CONFIG_LOAD_FAILURE"):
-        setattr(app_config, name, None)
-    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-
-    try:
-        try:
-            settings = app_config.load_settings(force_reload=True)
-        except RecoveryRequired:  # local ADR-126 gate; runs in CI
-            pytest.skip("RecoveryRequired (ADR-126) blocks config loads here")
+    config_path.chmod(0o600)
+    with monkeypatch.context() as selected:
+        app_config = select_config_source(selected, config_path)
+        settings = app_config.load_settings(force_reload=True)
         assert bs.disabled_builtins_from_config(settings) == frozenset({NAME})
-    finally:
-        for name, value in saved.items():
-            setattr(app_config, name, value)
 
 
 # ---------------------------------------------------------------------------

@@ -63,6 +63,7 @@ def test_process_attachment_path_rejects_oversized_files(tmp_path, monkeypatch):
         asyncio.run(process_attachment_path(str(big), allowed_root=str(tmp_path)))
 
 
+@pytest.mark.bootstrap_profile
 def test_process_attachment_path_inlines_text_files(tmp_path):
     note = tmp_path / "notes.md"
     note.write_text("# hello\nworld")
@@ -125,6 +126,7 @@ def test_inline_attachment_label_reports_zero_for_empty_file():
     assert _format_size(30) not in empty.label
 
 
+@pytest.mark.bootstrap_profile
 def test_process_attachment_path_attaches_images(tmp_path):
     image = tmp_path / "photo.png"
     _write_png(image)
@@ -186,6 +188,7 @@ def test_image_content_parts_builds_data_url():
     assert [p["type"] for p in only_image] == ["image_url"]
 
 
+@pytest.mark.bootstrap_profile
 def test_process_attachment_bytes_builds_image_pending():
     import asyncio
     from io import BytesIO
@@ -209,6 +212,7 @@ def test_process_attachment_bytes_builds_image_pending():
     assert attachment.data and attachment.processed_size == len(attachment.data)
 
 
+@pytest.mark.bootstrap_profile
 def test_process_attachment_bytes_rejects_corrupt_and_oversized(monkeypatch):
     import asyncio
 

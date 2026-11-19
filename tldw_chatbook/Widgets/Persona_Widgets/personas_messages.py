@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from textual.message import Message
+
+if TYPE_CHECKING:
+    from tldw_chatbook.UI.Persona_Modules.roleplay_list_window_state import WindowIntent
 
 
 PersonaWorkbenchMode = Literal[
@@ -24,8 +27,8 @@ PersonaEntityKind = Literal[
     "lore",
 ]
 PersonaAction = Literal[
-    "create",
-    "create_actor_pack",
+    "new",  # frame slice B2b: open the New chooser (+ New, Ctrl+N)
+    "create",  # a blank item of the current kind, at once
     "import",
     "export",
     "duplicate",
@@ -35,14 +38,11 @@ PersonaAction = Literal[
     "save",
     "cancel",
     "refresh",
+    "retry",  # frame slice B2b: read the failed items list again (spec 1.5.4)
 ]
 PersonaBuddyAction = Literal["use", "show", "close", "disable"]
 PersonaBuddySource = Literal["local", "server"]
 ActorPackExportActorKind = Literal["character", "persona"]
-
-
-class ActorPackImportRequested(Message):
-    """Request the dedicated Actor Pack picker without carrying path/content."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +180,23 @@ class PersonaEntitySelected(Message):
         self.runtime_target = runtime_target
 
 
+class DeferredPersonaEntitySelected(PersonaEntitySelected):
+    """A first-match activation still owned by its cancellable window intent."""
+
+    def __init__(
+        self,
+        *,
+        entity_kind: PersonaEntityKind,
+        entity_id: str,
+        entity_name: str,
+        intent: WindowIntent,
+    ) -> None:
+        super().__init__(
+            entity_kind=entity_kind, entity_id=entity_id, entity_name=entity_name
+        )
+        self.intent = intent
+
+
 class PersonaSearchChanged(Message):
     """Notify the workbench that list search or filter input changed."""
 
@@ -205,20 +222,28 @@ class PersonaActionRequested(Message):
         self.entity_id = entity_id
 
 
+class PersonaSearchSubmitted(Message):
+    """Enter in the library search box (frame slice B2a, spec 1.6's 4-key find)."""
+
+
+class AlsoInRequested(Message):
+    """Enter or a click on an ``Also in:`` target (frame slice B2b, spec 1.5.4).
+
+    The screen switches to ``kind``'s list with the search applied, through
+    the unsaved guard.
+    """
+
+    def __init__(self, kind: str) -> None:
+        super().__init__()
+        self.kind = kind
+
+
 class PersonaSortCycleRequested(Message):
     """The user asked to advance the library sort (screen decides the next key)."""
 
 
 class PersonaTagFilterRequested(Message):
     """The user asked to open the tag filter (characters only)."""
-
-
-class PersonaPageChanged(Message):
-    """The user asked to move the library page window."""
-
-    def __init__(self, delta: int) -> None:
-        super().__init__()
-        self.delta = delta
 
 
 class PersonaMarksChanged(Message):
@@ -235,6 +260,7 @@ class PersonaMarksChanged(Message):
 
 __all__ = [
     "ActorPackExportActorKind",
+    "AlsoInRequested",
     "ActorPackExportRequested",
     "PersonaAction",
     "PersonaActionRequested",
@@ -245,8 +271,8 @@ __all__ = [
     "PersonaEntitySelected",
     "PersonaMarksChanged",
     "PersonaModeChanged",
-    "PersonaPageChanged",
     "PersonaSearchChanged",
+    "PersonaSearchSubmitted",
     "PersonaSortCycleRequested",
     "PersonaTagFilterRequested",
     "PersonaWorkbenchMode",

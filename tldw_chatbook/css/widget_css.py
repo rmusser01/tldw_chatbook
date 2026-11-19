@@ -10,17 +10,18 @@ not yet seen this session first mounts.
 
 The fix is to stop those classes registering their own source: a widget declares
 ``BUNDLED_CSS`` (or a screen ``BUNDLED_SCREEN_CSS``) instead of
-``DEFAULT_CSS``/``CSS``, and this module lifts every such block into a single
-generated stylesheet at build time.  ``build_css.py`` writes:
+``DEFAULT_CSS``/``CSS``, and this module lifts every such block into generated
+stylesheets at build time.  ``build_css.py`` writes:
 
-* ``widget_defaults.tcss`` -- the ``BUNDLED_CSS`` blocks, loaded by the app as
-  *one* default-CSS source (``TldwCli.DEFAULT_CSS``), which keeps them in
-  Textual's low-priority "widget defaults" origin tier exactly as before.
-* ``components/_bundled_screen_css.tcss`` -- the ``BUNDLED_SCREEN_CSS`` blocks,
-  concatenated last into the app bundle, which keeps them in the high-priority
-  "app CSS" tier exactly as before (screen ``CSS`` is *not* default CSS) while
-  removing the full cold ``Stylesheet.reparse()`` Textual runs on a modal's
-  first open.
+* ``widget_defaults_{self,scoped}.tcss`` -- the ``BUNDLED_CSS`` blocks, which
+  ``TldwCli._get_default_css`` registers as two default-CSS sources
+  (``build_css.widget_defaults_sources``).  That keeps them in Textual's
+  low-priority "widget defaults" origin tier exactly as before.
+* ``screen_css_{scoped,self}.tcss`` -- the ``BUNDLED_SCREEN_CSS`` blocks, which
+  ``TldwCli.CSS_PATH`` loads either side of the app bundle.  That keeps them in
+  the high-priority "app CSS" tier exactly as before (screen ``CSS`` is *not*
+  default CSS) while removing the full cold ``Stylesheet.reparse()`` Textual
+  runs on a modal's first open.
 
 Scoping is preserved by rewriting the selectors the same way Textual would.
 ``Widget.SCOPED_CSS`` defaults to ``True``, so Textual prefixes every top-level
@@ -50,10 +51,10 @@ every tie it now finds itself in, which is arranged per tier:
 * widget defaults: the scoped sheet is registered with a tie-breaker below every
   other default-CSS source (Textual's own are ``-(MRO depth)``), so it loses
   ties on the tie-breaker.
-* app CSS (screens): the scoped sheet is concatenated near the *top* of the
-  bundle and the self sheet at the very *bottom*, so the scoped rules lose ties
-  on source order while the self rules keep winning them as they did when
-  Textual appended a screen's ``CSS`` at first open.
+* app CSS (screens): the scoped sheet loads *before* the app bundle and the
+  self sheet *after* it (``build_css.screen_css_paths``), so the scoped rules
+  lose ties on source order while the self rules keep winning them as they did
+  when Textual appended a screen's ``CSS`` at first open.
 
 **That compensation is one-directional, and the limit is worth stating.**  It
 handles LOSE -> TIE.  It cannot handle TIE -> WIN: a rule shifted from ``S`` to
@@ -97,6 +98,7 @@ from __future__ import annotations
 
 import ast
 import re
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -832,7 +834,9 @@ def iter_blocks(package_root: Path, attr: str) -> list[BundledBlock]:
 
     Returns:
         The blocks, ordered by module path then declaration line so the
-        generated stylesheet is byte-stable across machines.
+        generated stylesheet is byte-stable across machines, except that a
+        block never precedes a block of one of its base classes (see
+        :func:`_bases_first`).
 
     Raises:
         ValueError: If a declaration is not a plain string literal (it could not
@@ -840,6 +844,7 @@ def iter_blocks(package_root: Path, attr: str) -> list[BundledBlock]:
             scopes would collide in the generated sheet).
     """
     blocks: list[BundledBlock] = []
+    class_bases: dict[str, set[str]] = {}
     for path in sorted(package_root.rglob("*.py")):
         relative = path.relative_to(package_root)
         if any(part in EXCLUDED_DIRS for part in relative.parts):
@@ -851,6 +856,11 @@ def iter_blocks(package_root: Path, attr: str) -> list[BundledBlock]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
+            class_bases.setdefault(node.name, set()).update(
+                base.id if isinstance(base, ast.Name) else base.attr
+                for base in node.bases
+                if isinstance(base, (ast.Name, ast.Attribute))
+            )
             for stmt in node.body:
                 target_names: list[str] = []
                 value: ast.expr | None = None
@@ -893,7 +903,61 @@ def iter_blocks(package_root: Path, attr: str) -> list[BundledBlock]:
                 "class name, so the rules would cross-apply)."
             )
         seen[block.class_name] = block.module
-    return blocks
+    return _bases_first(blocks, class_bases)
+
+
+def _bases_first(
+    blocks: list[BundledBlock], class_bases: dict[str, set[str]]
+) -> list[BundledBlock]:
+    """Stably defer each block until the blocks of all its ancestors are out.
+
+    Within one generated stream an exact specificity tie goes to the later
+    rule, so a base class's block must come first: the order Textual's own
+    per-class ``DEFAULT_CSS`` tie-breakers gave them. Path order alone put
+    ``UI/Kanban``'s KanbanBoardScreen ahead of its base in ``UI/Navigation``
+    (TASK-38697). A block whose ancestors are all out keeps its path slot.
+
+    Args:
+        blocks: Blocks in path-then-line order.
+        class_bases: Direct base names of every class in the parsed files.
+
+    Returns:
+        The same blocks, every ancestor's block before its descendants'.
+    """
+
+    # ponytail: ancestors resolve by class name, only through classes in the
+    # files iter_blocks parses. A chain through a class in a file with no
+    # bundled CSS is missed here; test_base_class_blocks_precede_their_
+    # subclasses walks the real __mro__ and still catches it.
+    def ancestors(name: str, seen: set[str]) -> set[str]:
+        for base in class_bases.get(name, ()):
+            if base not in seen:
+                seen.add(base)
+                ancestors(base, seen)
+        return seen
+
+    names = {block.class_name for block in blocks}
+    waits_for = {
+        block.class_name: (ancestors(block.class_name, set()) & names)
+        - {block.class_name}
+        for block in blocks
+    }
+    pending, ordered = list(blocks), []
+    while pending:
+        waiting = {block.class_name for block in pending}
+        # Only a name cycle (unrelated same-named classes) leaves no block free;
+        # then the first pending block goes, so cycle members follow every block
+        # that can go, in path order among themselves ([P, Q, R], P<->Q: R, P, Q).
+        index = next(
+            (
+                i
+                for i, block in enumerate(pending)
+                if not waits_for[block.class_name] & waiting
+            ),
+            0,
+        )
+        ordered.append(pending.pop(index))
+    return ordered
 
 
 #: A generated stream carries rules only if a brace survives comment
@@ -997,8 +1061,11 @@ def render_stylesheets(
         # fallbacks *before* splitting/scoping, so they cannot leak into a
         # later block's rules once every block lands in the same generated
         # file -- see `isolate_local_variables`.
+        # TASK-36386: dedent first. A class-body string carries its Python
+        # indentation on every line, and these sheets are parsed before
+        # first paint; the CSS keeps only its own relative indentation.
         isolated_css = isolate_local_variables(
-            block.css, scope=block.class_name, variables=variables
+            textwrap.dedent(block.css), scope=block.class_name, variables=variables
         )
         split = split_scoped_css(
             isolated_css, block.class_name, scope_every_selector=scope_every_selector

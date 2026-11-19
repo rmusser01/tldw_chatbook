@@ -1,0 +1,7 @@
+GUARD, LIVE: this branch's final code with the L-01 defect put back in a scratch copy (canvas forwarder async + awaited,
+controller handler async + awaited, Export projection awaited inline), golden profile, 160x45, socket=w1b-t1-7, APP_WT=/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/9a6612d8-88a3-469a-a5da-1307bdff44b8/scratchpad/t1/defect
+Clicked Export… in the Media Items toolbar. 'Export bundle (.zip)' appeared within 12s: YES  (capture 95; the fallback whole-screen refresh)
+F1 opened Library Shortcuts: YES; Ctrl+P opened the palette: YES; Escape returned to the Media list: YES  (capture 96)
+6s after Ctrl+Q the tmux session had: ended
+Run log: Traceback count=0; lines naming the refusal=1; toast/keep-alive lines=0
+2026-10-05 14:01:58 [ERROR   ] tldw_chatbook.UI.Navigation.surface_swap_guard:651 - Surface swap refused (a handler awaited its own removal); whole-screen refresh instead. LibraryScreen.recompose: refusing an awaited surface swap that could never finish. It is running on the message pump of LibraryMediaCanvas(id='library-media-canvas', classes='w-fill'), which the swap removes -- Textual's teardow

@@ -671,11 +671,10 @@ enable_cache = false
 """
         config_file.write_text(config_content)
 
-        # Parse TOML (would use tomli in real implementation)
-        import tomli
+        import tomllib
 
         with open(config_file, "rb") as f:
-            settings = tomli.load(f)
+            settings = tomllib.load(f)
 
         # Load configs
         configs = load_config_from_settings(settings)

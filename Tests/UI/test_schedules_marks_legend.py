@@ -71,6 +71,7 @@ async def _mounted(pilot):
     return workbench
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_marking_rows_shows_count_and_keys():
     app = _App(_Service())
@@ -96,6 +97,7 @@ async def test_marking_rows_shows_count_and_keys():
         assert "2 marked" in _notice_text(workbench)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_marks_clears_the_legend():
     app = _App(_Service())
@@ -110,6 +112,7 @@ async def test_clearing_marks_clears_the_legend():
         assert "marked" not in _notice_text(workbench)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missed_glyph_has_a_visible_explanation():
     app = _App(_Service(with_missed=True))
@@ -120,6 +123,7 @@ async def test_missed_glyph_has_a_visible_explanation():
         assert "ran late" in text.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_missed_rows_means_no_glyph_legend():
     app = _App(_Service(with_missed=False))
@@ -128,6 +132,7 @@ async def test_no_missed_rows_means_no_glyph_legend():
         assert "◇" not in _notice_text(workbench)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resize_notice_and_mark_legend_coexist():
     app = _App(_Service())
@@ -191,6 +196,7 @@ class _MixedService(MockSchedulingServiceMixin):
         self.updated.append((task_id, fields))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_rows_are_not_markable():
     """redesign PR-2, Task 2: marking is reminder-only (plan ruling 1) --
@@ -224,6 +230,7 @@ async def test_definition_rows_are_not_markable():
         assert not any("Automations tab" in m for m in messages), messages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bulk_delete_never_falls_through_to_the_highlighted_row():
     """d with marks that no longer resolve refuses instead of opening the
@@ -249,6 +256,7 @@ async def test_bulk_delete_never_falls_through_to_the_highlighted_row():
         assert any("nothing was deleted" in m.lower() for m in messages), messages
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bulk_toggle_never_falls_through_to_the_highlighted_row():
     app = _App(_MixedService())
@@ -266,6 +274,7 @@ async def test_bulk_toggle_never_falls_through_to_the_highlighted_row():
         assert not workbench._marked_ids
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_marks_are_pruned_on_reload():
     app = _App(_MixedService())
@@ -279,6 +288,7 @@ async def test_stale_marks_are_pruned_on_reload():
         assert workbench._marked_ids == {"task-1"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_legend_states_marks_hidden_by_the_filter():
     app = _App(_Service())

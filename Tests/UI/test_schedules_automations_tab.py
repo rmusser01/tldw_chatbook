@@ -231,8 +231,7 @@ def _queue_row_index(workbench, definition_id: str) -> int:
     return next(
         index
         for index, row in enumerate(workbench._visible_rows)
-        if row.kind == "definition"
-        and str(row.source_row.get("id")) == definition_id
+        if row.kind == "definition" and str(row.source_row.get("id")) == definition_id
     )
 
 
@@ -243,9 +242,7 @@ async def _select_queue_definition(pilot, workbench, definition_id: str):
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()
-    return workbench.query_one(
-        "#scheduling-queue-definition-detail", DefinitionDetail
-    )
+    return workbench.query_one("#scheduling-queue-definition-detail", DefinitionDetail)
 
 
 async def _settled_workbench(pilot):
@@ -257,6 +254,7 @@ async def _settled_workbench(pilot):
     return pilot.app.screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_definitions_load_into_the_queue():
     """redesign PR-4 task 5: the server fetch lands in the unified queue.
@@ -289,6 +287,7 @@ async def test_server_definitions_load_into_the_queue():
         assert workbench._selected_queue_definition()["id"] == "def-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_rows_are_rebound_to_the_connection_owner_scope():
     """Live verification task 6, D1: the server sends its own raw user id
@@ -304,19 +303,19 @@ async def test_server_rows_are_rebound_to_the_connection_owner_scope():
     async with app.run_test() as pilot:
         workbench = await _settled_workbench(pilot)
 
-        assert [
-            row["owner_id"] for row in _queue_definitions(workbench)
-        ] == ["server:server-1", "server:server-1"]
-
-        first_cell = _queue_titles(workbench)[
-            _queue_row_index(workbench, "def-1")
+        assert [row["owner_id"] for row in _queue_definitions(workbench)] == [
+            "server:server-1",
+            "server:server-1",
         ]
+
+        first_cell = _queue_titles(workbench)[_queue_row_index(workbench, "def-1")]
         # 31713 AC#1: owner suffix, not prefix -- matches the reminder
         # queue-title convention (`" (server: <id>)"`) exactly.
         assert first_cell == "Morning brief (server: server-1)"
         assert "This device" not in first_cell
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_owner_prefix_and_bracket_name_render_literally():
     """Live verification task 6 round 2, D8.
@@ -406,6 +405,7 @@ async def test_owner_prefix_and_bracket_name_render_literally():
 # that survived. Keeping both would be one test twice.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_run_now_refusal_surfaces_without_raising():
     """A `ServerClientValidationError` refusal is surfaced, not raised out
@@ -431,6 +431,7 @@ async def test_server_run_now_refusal_surfaces_without_raising():
         assert workbench._selected_row_id == "definition:def-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_run_now_reports_honest_copy_when_capabilities_are_absent():
     """31713 AC#3: gated the SAME way `SyncEngine._pull_results` gates its
@@ -465,6 +466,7 @@ async def test_server_run_now_reports_honest_copy_when_capabilities_are_absent()
         assert not any("Failed to run" in n.message for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_run_now_reports_honest_copy_on_a_missing_run_route():
     """31713 AC#3: mirrors `_pull_results`'s OTHER case -- capabilities
@@ -495,6 +497,7 @@ async def test_server_run_now_reports_honest_copy_on_a_missing_run_route():
         assert not any("no such route" in n.message for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_now_on_queue_tab_routes_a_definition_row_to_its_owner():
     """redesign PR-4, task 3 (supersedes this test's old pin): Queue
@@ -554,6 +557,7 @@ async def _push_audit_view(pilot, service, definition):
     return pilot.app.screen.query_one(DefinitionAuditView)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audit_view_lists_the_events_and_counts_them():
     server_client = AutomationsServerClient()
@@ -569,15 +573,14 @@ async def test_audit_view_lists_the_events_and_counts_them():
             {"id": "def-1", "name": "Morning brief", "owner_id": "server:server-1"},
         )
 
-        server_client.list_automation_definition_audit.assert_awaited_once_with(
-            "def-1"
-        )
+        server_client.list_automation_definition_audit.assert_awaited_once_with("def-1")
         table = overlay.query_one("#scheduling-audit-view-table", DataTable)
         notice = overlay.query_one("#scheduling-audit-view-notice")
         assert table.row_count == 2
         assert "2 events" in str(notice.content)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audit_view_shows_empty_state_without_events():
     server_client = AutomationsServerClient()
@@ -601,6 +604,7 @@ async def test_audit_view_shows_empty_state_without_events():
         assert "No recorded events" in str(notice.content)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audit_view_shows_notice_when_capabilities_absent():
     """task-3 handshake, shape 1: the capabilities probe itself comes
@@ -625,6 +629,7 @@ async def test_audit_view_shows_notice_when_capabilities_absent():
         assert "does not support scheduled task automation" in str(notice.content)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audit_view_shows_notice_when_audit_route_missing_despite_capabilities():
     """task-3 handshake, shape 2 (the actual UAT repro): capabilities are
@@ -714,13 +719,16 @@ def test_execution_target_label_matrix():
 # --- task-5 fix round: merged local + server listing ------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_automation_appears_with_recomputed_health():
     """Local rows appear even without a connected server, and their Health
     cell is the freshly COMPUTED value (automation_health), never the DB's
     unreliable create-time placeholder."""
     server_client = MockServerClient(notifications_service=None)
-    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    service = AutomationsMockService(
+        server_client, local_definitions=[_local_definition()]
+    )
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
         workbench = await _settled_workbench(pilot)
@@ -734,11 +742,10 @@ async def test_local_automation_appears_with_recomputed_health():
         # does not, so the recomputed value is read off the row the queue
         # actually built (`_device_only_automations` stamps it, and that
         # stamping is what this test is about).
-        assert _queue_definitions(workbench)[0]["health"] == (
-            "capability_unavailable"
-        )
+        assert _queue_definitions(workbench)[0]["health"] == ("capability_unavailable")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_merged_list_shows_both_local_and_server_rows_with_owner_prefix():
     server_client = AutomationsServerClient()
@@ -763,6 +770,7 @@ async def test_merged_list_shows_both_local_and_server_rows_with_owner_prefix():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_offline_server_owned_row_is_listed_as_pending_sync():
     """Final review I5: a "Runs on: Server" automation saved while offline
@@ -797,12 +805,15 @@ async def test_offline_server_owned_row_is_listed_as_pending_sync():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_now_routes_local_automation_through_the_service_seam():
     """Local AND server rows both present -- selecting the local one must
     route through the local seam and never touch the server client."""
     server_client = AutomationsServerClient()
-    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    service = AutomationsMockService(
+        server_client, local_definitions=[_local_definition()]
+    )
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
         workbench = await _settled_workbench(pilot)
@@ -818,10 +829,13 @@ async def test_run_now_routes_local_automation_through_the_service_seam():
         server_client.run_automation_definition_now.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_run_now_refusal_surfaces_without_raising():
     server_client = MockServerClient(notifications_service=None)
-    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    service = AutomationsMockService(
+        server_client, local_definitions=[_local_definition()]
+    )
     service.run_automation_now = AsyncMock(return_value=None)
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
@@ -837,13 +851,16 @@ async def test_local_run_now_refusal_surfaces_without_raising():
         assert workbench._selected_row_id == "definition:local-def-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_automation_history_says_not_available_yet():
     """Local dispatch keeps no durable audit trail, and the view says so
     rather than showing an empty table. (redesign PR-4 task 5: read off
     the pushed `DefinitionAuditView`, which owns this notice now.)"""
     server_client = MockServerClient(notifications_service=None)
-    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    service = AutomationsMockService(
+        server_client, local_definitions=[_local_definition()]
+    )
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
         await _settled_workbench(pilot)
@@ -854,6 +871,7 @@ async def test_local_automation_history_says_not_available_yet():
         assert "isn't available yet" in str(notice.content)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_refresh_after_local_save_shows_the_new_row():
     """The exact gap the review named: a local save must not read as a no-op."""
@@ -883,10 +901,13 @@ async def test_refresh_after_local_save_shows_the_new_row():
 # --- task-5 fix round: edit affordance ---------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_action_opens_form_prefilled_for_a_local_row():
     server_client = MockServerClient(notifications_service=None)
-    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    service = AutomationsMockService(
+        server_client, local_definitions=[_local_definition()]
+    )
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
         workbench = await _settled_workbench(pilot)
@@ -906,6 +927,7 @@ async def test_edit_action_opens_form_prefilled_for_a_local_row():
         assert form._definition_id == "local-def-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_action_refuses_agent_task_rows():
     server_client = AutomationsServerClient()
@@ -938,6 +960,7 @@ async def test_edit_action_refuses_agent_task_rows():
         assert any("recurring-question" in n.message for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_action_mirrors_a_server_only_row_on_demand():
     """A server row with no local shadow yet gets one created on the fly
@@ -970,12 +993,15 @@ async def test_edit_action_mirrors_a_server_only_row_on_demand():
         assert runs_on.value == "server:server-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_save_reports_updated_not_created():
     """A save from the edit flow must say "updated", not the create-mode
     "created" wording -- both routes share one result handler."""
     server_client = MockServerClient(notifications_service=None)
-    service = AutomationsMockService(server_client, local_definitions=[_local_definition()])
+    service = AutomationsMockService(
+        server_client, local_definitions=[_local_definition()]
+    )
     app = AutomationsTestApp(service)
     async with app.run_test() as pilot:
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
@@ -1073,8 +1099,13 @@ async def test_definition_detail_renders_every_details_and_frequency_value():
             _detail_text(detail, "scheduling-automation-detail-question")
             == "What changed this week?"
         )
-        assert _detail_text(detail, "scheduling-automation-detail-runs-on") == "This device"
-        assert _detail_text(detail, "scheduling-automation-detail-model") == "openai/gpt-5"
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-runs-on")
+            == "This device"
+        )
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-model") == "openai/gpt-5"
+        )
         assert (
             _detail_text(detail, "scheduling-automation-detail-generation")
             == "Always generate a draft"
@@ -1087,7 +1118,9 @@ async def test_definition_detail_renders_every_details_and_frequency_value():
             _detail_text(detail, "scheduling-automation-detail-sources")
             == "Media, Notes"
         )
-        assert _detail_text(detail, "scheduling-automation-detail-repeat") == "Recurring"
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-repeat") == "Recurring"
+        )
         assert (
             _detail_text(detail, "scheduling-automation-detail-at")
             == "Weekly on Monday at 09:00 America/New_York"
@@ -1111,9 +1144,7 @@ async def test_definition_detail_runs_on_shows_transfer_badge_when_in_flight():
     round 1 finding 1: this case had no dedicated test)."""
     async with _BareDefinitionDetailApp().run_test() as pilot:
         detail = pilot.app.query_one(DefinitionDetail)
-        detail.set_definition(
-            _frequency_definition(transfer_state="to_server_pending")
-        )
+        detail.set_definition(_frequency_definition(transfer_state="to_server_pending"))
         await pilot.pause()
 
         assert (
@@ -1274,6 +1305,7 @@ async def test_definition_detail_clears_to_empty_state_for_none():
         assert empty_state.display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_local_definition_paints_its_details_and_counts():
     """Integration path: a real row highlight through `SchedulesWorkbench`
@@ -1323,12 +1355,15 @@ async def test_selecting_a_local_definition_paints_its_details_and_counts():
     # is enough.
     async with app.run_test(size=(200, 50)) as pilot:
         workbench = await _settled_workbench(pilot)
-        detail = await _select_queue_definition(
-            pilot, workbench, "local-def-freq"
-        )
+        detail = await _select_queue_definition(pilot, workbench, "local-def-freq")
 
-        assert _detail_text(detail, "scheduling-automation-detail-runs-on") == "This device"
-        assert _detail_text(detail, "scheduling-automation-detail-model") == "openai/gpt-5"
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-runs-on")
+            == "This device"
+        )
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-model") == "openai/gpt-5"
+        )
 
         # History starts collapsed (spec §5) -- its rows paint at zero
         # region until expanded, same discipline Task 3's own
@@ -1340,9 +1375,12 @@ async def test_selecting_a_local_definition_paints_its_details_and_counts():
         assert (
             _detail_text(detail, "scheduling-automation-detail-unread-results") == "1"
         )
-        assert "succeeded" in _detail_text(detail, "scheduling-automation-detail-last-run")
+        assert "succeeded" in _detail_text(
+            detail, "scheduling-automation-detail-last-run"
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selecting_a_server_definition_shows_its_server_owner_label():
     """A server-mirrored row's 'Runs on' shows the SERVER's owner label
@@ -1384,11 +1422,11 @@ async def test_selecting_a_server_definition_shows_its_server_owner_label():
     # Wide terminal -- see the local-definition test above.
     async with app.run_test(size=(200, 50)) as pilot:
         workbench = await _settled_workbench(pilot)
-        detail = await _select_queue_definition(
-            pilot, workbench, "def-server-freq"
-        )
+        detail = await _select_queue_definition(pilot, workbench, "def-server-freq")
 
-        assert _detail_text(detail, "scheduling-automation-detail-runs-on") == "server-1"
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-runs-on") == "server-1"
+        )
         assert (
             _detail_text(detail, "scheduling-automation-detail-model")
             == "anthropic/claude"
@@ -1417,6 +1455,7 @@ async def test_selecting_a_server_definition_shows_its_server_owner_label():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_detail_counts_are_read_off_the_event_loop():
     """schedules-redesign PR-1, task-4 AC: the pane's DB reads go through
@@ -1495,7 +1534,9 @@ async def test_definition_detail_reads_the_recorded_server_payload_honestly():
         detail.set_definition(definition)
         await pilot.pause()
 
-        assert _detail_text(detail, "scheduling-automation-detail-repeat") == "Recurring"
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-repeat") == "Recurring"
+        )
         assert (
             _detail_text(detail, "scheduling-automation-detail-at")
             == "Weekdays at 09:00 UTC"
@@ -1586,6 +1627,7 @@ async def test_definition_detail_says_so_when_the_history_read_failed():
             ), row_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_count_read_paints_the_error_not_zeros():
     """Same as above, driven through `SchedulesWorkbench`'s own read path
@@ -1603,9 +1645,7 @@ async def test_a_failed_count_read_paints_the_error_not_zeros():
     app = AutomationsTestApp(service)
     async with app.run_test(size=(200, 50)) as pilot:
         workbench = await _settled_workbench(pilot)
-        detail = await _select_queue_definition(
-            pilot, workbench, "local-def-freq"
-        )
+        detail = await _select_queue_definition(pilot, workbench, "local-def-freq")
 
         history_group = detail.query_one("#scheduling-automation-detail-group-history")
         history_group.collapsed = False
@@ -1616,6 +1656,7 @@ async def test_a_failed_count_read_paints_the_error_not_zeros():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editing_the_selected_definition_refreshes_the_detail_pane():
     """Final review F4: a table refresh that lands on the SAME row id must
@@ -1631,10 +1672,10 @@ async def test_editing_the_selected_definition_refreshes_the_detail_pane():
     app = AutomationsTestApp(service)
     async with app.run_test(size=(200, 50)) as pilot:
         workbench = await _settled_workbench(pilot)
-        detail = await _select_queue_definition(
-            pilot, workbench, "local-def-freq"
+        detail = await _select_queue_definition(pilot, workbench, "local-def-freq")
+        assert (
+            _detail_text(detail, "scheduling-automation-detail-model") == "openai/gpt-5"
         )
-        assert _detail_text(detail, "scheduling-automation-detail-model") == "openai/gpt-5"
 
         # Edit-and-save shape: the stored row changes, the id does not.
         service.db._automation_definitions[0]["input"] = {
@@ -1684,9 +1725,12 @@ def _isolated_local_service(definitions):
     server_client.list_automation_definitions = AsyncMock(
         return_value={"items": [], "total": 0}
     )
-    return AutomationsMockService(server_client, local_definitions=definitions), server_client
+    return AutomationsMockService(
+        server_client, local_definitions=definitions
+    ), server_client
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_now_on_queue_tab_dispatches_a_local_definition_locally():
     """PR-4 task 3: the Queue's own run-now routes a LOCAL definition
@@ -1715,6 +1759,7 @@ async def test_run_now_on_queue_tab_dispatches_a_local_definition_locally():
         server_client.run_automation_definition_now.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_on_queue_tab_opens_the_form_for_a_recurring_question_row():
     """PR-4 task 3: `e` on a Queue definition row opens the SAME
@@ -1741,6 +1786,7 @@ async def test_edit_on_queue_tab_opens_the_form_for_a_recurring_question_row():
         assert isinstance(pilot.app.screen, AutomationDefinitionForm)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edit_on_queue_tab_refuses_a_non_recurring_question_row():
     """PR-4 task 3: an `agent_task` Queue row's `e` refuses honestly
@@ -1773,6 +1819,7 @@ async def test_edit_on_queue_tab_refuses_a_non_recurring_question_row():
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_agent_task_queue_row_is_visible_and_read_only_with_honest_note():
     """PR-4 ruling 1 + task 3: an `agent_task` definition now has a home
@@ -1807,13 +1854,12 @@ async def test_agent_task_queue_row_is_visible_and_read_only_with_honest_note():
             "#scheduling-queue-definition-detail", DefinitionDetail
         )
         assert detail._definition["family"] == "agent_task"
-        assert [
-            row.row_key for row in detail._editable_rows() if row.affordance
-        ] == []
+        assert [row.row_key for row in detail._editable_rows() if row.affordance] == []
         why = detail.query_one("#scheduling-automation-detail-why", Static)
         assert "isn't a recurring question" in why.render_line(0).text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_last_run_row_activation_pushes_audit_view_with_painted_events():
     """PR-4 task 3 (audit-view relocation): the Queue's own
@@ -1856,6 +1902,7 @@ async def test_last_run_row_activation_pushes_audit_view_with_painted_events():
         assert rendered_row_cells(audit_table, 0)[2] == "Run succeeded."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_view_runs_button_pushes_the_audit_view_the_same_way_the_row_does():
     """task-31823 AC#1: the definition pane's `View runs` button reaches
@@ -1897,6 +1944,7 @@ async def test_view_runs_button_pushes_the_audit_view_the_same_way_the_row_does(
         assert audit_table.row_count == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_now_button_on_queue_definition_pane_dispatches_locally():
     """PR-4 task 3, ruling 2: the retired Automations-tab `r` key

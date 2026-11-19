@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌───────────────────────────┐  mode: Search ⇄ ✓ RAG Answer                                         ▆
+│ Navigat…    Collapse      │
+│     Import…               │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │┌────────────────────────────────────────────────────────────────────┐
+│ ▊ How much did retr ▎▊x▎  ││  How much did retrieval practice improve retention?                │
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │└────────────────────────────────────────────────────────────────────┘
+│                           │
+│ ────────────────────────  │ To openai: question + evidence
+│ Browse               ▾    │
+│    Media (24)             │       Run                                                            ▇
+│    Conversations (12)     │
+│    Notes (122)            │
+│    Prompts (10) — reuse   │Sources
+│    Skills (4)             │ Scope: all local sources
+│    Collections (6)        │  ☑ Notes (122)
+│  ▸ Search / RAG         ▅ │
+│ ────────────────────────  │
+│ Artifacts            ▾    │  ☑ Media (24)
+│    All artifacts          │
+│    Chatbooks              │
+│    Reports                │  ☑ Conversations (12)
+│ ────────────────────────  │
+│ Create               ▾    │
+│  ▾ scroll for more        │  ☑ Prompts (10)
+└───────────────────────────┘
+  u use Library context in Console | enter switch mode | F1 · F6 · Ctrl+P · Ctrl+Q

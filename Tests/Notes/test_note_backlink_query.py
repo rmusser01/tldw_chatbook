@@ -12,8 +12,12 @@ bound, and soft-deleted exclusion -- are all properties of the SQL, which a
 fake cannot have.
 """
 
+from contextlib import ExitStack
+from functools import partial
+
 import pytest
 
+from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
@@ -22,21 +26,32 @@ USER_ID = "backlink-user"
 
 
 @pytest.fixture
-def notes_scope_service(tmp_path):
-    """Real ``NotesScopeService`` over a real (temp-file) ChaChaNotes DB."""
+def notes_scope_service(tmp_path, monkeypatch):
+    """Real Notes scope over a temporary DB with thread-owned cleanup."""
     db_dir = tmp_path / "chachanotes"
     db_dir.mkdir()
-    global_db = CharactersRAGDB(str(db_dir / "unified.db"), client_id="backlink-app")
-    interop = NotesInteropService(
-        base_db_directory=db_dir,
-        api_client_id="backlink-client",
-        global_db_to_use=global_db,
-    )
-    return NotesScopeService(
-        local_notes_service=interop,
-        server_service=None,
-        policy_enforcer=None,
-    )
+    with ExitStack() as owners:
+        global_db = CharactersRAGDB(
+            str(db_dir / "unified.db"), client_id="backlink-app"
+        )
+        owners.callback(global_db.close_connection)
+        interop = NotesInteropService(
+            base_db_directory=db_dir,
+            api_client_id="backlink-client",
+            global_db_to_use=global_db,
+        )
+        owners.callback(interop.close_all_user_connections)
+        # Retire the fresh connection on the same worker that materializes rows.
+        monkeypatch.setattr(
+            interop,
+            "get_notes_linking_to",
+            partial(run_finite_local_worker, interop.get_notes_linking_to),
+        )
+        yield NotesScopeService(
+            local_notes_service=interop,
+            server_service=None,
+            policy_enforcer=None,
+        )
 
 
 async def _add(service, title, content):
@@ -45,6 +60,7 @@ async def _add(service, title, content):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backlinks_list_every_note_whose_body_links_to_the_target(
     notes_scope_service,
@@ -73,6 +89,7 @@ async def test_backlinks_list_every_note_whose_body_links_to_the_target(
     assert all(row["id"] != target for row in backlinks)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backlinks_exclude_deleted_notes(notes_scope_service):
     target = await _add(notes_scope_service, "Target", "hub")
@@ -99,6 +116,7 @@ async def test_backlinks_exclude_deleted_notes(notes_scope_service):
     assert [row["id"] for row in backlinks] == [linker]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backlinks_are_bounded_by_the_requested_limit(notes_scope_service):
     target = await _add(notes_scope_service, "Target", "hub")
@@ -114,6 +132,7 @@ async def test_backlinks_are_bounded_by_the_requested_limit(notes_scope_service)
     assert len(backlinks) == 4
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_wildcard_in_the_note_id_is_matched_literally(notes_scope_service):
     """The id reaches SQL as a bound parameter with LIKE wildcards escaped.
@@ -150,6 +169,7 @@ async def test_backlinks_refuse_every_scope_but_local(notes_scope_service):
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_prefix_of_another_note_id_is_not_a_backlink(notes_scope_service):
     """``note://abc`` must not match a link to ``note://abcdef``."""
@@ -176,6 +196,7 @@ def _connection(notes_scope_service):
     return notes_scope_service.local_notes_service._get_db(USER_ID).get_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_editing_a_body_adds_and_removes_its_backlinks(notes_scope_service):
     """An edit is reflected the next time Info is opened (AC #3)."""
@@ -205,6 +226,7 @@ async def test_editing_a_body_adds_and_removes_its_backlinks(notes_scope_service
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_restored_note_brings_its_backlinks_back(notes_scope_service):
     """Trash hides a linker's backlink; restoring it returns the row."""
@@ -234,6 +256,7 @@ async def test_a_restored_note_brings_its_backlinks_back(notes_scope_service):
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_lookup_does_not_scan_the_note_corpus(notes_scope_service):
     """The budget: an indexed search on both tables, never a SCAN of notes.
@@ -268,6 +291,7 @@ async def test_the_lookup_does_not_scan_the_note_corpus(notes_scope_service):
     assert not any(step.startswith("SCAN notes") for step in plan), plan
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_title_only_save_leaves_the_backlinks_alone(notes_scope_service):
     """An update that carries no body must not touch the relation.
@@ -296,6 +320,7 @@ async def _backlinks(service, note_id):
     return await service.list_note_backlinks(
         scope="local_note", note_id=note_id, user_id=USER_ID
     )
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_backlinks_find_the_display_text_link_form_the_importer_writes(
     notes_scope_service,

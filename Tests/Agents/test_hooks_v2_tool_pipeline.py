@@ -1,6 +1,7 @@
 """Hook preparation and required completion through the actual agent loop."""
 
 import asyncio
+import sys
 import threading
 from dataclasses import replace
 
@@ -12,6 +13,12 @@ from tldw_chatbook.Agents.agent_models import ModelTurn, ToolCall, ToolResult
 from tldw_chatbook.Agents.agent_runtime import run_agent_loop
 
 pytestmark = pytest.mark.bootstrap_profile
+
+# ADR-163 refuses native Windows commands before launch; retain neutral controls.
+requires_posix_commands = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="v2 command hooks require POSIX process-group terminal proof (ADR-163)",
+)
 
 
 class PostHookCase:
@@ -201,6 +208,7 @@ def hook_command(handler_id, *, effects=(), code="pass", event="PreToolUse", **k
 
 
 @pytest.mark.asyncio
+@requires_posix_commands
 async def test_real_command_transformers_run_once_then_final_guard_and_context(
     tmp_path,
 ):
@@ -283,6 +291,7 @@ async def test_real_command_transformers_run_once_then_final_guard_and_context(
 
 
 @pytest.mark.asyncio
+@requires_posix_commands
 async def test_service_result_publication_and_terminal_join_use_real_hook_owner(
     tmp_path,
 ):
@@ -355,6 +364,7 @@ async def test_service_result_publication_and_terminal_join_use_real_hook_owner(
 
 
 @pytest.mark.asyncio
+@requires_posix_commands
 async def test_final_failed_tool_joins_post_requirements_before_terminal_persistence(
     tmp_path,
 ):
@@ -444,10 +454,10 @@ async def test_final_failed_tool_joins_post_requirements_before_terminal_persist
 @pytest.mark.parametrize(
     "case",
     [
-        "invalid_replacement",
+        pytest.param("invalid_replacement", marks=requires_posix_commands),
         "unavailable_operation",
         "disabled_required",
-        "valid_tool_id",
+        pytest.param("valid_tool_id", marks=requires_posix_commands),
     ],
 )
 async def test_preparation_schema_requiredness_and_matcher_controls(case):
@@ -560,6 +570,7 @@ async def test_real_run_rechecks_changed_review_arguments_and_schema_before_prov
 
 
 @pytest.mark.asyncio
+@requires_posix_commands
 async def test_runtime_tool_transformation_uses_common_preparation_before_branch():
     from tldw_chatbook.Agents.agent_models import FIND_TOOLS_NAME
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
@@ -611,6 +622,7 @@ async def test_runtime_tool_transformation_uses_common_preparation_before_branch
 
 
 @pytest.mark.asyncio
+@requires_posix_commands
 async def test_authenticated_canvas_transform_keeps_covered_exemption(tmp_path):
     import json
 
@@ -671,6 +683,7 @@ async def test_authenticated_canvas_transform_keeps_covered_exemption(tmp_path):
 
 
 @pytest.mark.asyncio
+@requires_posix_commands
 async def test_settled_fleet_child_result_does_not_overtake_parent_post_gate(tmp_path):
     from Tests.Agents.test_fleet_runtime import FLEET_CFG, fence, make_fleet_service
     from tldw_chatbook.Agents.agent_models import SPAWN_TOOL_NAME, WAIT_AGENTS_TOOL_NAME
@@ -833,6 +846,7 @@ async def test_public_preparation_validates_local_schema_constraints(schema):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("denied", [False, True])
+@requires_posix_commands
 async def test_real_loop_legacy_final_guard_precedes_optional_context(tmp_path, denied):
     from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
     from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
@@ -898,6 +912,7 @@ async def test_real_loop_legacy_final_guard_precedes_optional_context(tmp_path, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("call_id", ["", "duplicate"])
+@requires_posix_commands
 async def test_real_loop_keeps_distinct_candidates_with_repeated_model_call_ids(
     call_id,
 ):
@@ -994,11 +1009,20 @@ def test_catalog_last_dispatch_recheck_after_existing_argument_repair(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("entry", "mode"),
-    [("spawn", mode) for mode in ("empty", "budget", "forbidden", "success", "error")]
-    + [
-        (entry, mode)
-        for entry in ("send", "message", "load")
-        for mode in ("refused", "success", "error")
+    [
+        pytest.param(
+            entry,
+            mode,
+            marks=requires_posix_commands if mode in {"success", "error"} else (),
+        )
+        for entry, modes in (
+            ("spawn", ("empty", "budget", "forbidden", "success", "error")),
+            *(
+                (entry, ("refused", "success", "error"))
+                for entry in ("send", "message", "load")
+            ),
+        )
+        for mode in modes
     ],
 )
 async def test_runtime_predispatch_refusal_has_no_posts_but_invocation_settles(
@@ -1127,5 +1151,182 @@ async def test_runtime_predispatch_refusal_has_no_posts_but_invocation_settles(
         assert outcome.status == "done"
         if not dispatched:
             assert results[0].dispatch_state == "not_started"
+    finally:
+        await engine.close()
+
+
+@pytest.mark.parametrize(
+    "prepared,expected",
+    [
+        (
+            ToolResult.blocked("Tool schema not loaded: calculator. Call load_tools."),
+            "Call load_tools",
+        ),
+        (ToolResult(ok=True, content="must not dispatch"), "hook: preparation refused"),
+        (
+            ToolResult(ok=False, error="private failure detail"),
+            "hook: preparation refused",
+        ),
+        (
+            ToolResult.blocked("denied detail", approval_decision="denied"),
+            "hook: preparation refused",
+        ),
+        (ToolResult.blocked("proceed"), "ERROR: proceed"),
+        (None, "hook: preparation refused"),
+    ],
+    ids=[
+        "availability-refusal",
+        "invalid-success",
+        "invalid-failure",
+        "invalid-denial",
+        "refusal-text-is-not-approval",
+        "exception",
+    ],
+)
+def test_preparation_refusal_preserves_recovery_without_review_or_dispatch(
+    prepared, expected
+):
+    side_effects = []
+    deps = make_deps(
+        [
+            ModelTurn(tool_calls=(ToolCall("calculator", {}, "call-1"),)),
+            ModelTurn(text="done"),
+        ]
+    )
+
+    def prepare(_call):
+        if prepared is None:
+            raise RuntimeError("private exception detail")
+        return prepared
+
+    deps.prepare_hook_call = prepare
+    deps.accept_hook_preparation = lambda _call: side_effects.append("accept")
+    deps.review_tool_calls = lambda _calls: side_effects.append("review") or {}
+    deps.invoke_tool = lambda _call: side_effects.append("dispatch") or ToolResult(
+        ok=True
+    )
+
+    outcome = run_agent_loop(CFG, [{"role": "user", "content": "go"}], [CALC], deps)
+
+    results = [step for step in outcome.steps if step.kind == "tool_result"]
+    assert outcome.status == "done"
+    assert side_effects == []
+    assert len(results) == 1
+    assert expected in results[0].result
+    assert "private failure detail" not in results[0].result
+    assert "denied detail" not in results[0].result
+    assert "private exception detail" not in results[0].result
+    assert outcome.denial_count == 0
+    assert results[0].tool_outcome == "blocked"
+
+
+@pytest.mark.asyncio
+@requires_posix_commands
+async def test_actual_local_operations_reach_pre_and_both_post_events(tmp_path):
+    import json
+
+    from Tests.Agents.test_post_tool_dispatch_hook import _Provider
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.hooks_v2.tool_pipeline import (
+        HookPreparationError,
+        ToolHookRun,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.MCP.permission_store import EffectiveToolState
+
+    observed = tmp_path / "operations.jsonl"
+    code = (
+        "import json,sys;from pathlib import Path;event=json.load(sys.stdin);"
+        f"Path({str(observed)!r}).open('a').write(json.dumps([event['event'],event['data']['operation']])+'\\n');"
+        "print(json.dumps({'version':2,'decision':'deny' if event['event']=='PreToolUse' and event['data']['tool_args'].get('content')=='blocked' else 'pass'}))"
+    )
+    handlers = [
+        hook_command(
+            name,
+            event=name,
+            code=code,
+            effects=("deny",) if name == "PreToolUse" else (),
+            required=True,
+            match={"operation": ["file.read", "file.write"]},
+        )
+        for name in ("PreToolUse", "PostToolUse", "PostToolUseFailure")
+    ]
+    engine = HookEngine(handlers, lambda *_: True, HookBudgetOwner())
+    registry = ToolCatalogRegistry()
+    reviews, unclassified = [], []
+    registry.register_provider(
+        LocalToolProvider(
+            workspace_root=tmp_path,
+            resolve_state=lambda _: EffectiveToolState(
+                state="ask", origin="global_default"
+            ),
+            approval_callback=lambda calls: reviews.extend(
+                call.llm_name for call in calls
+            )
+            or {call.llm_name: "approve_once" for call in calls},
+        )
+    )
+    registry.register_provider(
+        _Provider(
+            lambda: unclassified.append(True)
+            or ToolResult(ok=True, content="unclassified")
+        )
+    )
+    owner = ToolHookRun(
+        engine,
+        run_id="operations",
+        session_id="session",
+        turn_id="turn",
+        resolve_definition=lambda call: registry.snapshot_for_hook(call.name),
+    )
+
+    def dispatch(name, args, identity):
+        call = owner.prepare_call(ToolCall(name, args, identity))
+        owner.validate_dispatch(call)
+        result = registry.invoke_by_name(
+            name, call.args, expected_definition=registry.snapshot_for_hook(name)
+        )
+        owner.install_result(call, result)
+        owner.admit_input()
+        return result
+
+    try:
+        assert (
+            await asyncio.to_thread(
+                dispatch, "fs_write", {"path": "written", "content": "allowed"}, "write"
+            )
+        ).ok
+        assert (tmp_path / "written").read_text() == "allowed"
+        assert (
+            await asyncio.to_thread(dispatch, "fs_read", {"path": "written"}, "read")
+        ).ok
+        assert not (
+            await asyncio.to_thread(dispatch, "fs_read", {"path": "missing"}, "missing")
+        ).ok
+        pairs = [json.loads(line) for line in observed.read_text().splitlines()]
+        assert pairs == [
+            ["PreToolUse", "file.write"],
+            ["PostToolUse", "file.write"],
+            ["PreToolUse", "file.read"],
+            ["PostToolUse", "file.read"],
+            ["PreToolUse", "file.read"],
+            ["PostToolUse", "file.read"],
+            ["PostToolUseFailure", "file.read"],
+        ]
+        before = list(reviews)
+        with pytest.raises(HookPreparationError):
+            await asyncio.to_thread(
+                dispatch,
+                "fs_write",
+                {"path": "refused", "content": "blocked"},
+                "denied",
+            )
+        assert not (tmp_path / "refused").exists() and reviews == before
+        with pytest.raises(HookPreparationError):
+            await asyncio.to_thread(dispatch, "probe", {}, "unknown")
+        assert not unclassified and reviews == before
+        assert registry.snapshot_for_hook("probe").operation is None
     finally:
         await engine.close()

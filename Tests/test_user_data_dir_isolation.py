@@ -19,25 +19,8 @@ is therefore deliberately HOME-only; the tests below assert XDG_DATA_HOME is
 ignored.
 """
 
-import pytest
-
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config
-
-
-@pytest.fixture(autouse=True)
-def _clear_settings_cache():
-    """Ensure load_settings()/get_cli_setting() re-read from the (monkeypatched)
-    active config path in every test in this module, instead of serving a
-    stale cross-test cache."""
-    config._SETTINGS_CACHE = None
-    config._SETTINGS_CACHE_SOURCE = None
-    config._CONFIG_CACHE = None
-    config._CONFIG_CACHE_SOURCE = None
-    yield
-    config._SETTINGS_CACHE = None
-    config._SETTINGS_CACHE_SOURCE = None
-    config._CONFIG_CACHE = None
-    config._CONFIG_CACHE_SOURCE = None
 
 
 def _isolate(monkeypatch, tmp_path, *, home_name="scratch_home", xdg_data=None):
@@ -56,17 +39,17 @@ def _isolate(monkeypatch, tmp_path, *, home_name="scratch_home", xdg_data=None):
     # instead of picking up a data_dir configured by an earlier test/session.
     scratch_config = tmp_path / "config" / "config.toml"
     scratch_config.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(scratch_config))
-    return home_dir
+    scratch_config.write_text("", encoding="utf-8")
+    scratch_config.chmod(0o600)
+    source = select_config_source(monkeypatch, scratch_config)
+    return home_dir, source
 
 
 def test_get_user_data_dir_honors_home_set_after_import(monkeypatch, tmp_path):
-    """The default data dir must live under the CURRENT (test-scoped) HOME,
-    not whatever HOME happened to be true the first time config.py was
-    imported into this process."""
-    home_dir = _isolate(monkeypatch, tmp_path)
+    """The new selected profile resolves the HOME set after the first import."""
+    home_dir, source = _isolate(monkeypatch, tmp_path)
 
-    user_dir = config.get_user_data_dir()
+    user_dir = source.get_user_data_dir()
 
     assert str(user_dir).startswith(str(home_dir)), (
         f"get_user_data_dir() returned {user_dir!r}, which is not under the "
@@ -88,11 +71,11 @@ def test_get_user_data_dir_ignores_xdg_data_home(monkeypatch, tmp_path):
     their conversations/notes/media would appear to have vanished. So this
     default is deliberately HOME-only; see task-519 review notes.
     """
-    home_dir = _isolate(
+    home_dir, source = _isolate(
         monkeypatch, tmp_path, xdg_data=tmp_path / "xdg_data_should_be_ignored"
     )
 
-    user_dir = config.get_user_data_dir()
+    user_dir = source.get_user_data_dir()
 
     assert str(user_dir).startswith(str(home_dir)), (
         f"get_user_data_dir() returned {user_dir!r}, expected it to stay "

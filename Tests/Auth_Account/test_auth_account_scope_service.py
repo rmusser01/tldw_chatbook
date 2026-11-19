@@ -177,6 +177,7 @@ async def test_server_auth_account_service_can_use_context_provider_client():
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_server_auth_account_service_from_config_delegates_through_provider_seam():
     service = ServerAuthAccountService.from_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}
@@ -191,6 +192,7 @@ def test_server_auth_account_service_from_config_delegates_through_provider_seam
     assert service.client_provider.build_client() is client
 
 
+@pytest.mark.bootstrap_profile
 def test_server_auth_account_service_from_app_config_delegates_through_provider_seam():
     service = ServerAuthAccountService.from_app_config(
         {"tldw_api": {"base_url": "https://example.com", "api_key": "test-key"}}

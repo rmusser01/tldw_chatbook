@@ -1,0 +1,377 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+___ test_history_keeps_live_retired_supervisor_until_cancelled_close_joins ____
+
+self = <Coroutine test_history_keeps_live_retired_supervisor_until_cancelled_close_joins>
+
+    def runtest(self) -> None:
+        self.obj = wrap_in_sync(
+            # https://github.com/pytest-dev/pytest-asyncio/issues/596
+            self.obj,  # type: ignore[has-type]
+        )
+>       super().runtest()
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = ()
+kwargs = {'monkeypatch': <_pytest.monkeypatch.MonkeyPatch object at 0x000001973819AEA0>, 'request': <FixtureRequest for <Corout.../2026-10-22-keyword-dev-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-0/test_history_keeps_live_retire0')}
+request = <FixtureRequest for <Coroutine test_history_keeps_live_retired_supervisor_until_cancelled_close_joins>>
+work = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-22-keyw...-integration/native-temp-rebase/pytest-of-GDesktop-1/pytest-0/test_history_keeps_live_retire0/private-profile-process')
+profile = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-22-keyw...tion/native-temp-rebase/pytest-of-GDesktop-1/pytest-0/test_history_keeps_live_retire0/private-profile-process/profile')
+environment = {'ALLUSERSPROFILE': 'C:\\ProgramData', 'APPDATA': 'C:\\Users\\GDesktop-1\\AppData\\Roaming', 'ASL.LOG': 'Destination=file', 'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEAM5gC4oCZfQVG52QK1Cwa4hddvu7sYxw0vksdDWpr6eE=', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 240.0, armed = 0.0
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        global _awaiting
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            # pytest-timeout's signal method, where there is one (not Windows).
+            own_timeout = (
+                signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
+            )
+            if _STACKS_PATH and callable(own_timeout):
+    
+                def note_then_time_out(signum, frame):
+                    __tracebackhide__ = True
+                    with contextlib.suppress(Exception):
+                        _note_stacks(_STACKS_PATH, "when its own timeout fired")
+                    own_timeout(signum, frame)
+    
+                # pytest-timeout resets SIGALRM itself when the test ends.
+                signal.signal(signal.SIGALRM, note_then_time_out)
+            result = function(*args, **kwargs)
+            if not inspect.isawaitable(result):
+                return result
+            _awaiting = result
+            try:
+                return await result
+            finally:
+                _awaiting = None
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        # The signal method arms ITIMER_REAL for this test: what is left of it
+        # is the real budget, setup already having spent some.
+        armed = (
+            signal.getitimer(signal.ITIMER_REAL)[0]
+            if hasattr(signal, "getitimer")
+            else 0.0
+        )
+        child_timeout, wait = _child_deadlines(
+            min(armed or timeout, timeout),
+            # A test with no timeout of its own leaves any armed timer alone.
+            _extend_own_alarm(armed) if timeout > 0 else 0.0,
+        )
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        stacks = work / "stacks.txt"
+        environment[_CHILD_STACKS] = str(stacks)
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={child_timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                exited = await _exited_within(process, wait)
+                asked = not exited and hasattr(signal, "SIGUSR1")
+                if asked:
+                    # Past its own limit and still running (a teardown or an
+                    # exit that cannot finish): ask where before ending it.
+                    # Half the reserve for its dump leaves half for the kill
+                    # and this report, before the parent's own limit.
+                    with contextlib.suppress(ProcessLookupError):
+                        process.send_signal(signal.SIGUSR1)
+                    await _exited_within(process, _PARENT_RESERVE_SECONDS / 2)
+            finally:
+                killed = process.returncode is None
+                if killed:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+            if exited:
+                ending = ""
+            elif killed:
+                ending = f"(killed: still running after {wait:.0f}s"
+                ending += "; asked for its stacks first)\n" if asked else ")\n"
+            elif (
+                asked
+                and process.returncode == -signal.SIGUSR1
+                and _child_finished(report)
+            ):
+                # Its session had ended and interpreter shutdown had already
+                # put the handler back to the default (TASK-35027).
+                ending = (
+                    f"(still running after {wait:.0f}s; its test had ended "
+                    "and it was exiting when the ask for its stacks ended it)\n"
+                )
+            elif asked and process.returncode == -signal.SIGUSR1:
+                # No handler yet (still starting up, or the module imported
+                # off the main thread): the signal's default action ended it.
+                ending = (
+                    f"(still running after {wait:.0f}s; ended by the ask for "
+                    "its stacks before it could answer)\n"
+                )
+            elif asked:
+                ending = (
+                    f"(still running after {wait:.0f}s; asked for its stacks, "
+                    "it then exited by itself)\n"
+                )
+            else:
+                # Exited by itself just as the wait ended, before any ask
+                # (and always so where there is no SIGUSR1, e.g. Windows).
+                ending = f"(exited by itself just after the {wait:.0f}s wait ended)\n"
+            dumps = (
+                stacks.read_text(encoding="utf-8", errors="replace")
+                if stacks.is_file()
+                else ""
+            )
+>           pytest.fail(
+                f"{log}\n"
+                + ending
+                + f"{_child_failure_report(report)}\n"
+                + (f"--- child stacks at its deadline ---\n{dumps}" if dumps else "")
+                + "--- child log tail ---\n"
+                # A kill can land between two writes of one character.
+                + log.read_text(encoding="utf-8", errors="replace")[-16000:]
+            )
+E           Failed: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-22-keyword-dev-integration\native-temp-rebase\pytest-of-GDesktop-1\pytest-0\test_history_keeps_live_retire0\private-profile-process\pytest.log
+E           --- child failure: AssertionError: history discarded the still-running supervisor's shutdown join record
+E           assert None is _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='wo...time.BindingLifetime object at 0x000001B774B43020>, read_admission=<contextlib.ExitStack object at 0x000001B7747E55E0>)
+E            +  where None = <built-in method get of dict object at 0x000001B7749DEDC0>('2c9cddb0079f4c9cae85f6055c436add')
+E            +    where <built-in method get of dict object at 0x000001B7749DEDC0> = {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20>, read_admission=<contextlib.ExitStack object at 0x000001B774B7A300>), ...}.get
+E            +      where {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20>, read_admission=<contextlib.ExitStack object at 0x000001B774B7A300>), ...} = <tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490>._runs
+E            +        where <tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490> = <Tests.Workspaces.test_project_index_service.Rig object at 0x000001B7747E4CB0>.service
+E           tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-22-keyw...of-GDesktop-1/pytest-0/test_history_keeps_live_retire0/private-profile-process/pytest/test_history_keeps_live_retire0')
+E           request = <FixtureRequest for <Coroutine test_history_keeps_live_retired_supervisor_until_cancelled_close_joins>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B773843950>
+E           
+E               @private_profile_test
+E               async def test_history_keeps_live_retired_supervisor_until_cancelled_close_joins(
+E                   tmp_path, request, monkeypatch
+E               ):
+E                   rig = Rig(tmp_path)
+E                   entered, release = threading.Event(), threading.Event()
+E                   bind = rig.service._bind
+E                   first = closing = None
+E               
+E                   @contextmanager
+E                   def hold_first_supervisor_tail(pin):
+E                       with bind(pin):
+E                           yield
+E                       if (
+E                           threading.current_thread().name == "project-index-owner"
+E                           and not entered.is_set()
+E                       ):
+E                           entered.set()
+E                           release.wait()
+E               
+E                   monkeypatch.setattr(rig.service, "_bind", hold_first_supervisor_tail)
+E                   try:
+E                       rig.enable()
+E                       first_job = rig.refresh()
+E                       first = rig.service._runs[first_job]
+E                       assert await asyncio.to_thread(entered.wait, 15)
+E                       assert first.native_retired and first.supervisor.is_alive()
+E                       assert not first.writer.is_alive()
+E                       for _ in range(20):
+E                           job = await asyncio.to_thread(rig.refresh)
+E                           run = rig.service._runs[job]
+E                           await asyncio.to_thread(run.supervisor.join, 15)
+E                           assert run.native_retired and not run.supervisor.is_alive()
+E               
+E           >           assert rig.service._runs.get(first_job) is first, (
+E                           "history discarded the still-running supervisor's shutdown join record"
+E                       )
+E           E           AssertionError: history discarded the still-running supervisor's shutdown join record
+E           E           assert None is _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='wo...time.BindingLifetime object at 0x000001B774B43020>, read_admission=<contextlib.ExitStack object at 0x000001B7747E55E0>)
+E           E            +  where None = <built-in method get of dict object at 0x000001B7749DEDC0>('2c9cddb0079f4c9cae85f6055c436add')
+E           E            +    where <built-in method get of dict object at 0x000001B7749DEDC0> = {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20>, read_admission=<contextlib.ExitStack object at 0x000001B774B7A300>), ...}.get
+E           E            +      where {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20>, read_admission=<contextlib.ExitStack object at 0x000001B774B7A300>), ...} = <tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490>._runs
+E           E            +        where <tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490> = <Tests.Workspaces.test_project_index_service.Rig object at 0x000001B7747E4CB0>.service
+E           
+E           Tests\Workspaces\test_project_index_service.py:1672: AssertionError
+E           --- child log tail ---
+E           C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+E           The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+E           
+E             warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+E           F                                                                        [100%]
+E           ================================== FAILURES ===================================
+E           ___ test_history_keeps_live_retired_supervisor_until_cancelled_close_joins ____
+E           
+E           tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-22-keyw...of-GDesktop-1/pytest-0/test_history_keeps_live_retire0/private-profile-process/pytest/test_history_keeps_live_retire0')
+E           request = <FixtureRequest for <Coroutine test_history_keeps_live_retired_supervisor_until_cancelled_close_joins>>
+E           monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001B773843950>
+E           
+E               @private_profile_test
+E               async def test_history_keeps_live_retired_supervisor_until_cancelled_close_joins(
+E                   tmp_path, request, monkeypatch
+E               ):
+E                   rig = Rig(tmp_path)
+E                   entered, release = threading.Event(), threading.Event()
+E                   bind = rig.service._bind
+E                   first = closing = None
+E               
+E                   @contextmanager
+E                   def hold_first_supervisor_tail(pin):
+E                       with bind(pin):
+E                           yield
+E                       if (
+E                           threading.current_thread().name == "project-index-owner"
+E                           and not entered.is_set()
+E                       ):
+E                           entered.set()
+E                           release.wait()
+E               
+E                   monkeypatch.setattr(rig.service, "_bind", hold_first_supervisor_tail)
+E                   try:
+E                       rig.enable()
+E                       first_job = rig.refresh()
+E                       first = rig.service._runs[first_job]
+E                       assert await asyncio.to_thread(entered.wait, 15)
+E                       assert first.native_retired and first.supervisor.is_alive()
+E                       assert not first.writer.is_alive()
+E                       for _ in range(20):
+E                           job = await asyncio.to_thread(rig.refresh)
+E                           run = rig.service._runs[job]
+E                           await asyncio.to_thread(run.supervisor.join, 15)
+E                           assert run.native_retired and not run.supervisor.is_alive()
+E               
+E           >           assert rig.service._runs.get(first_job) is first, (
+E                           "history discarded the still-running supervisor's shutdown join record"
+E                       )
+E           E           AssertionError: history discarded the still-running supervisor's shutdown join record
+E           E           assert None is _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='wo...time.BindingLifetime object at 0x000001B774B43020>, read_admission=<contextlib.ExitStack object at 0x000001B7747E55E0>)
+E           E            +  where None = <built-in method get of dict object at 0x000001B7749DEDC0>('2c9cddb0079f4c9cae85f6055c436add')
+E           E            +    where <built-in method get of dict object at 0x000001B7749DEDC0> = {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20>, read_admission=<contextlib.ExitStack object at 0x000001B774B7A300>), ...}.get
+E           E            +      where {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20>, read_admission=<contextlib.ExitStack object at 0x000001B774B7A300>), ...} = <tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490>._runs
+E           E            +        where <tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490> = <Tests.Workspaces.test_project_index_service.Rig object at 0x000001B7747E4CB0>.service
+E           
+E           Tests\Workspaces\test_project_index_service.py:1672: AssertionError
+E           ---------------------------- Captured stderr setup ----------------------------
+E           2026-10-21 21:56:31.010 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-21 21:56:31.297 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-21 21:56:31.298 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-21 21:56:31.300 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+E           ============================== warnings summary ===============================
+E           Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+E             C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+E               warn(
+E           
+E           -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+E           - generated xml file: C:\Users\GDesktop-1\.codex\worktrees\workspace-project-guidance\tldw_tui\.superpowers\sdd\2026-10-22-keyword-dev-integration\native-temp-rebase\pytest-of-GDesktop-1\pytest-0\test_history_keeps_live_retire0\private-profile-process\pytest.xml -
+E           ============================ slowest 25 durations =============================
+E           218.18s call     Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+E           2.39s setup    Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+E           
+E           (1 durations < 1s hidden.  Use -vv to show these durations.)
+E           =========================== short test summary info ===========================
+E           FAILED Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+E           1 failed, 1 warning in 221.32s (0:03:41)
+
+Tests\private_profile.py:405: Failed
+---------------------------- Captured stderr setup ----------------------------
+2026-10-21 21:56:21.598 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-21 21:56:21.937 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-21 21:56:21.938 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-21 21:56:21.939 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================== warnings summary ===============================
+Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+228.55s call     Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+1.71s setup    Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+
+(1 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins
+1 failed, 1 warning in 231.75s (0:03:51)

@@ -1,0 +1,7 @@
+from common import *
+p='Tests/UI/test_console_runtime_ownership.py';original=blob(BASE,p);actual=(W/p).read_bytes();added=b'        consume_pending_vllm_console_intent=no_op,\n        consume_pending_llamacpp_console_intent=no_op,\n'
+assert actual.count(added)==1 and actual.replace(added,b'')==original
+argv=[R,'format','--stdin-filename',str(W/p),'-'];a=subprocess.run(argv,input=actual,cwd=W,capture_output=True);b=subprocess.run(argv,input=original,cwd=W,capture_output=True);assert a.returncode==b.returncode==0
+assert a.stdout.count(added)==1 and a.stdout.replace(added,b'')==b.stdout
+dump('changed-hunk-format.json',{'argv':argv,'actual_formatted_sha256':sha(a.stdout),'original_formatted_sha256':sha(b.stdout),'overlay_callback_lines_unchanged_by_formatter':True,'reverse_overlay_from_formatted_final_restores_exact_formatted_original':True,'required_changed_hunk_format_gate':True,'whole_owner_debt_unmodified':True})
+print('Changed callback hunk exactly formatter-stable; formatted reversal restores original projection.')

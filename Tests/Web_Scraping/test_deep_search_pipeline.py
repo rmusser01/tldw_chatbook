@@ -11,6 +11,7 @@ import time
 import httpx
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook.Tools import web_tool_impls
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
 from tldw_chatbook import config as config_module
@@ -24,18 +25,31 @@ def _fake_chat(responses):
         return queue.pop(0) if queue else queue_underflow(kwargs)
 
     def queue_underflow(kwargs):
-        raise AssertionError(f"unexpected extra chat_api_call: {kwargs.get('messages_payload')!r:.120}")
+        raise AssertionError(
+            f"unexpected extra chat_api_call: {kwargs.get('messages_payload')!r:.120}"
+        )
 
     return fake
 
 
 def _std_result(title, url, content):
-    return {"title": title, "url": url, "content": content,
-            "metadata": {"snippet": content, "date_published": None, "author": None,
-                          "source": None, "language": None, "relevance_score": None}}
+    return {
+        "title": title,
+        "url": url,
+        "content": content,
+        "metadata": {
+            "snippet": content,
+            "date_published": None,
+            "author": None,
+            "source": None,
+            "language": None,
+            "relevance_score": None,
+        },
+    }
 
 
 # --- _sanitize_sub_questions -------------------------------------------------
+
 
 def test_sanitize_normalizes_and_dedupes():
     raw = ["  Alpha?  ", {"sub_question": "beta"}, "ALPHA?", "", None, "gamma"]
@@ -44,13 +58,18 @@ def test_sanitize_normalizes_and_dedupes():
 
 
 def test_sanitize_accepts_dict_shapes():
-    assert WebSearch_APIs._sanitize_sub_questions({"sub_questions": ["a", "b"]}) == ["a", "b"]
+    assert WebSearch_APIs._sanitize_sub_questions({"sub_questions": ["a", "b"]}) == [
+        "a",
+        "b",
+    ]
     assert WebSearch_APIs._sanitize_sub_questions({"search_queries": ["c"]}) == ["c"]
     assert WebSearch_APIs._sanitize_sub_questions(None) == []
 
 
 # --- analyze_question fallback ----------------------------------------------
 
+
+@pytest.mark.bootstrap_profile
 def test_analyze_question_total_failure_falls_back_to_empty(monkeypatch):
     def always_garbage(**kwargs):
         return "not json and no quoted strings here"
@@ -62,9 +81,16 @@ def test_analyze_question_total_failure_falls_back_to_empty(monkeypatch):
 
 # --- generate_and_search warnings --------------------------------------------
 
+
 def _search_params(**over):
-    base = {"engine": "google", "content_country": "US", "search_lang": "en",
-            "output_lang": "en", "result_count": 3, "subquery_generation": False}
+    base = {
+        "engine": "google",
+        "content_country": "US",
+        "search_lang": "en",
+        "output_lang": "en",
+        "result_count": 3,
+        "subquery_generation": False,
+    }
     base.update(over)
     return base
 
@@ -84,12 +110,16 @@ def test_generate_and_search_surfaces_provider_errors(monkeypatch):
     assert wsr["error"] and "exploded" in wsr["error"]  # zero results -> error set
 
 
+@pytest.mark.bootstrap_profile
 def test_generate_and_search_dedupes_subquery_equal_to_question(monkeypatch):
     seen_queries = []
 
     def fake_perform(search_engine, search_query, *a, **k):
         seen_queries.append(search_query)
-        return {"results": [_std_result("T", "https://e.com/", "c")], "processing_error": None}
+        return {
+            "results": [_std_result("T", "https://e.com/", "c")],
+            "processing_error": None,
+        }
 
     def fake_chat(**kwargs):
         return json.dumps({"sub_questions": ["What Is Love", "real subquery"]})
@@ -98,11 +128,13 @@ def test_generate_and_search_dedupes_subquery_equal_to_question(monkeypatch):
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
     monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
     WebSearch_APIs.generate_and_search(
-        "what is love", _search_params(subquery_generation=True, subquery_generation_llm="openai")
+        "what is love",
+        _search_params(subquery_generation=True, subquery_generation_llm="openai"),
     )
     assert seen_queries == ["what is love", "real subquery"]  # casefold-dup dropped
 
 
+@pytest.mark.bootstrap_profile
 def test_generate_and_search_caps_fanout_at_search_default_max_queries(monkeypatch):
     """Important 2 (final review): search_default_max_queries resolves but was
     never applied -- an LLM returning 12 sub-questions fanned out to 13
@@ -112,7 +144,10 @@ def test_generate_and_search_caps_fanout_at_search_default_max_queries(monkeypat
 
     def fake_perform(search_engine, search_query, *a, **k):
         seen_queries.append(search_query)
-        return {"results": [_std_result("T", "https://e.com/", "c")], "processing_error": None}
+        return {
+            "results": [_std_result("T", "https://e.com/", "c")],
+            "processing_error": None,
+        }
 
     def fake_chat(**kwargs):
         return json.dumps({"sub_questions": [f"sub question {i}" for i in range(12)]})
@@ -122,12 +157,16 @@ def test_generate_and_search_caps_fanout_at_search_default_max_queries(monkeypat
     monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
     WebSearch_APIs.generate_and_search(
         "what is love",
-        _search_params(subquery_generation=True, subquery_generation_llm="openai",
-                       search_default_max_queries=5),
+        _search_params(
+            subquery_generation=True,
+            subquery_generation_llm="openai",
+            search_default_max_queries=5,
+        ),
     )
     assert len(seen_queries) == 5  # question + 4 sub-queries, NOT question + 12
 
 
+@pytest.mark.bootstrap_profile
 def test_generate_and_search_stops_fanout_at_phase1_time_budget(monkeypatch):
     """Important 3a (final review): a cheap between-queries deadline check.
     A fake clock advances past the budget after the first search call, so
@@ -145,7 +184,10 @@ def test_generate_and_search_stops_fanout_at_phase1_time_budget(monkeypatch):
     def fake_perform(search_engine, search_query, *a, **k):
         seen_queries.append(search_query)
         fake_clock["t"] += 10.0  # advance well past the budget after each call
-        return {"results": [_std_result("T", "https://e.com/", "c")], "processing_error": None}
+        return {
+            "results": [_std_result("T", "https://e.com/", "c")],
+            "processing_error": None,
+        }
 
     def fake_chat(**kwargs):
         return json.dumps({"sub_questions": ["sq1", "sq2", "sq3"]})
@@ -157,8 +199,11 @@ def test_generate_and_search_stops_fanout_at_phase1_time_budget(monkeypatch):
 
     out = WebSearch_APIs.generate_and_search(
         "what is love",
-        _search_params(subquery_generation=True, subquery_generation_llm="openai",
-                       phase1_time_budget_s=5.0),
+        _search_params(
+            subquery_generation=True,
+            subquery_generation_llm="openai",
+            phase1_time_budget_s=5.0,
+        ),
     )
     wsr = out["web_search_results_dict"]
     assert len(seen_queries) == 1  # fan-out stopped after the first query
@@ -166,7 +211,10 @@ def test_generate_and_search_stops_fanout_at_phase1_time_budget(monkeypatch):
     assert wsr["results"]  # partial results still returned, not discarded
 
 
-def test_generate_and_search_warns_when_subquery_generation_exhausts_attempts(monkeypatch):
+@pytest.mark.bootstrap_profile
+def test_generate_and_search_warns_when_subquery_generation_exhausts_attempts(
+    monkeypatch,
+):
     """task-3221: when subquery_generation is on, analyze_question makes up
     to 3 paid LLM attempts; if every attempt fails to produce sub-questions,
     generate_and_search must leave a trace -- otherwise 3 billed calls are
@@ -181,17 +229,23 @@ def test_generate_and_search_warns_when_subquery_generation_exhausts_attempts(mo
         return "not json and no quoted strings here"
 
     def fake_perform(search_engine, search_query, *a, **k):
-        return {"results": [_std_result("T", "https://e.com/", "c")], "processing_error": None}
+        return {
+            "results": [_std_result("T", "https://e.com/", "c")],
+            "processing_error": None,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", always_garbage)
     monkeypatch.setattr(WebSearch_APIs, "perform_websearch", fake_perform)
     monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
 
     out = WebSearch_APIs.generate_and_search(
-        "what is love", _search_params(subquery_generation=True, subquery_generation_llm="openai")
+        "what is love",
+        _search_params(subquery_generation=True, subquery_generation_llm="openai"),
     )
     wsr = out["web_search_results_dict"]
-    assert attempts["n"] == WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS  # all paid attempts made
+    assert (
+        attempts["n"] == WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS
+    )  # all paid attempts made
     expected = (
         f"sub-query generation failed after "
         f"{WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS} attempts; "
@@ -204,18 +258,27 @@ def test_generate_and_search_no_warning_when_subquery_generation_disabled(monkey
     """Sanity check: the new warning must never appear when
     subquery_generation is off -- analyze_question is never even called, so
     there is nothing to report as a "failure"."""
+
     def fake_perform(search_engine, search_query, *a, **k):
-        return {"results": [_std_result("T", "https://e.com/", "c")], "processing_error": None}
+        return {
+            "results": [_std_result("T", "https://e.com/", "c")],
+            "processing_error": None,
+        }
 
     monkeypatch.setattr(WebSearch_APIs, "perform_websearch", fake_perform)
     monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
 
-    out = WebSearch_APIs.generate_and_search("q", _search_params(subquery_generation=False))
+    out = WebSearch_APIs.generate_and_search(
+        "q", _search_params(subquery_generation=False)
+    )
     wsr = out["web_search_results_dict"]
     assert not any("sub-query generation failed" in w for w in wsr["warnings"])
 
 
-def test_generate_and_search_provider_error_not_demoted_by_subquery_warning(monkeypatch):
+@pytest.mark.bootstrap_profile
+def test_generate_and_search_provider_error_not_demoted_by_subquery_warning(
+    monkeypatch,
+):
     """Important 2 (fix-wave 2026-08-07 review): the sub-query-generation-
     exhausted notice used to be appended at warnings[0] BEFORE the fan-out
     loop ran, and the promotion check just below it blindly promotes
@@ -239,10 +302,13 @@ def test_generate_and_search_provider_error_not_demoted_by_subquery_warning(monk
     monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
 
     out = WebSearch_APIs.generate_and_search(
-        "what is love", _search_params(subquery_generation=True, subquery_generation_llm="openai")
+        "what is love",
+        _search_params(subquery_generation=True, subquery_generation_llm="openai"),
     )
     wsr = out["web_search_results_dict"]
-    assert attempts["n"] == WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS  # all paid attempts made
+    assert (
+        attempts["n"] == WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS
+    )  # all paid attempts made
 
     subquery_notice = (
         f"sub-query generation failed after "
@@ -259,7 +325,10 @@ def test_generate_and_search_provider_error_not_demoted_by_subquery_warning(monk
     assert wsr["warnings"][-1] == subquery_notice
 
 
-def test_generate_and_search_no_false_error_when_subquery_warning_is_the_only_warning(monkeypatch):
+@pytest.mark.bootstrap_profile
+def test_generate_and_search_no_false_error_when_subquery_warning_is_the_only_warning(
+    monkeypatch,
+):
     """Important 2 continued: a search that legitimately finds nothing --
     zero results, no provider processing_error at all -- must leave `error`
     at None. Before this fix, once the sub-query notice was the ONLY entry
@@ -280,7 +349,8 @@ def test_generate_and_search_no_false_error_when_subquery_warning_is_the_only_wa
     monkeypatch.setattr(WebSearch_APIs.time, "sleep", lambda s: None)
 
     out = WebSearch_APIs.generate_and_search(
-        "what is love", _search_params(subquery_generation=True, subquery_generation_llm="openai")
+        "what is love",
+        _search_params(subquery_generation=True, subquery_generation_llm="openai"),
     )
     wsr = out["web_search_results_dict"]
     assert attempts["n"] == WebSearch_APIs._SUBQUERY_GENERATION_MAX_ATTEMPTS
@@ -295,6 +365,7 @@ def test_generate_and_search_no_false_error_when_subquery_warning_is_the_only_wa
 
 
 # --- chunking / confidence ----------------------------------------------------
+
 
 def test_build_chunk_infos_packs_and_splits():
     small = ["a" * 100, "b" * 100]
@@ -318,8 +389,15 @@ def test_estimate_confidence_formula_points():
 
 # --- aggregate_results branches ----------------------------------------------
 
-_REL = {"1": {"content": "sum one", "original_content": "orig", "reasoning": "r1",
-              "url": "https://one.example/", "title": "One"}}
+_REL = {
+    "1": {
+        "content": "sum one",
+        "original_content": "orig",
+        "reasoning": "r1",
+        "url": "https://one.example/",
+        "title": "One",
+    }
+}
 
 
 def test_aggregate_empty_returns_typed_shape():
@@ -328,6 +406,7 @@ def test_aggregate_empty_returns_typed_shape():
     assert out["confidence"] == 0.0 and out["evidence"] == []
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_success_typed_and_numbered(monkeypatch):
     captured = {}
 
@@ -338,33 +417,50 @@ def test_aggregate_success_typed_and_numbered(monkeypatch):
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
     # chunk-phase summarizer:
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
-    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
+
+    monkeypatch.setattr(
+        Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary"
+    )
     out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
     # Success branch carries the citation-verification verdict (task-16331);
     # failure/empty branches (pinned by their own tests) omit the key.
-    assert set(out) == {"text", "evidence", "confidence", "chunks", "citation_verification"}
+    assert set(out) == {
+        "text",
+        "evidence",
+        "confidence",
+        "chunks",
+        "citation_verification",
+    }
     assert out["text"] == "Answer citing [1]."
     cv = out["citation_verification"]
     assert cv["markers_total"] == 1 and cv["markers_resolved"] == 1
     assert cv["unknown_marker_ids"] == []
     assert out["evidence"][0]["id"] == 1
     assert out["evidence"][0]["url"] == "https://one.example/"
-    assert "[1]" in captured["prompt"]          # numbered payload shown to the LLM
-    assert 0.1 <= out["confidence"] <= 0.99      # computed, not hardcoded
+    assert "[1]" in captured["prompt"]  # numbered payload shown to the LLM
+    assert 0.1 <= out["confidence"] <= 0.99  # computed, not hardcoded
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_llm_failure_still_typed(monkeypatch):
     def boom(**kwargs):
         raise RuntimeError("provider down")
 
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", boom)
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
-    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
+
+    monkeypatch.setattr(
+        Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary"
+    )
     out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
     # Typed shape holds and no "summary" key ever appears; task-17386 adds
     # synthesis_failed so the run records WHY it has no citation verdict.
     assert set(out) == {
-        "text", "evidence", "confidence", "chunks", "synthesis_failed",
+        "text",
+        "evidence",
+        "confidence",
+        "chunks",
+        "synthesis_failed",
     }
     assert "summary" not in out
     assert out["synthesis_failed"]["error_type"] == "RuntimeError"
@@ -376,6 +472,7 @@ def test_aggregate_no_llm_fallback():
     assert "sum one" in out["text"] and out["confidence"] > 0.0
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_single_chunk_skips_wasted_map_call(monkeypatch):
     # _REL is one small entry -> exactly one chunk. The MAP-phase chunk
     # summarization would cost a provider round-trip whose output feeds
@@ -393,6 +490,7 @@ def test_aggregate_single_chunk_skips_wasted_map_call(monkeypatch):
 
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+
     monkeypatch.setattr(Summarization_General_Lib, "analyze", fake_analyze)
 
     out = WebSearch_APIs.aggregate_results(_REL, "q", [], "openai")
@@ -400,11 +498,22 @@ def test_aggregate_single_chunk_skips_wasted_map_call(monkeypatch):
 
 
 _REL_MULTI = {
-    "a": {"content": "A" * 4000, "reasoning": "ra", "url": "https://a.example/", "title": "A"},
-    "b": {"content": "B" * 4000, "reasoning": "rb", "url": "https://b.example/", "title": "B"},
+    "a": {
+        "content": "A" * 4000,
+        "reasoning": "ra",
+        "url": "https://a.example/",
+        "title": "A",
+    },
+    "b": {
+        "content": "B" * 4000,
+        "reasoning": "rb",
+        "url": "https://b.example/",
+        "title": "B",
+    },
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_aggregate_multi_chunk_synthesizes_from_chunk_summaries(monkeypatch):
     # Two ~4000-char entries pack into 2 separate 6000-char chunks, so the
     # MAP phase runs. The synthesis prompt must consume the chunk SUMMARIES
@@ -423,21 +532,29 @@ def test_aggregate_multi_chunk_synthesizes_from_chunk_summaries(monkeypatch):
 
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+
     monkeypatch.setattr(Summarization_General_Lib, "analyze", fake_analyze)
 
     out = WebSearch_APIs.aggregate_results(_REL_MULTI, "q", [], "openai")
     prompt = captured["prompt"]
-    assert "summary of chunk" in prompt              # built from chunk summaries
-    assert "[1]" in prompt and "[2]" in prompt        # citation markers survived the map step
-    assert "A" * 4000 not in prompt and "B" * 4000 not in prompt  # not the raw originals
+    assert "summary of chunk" in prompt  # built from chunk summaries
+    assert "[1]" in prompt and "[2]" in prompt  # citation markers survived the map step
+    assert (
+        "A" * 4000 not in prompt and "B" * 4000 not in prompt
+    )  # not the raw originals
 
 
 # --- relevance: timeouts, cancel, scrape fallback, url/title capture -----------
 
+
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_scrape_failure_keeps_result_with_fallback(monkeypatch):
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
-                        _fake_chat(["Selected Answer: True\nReasoning: looks relevant"]))
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "chat_api_call",
+        _fake_chat(["Selected Answer: True\nReasoning: looks relevant"]),
+    )
 
     async def failing_scrape(url, **k):
         raise RuntimeError("scrape died")
@@ -451,9 +568,11 @@ async def test_relevance_scrape_failure_keeps_result_with_fallback(monkeypatch):
     assert "snippet text" in entry["content"] or "Kept Title" in entry["content"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_cancel_event_stops_loop(monkeypatch):
     import asyncio
+
     evt = asyncio.Event()
     calls = {"n": 0}
 
@@ -464,35 +583,44 @@ async def test_relevance_cancel_event_stops_loop(monkeypatch):
 
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
     results = [_std_result(f"T{i}", f"https://e{i}.example/", "c") for i in range(5)]
-    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai", cancel_event=evt)
+    out = await WebSearch_APIs.search_result_relevance(
+        results, "q", [], "openai", cancel_event=evt
+    )
     assert calls["n"] == 1  # loop stopped after cancellation
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_llm_timeout_counts_as_not_relevant(monkeypatch):
     import asyncio
 
     def hanging_chat(**kwargs):
         import time as _t
+
         _t.sleep(0.3)
         return "Selected Answer: True\nReasoning: slow"
 
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", hanging_chat)
     results = [_std_result("T", "https://e.example/", "c")]
     out = await WebSearch_APIs.search_result_relevance(
-        results, "q", [], "openai", llm_timeout_s=0.05)
+        results, "q", [], "openai", llm_timeout_s=0.05
+    )
     assert out == {}  # timed out -> skipped, not crashed
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_refuses_private_url_scrape(monkeypatch):
     # Pre-scrape SSRF guard (task-1356): a relevant result pointing at a
     # cloud metadata IP must never be navigated to by scrape_article --
     # scrape_article is faked here as a spy solely to prove it's never
     # called; the guard refuses BEFORE any fetch, so this test performs
     # no real network I/O either way.
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
-                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "chat_api_call",
+        _fake_chat(["Selected Answer: True\nReasoning: relevant"]),
+    )
     scraped = []
 
     async def spy_scrape(url, **k):
@@ -500,14 +628,19 @@ async def test_relevance_refuses_private_url_scrape(monkeypatch):
         return {"content": "should not happen", "extraction_successful": True}
 
     monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
-    results = [_std_result("Internal", "http://169.254.169.254/latest", "metadata snippet")]
+    results = [
+        _std_result("Internal", "http://169.254.169.254/latest", "metadata snippet")
+    ]
     out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
-    assert scraped == []                                  # never navigated
+    assert scraped == []  # never navigated
     entry = next(iter(out.values()))
-    assert "metadata snippet" in entry["content"] or "Internal" in entry["content"]  # fallback kept
+    assert (
+        "metadata snippet" in entry["content"] or "Internal" in entry["content"]
+    )  # fallback kept
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_guard_does_not_block_event_loop(monkeypatch):
     # CRITICAL 2 (task-1356 re-review): is_public_http_url does synchronous
     # DNS resolution (socket.getaddrinfo). Calling it directly inside this
@@ -517,8 +650,11 @@ async def test_relevance_guard_does_not_block_event_loop(monkeypatch):
     # concurrently-scheduled heartbeat coroutine is NOT stalled: its
     # sleep(0.01) ticks keep landing close to schedule instead of bunching
     # up behind the guard's 0.3s sleep.
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
-                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "chat_api_call",
+        _fake_chat(["Selected Answer: True\nReasoning: relevant"]),
+    )
 
     def slow_guard(url):
         time.sleep(0.3)
@@ -556,13 +692,17 @@ async def test_relevance_guard_does_not_block_event_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_guard_timeout_falls_back_like_scrape_failure(monkeypatch):
     # CRITICAL 2 continued: a guard that doesn't resolve within
     # scrape_timeout_s must be treated as a refusal -- same fallback path
     # as a scrape failure or a private-IP refusal -- not left to hang or
     # raise out of search_result_relevance.
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
-                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "chat_api_call",
+        _fake_chat(["Selected Answer: True\nReasoning: relevant"]),
+    )
 
     def hanging_guard(url):
         time.sleep(1.0)
@@ -578,22 +718,30 @@ async def test_relevance_guard_timeout_falls_back_like_scrape_failure(monkeypatc
     monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
     results = [_std_result("Kept Title", "https://kept.example/", "snippet text")]
     out = await WebSearch_APIs.search_result_relevance(
-        results, "q", [], "openai", scrape_timeout_s=0.05)
-    assert scraped == []                                  # never reached scrape_article
+        results, "q", [], "openai", scrape_timeout_s=0.05
+    )
+    assert scraped == []  # never reached scrape_article
     entry = next(iter(out.values()))
-    assert "snippet text" in entry["content"] or "Kept Title" in entry["content"]  # fallback kept
+    assert (
+        "snippet text" in entry["content"] or "Kept Title" in entry["content"]
+    )  # fallback kept
 
 
 # --- DNS-guard offload isolation (task-3220) -----------------------------------
 
+
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_guard_runs_on_dedicated_dns_guard_executor(monkeypatch):
     """task-3220: the pre-scrape SSRF guard (`is_public_http_url`) must be
     offloaded through the dedicated DNS-guard executor, not
     `asyncio.to_thread`'s shared default one -- proven by capturing the name
     of the worker thread the guard actually ran on."""
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
-                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "chat_api_call",
+        _fake_chat(["Selected Answer: True\nReasoning: relevant"]),
+    )
     seen_thread_names = []
 
     def spying_guard(url):
@@ -616,7 +764,10 @@ async def test_relevance_guard_runs_on_dedicated_dns_guard_executor(monkeypatch)
     )
 
 
-def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads(monkeypatch):
+@pytest.mark.bootstrap_profile
+def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads(
+    monkeypatch,
+):
     """task-3220 / fix-wave Important 3 (2026-08-07 review, reviewer's option
     b): the PREDECESSOR of this test saturated the dedicated pool from
     OUTSIDE via direct `executor.submit()` calls, then ran a brand-new
@@ -681,7 +832,9 @@ def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads
     monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
     monkeypatch.setattr(WebSearch_APIs.random, "uniform", lambda a, b: 0.0)
 
-    results = [_std_result(f"T{i}", f"https://e{i}.example/", "c") for i in range(n_results)]
+    results = [
+        _std_result(f"T{i}", f"https://e{i}.example/", "c") for i in range(n_results)
+    ]
 
     try:
         start = time.monotonic()
@@ -699,7 +852,9 @@ def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads
         assert len(out) == n_results
         assert scraped == []  # the guard refusal/timeout path was taken every time
 
-        assert len(llm_call_times) == n_results, "not every result reached the relevance LLM call"
+        assert len(llm_call_times) == n_results, (
+            "not every result reached the relevance LLM call"
+        )
         # Bound is intentionally generous, NOT tight around n_results *
         # scrape_timeout_s: this test's job is proving the pipeline makes
         # progress and completes at all (non-starvation), not pinning which
@@ -732,6 +887,7 @@ def test_dns_guard_executor_saturation_does_not_starve_default_executor_offloads
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypatch):
     """respect_robots_txt=True must skip scraping a robots-disallowed host
     (keeping its existing snippet/title/url fallback content, never
@@ -765,9 +921,12 @@ async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypat
             return httpx.Response(200, content=b"User-agent: *\nDisallow: /\n")
         return httpx.Response(200, content=b"User-agent: *\nAllow: /\n")
 
-    monkeypatch.setattr(web_tool_impls, "_transport", httpx.MockTransport(robots_handler))
     monkeypatch.setattr(
-        WebSearch_APIs, "chat_api_call",
+        web_tool_impls, "_transport", httpx.MockTransport(robots_handler)
+    )
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "chat_api_call",
         _fake_chat(["Selected Answer: True\nReasoning: relevant"] * 2),
     )
 
@@ -780,12 +939,18 @@ async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypat
     monkeypatch.setattr(WebSearch_APIs, "scrape_article", spy_scrape)
 
     results = [
-        _std_result("Disallowed", "https://disallowed.example/page", "disallowed snippet"),
+        _std_result(
+            "Disallowed", "https://disallowed.example/page", "disallowed snippet"
+        ),
         _std_result("Allowed", "https://allowed.example/page", "allowed snippet"),
     ]
     try:
         out = await WebSearch_APIs.search_result_relevance(
-            results, "q", [], "openai", respect_robots_txt=True,
+            results,
+            "q",
+            [],
+            "openai",
+            respect_robots_txt=True,
         )
     finally:
         web_tool_impls._reset_state_for_tests()
@@ -794,7 +959,9 @@ async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypat
         "the disallowed host must never reach scrape_article"
     )
     assert len(out) == 2  # both results kept -- disallowed is a fallback, not a discard
-    disallowed_entry = next(v for v in out.values() if v["url"] == "https://disallowed.example/page")
+    disallowed_entry = next(
+        v for v in out.values() if v["url"] == "https://disallowed.example/page"
+    )
     assert "REAL SCRAPED CONTENT" not in disallowed_entry["content"]
     # Pin the ACTUAL _build_result_fallback_content shape (Minor 5) rather
     # than a loose "either field" OR -- the disallowed result's summary
@@ -804,11 +971,14 @@ async def test_relevance_robots_disallowed_skips_scrape_others_proceed(monkeypat
     assert disallowed_entry["content"] == WebSearch_APIs._build_result_fallback_content(
         results[0]
     )
-    allowed_entry = next(v for v in out.values() if v["url"] == "https://allowed.example/page")
+    allowed_entry = next(
+        v for v in out.values() if v["url"] == "https://allowed.example/page"
+    )
     assert "REAL SCRAPED CONTENT" in allowed_entry["content"]
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_robots_off_by_default_makes_no_robots_fetch(monkeypatch):
     """Parity pin: respect_robots_txt defaults to False when the caller
     doesn't pass it -- the dead-wired research-service caller never sets
@@ -829,9 +999,14 @@ async def test_relevance_robots_off_by_default_makes_no_robots_fetch(monkeypatch
         transport_calls.append(str(request.url))
         return httpx.Response(200, content=b"User-agent: *\nDisallow: /\n")
 
-    monkeypatch.setattr(web_tool_impls, "_transport", httpx.MockTransport(robots_handler))
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
-                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+    monkeypatch.setattr(
+        web_tool_impls, "_transport", httpx.MockTransport(robots_handler)
+    )
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "chat_api_call",
+        _fake_chat(["Selected Answer: True\nReasoning: relevant"]),
+    )
 
     scraped = []
 
@@ -847,11 +1022,14 @@ async def test_relevance_robots_off_by_default_makes_no_robots_fetch(monkeypatch
     finally:
         web_tool_impls._reset_state_for_tests()
 
-    assert transport_calls == [], "no robots.txt fetch should happen when the toggle is absent"
+    assert transport_calls == [], (
+        "no robots.txt fetch should happen when the toggle is absent"
+    )
     assert scraped == ["https://would-be-blocked.example/"]
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_relevance_robots_unreachable_fails_open_and_scrapes(monkeypatch):
     """A robots.txt that cannot be fetched (network error) must fail OPEN
     and proceed to scrape -- deliberately the OPPOSITE of the SSRF guard's
@@ -867,9 +1045,14 @@ async def test_relevance_robots_unreachable_fails_open_and_scrapes(monkeypatch):
     def robots_handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("simulated robots.txt fetch failure", request=request)
 
-    monkeypatch.setattr(web_tool_impls, "_transport", httpx.MockTransport(robots_handler))
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
-                        _fake_chat(["Selected Answer: True\nReasoning: relevant"]))
+    monkeypatch.setattr(
+        web_tool_impls, "_transport", httpx.MockTransport(robots_handler)
+    )
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "chat_api_call",
+        _fake_chat(["Selected Answer: True\nReasoning: relevant"]),
+    )
 
     scraped = []
 
@@ -881,15 +1064,22 @@ async def test_relevance_robots_unreachable_fails_open_and_scrapes(monkeypatch):
     results = [_std_result("T", "https://unreachable-robots.example/", "c")]
     try:
         out = await WebSearch_APIs.search_result_relevance(
-            results, "q", [], "openai", respect_robots_txt=True,
+            results,
+            "q",
+            [],
+            "openai",
+            respect_robots_txt=True,
         )
     finally:
         web_tool_impls._reset_state_for_tests()
 
-    assert scraped == ["https://unreachable-robots.example/"]  # fail-open: scrape proceeded
+    assert scraped == [
+        "https://unreachable-robots.example/"
+    ]  # fail-open: scrape proceeded
 
 
 # --- pure review ---------------------------------------------------------------
+
 
 def test_review_no_selector_passes_all():
     wsr = {"results": [_std_result("A", "https://a.example/", "c")]}
@@ -899,13 +1089,16 @@ def test_review_no_selector_passes_all():
 
 def test_review_never_blocks_on_input(monkeypatch):
     import builtins
+
     def no_input(*a, **k):
         raise AssertionError("input() must never be called")
+
     monkeypatch.setattr(builtins, "input", no_input)
     WebSearch_APIs.review_and_select_results({"results": []})
 
 
 # --- [SearchSettings] loader (task-1356 Task 4) -------------------------------
+
 
 def test_search_settings_timeout_keys_with_defaults(tmp_path, monkeypatch):
     """New timeout keys load with defaults when absent from TOML.
@@ -925,9 +1118,11 @@ def test_search_settings_timeout_keys_with_defaults(tmp_path, monkeypatch):
         "[general]\nusers_name = 'test'\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.chmod(0o600)
 
-    settings = config_module.load_settings(force_reload=True)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        settings = source.load_settings(force_reload=True)
 
     search_settings = settings["search_settings_general"]
     assert search_settings["relevance_llm_timeout_s"] == 30
@@ -948,9 +1143,11 @@ def test_search_settings_timeout_keys_from_toml(tmp_path, monkeypatch):
         "deep_search_timeout_s = 600\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.chmod(0o600)
 
-    settings = config_module.load_settings(force_reload=True)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        settings = source.load_settings(force_reload=True)
 
     search_settings = settings["search_settings_general"]
     assert search_settings["relevance_llm_timeout_s"] == 45
@@ -971,9 +1168,11 @@ def test_search_settings_timeout_keys_coerce_int(tmp_path, monkeypatch):
         'deep_search_timeout_s = "600"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.chmod(0o600)
 
-    settings = config_module.load_settings(force_reload=True)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        settings = source.load_settings(force_reload=True)
 
     search_settings = settings["search_settings_general"]
     assert search_settings["relevance_llm_timeout_s"] == 45
@@ -995,13 +1194,15 @@ def test_search_settings_timeout_keys_malformed_value_degrades_to_default(
     config_path.write_text(
         "[SearchSettings]\n"
         'relevance_llm_timeout_s = "30s"\n'
-        'relevance_scrape_timeout_s = true\n'
+        "relevance_scrape_timeout_s = true\n"
         'deep_search_timeout_s = "300x"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.chmod(0o600)
 
-    settings = config_module.load_settings(force_reload=True)
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path)
+        settings = source.load_settings(force_reload=True)
 
     search_settings = settings["search_settings_general"]
     # Malformed values should degrade to defaults
@@ -1011,6 +1212,7 @@ def test_search_settings_timeout_keys_malformed_value_degrades_to_default(
 
 
 # --- Config template and non-positive timeout guards -----------------------
+
 
 def test_config_template_contains_tools_section():
     """The CONFIG_TOML_CONTENT template includes the [tools] section with web_deep_search_enabled key.
@@ -1047,10 +1249,12 @@ def test_non_positive_timeout_values_degrade_to_default(tmp_path, monkeypatch, c
             "deep_search_timeout_s = 100\n",
             encoding="utf-8",
         )
-        monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+        config_path.chmod(0o600)
 
-        with caplog.at_level(logging.WARNING):
-            settings = config_module.load_settings(force_reload=True)
+        with monkeypatch.context() as selected:
+            source = select_config_source(selected, config_path)
+            with caplog.at_level(logging.WARNING):
+                settings = source.load_settings(force_reload=True)
 
         search_settings = settings["search_settings_general"]
         # Non-positive values should degrade to defaults
@@ -1059,14 +1263,20 @@ def test_non_positive_timeout_values_degrade_to_default(tmp_path, monkeypatch, c
         assert search_settings["deep_search_timeout_s"] == 100
 
         # Check warnings were logged for the non-positive cases
-        assert "non-positive" in caplog.text.lower() or "not valid for timeout" in caplog.text.lower()
+        assert (
+            "non-positive" in caplog.text.lower()
+            or "not valid for timeout" in caplog.text.lower()
+        )
     finally:
         loguru_logger.remove(handler_id)
 
 
 # --- analyze_and_aggregate must not block the event loop (task-1356 review) --
 
-def test_analyze_and_aggregate_offloads_aggregate_results_so_wait_for_can_fire(monkeypatch):
+
+def test_analyze_and_aggregate_offloads_aggregate_results_so_wait_for_can_fire(
+    monkeypatch,
+):
     """aggregate_results is synchronous; calling it directly on the event
     loop thread blocks the whole loop for its duration, which means an
     outer asyncio.wait_for wrapped around analyze_and_aggregate can never
@@ -1126,8 +1336,11 @@ def test_analyze_and_aggregate_offloads_aggregate_results_so_wait_for_can_fire(m
 
 # --- discriminating timeout pass-through (task-1356 final review, Minor 6) ---
 
+
 @pytest.mark.asyncio
-async def test_analyze_and_aggregate_forwards_nondefault_relevance_llm_timeout(monkeypatch):
+async def test_analyze_and_aggregate_forwards_nondefault_relevance_llm_timeout(
+    monkeypatch,
+):
     """No test previously drove a NON-default timeout through
     analyze_and_aggregate into search_result_relevance -- a test using the
     30s default would pass even if the forwarding at WebSearch_APIs.py
@@ -1143,8 +1356,11 @@ async def test_analyze_and_aggregate_forwards_nondefault_relevance_llm_timeout(m
 
     wsr = {"results": [], "warnings": []}
     sqd = {"main_goal": "q", "sub_questions": []}
-    params = {"relevance_analysis_llm": "openai", "final_answer_llm": "openai",
-              "relevance_llm_timeout_s": 45}
+    params = {
+        "relevance_analysis_llm": "openai",
+        "final_answer_llm": "openai",
+        "relevance_llm_timeout_s": 45,
+    }
 
     await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
     assert captured["llm_timeout_s"] == 45
@@ -1170,8 +1386,11 @@ async def test_analyze_and_aggregate_forwards_respect_robots_txt_true(monkeypatc
 
     wsr = {"results": [], "warnings": []}
     sqd = {"main_goal": "q", "sub_questions": []}
-    params = {"relevance_analysis_llm": "openai", "final_answer_llm": "openai",
-              "respect_robots_txt": True}
+    params = {
+        "relevance_analysis_llm": "openai",
+        "final_answer_llm": "openai",
+        "respect_robots_txt": True,
+    }
 
     await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
     assert captured["respect_robots_txt"] is True
@@ -1192,16 +1411,27 @@ async def test_analyze_and_aggregate_string_false_does_not_enable_robots(monkeyp
     monkeypatch.setattr(WebSearch_APIs, "search_result_relevance", fake_relevance)
     wsr = {"results": [], "warnings": []}
     sqd = {"main_goal": "q", "sub_questions": []}
-    for raw, expected in (("false", False), ("true", True), ("1", True), ("no", False), (0, False)):
+    for raw, expected in (
+        ("false", False),
+        ("true", True),
+        ("1", True),
+        ("no", False),
+        (0, False),
+    ):
         captured.clear()
-        params = {"relevance_analysis_llm": "openai", "final_answer_llm": "openai",
-                  "respect_robots_txt": raw}
+        params = {
+            "relevance_analysis_llm": "openai",
+            "final_answer_llm": "openai",
+            "respect_robots_txt": raw,
+        }
         await WebSearch_APIs.analyze_and_aggregate(wsr, sqd, params)
         assert captured["respect_robots_txt"] is expected, f"raw={raw!r}"
 
 
 @pytest.mark.asyncio
-async def test_analyze_and_aggregate_forwards_respect_robots_txt_false_when_absent(monkeypatch):
+async def test_analyze_and_aggregate_forwards_respect_robots_txt_false_when_absent(
+    monkeypatch,
+):
     """Companion case: an absent key must forward False (not None, not
     missing), proving the forwarding isn't hardcoded True and the
     documented default really does reach search_result_relevance -- parity
@@ -1225,6 +1455,8 @@ async def test_analyze_and_aggregate_forwards_respect_robots_txt_false_when_abse
 
 # --- relevance gate robustness (task-16333) --------------------------------------
 
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_judgment_runs_at_classification_temperature(monkeypatch):
     captured = []
@@ -1239,7 +1471,8 @@ async def test_relevance_judgment_runs_at_classification_temperature(monkeypatch
     await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
 
     eval_calls = [
-        c for c in captured
+        c
+        for c in captured
         if str(c["messages_payload"][0]["content"]).startswith("Evaluate the relevance")
     ]
     assert eval_calls, "the judgment call must be identifiable by its input"
@@ -1250,15 +1483,23 @@ async def failing_scrape_noop(url, **k):
     raise RuntimeError("no scrape")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_zero_relevant_falls_back_to_flagged_top_results(monkeypatch):
-    monkeypatch.setattr(WebSearch_APIs, "chat_api_call",
-                        _fake_chat(["Selected Answer: False\nReasoning: off-topic"] * 5))
-    results = [_std_result(f"T{i}", f"https://e{i}.example/", f"snippet {i}") for i in range(5)]
+    monkeypatch.setattr(
+        WebSearch_APIs,
+        "chat_api_call",
+        _fake_chat(["Selected Answer: False\nReasoning: off-topic"] * 5),
+    )
+    results = [
+        _std_result(f"T{i}", f"https://e{i}.example/", f"snippet {i}") for i in range(5)
+    ]
 
     out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
 
-    assert out, "all-rejected must not produce an empty evidence set when raw results exist"
+    assert out, (
+        "all-rejected must not produce an empty evidence set when raw results exist"
+    )
     assert len(out) <= 3  # bounded fallback
     first = next(iter(out.values()))
     assert first["gate_unverified"] is True
@@ -1266,9 +1507,11 @@ async def test_zero_relevant_falls_back_to_flagged_top_results(monkeypatch):
     assert "snippet 0" in (first["content"] or "")  # snippet-level, no summarize spend
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_zero_relevant_with_cancel_keeps_empty(monkeypatch):
     import asyncio
+
     evt = asyncio.Event()
 
     def fake_chat(**kwargs):
@@ -1278,12 +1521,15 @@ async def test_zero_relevant_with_cancel_keeps_empty(monkeypatch):
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
     results = [_std_result("T", "https://e.example/", "c")]
 
-    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai", cancel_event=evt)
+    out = await WebSearch_APIs.search_result_relevance(
+        results, "q", [], "openai", cancel_event=evt
+    )
 
     assert out == {}  # a cancelled/deadline run reports honestly, no fallback
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_zero_relevant_with_unevaluated_results_keeps_empty(monkeypatch):
     import time as _t
 
@@ -1294,27 +1540,45 @@ async def test_zero_relevant_with_unevaluated_results_keeps_empty(monkeypatch):
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", hanging_chat)
     results = [_std_result("T", "https://e.example/", "c")]
 
-    out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai", llm_timeout_s=0.05)
+    out = await WebSearch_APIs.search_result_relevance(
+        results, "q", [], "openai", llm_timeout_s=0.05
+    )
 
-    assert out == {}  # never-evaluated results are not promoted (existing pin, unchanged)
+    assert (
+        out == {}
+    )  # never-evaluated results are not promoted (existing pin, unchanged)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_aggregate_carries_gate_unverified_flag_into_evidence(monkeypatch):
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", lambda **kwargs: "A[1].")
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
+
     monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "s")
 
     out = WebSearch_APIs.aggregate_results(
-        {"1": {"content": "c", "original_content": "o", "reasoning": "gate fallback",
-               "url": "https://e.example/", "title": "T", "gate_unverified": True}},
-        "q", [], "openai",
+        {
+            "1": {
+                "content": "c",
+                "original_content": "o",
+                "reasoning": "gate fallback",
+                "url": "https://e.example/",
+                "title": "T",
+                "gate_unverified": True,
+            }
+        },
+        "q",
+        [],
+        "openai",
     )
     assert out["evidence"][0]["gate_unverified"] is True
 
 
 # --- source-type-aware gate prompt (task-17066) -------------------------------------
 
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_gate_carries_source_note_for_repository_records(monkeypatch):
     captured = {}
@@ -1324,15 +1588,24 @@ async def test_relevance_gate_carries_source_note_for_repository_records(monkeyp
         return "Selected Answer: False\nReasoning: no"
 
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
-    result = _std_result("Folding dataset", "https://zenodo.org/records/1", "Simulations of folding")
-    result["metadata"] = {"source": "academic", "provider": "zenodo", "doi": "10.5281/x"}
+    result = _std_result(
+        "Folding dataset", "https://zenodo.org/records/1", "Simulations of folding"
+    )
+    result["metadata"] = {
+        "source": "academic",
+        "provider": "zenodo",
+        "doi": "10.5281/x",
+    }
 
-    await WebSearch_APIs.search_result_relevance([result], "how do proteins fold", [], "openai")
+    await WebSearch_APIs.search_result_relevance(
+        [result], "how do proteins fold", [], "openai"
+    )
 
     assert "repository record" in captured["prompt"]
     assert "does NOT need to directly answer" in captured["prompt"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_gate_carries_source_note_for_metadata_records(monkeypatch):
     captured = {}
@@ -1342,7 +1615,9 @@ async def test_relevance_gate_carries_source_note_for_metadata_records(monkeypat
         return "Selected Answer: False\nReasoning: no"
 
     monkeypatch.setattr(WebSearch_APIs, "chat_api_call", fake_chat)
-    result = _std_result("Registry record", "https://openalex.org/W1", "Citation metadata")
+    result = _std_result(
+        "Registry record", "https://openalex.org/W1", "Citation metadata"
+    )
     result["metadata"] = {"source": "academic", "provider": "openalex"}
 
     await WebSearch_APIs.search_result_relevance([result], "any question", [], "openai")
@@ -1350,6 +1625,7 @@ async def test_relevance_gate_carries_source_note_for_metadata_records(monkeypat
     assert "metadata record" in captured["prompt"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_gate_prompt_unchanged_for_papers_and_web(monkeypatch):
     prompts = []
@@ -1373,6 +1649,7 @@ async def test_relevance_gate_prompt_unchanged_for_papers_and_web(monkeypatch):
         assert prompt.split("\n\n", 1)[0] == prefix
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_relevance_gate_paper_prompt_is_byte_identical(monkeypatch):
     captured = []
@@ -1447,6 +1724,7 @@ def test_real_summaries_are_not_mistaken_for_failures(summary_text):
     assert _is_summary_failure(summary_text) is False
 
 
+@pytest.mark.bootstrap_profile
 def test_verification_failure_is_not_labelled_a_synthesis_failure(monkeypatch):
     """Qodo (PR 1782): verify_citations runs after the provider returns, inside
     the same try, so a verification defect used to be recorded as a SYNTHESIS
@@ -1455,7 +1733,10 @@ def test_verification_failure_is_not_labelled_a_synthesis_failure(monkeypatch):
         WebSearch_APIs, "chat_api_call", lambda **kwargs: "a report citing [1]"
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
-    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
+
+    monkeypatch.setattr(
+        Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary"
+    )
 
     def boom(*_args, **_kwargs):
         raise ValueError("citation verifier defect")

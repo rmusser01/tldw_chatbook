@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,17 +38,21 @@ requires_posix_special_files = pytest.mark.skipif(
 )
 
 
-def _registry(tmp_path: Path) -> LocalWorkspaceRegistryService:
-    registry = LocalWorkspaceRegistryService(
-        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="file-inspector")
-    )
+def _registry(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> LocalWorkspaceRegistryService:
+    db = WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="file-inspector")
+    request.addfinalizer(db.close)
+    registry = LocalWorkspaceRegistryService(db)
     registry.create_workspace(workspace_id="ws-a", name="Workspace A")
     registry.create_workspace(workspace_id="ws-b", name="Workspace B")
     return registry
 
 
-def _scope(tmp_path: Path) -> tuple[WorkspaceFileInspector, LocalWorkspaceRegistryService, Path, object]:
-    registry = _registry(tmp_path)
+def _scope(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> tuple[WorkspaceFileInspector, LocalWorkspaceRegistryService, Path, object]:
+    registry = _registry(tmp_path, request)
     root = tmp_path / "workspace"
     root.mkdir()
     binding = registry.add_folder_binding("ws-a", root)
@@ -57,9 +62,10 @@ def _scope(tmp_path: Path) -> tuple[WorkspaceFileInspector, LocalWorkspaceRegist
 
 def test_capture_is_immutable_and_every_operation_revalidates_current_registry(
     tmp_path: Path,
+    request,
 ) -> None:
     """Catch a service that treats an opening snapshot as continuing authority."""
-    inspector, registry, root, scope = _scope(tmp_path)
+    inspector, registry, root, scope = _scope(tmp_path, request)
     (root / "visible.txt").write_text("visible")
 
     assert inspector.list_directory(scope).status is DirectoryStatus.COMPLETE
@@ -73,9 +79,10 @@ def test_capture_is_immutable_and_every_operation_revalidates_current_registry(
 
 def test_scope_rejects_removed_retargeted_foreign_default_and_nonlocal_bindings(
     tmp_path: Path,
+    request,
 ) -> None:
     """Catch stale binding IDs silently selecting a current or default root."""
-    inspector, registry, root, scope = _scope(tmp_path)
+    inspector, registry, root, scope = _scope(tmp_path, request)
     binding = registry.list_folder_bindings("ws-a")[0]
     registry.remove_runtime_binding(binding.binding_id)
     assert inspector.list_directory(scope).error_code == "binding_changed"
@@ -103,9 +110,10 @@ def test_scope_rejects_removed_retargeted_foreign_default_and_nonlocal_bindings(
 @requires_posix_special_files
 def test_list_and_read_reject_component_escape_links_special_files_and_vcs(
     tmp_path: Path,
+    request,
 ) -> None:
     """Catch path resolution that follows a rendered label or a symlink."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "safe.txt").write_text("ok")
     outside = tmp_path / "outside.txt"
     outside.write_text("outside")
@@ -135,9 +143,10 @@ def test_list_and_read_reject_component_escape_links_special_files_and_vcs(
 
 def test_safe_filesystem_text_is_one_way_safe_while_raw_parts_remain_authority(
     tmp_path: Path,
+    request,
 ) -> None:
     """Catch display formatting that loses bytes or leaves terminal controls live."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     name = "Readme[bold] ✓\n\t\x1b\u202e"
     (root / name).write_text("safe")
 
@@ -151,9 +160,11 @@ def test_safe_filesystem_text_is_one_way_safe_while_raw_parts_remain_authority(
     assert safe_filesystem_text(bytes([0xFF]).decode("utf-8", "surrogateescape")) == "\\xff"
 
 
-def test_directory_pages_are_deterministic_bounded_and_revision_pinned(tmp_path: Path) -> None:
+def test_directory_pages_are_deterministic_bounded_and_revision_pinned(
+    tmp_path: Path, request
+) -> None:
     """Catch unbounded or mixed-revision directory pagination."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "z-dir").mkdir()
     (root / "a-dir").mkdir()
     (root / ".dotfile").write_text("dot")
@@ -178,9 +189,11 @@ def test_directory_pages_are_deterministic_bounded_and_revision_pinned(tmp_path:
 
 
 @requires_posix_special_files
-def test_filter_is_literal_selected_scope_bounded_and_reports_exclusions(tmp_path: Path) -> None:
+def test_filter_is_literal_selected_scope_bounded_and_reports_exclusions(
+    tmp_path: Path, request
+) -> None:
     """Catch recursive filtering that crosses bindings, follows links, or hides bounds."""
-    inspector, registry, root, scope = _scope(tmp_path)
+    inspector, registry, root, scope = _scope(tmp_path, request)
     (root / "nested").mkdir()
     (root / "nested" / "Needle[one].txt").write_text("one")
     (root / ".git").mkdir()
@@ -211,9 +224,10 @@ def test_filter_is_literal_selected_scope_bounded_and_reports_exclusions(tmp_pat
 @requires_posix_special_files
 def test_filter_reports_cancellation_and_does_not_descend_symlink_directories(
     tmp_path: Path,
+    request,
 ) -> None:
     """Catch a filter that keeps walking after cancellation or follows aliases."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     for index in range(20):
         (root / f"match-{index}").write_text("x")
     outside = tmp_path / "outside"
@@ -233,9 +247,11 @@ def test_filter_reports_cancellation_and_does_not_descend_symlink_directories(
     assert all("outside" not in "/".join(item.raw_parts) for item in result.matches)
 
 
-def test_read_classifies_safe_bom_invalid_control_and_oversized_files(tmp_path: Path) -> None:
+def test_read_classifies_safe_bom_invalid_control_and_oversized_files(
+    tmp_path: Path, request
+) -> None:
     """Catch unsafe previews and accidental reads of metadata-only files."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "bom.txt").write_bytes(b"\xef\xbb\xbfHello")
     (root / "invalid.bin").write_bytes(b"\xff\x00")
     (root / "control.txt").write_text("hi\x1bthere")
@@ -253,9 +269,10 @@ def test_read_classifies_safe_bom_invalid_control_and_oversized_files(tmp_path: 
 
 def test_large_utf8_reads_are_paged_on_character_boundaries_and_revision_pinned(
     tmp_path: Path,
+    request,
 ) -> None:
     """Catch byte-sliced UTF-8 pages or pages mixed after an external replacement."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     payload = "é" * 100_000 + "🙂" * 100_001
     (root / "large.txt").write_text(payload)
 
@@ -287,9 +304,10 @@ def test_large_utf8_reads_are_paged_on_character_boundaries_and_revision_pinned(
 
 def test_paged_cache_rechecks_a_strong_content_revision_before_serving_hits(
     tmp_path: Path,
+    request,
 ) -> None:
     """Same inode/size/mtime replacement content must not revive a cached page."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     path = root / "large.txt"
     path.write_text("a" * 200_001, encoding="utf-8")
     first = inspector.read_file(scope, ("large.txt",))
@@ -312,9 +330,11 @@ def test_paged_cache_rechecks_a_strong_content_revision_before_serving_hits(
     assert changed.text == ""
 
 
-def test_root_replacement_and_disappeared_file_fail_closed(tmp_path: Path) -> None:
+def test_root_replacement_and_disappeared_file_fail_closed(
+    tmp_path: Path, request
+) -> None:
     """Catch root/file replacement races that retain an old rendered selection."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     file_path = root / "gone.txt"
     file_path.write_text("gone")
     file_path.unlink()
@@ -329,10 +349,10 @@ def test_root_replacement_and_disappeared_file_fail_closed(tmp_path: Path) -> No
 
 @requires_posix_special_files
 def test_read_rejects_root_symlink_swap_after_scope_revalidation(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request
 ) -> None:
     """Catch a root pathname reopened after validation and redirected by a swap."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "visible.txt").write_text("inside")
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -359,10 +379,10 @@ def test_read_rejects_root_symlink_swap_after_scope_revalidation(
 
 @requires_posix_special_files
 def test_read_rejects_intermediate_directory_symlink_swap_after_root_open(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request
 ) -> None:
     """Catch intermediate components reopened from a root-derived pathname."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     nested = root / "nested"
     nested.mkdir()
     (nested / "visible.txt").write_text("inside")
@@ -392,10 +412,10 @@ def test_read_rejects_intermediate_directory_symlink_swap_after_root_open(
 @pytest.mark.parametrize("page_offset", (None, 100_000))
 @requires_posix_special_files
 def test_read_rejects_a_listed_file_swapped_to_fifo_without_blocking(
-    tmp_path: Path, page_offset: int | None
+    tmp_path: Path, page_offset: int | None, request
 ) -> None:
     """A listed regular file swapped to a FIFO must never hold a read worker."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     target = root / "listed.txt"
     target.write_text("x" * 200_001, encoding="utf-8")
     listing = inspector.list_directory(scope)
@@ -422,9 +442,10 @@ def test_read_rejects_a_listed_file_swapped_to_fifo_without_blocking(
 
 def test_filter_streams_progress_and_returns_honest_unsearched_exclusion_state(
     tmp_path: Path,
+    request,
 ) -> None:
     """Catch eager filtering and an unrelated query reported as excluded-only."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "ordinary.txt").write_text("x")
     (root / ".git").mkdir()
     (root / ".git" / "needle.txt").write_text("hidden")
@@ -443,10 +464,10 @@ def test_filter_streams_progress_and_returns_honest_unsearched_exclusion_state(
 
 
 def test_filter_checks_the_visit_cap_before_a_huge_directory_is_materialized(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request
 ) -> None:
     """Catch list(scandir(...)) exhausting a huge directory before cancellation."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     for index in range(10):
         (root / f"entry-{index}").write_text("x")
     monkeypatch.setattr(file_inspector, "FILTER_VISIT_LIMIT", 3)
@@ -458,9 +479,11 @@ def test_filter_checks_the_visit_cap_before_a_huge_directory_is_materialized(
     assert result.progress.visited_entries == 3
 
 
-def test_directory_continuation_is_service_issued_and_validated(tmp_path: Path) -> None:
+def test_directory_continuation_is_service_issued_and_validated(
+    tmp_path: Path, request
+) -> None:
     """Catch caller-forged, negative, or cross-service continuation offsets."""
-    inspector, registry, root, scope = _scope(tmp_path)
+    inspector, registry, root, scope = _scope(tmp_path, request)
     for index in range(205):
         (root / f"entry-{index}").write_text("x")
     first = inspector.list_directory(scope)
@@ -472,9 +495,11 @@ def test_directory_continuation_is_service_issued_and_validated(tmp_path: Path) 
     assert other_service.list_directory(scope, continuation=first.continuation).error_code == "invalid_page"
 
 
-def test_large_page_cache_serves_hits_and_evicts_nonadjacent_pages(tmp_path: Path, monkeypatch) -> None:
+def test_large_page_cache_serves_hits_and_evicts_nonadjacent_pages(
+    tmp_path: Path, monkeypatch, request
+) -> None:
     """Catch a nominal page cache that always decodes and retains stale pages."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "large.txt").write_text("é" * 450_000)
     first = inspector.read_file(scope, ("large.txt",))
     calls = 0
@@ -497,9 +522,11 @@ def test_large_page_cache_serves_hits_and_evicts_nonadjacent_pages(tmp_path: Pat
     assert inspector.cached_page_offsets(scope, ("large.txt",)) == (300_000,)
 
 
-def test_service_operations_do_not_start_threads_or_workers(tmp_path: Path, monkeypatch) -> None:
+def test_service_operations_do_not_start_threads_or_workers(
+    tmp_path: Path, monkeypatch, request
+) -> None:
     """Catch future service work escaping the modal's owned worker lanes."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "file.txt").write_text("x")
     starts = []
     monkeypatch.setattr(threading.Thread, "start", lambda thread: starts.append(thread))
@@ -511,9 +538,11 @@ def test_service_operations_do_not_start_threads_or_workers(tmp_path: Path, monk
     assert starts == []
 
 
-def test_filter_only_excluded_never_claims_the_hidden_name_matched(tmp_path: Path) -> None:
+def test_filter_only_excluded_never_claims_the_hidden_name_matched(
+    tmp_path: Path, request
+) -> None:
     """Catch excluded-only state being replaced by an ambiguous empty result."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / ".git").mkdir()
     (root / ".git" / "hidden-name.txt").write_text("x")
 
@@ -524,9 +553,11 @@ def test_filter_only_excluded_never_claims_the_hidden_name_matched(tmp_path: Pat
     assert result.excluded_locations_unsearched is True
 
 
-def test_continuation_store_is_bounded_and_tokens_are_one_shot(tmp_path: Path) -> None:
+def test_continuation_store_is_bounded_and_tokens_are_one_shot(
+    tmp_path: Path, request
+) -> None:
     """Catch unbounded continuation retention and replayed pagination tokens."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     for index in range(205):
         (root / f"entry-{index}").write_text("x")
     pages = [inspector.list_directory(scope) for _ in range(20)]
@@ -539,10 +570,10 @@ def test_continuation_store_is_bounded_and_tokens_are_one_shot(tmp_path: Path) -
 
 
 def test_filter_closes_directory_descriptor_when_scandir_construction_fails(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request
 ) -> None:
     """Catch a descriptor leak before filter iteration starts."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "file.txt").write_text("x")
     real_close = file_inspector.os.close
     closed = []
@@ -582,9 +613,9 @@ def test_capture_rejects_real_default_workspace_identity(tmp_path: Path) -> None
         WorkspaceFileInspector(Registry()).capture_binding(DEFAULT_WORKSPACE_ID, "default-binding")
 
 
-def test_capture_rejects_nonlocal_runtime_binding(tmp_path: Path) -> None:
+def test_capture_rejects_nonlocal_runtime_binding(tmp_path: Path, request) -> None:
     """Catch container/runtime bindings entering the local filesystem service."""
-    registry = _registry(tmp_path)
+    registry = _registry(tmp_path, request)
     root = tmp_path / "root"
     root.mkdir()
     binding = WorkspaceRuntimeBinding(
@@ -598,9 +629,11 @@ def test_capture_rejects_nonlocal_runtime_binding(tmp_path: Path) -> None:
         WorkspaceFileInspector(registry).capture_binding("ws-a", binding.binding_id)
 
 
-def test_read_and_filter_revalidate_fresh_registry_mutations(tmp_path: Path) -> None:
+def test_read_and_filter_revalidate_fresh_registry_mutations(
+    tmp_path: Path, request
+) -> None:
     """Catch stale read/filter scope use after independent registry revocation."""
-    inspector, registry, root, scope = _scope(tmp_path)
+    inspector, registry, root, scope = _scope(tmp_path, request)
     (root / "file.txt").write_text("secret")
     registry.archive_workspace("ws-a")
 
@@ -613,9 +646,11 @@ def test_read_and_filter_revalidate_fresh_registry_mutations(tmp_path: Path) -> 
     assert filtered.matches == ()
 
 
-def test_unconsumed_continuation_detects_directory_revision_change(tmp_path: Path) -> None:
+def test_unconsumed_continuation_detects_directory_revision_change(
+    tmp_path: Path, request
+) -> None:
     """Catch a fresh page token mixing entries after its directory changed."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     for index in range(205):
         (root / f"entry-{index}").write_text("x")
     first = inspector.list_directory(scope)
@@ -628,39 +663,60 @@ def test_unconsumed_continuation_detects_directory_revision_change(tmp_path: Pat
 
 
 def test_root_descriptor_is_closed_when_fstat_fails(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request
 ) -> None:
     """A failed post-open identity check must not leak the root descriptor."""
-    inspector, _registry_service, _root, scope = _scope(tmp_path)
+    inspector, _registry_service, _root, scope = _scope(tmp_path, request)
     descriptor = 987_654
     closed: list[int] = []
-    monkeypatch.setattr(file_inspector.os, "open", lambda *_args, **_kwargs: descriptor)
-    monkeypatch.setattr(
-        file_inspector.os,
-        "fstat",
-        lambda _descriptor: (_ for _ in ()).throw(OSError("fstat failed")),
+    real_open, real_fstat, real_close = (
+        file_inspector.os.open,
+        file_inspector.os.fstat,
+        file_inspector.os.close,
     )
-    monkeypatch.setattr(file_inspector.os, "close", closed.append)
 
-    result = inspector.list_directory(scope)
+    def open_root(path, *args, **kwargs):
+        if path == scope.canonical_root and kwargs.get("dir_fd") is None:
+            return descriptor
+        return real_open(path, *args, **kwargs)
+
+    def fail_root_fstat(fd):
+        if fd == descriptor:
+            raise OSError("fstat failed")
+        return real_fstat(fd)
+
+    def close_root(fd):
+        if fd == descriptor:
+            closed.append(fd)
+        else:
+            real_close(fd)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(file_inspector, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(file_inspector.os, "open", open_root)
+        fault.setattr(file_inspector.os, "fstat", fail_root_fstat)
+        fault.setattr(file_inspector.os, "close", close_root)
+        result = inspector.list_directory(scope)
 
     assert result.error_code == "binding_changed"
     assert closed == [descriptor]
 
 
 def test_path_validation_rejects_nul_without_calling_os_open(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request
 ) -> None:
     """NUL is invalid path input, not an uncaught ``os.open`` ValueError."""
-    inspector, _registry_service, _root, scope = _scope(tmp_path)
+    inspector, _registry_service, _root, scope = _scope(tmp_path, request)
     calls: list[object] = []
-    monkeypatch.setattr(
-        file_inspector.os,
-        "open",
-        lambda *args, **kwargs: calls.append((args, kwargs)),
-    )
+    with monkeypatch.context() as fault:
+        fault.setattr(file_inspector, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(
+            file_inspector.os,
+            "open",
+            lambda *args, **kwargs: calls.append((args, kwargs)),
+        )
 
-    result = inspector.read_file(scope, ("bad\0name.txt",))
+        result = inspector.read_file(scope, ("bad\0name.txt",))
 
     assert result.kind is FileReadKind.FAILED
     assert result.error_code == "invalid_path"
@@ -669,9 +725,10 @@ def test_path_validation_rejects_nul_without_calling_os_open(
 
 def test_negative_page_offset_is_rejected_before_small_file_decode(
     tmp_path: Path,
+    request,
 ) -> None:
     """Every caller-supplied page offset must be a non-negative integer."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "small.txt").write_text("small")
 
     result = inspector.read_file(scope, ("small.txt",), page_offset=-1)
@@ -681,19 +738,21 @@ def test_negative_page_offset_is_rejected_before_small_file_decode(
 
 
 def test_empty_filter_returns_without_traversing_the_binding(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, request
 ) -> None:
     """An empty query is an empty result, never an accidental full-tree walk."""
-    inspector, _registry_service, _root, scope = _scope(tmp_path)
-    monkeypatch.setattr(
-        file_inspector.os,
-        "scandir",
-        lambda _descriptor: (_ for _ in ()).throw(
-            AssertionError("empty query traversed the workspace")
-        ),
-    )
+    inspector, _registry_service, _root, scope = _scope(tmp_path, request)
+    with monkeypatch.context() as fault:
+        fault.setattr(file_inspector, "os", SimpleNamespace(**vars(os)))
+        fault.setattr(
+            file_inspector.os,
+            "scandir",
+            lambda _descriptor: (_ for _ in ()).throw(
+                AssertionError("empty query traversed the workspace")
+            ),
+        )
 
-    result = inspector.filter_paths(scope, "")
+        result = inspector.filter_paths(scope, "")
 
     assert result.status is FilterStatus.EMPTY
     assert result.matches == ()
@@ -702,9 +761,10 @@ def test_empty_filter_returns_without_traversing_the_binding(
 
 def test_filter_results_contain_only_files_even_when_directory_name_matches(
     tmp_path: Path,
+    request,
 ) -> None:
     """The modal's file-result rows must never receive a directory identity."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     (root / "needle-folder").mkdir()
     (root / "needle-folder" / "ordinary.txt").write_text("x")
 
@@ -715,9 +775,9 @@ def test_filter_results_contain_only_files_even_when_directory_name_matches(
     ]
 
 
-def test_page_cache_bounds_distinct_file_revisions(tmp_path: Path) -> None:
+def test_page_cache_bounds_distinct_file_revisions(tmp_path: Path, request) -> None:
     """Sparse per-file paging must also bound the outer file/revision cache."""
-    inspector, _registry_service, root, scope = _scope(tmp_path)
+    inspector, _registry_service, root, scope = _scope(tmp_path, request)
     for index in range(file_inspector.PAGE_CACHE_FILE_LIMIT + 3):
         name = f"large-{index}.txt"
         (root / name).write_text(str(index) * 200_001)

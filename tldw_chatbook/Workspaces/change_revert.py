@@ -214,9 +214,7 @@ def revert_paths(
             outcomes.append(RevertOutcome(path=path, ok=True))
             reverted.append(path)
         except (ChangeTrackingError, OSError) as exc:
-            outcomes.append(
-                RevertOutcome(path=path, ok=False, error=str(exc)[:300])
-            )
+            outcomes.append(RevertOutcome(path=path, ok=False, error=str(exc)[:300]))
 
     if reverted:
         try:

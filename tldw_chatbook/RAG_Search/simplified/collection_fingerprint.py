@@ -11,6 +11,7 @@ This module is PURE (no IO). The fingerprint is a persistent contract:
 changing FINGERPRINT_VERSION or the input set re-points every collection, so
 treat any such change as a migration.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -63,7 +64,7 @@ def _index_fields(config: RAGConfig) -> List[Tuple[str, Any]]:
 def _normalize(value: Any) -> Any:
     """Coerce a config value to a canonical, hash-stable form."""
     if isinstance(value, bool):
-        return bool(value)               # keep bools distinct from ints
+        return bool(value)  # keep bools distinct from ints
     if isinstance(value, int):
         return int(value)
     if isinstance(value, float):

@@ -277,7 +277,7 @@ class SpeechPlaygroundPane(
 
     _tts_service: Any
 
-    #: Pane-local accelerators that do not shadow ADR-031 global or terminal
+    #: Pane-local accelerators that do not shadow ADR-299 global or terminal
     #: keys. The containing STTS screen owns its plain single-letter actions.
     BINDINGS = [
         Binding("ctrl+g", "generate_tts", "Generate Speech"),

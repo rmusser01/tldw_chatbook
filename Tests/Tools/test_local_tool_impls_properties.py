@@ -22,12 +22,17 @@ _PROPERTY_SETTINGS = settings(
 
 @example(prefix="a", needle="aa", suffix="", replacement="R")
 @given(
-    prefix=st.text(max_size=50), needle=st.text(min_size=1, max_size=10),
-    suffix=st.text(max_size=50), replacement=st.text(max_size=20),
+    prefix=st.text(max_size=50),
+    needle=st.text(min_size=1, max_size=10),
+    suffix=st.text(max_size=50),
+    replacement=st.text(max_size=20),
 )
 @_PROPERTY_SETTINGS
-def test_edit_replaces_exactly_one_occurrence(tmp_path, prefix, needle, suffix, replacement):
-    ws = tmp_path / "ws"; ws.mkdir(exist_ok=True)
+def test_edit_replaces_exactly_one_occurrence(
+    tmp_path, prefix, needle, suffix, replacement
+):
+    ws = tmp_path / "ws"
+    ws.mkdir(exist_ok=True)
     content = prefix + needle + suffix
     if content.count(needle) != 1:
         return  # only unique-match inputs are in scope for this property
@@ -57,12 +62,17 @@ def test_edit_replaces_exactly_one_occurrence(tmp_path, prefix, needle, suffix, 
 
 
 @given(
-    prefix=st.text(max_size=50), needle=st.text(min_size=1, max_size=10),
-    suffix=st.text(max_size=50), replacement=st.text(max_size=20),
+    prefix=st.text(max_size=50),
+    needle=st.text(min_size=1, max_size=10),
+    suffix=st.text(max_size=50),
+    replacement=st.text(max_size=20),
 )
 @_PROPERTY_SETTINGS
-def test_edit_replace_all_replaces_every_occurrence(tmp_path, prefix, needle, suffix, replacement):
-    ws = tmp_path / "ws"; ws.mkdir(exist_ok=True)
+def test_edit_replace_all_replaces_every_occurrence(
+    tmp_path, prefix, needle, suffix, replacement
+):
+    ws = tmp_path / "ws"
+    ws.mkdir(exist_ok=True)
     content = prefix + needle + suffix
     if content.count(needle) < 1:
         return  # only matching inputs are in scope for this property
@@ -83,7 +93,8 @@ def test_edit_replace_all_replaces_every_occurrence(tmp_path, prefix, needle, su
 @given(path=st.text(min_size=1))
 @_PROPERTY_SETTINGS
 def test_workspace_confinement_never_escapes(tmp_path, path):
-    ws = tmp_path / "ws"; ws.mkdir(exist_ok=True)
+    ws = tmp_path / "ws"
+    ws.mkdir(exist_ok=True)
     try:
         resolved = resolve_workspace_path(path, ws)
     except (LocalToolError, ValueError):

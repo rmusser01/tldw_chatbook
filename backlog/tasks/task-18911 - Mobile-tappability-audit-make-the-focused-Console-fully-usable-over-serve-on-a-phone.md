@@ -24,3 +24,23 @@ Focus mode (task-18812) made the Console chrome-free for phone use over --serve,
 <!-- AC:BEGIN -->
 - [ ] #1 Composer send is achievable purely by tap (button or equivalent),Tool approval/rejection flows are fully tappable,No information is reachable only via hover — every hover reveal has a tap path,Flows that depend on Escape (hands-free exit, composer expand, composer focus) have visible tap/keyboard alternatives on a phone,Verified live over --serve at a phone-sized viewport (e.g. 390x844),Focus-mode desktop behavior unchanged (existing test suites stay green)
 <!-- AC:END -->
+
+## Deferral note (2026-10-11, dev `9f8533686c`)
+
+DEFERRED from the t2-hermes porting slice. The AC requires live verification
+over `--serve` at a phone-sized viewport (390x844), which needs an
+interactive browser session against a served app — not executable within
+this slice's budget alongside the code-port tasks. Nothing here was
+implemented; no claim is made about the three spec items' current state.
+
+Starting points for the next session (verified in code at dev `9f8533686c`):
+the composer's Send/Queue button lives in the composer bar
+(`Widgets/Console/console_composer_bar.py` — Tab reaches it per the
+chat-basics Composer section, so a tap target exists; the audit question is
+its tap hit-area at 390px, not its existence); approval flows render through
+`ChatApprovalCard` (see `Tests/UI/test_approval_*` for the surface's test
+seams); hover-reveals and Escape-dependent flows (hands-free exit, composer
+expand/focus) are concentrated in `chat_screen.py`'s Escape routing and the
+composer-bar hover styles in `css/features/_console*.tcss`. A browser-driven
+session over `--serve` (browser automation against localhost) is the AC's
+verification path.

@@ -58,6 +58,7 @@ from tldw_chatbook.UI.Evals.snippet_editor import (
     whitespace_warning_kinds,
 )
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
@@ -79,7 +80,11 @@ class _FakeAppInstance:
 
 
 class EvalsHarness(App):
-    CSS_PATH = _BUNDLED_CSS_PATH
+    # task-1515: bundle + screen-owned split sheets. The bundle alone
+    # has not carried the evals screen rules (e.g. `#evals-snippet-table
+    # { overflow-y: auto; }`) since TASK-24459's split, so a bundle-only
+    # pin failed this file's scroll-behaviour test deterministically.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()
@@ -346,6 +351,7 @@ def test_import_snippets_into_dataset_dedups_colliding_ids(evals_db):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snippet_editor_mounts_with_summary_and_labelled_char_column(
     evals_app, evals_db
@@ -353,7 +359,10 @@ async def test_snippet_editor_mounts_with_summary_and_labelled_char_column(
     dataset_id = _make_dataset(
         evals_db,
         "nouns-12",
-        [_snip("The protestors were", group="neutral"), _snip("The rioters were", group="loaded")],
+        [
+            _snip("The protestors were", group="neutral"),
+            _snip("The rioters were", group="loaded"),
+        ],
     )
     async with evals_app.run_test() as pilot:
         await pilot.pause()
@@ -379,6 +388,7 @@ async def test_snippet_editor_mounts_with_summary_and_labelled_char_column(
         assert "token" not in header_text.lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snippet_table_header_names_the_columns_rows_actually_render(
     evals_app, evals_db
@@ -413,6 +423,7 @@ async def test_snippet_table_header_names_the_columns_rows_actually_render(
         assert meta_text.count("·") == header_text.count("·")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snippet_editor_heading_renders_a_markup_hazard_dataset_name_literally(
     evals_app, evals_db
@@ -443,6 +454,7 @@ async def test_snippet_editor_heading_renders_a_markup_hazard_dataset_name_liter
         assert heading.visual.plain == "dataset[/]name"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_normal_snippet_renders_no_whitespace_marker(evals_app, evals_db):
     clean = _snip("The protestors were")
@@ -464,8 +476,11 @@ async def test_normal_snippet_renders_no_whitespace_marker(evals_app, evals_db):
         assert "exact dup" not in meta_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_trailing_whitespace_snippet_renders_a_visible_marker(evals_app, evals_db):
+async def test_trailing_whitespace_snippet_renders_a_visible_marker(
+    evals_app, evals_db
+):
     dirty = _snip("The government said ")
     dataset_id = _make_dataset(evals_db, "dirty-set", [dirty])
     async with evals_app.run_test() as pilot:
@@ -489,6 +504,7 @@ async def test_trailing_whitespace_snippet_renders_a_visible_marker(evals_app, e
         assert "␣" in meta_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_leading_and_interior_whitespace_are_both_detected_on_screen(
     evals_app, evals_db
@@ -511,8 +527,11 @@ async def test_leading_and_interior_whitespace_are_both_detected_on_screen(
         assert "interior" in _row_meta(screen, 1)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_minimal_pair_snippets_render_with_no_duplicate_warning(evals_app, evals_db):
+async def test_minimal_pair_snippets_render_with_no_duplicate_warning(
+    evals_app, evals_db
+):
     """Full-screen counterpart to the pure test above: a genuine minimal
     pair (one loaded noun swapped) must pass with zero warnings end to
     end, not just at the pure-function layer."""
@@ -539,6 +558,7 @@ async def test_minimal_pair_snippets_render_with_no_duplicate_warning(evals_app,
         assert warnings_line == "No warnings", warnings_line
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_exact_duplicate_after_normalization_is_flagged_on_screen(
     evals_app, evals_db
@@ -569,6 +589,7 @@ async def test_exact_duplicate_after_normalization_is_flagged_on_screen(
         assert warnings_line == "2 warnings", warnings_line
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinned(
     evals_app, evals_db
@@ -615,9 +636,7 @@ async def test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinn
         await pilot.pause()
 
         assert table.scroll_offset.y > 0, "the table did not actually scroll"
-        last_row_text_after = screen.query_one(
-            f"#evals-snippet-text-{last_row_index}"
-        )
+        last_row_text_after = screen.query_one(f"#evals-snippet-text-{last_row_index}")
         assert pane.region.contains_region(last_row_text_after.region), (
             "the last row is still unreachable after scrolling to the end"
         )
@@ -628,6 +647,7 @@ async def test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinn
         assert import_button_after.region.y == button_y_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_dataset_shows_empty_state_and_import_control(evals_app, evals_db):
     dataset_id = _make_dataset(evals_db, "fresh-set", [])
@@ -651,6 +671,7 @@ async def test_empty_dataset_shows_empty_state_and_import_control(evals_app, eva
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dataset_with_duplicate_and_illegal_snippet_ids_renders_without_raising(
     evals_app, evals_db
@@ -714,6 +735,7 @@ async def test_dataset_with_duplicate_and_illegal_snippet_ids_renders_without_ra
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_plain_text_import_assigns_uuids_and_persists_inline(
     evals_app, evals_db, tmp_path
@@ -737,6 +759,7 @@ async def test_plain_text_import_assigns_uuids_and_persists_inline(
     assert stored["metadata"]["sample_count"] == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_csv_import_round_trips_the_group_field(evals_app, evals_db, tmp_path):
     dataset_id = _make_dataset(evals_db, "csv-target", [])
@@ -762,6 +785,7 @@ async def test_csv_import_round_trips_the_group_field(evals_app, evals_db, tmp_p
     assert by_text["no group here"] is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_json_import_round_trips_id_group_and_note(evals_app, evals_db, tmp_path):
     dataset_id = _make_dataset(evals_db, "json-target", [])
@@ -801,6 +825,7 @@ async def test_json_import_round_trips_id_group_and_note(evals_app, evals_db, tm
     assert other["group"] == "loaded"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_json_import_with_illegal_id_does_not_crash_and_dataset_stays_openable(
     evals_app, evals_db, tmp_path
@@ -829,7 +854,9 @@ async def test_json_import_with_illegal_id_does_not_crash_and_dataset_stays_open
         # import -- must not crash the detail pane a second time.
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
-        editor_again = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor_again = evals_app.screen.query_one(
+            "#evals-snippet-editor", SnippetEditor
+        )
         assert editor_again.region.width > 0
         assert editor_again.region.height > 0
 
@@ -839,6 +866,7 @@ async def test_json_import_with_illegal_id_does_not_crash_and_dataset_stays_open
     uuid.UUID(samples[0]["id"])  # the illegal id was replaced, not stored verbatim
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_json_import_of_the_same_export_twice_does_not_crash(
     evals_app, evals_db, tmp_path
@@ -870,7 +898,9 @@ async def test_json_import_of_the_same_export_twice_does_not_crash(
         # every later selection broken too, not just the import itself.
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
-        editor_again = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor_again = evals_app.screen.query_one(
+            "#evals-snippet-editor", SnippetEditor
+        )
         assert editor_again.region.width > 0
         assert editor_again.region.height > 0
 
@@ -878,9 +908,12 @@ async def test_json_import_of_the_same_export_twice_does_not_crash(
     samples = stored["metadata"][RESERVED_LOCAL_DATASET_SAMPLES_KEY]
     ids = [s["id"] for s in samples]
     assert len(samples) == 2
-    assert len(set(ids)) == 2, "duplicate snippet ids after re-importing the same export"
+    assert len(set(ids)) == 2, (
+        "duplicate snippet ids after re-importing the same export"
+    )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_csv_import_without_text_column_notifies_error_and_does_not_persist(
     evals_app, evals_db, tmp_path
@@ -897,12 +930,14 @@ async def test_csv_import_without_text_column_notifies_error_and_does_not_persis
         await _drive_import(editor, pilot, csv_path)
 
     assert any(
-        severity == "error" for _message, severity in evals_app.app_instance.notifications
+        severity == "error"
+        for _message, severity in evals_app.app_instance.notifications
     )
     stored = evals_db.get_dataset(dataset_id)
     assert stored["metadata"].get("sample_count", 0) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_notification_names_the_skipped_count_when_entries_are_dropped(
     evals_app, evals_db, tmp_path
@@ -950,6 +985,7 @@ async def test_import_notification_names_the_skipped_count_when_entries_are_drop
     assert stored["metadata"]["sample_count"] == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_notification_omits_the_skipped_clause_when_nothing_is_dropped(
     evals_app, evals_db, tmp_path
@@ -980,6 +1016,7 @@ async def test_import_notification_omits_the_skipped_clause_when_nothing_is_drop
     assert "skipped" not in info_messages[0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_non_utf8_import_file_notifies_error_instead_of_crashing(
     evals_app, evals_db, tmp_path
@@ -1014,12 +1051,14 @@ async def test_non_utf8_import_file_notifies_error_instead_of_crashing(
         assert editor_still_here.region.width > 0
 
     assert any(
-        severity == "error" for _message, severity in evals_app.app_instance.notifications
+        severity == "error"
+        for _message, severity in evals_app.app_instance.notifications
     )
     stored = evals_db.get_dataset(dataset_id)
     assert stored["metadata"].get("sample_count", 0) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_nonexistent_import_path_notifies_error_instead_of_crashing(
     evals_app, evals_db, tmp_path
@@ -1048,7 +1087,8 @@ async def test_nonexistent_import_path_notifies_error_instead_of_crashing(
         assert editor_still_here.region.width > 0
 
     assert any(
-        severity == "error" for _message, severity in evals_app.app_instance.notifications
+        severity == "error"
+        for _message, severity in evals_app.app_instance.notifications
     )
     stored = evals_db.get_dataset(dataset_id)
     assert stored["metadata"].get("sample_count", 0) == 0
@@ -1070,8 +1110,11 @@ async def test_snippet_editor_never_imports_the_runner_or_capture_client():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_evals_screen_dataset_selection_mounts_snippet_editor(evals_app, evals_db):
+async def test_evals_screen_dataset_selection_mounts_snippet_editor(
+    evals_app, evals_db
+):
     dataset_id = _make_dataset(evals_db, "seam-set", [_snip("hello world")])
     async with evals_app.run_test() as pilot:
         await pilot.pause()
@@ -1082,6 +1125,7 @@ async def test_evals_screen_dataset_selection_mounts_snippet_editor(evals_app, e
         assert editor.region.height > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_dataset_still_shows_the_not_found_message(evals_app, evals_db):
     """Pre-existing behaviour from Task 3 must survive this task's rewrite
@@ -1092,3 +1136,95 @@ async def test_missing_dataset_still_shows_the_not_found_message(evals_app, eval
         await pilot.pause()
         missing = evals_app.screen.query_one("#evals-detail-missing")
         assert "deleted" in str(missing.renderable)
+
+
+# ---------------------------------------------------------------------------
+# task-1484: rename affordance
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_dataset_can_be_renamed_from_its_detail_pane(evals_app, evals_db):
+    """task-1484: the detail pane carries a rename affordance
+    (``DatasetRenameRow``); a rename persists through
+    ``EvalsDB.update_dataset`` and the rail row re-renders the new name
+    immediately via the screen's rail-dirty re-selection."""
+    from textual.widgets import Button as TextualButton
+    from textual.widgets import Input as TextualInput
+
+    dataset_id = _make_dataset(evals_db, "old name", [_snip("hello world")])
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        rename_input = screen.query_one("#evals-dataset-rename-input", TextualInput)
+        rename_input.value = "renamed dataset"
+        await pilot.click("#evals-dataset-rename")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Persisted...
+        row = screen._view_model.db.get_dataset(dataset_id)
+        assert str(row.get("name")) == "renamed dataset"
+        # ...rail row reflects the new name immediately (re-selected with
+        # rail_dirty=True)...
+        rail_button = screen.query_one("#evals-rail-row-datasets-0", TextualButton)
+        assert "renamed dataset" in str(rail_button.label)
+        # ...and the detail pane's own heading re-rendered too.
+        heading = screen.query_one("#evals-detail-dataset-name")
+        assert str(heading.renderable) == "renamed dataset"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_an_empty_rename_is_a_warning_not_a_write(evals_app, evals_db):
+    """A blank rename must toast and leave the stored name untouched --
+    never a silent no-op and never a write."""
+    dataset_id = _make_dataset(evals_db, "keep me", [_snip("hello world")])
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        rename_input = screen.query_one("#evals-dataset-rename-input")
+        rename_input.value = "   "
+        await pilot.click("#evals-dataset-rename")
+        await pilot.pause()
+
+        assert str(screen._view_model.db.get_dataset(dataset_id).get("name")) == (
+            "keep me"
+        )
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "warning"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_colliding_rename_toasts_and_keeps_the_original_name(
+    evals_app, evals_db
+):
+    """``eval_datasets.name`` is UNIQUE with no ``deleted_at`` exemption --
+    renaming INTO an existing name must surface the collision as a toast,
+    keeping the original name, rather than crashing the pane."""
+    _make_dataset(evals_db, "taken", [])
+    dataset_id = _make_dataset(evals_db, "original", [_snip("hello world")])
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        rename_input = screen.query_one("#evals-dataset-rename-input")
+        rename_input.value = "taken"
+        await pilot.click("#evals-dataset-rename")
+        await pilot.pause()
+
+        assert str(screen._view_model.db.get_dataset(dataset_id).get("name")) == (
+            "original"
+        )
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "error"

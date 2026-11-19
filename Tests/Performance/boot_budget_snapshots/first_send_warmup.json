@@ -1,0 +1,403 @@
+{
+  "_comment": "First-send warm-up payload census (the pre-import pass's last step, after the screen routes), counted from app + chat: an upper bound on what the warm-up adds. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
+  "warmup_added_modules": 94,
+  "warmup_added_loc": 61609,
+  "listed": [
+    "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
+    "tldw_chatbook.UI.Console_Modules.sent_draft",
+    "tldw_chatbook.Chat.console_received_intent",
+    "tldw_chatbook.Chat.console_configuration_preparation",
+    "tldw_chatbook.Chat.console_preparation_reads",
+    "tldw_chatbook.Chat.console_configuration_capture",
+    "tldw_chatbook.UI.Console_Modules.turn_admission",
+    "tldw_chatbook.MCP.console_snapshot",
+    "tldw_chatbook.Chat.console_received_dispatch",
+    "tldw_chatbook.Chat.console_received_turn",
+    "tldw_chatbook.Chat.console_send_diagnostics",
+    "tldw_chatbook.Chat.console_automatic_submission",
+    "tldw_chatbook.Chat.console_hook_preparation",
+    "tldw_chatbook.Agents.run_hooks",
+    "tldw_chatbook.Agents.automatic_work_runtime",
+    "tldw_chatbook.Chat.console_references",
+    "tldw_chatbook.Agents.hooks_v2.lifecycle",
+    "tldw_chatbook.Agents.hooks_v2.matching",
+    "tldw_chatbook.Agents.hooks_v2.models",
+    "tldw_chatbook.Agents.hooks_v2.validation",
+    "tldw_chatbook.Agents.hooks_v2.checkpoints",
+    "tldw_chatbook.Agents.hooks_v2.engine",
+    "tldw_chatbook.Agents.hooks_v2.budgets",
+    "tldw_chatbook.Agents.hooks_v2.command_executor",
+    "tldw_chatbook.Agents.hooks_v2.ownership",
+    "tldw_chatbook.Agents.hooks_v2.context",
+    "tldw_chatbook.Chat.console_legacy_flat_roots",
+    "tldw_chatbook.Chat.console_context_window",
+    "tldw_chatbook.Chat.console_visual_transcript",
+    "tldw_chatbook.Chat.console_predispatch_block",
+    "tldw_chatbook.Chat.console_native_commit",
+    "tldw_chatbook.Chat.console_trace_row_sources",
+    "tldw_chatbook.Chat.response_rules.generation",
+    "tldw_chatbook.Chat.response_rules.builder",
+    "tldw_chatbook.Chat.response_rules.evaluator",
+    "tldw_chatbook.Chat.response_rules.models",
+    "tldw_chatbook.Chat.response_rules.repository",
+    "tldw_chatbook.Chat.response_rules.resources",
+    "tldw_chatbook.Chat.response_rules.runtime",
+    "tldw_chatbook.Chat.response_rules.corrections",
+    "tldw_chatbook.Chat.response_rules.evidence",
+    "tldw_chatbook.Chat.response_rules.store",
+    "tldw_chatbook.Chat.response_rules.resolution",
+    "tldw_chatbook.Chat.response_rules.chat_state",
+    "tldw_chatbook.UI.Console_Modules.response_rules",
+    "tldw_chatbook.app_served",
+    "tldw_chatbook.Web_Server.served_relay_publisher",
+    "tldw_chatbook.Guardian.settings",
+    "tldw_chatbook.Agents.local_tool_provider",
+    "tldw_chatbook.Chat.console_run_start_tools",
+    "tldw_chatbook.MCP.console_tool_preparation",
+    "tldw_chatbook.Character_Chat.world_info_resolver",
+    "tldw_chatbook.Agents.persona_policy",
+    "tldw_chatbook.Tools.character_tool_service",
+    "tldw_chatbook.Tools.git_tool_impls",
+    "tldw_chatbook.Tools.web_tool_impls",
+    "tldw_chatbook.Web_Scraping.deep_search_citations",
+    "tldw_chatbook.Agents.ask_user_questions",
+    "tldw_chatbook.Agents.fs_read_ledger",
+    "tldw_chatbook.Chat.conversation_archive_actions",
+    "tldw_chatbook.Agents.canvas_tool_provider",
+    "tldw_chatbook.Canvas.guide",
+    "tldw_chatbook.Chat.console_stream_persistence",
+    "tldw_chatbook.Chat.provider_rate_limits",
+    "tldw_chatbook.Canvas.native_authority",
+    "tldw_chatbook.Canvas.compiler",
+    "tldw_chatbook.Canvas.gateway",
+    "tldw_chatbook.Canvas.capabilities",
+    "tldw_chatbook.Canvas.control_protocol",
+    "tldw_chatbook.Tools.remote_session_registry",
+    "tldw_chatbook.Tools.remote_session_worker",
+    "tldw_chatbook.UI.Console_Modules.citation_counts",
+    "tldw_chatbook.UI.Console_Modules.config_sync",
+    "tldw_chatbook.emergency_stop",
+    "tldw_chatbook.Chat.console_voice_input"
+  ],
+  "entries": {
+    "tldw_chatbook.UI.Console_Modules.send_acknowledgement": {
+      "loc": 1045,
+      "modules": [
+        "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
+        "tldw_chatbook.UI.Console_Modules.sent_draft"
+      ]
+    },
+    "tldw_chatbook.Chat.console_configuration_preparation": {
+      "loc": 1463,
+      "modules": [
+        "tldw_chatbook.Chat.console_configuration_preparation"
+      ]
+    },
+    "tldw_chatbook.UI.Console_Modules.turn_admission": {
+      "loc": 383,
+      "modules": [
+        "tldw_chatbook.UI.Console_Modules.turn_admission"
+      ]
+    },
+    "tldw_chatbook.MCP.console_snapshot": {
+      "loc": 910,
+      "modules": [
+        "tldw_chatbook.MCP.console_snapshot"
+      ]
+    },
+    "tldw_chatbook.Chat.console_received_dispatch": {
+      "loc": 568,
+      "modules": [
+        "tldw_chatbook.Chat.console_received_dispatch"
+      ]
+    },
+    "tldw_chatbook.Chat.console_send_diagnostics": {
+      "loc": 222,
+      "modules": [
+        "tldw_chatbook.Chat.console_send_diagnostics"
+      ]
+    },
+    "tldw_chatbook.Chat.console_automatic_submission": {
+      "loc": 489,
+      "modules": [
+        "tldw_chatbook.Chat.console_automatic_submission"
+      ]
+    },
+    "tldw_chatbook.Chat.console_hook_preparation": {
+      "loc": 389,
+      "modules": [
+        "tldw_chatbook.Chat.console_hook_preparation"
+      ]
+    },
+    "tldw_chatbook.Agents.run_hooks": {
+      "loc": 1281,
+      "modules": [
+        "tldw_chatbook.Agents.run_hooks"
+      ]
+    },
+    "tldw_chatbook.Agents.automatic_work_runtime": {
+      "loc": 370,
+      "modules": [
+        "tldw_chatbook.Agents.automatic_work_budget",
+        "tldw_chatbook.Agents.automatic_work_runtime"
+      ]
+    },
+    "tldw_chatbook.Chat.console_references": {
+      "loc": 403,
+      "modules": [
+        "tldw_chatbook.Chat.console_references"
+      ]
+    },
+    "tldw_chatbook.Agents.hooks_v2.lifecycle": {
+      "loc": 3700,
+      "modules": [
+        "tldw_chatbook.Agents.hooks_v2",
+        "tldw_chatbook.Agents.hooks_v2.budgets",
+        "tldw_chatbook.Agents.hooks_v2.checkpoints",
+        "tldw_chatbook.Agents.hooks_v2.command_executor",
+        "tldw_chatbook.Agents.hooks_v2.context",
+        "tldw_chatbook.Agents.hooks_v2.engine",
+        "tldw_chatbook.Agents.hooks_v2.lifecycle",
+        "tldw_chatbook.Agents.hooks_v2.matching",
+        "tldw_chatbook.Agents.hooks_v2.models",
+        "tldw_chatbook.Agents.hooks_v2.ownership",
+        "tldw_chatbook.Agents.hooks_v2.validation"
+      ]
+    },
+    "tldw_chatbook.Chat.console_legacy_flat_roots": {
+      "loc": 424,
+      "modules": [
+        "tldw_chatbook.Chat.console_legacy_flat_roots"
+      ]
+    },
+    "tldw_chatbook.Chat.console_context_window": {
+      "loc": 346,
+      "modules": [
+        "tldw_chatbook.Chat.console_context_window"
+      ]
+    },
+    "tldw_chatbook.Chat.console_visual_transcript": {
+      "loc": 669,
+      "modules": [
+        "tldw_chatbook.Chat.console_visual_transcript"
+      ]
+    },
+    "tldw_chatbook.Chat.console_predispatch_block": {
+      "loc": 185,
+      "modules": [
+        "tldw_chatbook.Chat.console_predispatch_block"
+      ]
+    },
+    "tldw_chatbook.Chat.console_native_commit": {
+      "loc": 1312,
+      "modules": [
+        "tldw_chatbook.Chat.console_native_commit"
+      ]
+    },
+    "tldw_chatbook.Chat.console_trace_row_sources": {
+      "loc": 129,
+      "modules": [
+        "tldw_chatbook.Chat.console_trace_row_sources"
+      ]
+    },
+    "tldw_chatbook.Chat.response_rules.generation": {
+      "loc": 54,
+      "modules": [
+        "tldw_chatbook.Chat.response_rules",
+        "tldw_chatbook.Chat.response_rules.generation"
+      ]
+    },
+    "tldw_chatbook.Chat.response_rules.builder": {
+      "loc": 1895,
+      "modules": [
+        "tldw_chatbook.Chat.response_rules.builder",
+        "tldw_chatbook.Chat.response_rules.evaluator",
+        "tldw_chatbook.Chat.response_rules.models",
+        "tldw_chatbook.Chat.response_rules.repository",
+        "tldw_chatbook.Chat.response_rules.resources"
+      ]
+    },
+    "tldw_chatbook.Chat.response_rules.runtime": {
+      "loc": 1955,
+      "modules": [
+        "tldw_chatbook.Chat.response_rules.corrections",
+        "tldw_chatbook.Chat.response_rules.evidence",
+        "tldw_chatbook.Chat.response_rules.resolution",
+        "tldw_chatbook.Chat.response_rules.runtime",
+        "tldw_chatbook.Chat.response_rules.store"
+      ]
+    },
+    "tldw_chatbook.Chat.response_rules.chat_state": {
+      "loc": 184,
+      "modules": [
+        "tldw_chatbook.Chat.response_rules.chat_state"
+      ]
+    },
+    "tldw_chatbook.app_served": {
+      "loc": 125,
+      "modules": [
+        "tldw_chatbook.app_served"
+      ]
+    },
+    "tldw_chatbook.Web_Server.served_relay_publisher": {
+      "loc": 370,
+      "modules": [
+        "tldw_chatbook.Web_Server",
+        "tldw_chatbook.Web_Server.served_relay_publisher"
+      ]
+    },
+    "tldw_chatbook.Guardian.settings": {
+      "loc": 66,
+      "modules": [
+        "tldw_chatbook.Guardian",
+        "tldw_chatbook.Guardian.settings"
+      ]
+    },
+    "tldw_chatbook.Agents.local_tool_provider": {
+      "loc": 10908,
+      "modules": [
+        "tldw_chatbook.Agents.local_tool_provider",
+        "tldw_chatbook.Tools.local_tool_impls",
+        "tldw_chatbook.Tools.patch_tool_impls",
+        "tldw_chatbook.Tools.worker_watchdog",
+        "tldw_chatbook.Tools.workspace_root_pin",
+        "tldw_chatbook.Tools.workspace_tool_executor",
+        "tldw_chatbook.Tools.workspace_tool_protocol",
+        "tldw_chatbook.Tools.workspace_wire_decode"
+      ]
+    },
+    "tldw_chatbook.Chat.console_run_start_tools": {
+      "loc": 412,
+      "modules": [
+        "tldw_chatbook.Chat.console_run_start_tools"
+      ]
+    },
+    "tldw_chatbook.MCP.console_tool_preparation": {
+      "loc": 549,
+      "modules": [
+        "tldw_chatbook.MCP.console_tool_preparation"
+      ]
+    },
+    "tldw_chatbook.Character_Chat.world_info_resolver": {
+      "loc": 359,
+      "modules": [
+        "tldw_chatbook.Character_Chat.world_info_resolver"
+      ]
+    },
+    "tldw_chatbook.Agents.persona_policy": {
+      "loc": 162,
+      "modules": [
+        "tldw_chatbook.Agents.persona_policy"
+      ]
+    },
+    "tldw_chatbook.Tools.character_tool_service": {
+      "loc": 769,
+      "modules": [
+        "tldw_chatbook.Character_Chat.character_avatar",
+        "tldw_chatbook.Tools.character_tool_service"
+      ]
+    },
+    "tldw_chatbook.Tools.git_tool_impls": {
+      "loc": 1383,
+      "modules": [
+        "tldw_chatbook.Tools.git_tool_impls"
+      ]
+    },
+    "tldw_chatbook.Tools.web_tool_impls": {
+      "loc": 3132,
+      "modules": [
+        "tldw_chatbook.Tools.web_tool_impls",
+        "tldw_chatbook.Web_Scraping",
+        "tldw_chatbook.Web_Scraping.deep_search_citations"
+      ]
+    },
+    "tldw_chatbook.Agents.ask_user_questions": {
+      "loc": 432,
+      "modules": [
+        "tldw_chatbook.Agents.ask_user_questions"
+      ]
+    },
+    "tldw_chatbook.Agents.fs_read_ledger": {
+      "loc": 139,
+      "modules": [
+        "tldw_chatbook.Agents.fs_read_ledger"
+      ]
+    },
+    "tldw_chatbook.Chat.conversation_archive_actions": {
+      "loc": 313,
+      "modules": [
+        "tldw_chatbook.Chat.conversation_archive_actions"
+      ]
+    },
+    "tldw_chatbook.Agents.canvas_tool_provider": {
+      "loc": 1356,
+      "modules": [
+        "tldw_chatbook.Agents.canvas_tool_provider",
+        "tldw_chatbook.Canvas.guide"
+      ]
+    },
+    "tldw_chatbook.Chat.console_stream_persistence": {
+      "loc": 122,
+      "modules": [
+        "tldw_chatbook.Chat.console_stream_persistence"
+      ]
+    },
+    "tldw_chatbook.Chat.provider_rate_limits": {
+      "loc": 212,
+      "modules": [
+        "tldw_chatbook.Chat.provider_rate_limits"
+      ]
+    },
+    "tldw_chatbook.Canvas.native_authority": {
+      "loc": 8382,
+      "modules": [
+        "tldw_chatbook.Canvas.capabilities",
+        "tldw_chatbook.Canvas.compilation",
+        "tldw_chatbook.Canvas.compiler",
+        "tldw_chatbook.Canvas.control_protocol",
+        "tldw_chatbook.Canvas.gateway",
+        "tldw_chatbook.Canvas.native_authority",
+        "tldw_chatbook.Canvas.profiles",
+        "tldw_chatbook.Canvas.runtime_assets"
+      ]
+    },
+    "tldw_chatbook.Tools.remote_session_registry": {
+      "loc": 11309,
+      "modules": [
+        "tldw_chatbook.Tools.build_remote_worker_bundle",
+        "tldw_chatbook.Tools.remote_binding_locator",
+        "tldw_chatbook.Tools.remote_session_frames",
+        "tldw_chatbook.Tools.remote_session_registry",
+        "tldw_chatbook.Tools.remote_session_worker",
+        "tldw_chatbook.Tools.remote_worker_bundle",
+        "tldw_chatbook.Tools.remote_workspace_executor",
+        "tldw_chatbook.Tools.remote_workspace_transport"
+      ]
+    },
+    "tldw_chatbook.UI.Console_Modules.citation_counts": {
+      "loc": 39,
+      "modules": [
+        "tldw_chatbook.UI.Console_Modules.citation_counts"
+      ]
+    },
+    "tldw_chatbook.UI.Console_Modules.config_sync": {
+      "loc": 154,
+      "modules": [
+        "tldw_chatbook.UI.Console_Modules.config_sync"
+      ]
+    },
+    "tldw_chatbook.emergency_stop": {
+      "loc": 98,
+      "modules": [
+        "tldw_chatbook.emergency_stop"
+      ]
+    },
+    "tldw_chatbook.Chat.console_voice_input": {
+      "loc": 2442,
+      "modules": [
+        "tldw_chatbook.Chat.console_voice_input",
+        "tldw_chatbook.Utils.local_stt_providers"
+      ]
+    }
+  }
+}

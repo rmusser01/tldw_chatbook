@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N   Library notes · Ready · Next:    N  Select a note to edit it here.
+  a   Create a note or add from        o
+  v   files.                           t
+      Notes (121)                      e
+      Filter  Filter notes… (Enter)    s
+        New     Sort: Newest
+--->    Select
+        Add from files…     Export
+        New folder                   <---
+        Add to folder
+        Move note
+--->    Remove placement
+
+      ✓ deleted · Advisor meeting …
+      ┃ Undo ┃   Dismiss
+      ▸ Agent_Lessons
+      ▸ Journal
+      ▾ Meetings
+  n new | / find | g folder | esc rail | F1 · F6 · Ctrl+P · Ctrl+Q

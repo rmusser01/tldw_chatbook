@@ -4,6 +4,7 @@ import asyncio
 
 # These are actual destination bodies, not shared shell navigation/chrome.
 DESTINATION_BODIES = {
+    "plugins": "#plugins-shell",
     "home": "#home-canvas",
     "console": "#console-native-composer",
     "library": "#library-landing-canvas",
@@ -11,13 +12,14 @@ DESTINATION_BODIES = {
     "watchlists_collections": "#wl-workbench-body",
     "schedules": "#scheduling-task-table",
     "workflows": "#workflows-editor",
-    "mcp": "#mcp-mode-canvas-servers",
+    # ADR-240: the MCP destination retired into Settings > Tools & MCP.
     "acp": "#acp-detail-pane",
     "lab": "#lab-body LLMManagementWindow",
     "logs": "#logs-window",
     "settings": "#settings-detail-pane",
     "research": "#research-chat-pane",
     "meetings": "#meetings-transcript",
+    "kanban": "#kanban-board-root",
 }
 
 

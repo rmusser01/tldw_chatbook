@@ -200,9 +200,7 @@ async def test_research_local_note_mutation_uses_canonical_app_notes_user(
                 "version": 1,
             }
             self.rows[row["id"]] = row
-            self.private_proofs[row["id"]] = kwargs[
-                "internal_research_owner_proof"
-            ]
+            self.private_proofs[row["id"]] = kwargs["internal_research_owner_proof"]
             return row
 
         async def has_internal_research_quick_note_owner_proof(self, **kwargs):
@@ -226,7 +224,9 @@ async def test_research_local_note_mutation_uses_canonical_app_notes_user(
     app.notes_user_id = "notes-owner-from-users-name"
     app.notes_scope_service = notes
     set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
-    screen = app._create_navigation_screen("research_workspace", ResearchWorkspaceScreen)
+    screen = app._create_navigation_screen(
+        "research_workspace", ResearchWorkspaceScreen
+    )
     port = screen.controller.port_for_data_source(WorkspaceDataSource.LOCAL)
 
     try:
@@ -269,18 +269,27 @@ async def test_app_startup_reconciliation_clears_absent_owner_only_after_grace(
     app.notes_user_id = "startup-user"
     try:
         await app._reconcile_research_quick_notes_startup()
-        assert registry.list_quick_note_receipts(
-            "startup-user", include_blocked=True, limit=100
-        )[1] == 1
+        assert (
+            registry.list_quick_note_receipts(
+                "startup-user", include_blocked=True, limit=100
+            )[1]
+            == 1
+        )
         current += timedelta(seconds=31)
         await app._reconcile_research_quick_notes_startup()
-        assert registry.list_quick_note_receipts(
-            "startup-user", include_blocked=True, limit=100
-        )[1] == 1
+        assert (
+            registry.list_quick_note_receipts(
+                "startup-user", include_blocked=True, limit=100
+            )[1]
+            == 1
+        )
         current = datetime(2026, 8, 31, tzinfo=timezone.utc) - timedelta(seconds=1)
-        assert registry.list_quick_note_receipts(
-            "startup-user", include_blocked=True, limit=100
-        )[1] == 1
+        assert (
+            registry.list_quick_note_receipts(
+                "startup-user", include_blocked=True, limit=100
+            )[1]
+            == 1
+        )
         current += timedelta(seconds=1)
         await app._reconcile_research_quick_notes_startup()
         receipts, total = registry.list_quick_note_receipts(
@@ -332,6 +341,7 @@ class _ProductionResearchHarness(_ResearchHarness):
     CSS_PATH = TldwCli.CSS_PATH
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_selector_switches_controller_and_qualified_catalog(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -386,6 +396,7 @@ async def test_mounted_selector_switches_controller_and_qualified_catalog(
         assert server.list_calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unavailable_server_stays_selected_with_recovery_and_no_local_fallback(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -431,6 +442,7 @@ async def test_unavailable_server_stays_selected_with_recovery_and_no_local_fall
         assert server.list_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selected_workspace_loads_and_saves_device_only_pane_preferences(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -496,6 +508,7 @@ def test_foundation_screen_does_not_construct_future_phase_coordinators(
         assert not hasattr(screen, attribute)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_catalog_aba_does_not_repaint_newer_local_selection() -> None:
     port = _DeferredCatalogPort()
@@ -534,6 +547,7 @@ async def test_catalog_aba_does_not_repaint_newer_local_selection() -> None:
         assert screen.controller.catalog_state.workspaces == (new_workspace,)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_overlay_preferences_do_not_carry_to_server_without_overlay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -570,6 +584,7 @@ async def test_local_overlay_preferences_do_not_carry_to_server_without_overlay(
         assert screen.query_one("#research-studio-pane").display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_overlay_preferences_do_not_carry_back_to_local_without_overlay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -607,6 +622,7 @@ async def test_server_overlay_preferences_do_not_carry_back_to_local_without_ove
         assert screen.pane_preferences == ResearchPanePreferences()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_medium_companion_change_persists_qualified_overlay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -736,6 +752,7 @@ class _BlockBeforeCommitOverlayStore:
             return self._load_counts.get(ref, 0)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rapid_medium_companion_saves_follow_committed_revision_order(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -798,6 +815,7 @@ async def test_rapid_medium_companion_saves_follow_committed_revision_order(
         assert warnings == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_queued_overlay_save_recaptures_owner_after_authority_switch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -859,6 +877,7 @@ async def test_queued_overlay_save_recaptures_owner_after_authority_switch(
         assert screen._overlay_revision == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_aba_reconciles_own_precommit_save_before_final_choice(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -949,6 +968,7 @@ async def test_local_aba_reconciles_own_precommit_save_before_final_choice(
         assert warnings == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stale_overlay_load_cannot_repaint_new_qualified_workspace() -> None:
     local_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "local")
@@ -994,6 +1014,7 @@ async def test_stale_overlay_load_cannot_repaint_new_qualified_workspace() -> No
         assert screen.pane_preferences == ResearchPanePreferences()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mismatched_overlay_ref_cannot_repaint_selected_workspace() -> None:
     selected_ref = QualifiedWorkspaceRef(WorkspaceDataSource.LOCAL, "selected")
@@ -1031,6 +1052,7 @@ async def test_mismatched_overlay_ref_cannot_repaint_selected_workspace() -> Non
         assert screen.pane_preferences == ResearchPanePreferences()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inactive_authority_focus_does_not_impersonate_active_selection(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

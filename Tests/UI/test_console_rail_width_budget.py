@@ -49,6 +49,7 @@ def _static_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(140, 42), (160, 48)])
 async def test_session_rows_fit_inside_the_rail(size: tuple[int, int]) -> None:
@@ -112,6 +113,7 @@ async def test_session_rows_fit_inside_the_rail(size: tuple[int, int]) -> None:
         assert switch.region.right <= new.region.x
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(140, 42), (160, 48)])
 async def test_conversation_search_and_clear_render_without_overlap(
@@ -145,6 +147,7 @@ async def test_conversation_search_and_clear_render_without_overlap(
         assert clear.region.right <= row.content_region.right
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switch_gating_copy_lives_on_the_disabled_button_tooltip() -> None:
     """LY-06: `Add another workspace before switching.` no longer renders as
@@ -168,6 +171,7 @@ async def test_switch_gating_copy_lives_on_the_disabled_button_tooltip() -> None
         assert switch.tooltip == "Add another workspace before switching."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_selected_summary_drops_the_synthetic_chats_suffix() -> None:
     """LY-05: `{title} - Chats` above the collapsible `Chats` group was two
@@ -188,6 +192,7 @@ async def test_selected_summary_drops_the_synthetic_chats_suffix() -> None:
         assert " - Chats" not in summary
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_retired_grouped_browser_stays_absent_from_empty_rail() -> None:
     """LY-04: empty rails use native owners, not aggregate group chrome."""

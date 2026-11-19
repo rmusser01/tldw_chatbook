@@ -26,7 +26,9 @@ from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 
 
 @contextmanager
-def _completed(tmp_path, monkeypatch, helper, *, control_root=None):
+def _completed(
+    tmp_path, monkeypatch, helper, *, control_root=None, edit_selector=True
+):
     from Tests.RuntimePolicy.test_server_credentials import FakeKeyring
     from tldw_chatbook.Backup_Recovery import credentials
     from tldw_chatbook.runtime_policy.server_credentials import (
@@ -58,11 +60,12 @@ def _completed(tmp_path, monkeypatch, helper, *, control_root=None):
             check=True,
             timeout=15,
         )
-        selector.write_bytes(
-            selector.read_bytes().replace(
-                b"[general]\n", b"[general]\npost_restore=true\n"
+        if edit_selector:
+            selector.write_bytes(
+                selector.read_bytes().replace(
+                    b"[general]\n", b"[general]\npost_restore=true\n"
+                )
             )
-        )
         yield case, operation, original_config
 
 

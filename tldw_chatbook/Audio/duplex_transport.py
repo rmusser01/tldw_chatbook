@@ -594,6 +594,18 @@ class DuplexAudioTransport:
                 return None
             return self._render_reference_ring.popleft()
 
+    def pop_paired_render_reference(self, capture: AudioFrame) -> AudioFrame | None:
+        """Take the exact capture partner without consuming another ring entry."""
+        with self._lock:
+            if self._render_reference_ring:
+                head = self._render_reference_ring[0]
+                if (
+                    head.clock_generation == capture.clock_generation == self._clock_generation
+                    and head.sequence == capture.render_reference_sequence
+                ):
+                    return self._render_reference_ring.popleft()
+            return None
+
     def pop_control_event(self) -> DeviceRouteChanged | None:
         """Pop the oldest content-free route control event."""
 

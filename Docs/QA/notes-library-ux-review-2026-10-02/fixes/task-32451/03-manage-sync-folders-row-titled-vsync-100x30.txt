@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌───────────────────────────┐  N    N  Library notes · Manage sync folders
+│ Navigation                │  a    o  Nothing chosen yet.
+│     Import…               │  v    t  VSync
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e  ✓ Up to date as of 16:33 · Next: Check changes
+│ ▊ Search Library…   ▎▊x▎  │       s    Check changes
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │            Pause
+│                           │            ○ Retarget unavailable — not in this release
+│ ────────────────────────  │            ○ Disconnect unavailable — not in this release
+│ Browse               ▾    │<---
+│    Media (0)              │
+│    Conversations (0)      │          Receipts
+│  ▸ Notes (1)              │     ---> No writes yet. Sync writes are listed here when you open
+│    Prompts (0) — reuse    │          this list.
+│    Skills (1)             │
+│    Collections (0)      ▇ │
+│    Search / RAG           │<---
+│ ────────────────────────  │
+│ Artifacts            ▾    │
+│    All artifacts          │
+│    Chatbooks              │
+│    Reports                │
+│ ────────────────────────  │          Retarget/Disconnect unavailable — not in this release;
+│  ▾ scroll for more        │          nothing on disk or in Notes changes.
+└───────────────────────────┘           ┃ ‹ Notes ┃
+  enter act | esc notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

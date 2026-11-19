@@ -4,6 +4,7 @@ import hashlib
 import time
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -597,6 +598,9 @@ def test_nested_invalid_outcome_remains_terminal_after_file_becomes_valid(
             raise AssertionError("terminal source must not be reread")
         return real_open(candidate, flags)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "open", refuse_terminal_reread)
 
     retry = ledger.prepare(calls, "primary", registry, payload)
@@ -932,6 +936,9 @@ def test_nested_pinned_reuse_rejects_binding_root_swap(tmp_path, monkeypatch):
                 (root / "src").mkdir(parents=True)
         return real_lstat(candidate)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", swap_before_pinned_reuse)
 
     batch = ProjectInstructionResolver().resolve_targets(
@@ -1022,6 +1029,9 @@ def test_nested_resolution_rejects_binding_root_swap_before_candidate_read(
                 (root / "src" / "AGENTS.md").write_text("replacement")
         return real_lstat(candidate)
 
+    monkeypatch.setattr(
+        resolver_module, "os", SimpleNamespace(**vars(resolver_module.os))
+    )
     monkeypatch.setattr(resolver_module.os, "lstat", swap_on_nested_revalidation)
 
     batch = ProjectInstructionResolver().resolve_targets(

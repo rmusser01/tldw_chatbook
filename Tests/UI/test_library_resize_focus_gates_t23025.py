@@ -117,6 +117,7 @@ async def _settled_library(host, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("harness", [LibraryHarness, LibraryProductionCSSHarness])
 async def test_resize_gate_skips_library_query_work_on_non_crossing_frames(harness):
@@ -158,6 +159,7 @@ async def test_resize_gate_skips_library_query_work_on_non_crossing_frames(harne
         assert screen._library_compose_generation == compose_generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resize_compact_crossing_still_transitions_both_ways_twice():
     """The 120-column compact crossing keeps working through the gate.
@@ -206,6 +208,7 @@ async def test_resize_compact_crossing_still_transitions_both_ways_twice():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resize_emergency_crossing_still_engages_and_restores():
     """The <64-column emergency takeover engages and restores through the gate."""
@@ -238,6 +241,7 @@ async def test_resize_emergency_crossing_still_engages_and_restores():
         assert screen.query_one("#library-canvas").display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stage_visibility_runs_once_per_emergency_band_crossing():
     """TASK-23151: the stage leg is gated, not moved, above the crossing return.
@@ -633,6 +637,7 @@ def test_a_raising_stage_leg_leaves_the_gate_re_armed_not_stale():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_resize_ingest_rail_autocollapse_crossing_still_works():
     """The Ingest route's 100-column rail auto-collapse crosses both ways."""
@@ -665,6 +670,7 @@ async def test_resize_ingest_rail_autocollapse_crossing_still_works():
         assert screen.query_one("#library-rail").display is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("harness", [LibraryHarness, LibraryProductionCSSHarness])
 async def test_tab_focus_path_library_query_volume_is_bounded(harness):
@@ -699,6 +705,7 @@ async def test_tab_focus_path_library_query_volume_is_bounded(harness):
         assert screen._library_compose_generation == compose_generation
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_details_disclosure_children_stay_queryable_while_closed():
     """The closed Details body keeps its queried-while-closed contract.
@@ -728,6 +735,7 @@ async def test_details_disclosure_children_stay_queryable_while_closed():
         assert screen.query_one("#library-details-group-status", Static).display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_install_progress_grows_on_demand_renders_and_unmounts_cleanly():
     """The install label+bar pair mounts on first progress, then updates.
@@ -858,6 +866,7 @@ async def test_research_pane_layout_gate_skips_queries_and_keeps_crossings():
         assert not shell.has_class("height-compact")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focusability_cache_tracks_hidden_disabled_and_replaced_controls():
     """Cached chrome references must still honor the live Textual focus chain."""
@@ -889,6 +898,7 @@ async def test_focusability_cache_tracks_hidden_disabled_and_replaced_controls()
         assert replacement in screen.focus_chain
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("saved_width", [24, 48])
 async def test_cached_ordinary_rail_restores_after_reader_return(saved_width):

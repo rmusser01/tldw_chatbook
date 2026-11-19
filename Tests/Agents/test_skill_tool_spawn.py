@@ -193,7 +193,10 @@ def test_skill_spawn_capture_failure_uses_the_parent_diagnostic(tmp_path, monkey
         {"choices": [{"message": {"content": "done"}}]},
     ]
     service = AgentService(
-        db, reg, chat_call=lambda **_kwargs: script.pop(0), skill_runner=_FakeSkillRunner()
+        db,
+        reg,
+        chat_call=lambda **_kwargs: script.pop(0),
+        skill_runner=_FakeSkillRunner(),
     )
     parent_id, outcome = service.run_turn(
         conversation_id="skill-spawn-capture",
@@ -210,7 +213,9 @@ def test_skill_spawn_capture_failure_uses_the_parent_diagnostic(tmp_path, monkey
     rows = db.list_runs("skill-spawn-capture", include_superseded=True)
     parent = next(row for row in rows if row["id"] == parent_id)
     child = next(row for row in rows if row["agent_kind"] == "subagent")
-    diagnostic = next(step for step in parent["steps"] if step["kind"] == "capture_failed")
+    diagnostic = next(
+        step for step in parent["steps"] if step["kind"] == "capture_failed"
+    )
     diagnostic_id = f"agent-step:{parent_id}:{diagnostic['index']}"
     assert child["spawn_event_id"] == diagnostic_id
 
@@ -334,7 +339,9 @@ def test_undisclosed_skill_tool_is_refused_without_find_load(tmp_path):
     assert outcome.status == RUN_DONE
     run = db.get_run(run_id)
     results = [s for s in run["steps"] if s["kind"] == "tool_result"]
-    assert "Tool not permitted: code-review" in results[0]["result"]
+    assert "schema not loaded: code-review" in results[0]["result"]
+    assert "load_tools" in results[0]["result"]
+    assert results[0]["tool_outcome"] == "blocked"
     assert runner.ran_with is None  # never actually spawned
     assert db.count_subagent_runs("c1") == 0
 
@@ -422,7 +429,11 @@ def test_combined_budget_native_spawn_then_skill_call(tmp_path):
             },
             {"choices": [{"message": {"content": "final"}}]},
         ],
-        {"native task": [{"choices": [{"message": {"content": "native child answer"}}]}]},
+        {
+            "native task": [
+                {"choices": [{"message": {"content": "native child answer"}}]}
+            ]
+        },
         reply=verbatim,
     )
     runner = _FakeSkillRunner()
@@ -625,7 +636,11 @@ def test_skill_call_runs_inline_and_returns_the_output_not_a_handle(
             },
             {"choices": [{"message": {"content": "Done reviewing."}}]},
         ],
-        {"RENDERED[the diff]": [{"choices": [{"message": {"content": "child answer"}}]}]},
+        {
+            "RENDERED[the diff]": [
+                {"choices": [{"message": {"content": "child answer"}}]}
+            ]
+        },
         reply=verbatim,
     )
     runner = _FakeSkillRunner()

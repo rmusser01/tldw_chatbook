@@ -1,0 +1,7 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+4.34s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_create_and_filtered_pagination_totals
+3.36s call     Tests/UI/test_library_prompt_mixins.py::test_real_console_mixin_consumer_enables_without_touching_composer_or_system
+
+(13 durations < 1s hidden.)
+5 passed in 10.21s

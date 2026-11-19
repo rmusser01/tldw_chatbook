@@ -173,9 +173,16 @@ class SSERecordDecoder:
 
 
 class OwnedSSEStream(Iterator[SSERecord]):
-    """Own one response/session pair for its complete SSE body lifetime."""
+    """Own one response (and, if given, its session) for the SSE body lifetime.
 
-    def __init__(self, *, response: Any, session: Any) -> None:
+    ADR-222 (TASK-34418): ``session`` is optional. Provider calls now draw
+    their session from the per-thread registry, which owns its lifecycle;
+    those callers pass ``session=None`` and the stream closes only its
+    response. Passing a session keeps the pre-ADR-222 behaviour of closing
+    both (used by tests and any dedicated-session caller).
+    """
+
+    def __init__(self, *, response: Any, session: Any | None = None) -> None:
         self._response = response
         self._session = session
         self._chunks: Iterable[bytes] = response.iter_content(chunk_size=8192)
@@ -216,11 +223,13 @@ class OwnedSSEStream(Iterator[SSERecord]):
         return self._pending.popleft()
 
     def close(self) -> None:
-        """Close the response and its dedicated session exactly once."""
+        """Close the response (and its dedicated session, if any) exactly once."""
         if self._closed:
             return
         self._closed = True
         for resource in (self._response, self._session):
+            if resource is None:
+                continue
             try:
                 resource.close()
             except Exception:

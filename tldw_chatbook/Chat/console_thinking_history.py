@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     THINKING_ENVELOPE_VERSION,
     DisplayableThinkingBlock,
     ThinkingEnvelope,

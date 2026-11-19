@@ -88,6 +88,7 @@ class _OwnerSuffixApp(ConsolidatedCSSApp):
         self.scheduling_service = _OwnerSuffixService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_queue_owner_suffix_shown_at_wide_width():
     async with _OwnerSuffixApp().run_test(size=(160, 42)) as pilot:
@@ -99,6 +100,7 @@ async def test_queue_owner_suffix_shown_at_wide_width():
         assert "(server: 1)" in str(table.get_cell_at((0, 1)))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_queue_owner_suffix_hidden_at_compact_width():
     async with _OwnerSuffixApp().run_test(size=(100, 30)) as pilot:
@@ -134,6 +136,7 @@ class _BracketTitleApp(ConsolidatedCSSApp):
         self.scheduling_service = _BracketTitleService()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_queue_title_renders_brackets_literally():
     """Task 6 round 2, D8's class on the Queue table.
@@ -253,6 +256,7 @@ def notif_db(tmp_path):
         database.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_observer_not_started_without_a_server_connection(notif_db):
     """No server configured -- the dormant observer must stay dormant."""
@@ -266,6 +270,7 @@ async def test_observer_not_started_without_a_server_connection(notif_db):
         assert screen._notification_cancel_event is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_observer_starts_on_mount_and_stops_on_unmount_double_cycle(notif_db):
     """First-ever caller of `ServerNotificationEventObserver.observe()`
@@ -308,6 +313,7 @@ async def test_observer_starts_on_mount_and_stops_on_unmount_double_cycle(notif_
         await pilot.app.workers.wait_for_complete()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_non_automation_kind_is_ignored(notif_db):
     """A non-`automation_run_*` kind must not schedule a pull."""
@@ -326,6 +332,7 @@ async def test_non_automation_kind_is_ignored(notif_db):
         assert screen._results_pull_running is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_automation_event_burst_of_three_triggers_exactly_one_pull(notif_db):
     """A burst of `automation_run_*` events delivered by the observer
@@ -351,6 +358,7 @@ async def test_automation_event_burst_of_three_triggers_exactly_one_pull(notif_d
         assert server_client.calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_trigger_during_in_flight_pull_queues_exactly_one_follow_up(notif_db):
     """A trigger that lands while a pull is already running absorbs into
@@ -384,6 +392,7 @@ async def test_trigger_during_in_flight_pull_queues_exactly_one_follow_up(notif_
         assert screen._results_pull_rerun_requested is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pull_failure_surfaces_via_sync_error_path_without_killing_observer(
     notif_db,
@@ -453,6 +462,7 @@ class _ScriptedScopeService:
         return SimpleNamespace(cancelled=True, handled_events=0, reset=None)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_sustained_failure_warns_once_then_debugs_then_info_on_reconnect(
     notif_db, monkeypatch
@@ -525,6 +535,7 @@ async def test_sustained_failure_warns_once_then_debugs_then_info_on_reconnect(
         loguru_logger.remove(sink_id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mount_pulls_results_once_to_catch_up_on_acked_events(notif_db):
     """HIGH (Qodo): `_on_server_notification_event` acks BEFORE the pull it
@@ -555,6 +566,7 @@ async def test_mount_pulls_results_once_to_catch_up_on_acked_events(notif_db):
         assert screen._results_pull_running is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mount_catch_up_and_an_event_burst_stay_single_flight(notif_db):
     """The catch-up pull shares the live-event path, so mounting straight
@@ -579,6 +591,7 @@ async def test_mount_catch_up_and_an_event_burst_stay_single_flight(notif_db):
         assert screen._results_pull_rerun_requested is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_catch_up_pull_without_a_server_connection(notif_db):
     """No server configured -- nothing to catch up on, and `_run_phase`

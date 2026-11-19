@@ -1,0 +1,4 @@
+{
+  "sha256": "d0589c7b810c4961a8d6a181cc0133aba4688708df268ffbd147b815dfdc3221",
+  "raw_text": "............                                                             [100%]\n============================= slowest 25 durations =============================\n5.59s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]\n5.42s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size2]\n5.39s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]\n\n(22 durations < 1s hidden.)\n12 passed in 21.73s\n"
+}

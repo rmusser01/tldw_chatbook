@@ -1,7 +1,7 @@
 import pytest
 from textual.widgets import Select, Static
 
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_network_defaults import load_network_tls
 
 from Tests.UI.test_destination_shells import (
@@ -17,7 +17,10 @@ from Tests.UI.test_settings_category_sweep import (
 pytestmark = pytest.mark.ui
 
 
-async def test_network_category_rejects_missing_ca_and_saves_valid_one(tmp_path, monkeypatch):
+@pytest.mark.bootstrap_profile
+async def test_network_category_rejects_missing_ca_and_saves_valid_one(
+    tmp_path, monkeypatch
+):
     saved: list[dict] = []
 
     def _capture(sections):
@@ -47,10 +50,7 @@ async def test_network_category_rejects_missing_ca_and_saves_valid_one(tmp_path,
         # qodo PR #2223 bug 5: the app's in-memory config mapping must
         # reflect the save, or the next detail render shows the stale
         # pre-save mode/path.
-        assert (
-            load_network_tls(screen._app_config_mapping()).ca_bundle_path
-            == str(ca)
-        )
+        assert load_network_tls(screen._app_config_mapping()).ca_bundle_path == str(ca)
 
         # Fix round 1: the Network banner/guided rows must not claim
         # read-only -- `s` saves, and the badge names that save model.
@@ -65,6 +65,7 @@ async def test_network_category_rejects_missing_ca_and_saves_valid_one(tmp_path,
         assert "Read-only" not in guided_text
 
 
+@pytest.mark.bootstrap_profile
 async def test_network_category_hop_reseeds_select_from_pending_mode():
     """Final-review fix: a category hop must not desync the Select from pending.
 

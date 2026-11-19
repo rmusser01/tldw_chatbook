@@ -144,6 +144,7 @@ def test_launch_sqlite_owner_allows_only_existing_private_readonly_files(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_runtime_recovers_once_and_remount_does_not_invalidate_live_owner(
     native, monkeypatch
@@ -182,6 +183,7 @@ async def test_runtime_recovers_once_and_remount_does_not_invalidate_live_owner(
         await runtime.dispose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_launch_waits_for_recovery_before_hydrating_unmarked_claim(
     native, monkeypatch
@@ -231,6 +233,7 @@ async def test_launch_waits_for_recovery_before_hydrating_unmarked_claim(
         await runtime.dispose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_recovery_prevents_hydration(native, monkeypatch):
     app, db = native
@@ -251,6 +254,42 @@ async def test_failed_recovery_prevents_hydration(native, monkeypatch):
         await runtime.dispose()
 
 
+# Builds the real runtime and store: keep the collection-time profile.
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_chat_opened_while_the_wake_loads_its_tree_is_not_opened_twice(
+    native, monkeypatch
+):
+    """TASK-33667: the wake's "already open" check runs before its tree load.
+
+    A rail, switcher or Library open of the same chat can register its session
+    during that await. A second session's recovery card can never settle
+    (TASK-33662), so the wake must look again before it hydrates.
+    """
+    app, db = native
+    survivor(db, chain(db))
+    saved = {"conversation": {"id": "conversation", "title": "Saved"}, "root_threads": []}
+    runtime, controller = _controller(app, db)
+
+    async def tree(cid, **kwargs):
+        # The other open, landing while this load is pending.
+        await launch.hydrate_console_session(
+            app=app, store=controller.store, conversation_id=cid, tree=saved,
+            settings=None,
+        )
+        return saved
+
+    app.chat_conversation_scope_service = SimpleNamespace(get_conversation_tree=tree)
+    monkeypatch.setattr(launch, "_ensure_launch_runtime", lambda _: controller)
+    try:
+        assert await launch.deliver_launch_wakes(app, ()) == 0
+        assert [
+            session.persisted_conversation_id for session in controller.store.sessions()
+        ] == ["conversation"]
+    finally:
+        await runtime.dispose()
+
+
 def test_remount_rearms_each_concurrent_delivery():
     seen = []
     wake = SimpleNamespace(
@@ -264,6 +303,7 @@ def test_remount_rearms_each_concurrent_delivery():
     assert seen == ["first", "second"]
 
 
+@pytest.mark.bootstrap_profile
 def test_synchronous_native_construction_defers_one_audit_until_loop_capture(native):
     app, db = native
     chain_id = chain(db)
@@ -281,6 +321,7 @@ def test_synchronous_native_construction_defers_one_audit_until_loop_capture(nat
     asyncio.run(start_loop())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recovery_waits_for_first_interactive_frame(native, monkeypatch):
     app, db = native
@@ -303,6 +344,7 @@ async def test_recovery_waits_for_first_interactive_frame(native, monkeypatch):
         await runtime.dispose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dispose_before_first_frame_never_audits(native, monkeypatch):
     app, db = native
@@ -356,6 +398,7 @@ def test_legacy_launch_discovery_preserves_old_schema_and_empty_fast_path(
     assert not hasattr(app, "_console_runtime")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_launch_upgrades_legacy_survivor_and_preserves_manual_review(
     tmp_path, monkeypatch

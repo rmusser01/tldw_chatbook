@@ -161,6 +161,7 @@ async def test_shared_interpreter_control_loses_dsp_progress(
             assert counters["capture_overflows"] > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("order", ["terminal_first", "speech_first"])
 async def test_native_terminal_preroll_orders_and_delayed_parent_promotion(

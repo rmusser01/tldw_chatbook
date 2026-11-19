@@ -35,6 +35,7 @@ async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
     return bool(predicate())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p1_deferred_startup_runs_and_console_is_absent(tmp_path):
     app = _build_test_app("library")
@@ -52,7 +53,9 @@ async def test_probe_p1_deferred_startup_runs_and_console_is_absent(tmp_path):
         async with app.run_test(size=(120, 40)) as pilot:
             reached = await _settle(pilot, lambda: bool(seen), seconds=15.0)
             print(f"\nPROBE P1 deferred-startup reached: {reached}")
-            print(f"PROBE P1 screen stack: {[type(s).__name__ for s in app.screen_stack]}")
+            print(
+                f"PROBE P1 screen stack: {[type(s).__name__ for s in app.screen_stack]}"
+            )
             runtime = app.console_runtime
             print(f"PROBE P2 runtime: {runtime!r}")
             print(f"PROBE P2 chat_controller: {runtime.chat_controller!r}")
@@ -64,6 +67,7 @@ async def test_probe_p1_deferred_startup_runs_and_console_is_absent(tmp_path):
     assert reached, "the app never reached _schedule_deferred_startup_work"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p4_the_real_conversation_service_can_be_wired_after_the_db(
     tmp_path,
@@ -116,8 +120,10 @@ def test_probe_p3a_an_unsaved_session_is_keyed_by_its_own_session_id(tmp_path):
     )
     try:
         keyed = controller._agent_conversation_id(session.id)
-        print(f"\nPROBE P3a session.persisted_conversation_id: "
-              f"{session.persisted_conversation_id!r}")
+        print(
+            f"\nPROBE P3a session.persisted_conversation_id: "
+            f"{session.persisted_conversation_id!r}"
+        )
         print(f"PROBE P3a keyed conversation id: {keyed!r}")
         print(
             "PROBE P3a ChaChaNotes row for that id: "
@@ -131,6 +137,7 @@ def test_probe_p3a_an_unsaved_session_is_keyed_by_its_own_session_id(tmp_path):
         chacha.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_p3_ephemeral_conversation_id_leaks_a_permanent_mark(tmp_path):
     """The stale-mark shape: mark an id that names no ChaChaNotes row (an

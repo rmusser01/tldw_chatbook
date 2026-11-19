@@ -16,6 +16,7 @@ from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_MODE
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cold_conversation_entry_reconciles_successful_page_after_source_failure(
     monkeypatch,

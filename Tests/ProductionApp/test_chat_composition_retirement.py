@@ -29,7 +29,7 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Video_Generation.video_store import VideoStore
@@ -53,7 +53,7 @@ def isolated_video_store(monkeypatch: pytest.MonkeyPatch, tmp_path):
         lambda: data_root,
     )
     monkeypatch.setattr(
-        "tldw_chatbook.Video_Generation.video_store.get_video_store_policy",
+        "tldw_chatbook.Video_Generation.config.get_video_store_policy",
         lambda: config,
     )
     return data_root / "generated_videos", config
@@ -134,6 +134,7 @@ def _chat_handoff(title: str) -> ChatHandoffPayload:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_video_retention_runs_during_app_construction_once(
     monkeypatch: pytest.MonkeyPatch,
     isolated_video_store,
@@ -159,6 +160,7 @@ def test_video_retention_runs_during_app_construction_once(
     assert app.generated_video_store.root == video_root
 
 
+@pytest.mark.bootstrap_profile
 def test_next_app_startup_applies_session_retention_again(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -224,6 +226,7 @@ def test_next_app_startup_keeps_fresh_ttl_video_and_removes_stale(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_video_retention_startup_failure_is_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -91,9 +91,9 @@ async def test_submit_button_returns_comment_text() -> None:
         await app.push_screen(modal, callback=app.results.append)
         await pilot.pause()
 
-        modal.query_one("#console-feedback-comment-input", Input).value = (
-            "tighten the error handling"
-        )
+        modal.query_one(
+            "#console-feedback-comment-input", Input
+        ).value = "tighten the error handling"
         await pilot.click("#console-feedback-comment-submit")
         await pilot.pause()
 

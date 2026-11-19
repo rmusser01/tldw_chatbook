@@ -508,7 +508,7 @@ class CanvasRepository:
                     "JOIN canvas_revisions AS revision ON revision.canvas_id = document.id "
                     "WHERE document.conversation_id = ? AND conversation.deleted = 0 "
                     f"{deleted_filter} "
-                    "ORDER BY document.created_at, document.id, revision.sequence",
+                    "ORDER BY document.created_at, document.id, revision.sequence, revision.id",
                     (conversation_id,),
                 ).fetchall()
         except CharactersRAGDBError:
@@ -719,7 +719,8 @@ class CanvasRepository:
                         ),
                     )
                 for revision in sorted(
-                    batch.revisions, key=lambda item: (item.canvas_id, item.sequence)
+                    batch.revisions,
+                    key=lambda item: (item.canvas_id, item.sequence, item.revision_id),
                 ):
                     cursor.execute(
                         _INSERT_REVISION_SQL,
@@ -792,7 +793,8 @@ class CanvasRepository:
                 ),
             )
         for revision in sorted(
-            batch.revisions, key=lambda item: (item.canvas_id, item.sequence)
+            batch.revisions,
+            key=lambda item: (item.canvas_id, item.sequence, item.revision_id),
         ):
             cursor.execute(
                 _INSERT_REVISION_SQL,
@@ -873,7 +875,8 @@ class CanvasRepository:
                 ),
             )
         for revision in sorted(
-            batch.revisions, key=lambda item: (item.canvas_id, item.sequence)
+            batch.revisions,
+            key=lambda item: (item.canvas_id, item.sequence, item.revision_id),
         ):
             cursor.execute(
                 _INSERT_REVISION_SQL,
@@ -1009,16 +1012,17 @@ class CanvasRepository:
             cursor, batch.conversation_id, added_bytes
         )
         for canvas_id, revisions in per_canvas.items():
-            existing_count = int(
-                cursor.execute(
-                    "SELECT COUNT(*) FROM canvas_revisions WHERE canvas_id = ?",
-                    (canvas_id,),
-                ).fetchone()[0]
-            )
+            existing_count, max_sequence = cursor.execute(
+                "SELECT COUNT(*), COALESCE(MAX(sequence), 0) "
+                "FROM canvas_revisions WHERE canvas_id = ?",
+                (canvas_id,),
+            ).fetchone()
             if existing_count + len(revisions) > self._limits.max_revisions_per_canvas:
                 raise CanvasQuotaError("revision_count")
-            expected_sequence = existing_count + 1
-            for revision in sorted(revisions, key=lambda item: item.sequence):
+            expected_sequence = int(max_sequence) + 1
+            for revision in sorted(
+                revisions, key=lambda item: (item.sequence, item.revision_id)
+            ):
                 if revision.sequence != expected_sequence:
                     raise CanvasValidationError("invalid_revision_sequence")
                 if revision.parent_revision_id is None:
@@ -1219,9 +1223,14 @@ class CanvasRepository:
                 raise CanvasValidationError("canvas_without_revision")
             if len(revisions) > self._limits.max_revisions_per_canvas:
                 raise CanvasQuotaError("revision_count")
-            ordered = sorted(revisions, key=lambda item: item.sequence)
-            if [item.sequence for item in ordered] != list(range(1, len(ordered) + 1)):
+            ordered = sorted(
+                revisions, key=lambda item: (item.sequence, item.revision_id)
+            )
+            distinct_sequences = sorted({revision.sequence for revision in ordered})
+            if distinct_sequences != list(range(1, len(distinct_sequences) + 1)):
                 raise CanvasValidationError("invalid_revision_sequence")
+            if sum(revision.parent_revision_id is None for revision in ordered) != 1:
+                raise CanvasValidationError("invalid_root_parent")
             for revision in ordered:
                 if revision.sequence == 1:
                     if revision.parent_revision_id is not None:

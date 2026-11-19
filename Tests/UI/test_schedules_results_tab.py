@@ -16,15 +16,23 @@ Two layers, matching `test_schedules_transfer_actions.py`'s split:
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import warnings
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import pytest_asyncio
 from textual.widgets import Button, DataTable, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
-from Tests.UI.schedules_test_helpers import rendered_row_cells
+from Tests.UI.schedules_test_helpers import (
+    rendered_row_cells,
+    settle_schedules_workbench,
+)
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services import SchedulingService
 from tldw_chatbook.Scheduling.services.server_client import SchedulingServerClient
@@ -195,8 +203,7 @@ async def test_detail_pane_renders_answer_evidence_and_review_metadata():
                     "kind": "finding",
                     "title": "Daily stand-up summary",
                     "answer": (
-                        "The team is blocked on CI flakiness and an API "
-                        "review."
+                        "The team is blocked on CI flakiness and an API " "review."
                     ),
                     "source_refs": [{"source_type": "message", "source_id": "msg_1"}],
                     "review_state": "unread",
@@ -213,9 +220,7 @@ async def test_detail_pane_renders_answer_evidence_and_review_metadata():
         table.cursor_coordinate = (0, 0)
         await pilot.pause()
 
-        detail_text = str(
-            tab.query_one("#scheduling-results-detail").render()
-        )
+        detail_text = str(tab.query_one("#scheduling-results-detail").render())
         assert "Daily stand-up summary" in detail_text
         assert "The team is blocked on CI flakiness" in detail_text
         assert "message: msg_1" in detail_text
@@ -260,9 +265,7 @@ async def test_non_list_source_refs_degrades_instead_of_crashing():
     async with app.run_test() as pilot:
         tab = pilot.app.query_one(ResultsTab)
         await pilot.pause()
-        detail_text = await _detail_text_for(
-            pilot, tab, _base_result(source_refs=5)
-        )
+        detail_text = await _detail_text_for(pilot, tab, _base_result(source_refs=5))
         assert "unparsed" in detail_text
         assert "5" in detail_text
 
@@ -419,13 +422,21 @@ async def test_empty_state_shown_when_no_results():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def results_db(tmp_path):
+@pytest_asyncio.fixture
+async def results_db(tmp_path, isolate_test_environment, request):
     database = ScheduledTasksDB(tmp_path / "scheduled_tasks.db")
-    try:
-        yield database
-    finally:
-        database.close()
+    yield database
+    from tldw_chatbook.app_lifecycle import WORKER_CANCELLATION_GRACE_SECONDS
+
+    # Textual cancellation does not join work already running on the executor.
+    request.node._test_app_native_workers_uncertain = True
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        await asyncio.get_running_loop().shutdown_default_executor(
+            timeout=WORKER_CANCELLATION_GRACE_SECONDS
+        )
+    request.node._test_app_native_workers_uncertain = False
+    database.close()
 
 
 class ResultsWorkbenchTestApp(ConsolidatedCSSApp):
@@ -530,6 +541,10 @@ async def _open_results_overlay(pilot, *, row: int = 0):
     """
     workbench = pilot.app.screen
     workbench.query_one("#scheduling-results-badge", Button).press()
+    await _until_results(
+        lambda: isinstance(pilot.app.screen, ResultsHostScreen)
+        and bool(pilot.app.screen.query("#scheduling-results-table"))
+    )
     await pilot.pause()
     screen = pilot.app.screen
     assert isinstance(screen, ResultsHostScreen), screen
@@ -540,6 +555,7 @@ async def _open_results_overlay(pilot, *, row: int = 0):
     return workbench, screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_badge_and_table_span_every_owner(results_db):
     db = results_db
@@ -573,9 +589,10 @@ async def test_badge_and_table_span_every_owner(results_db):
         # `Results (N)` button, the badge that survived the retirement --
         # `_refresh_results_badge` mirrors the same single
         # `count_unread_results` the tab label used to.
-        assert _rendered_badge_label(
-            pilot.app.screen, "#scheduling-results-badge"
-        ) == "Results (2)"
+        assert (
+            _rendered_badge_label(pilot.app.screen, "#scheduling-results-badge")
+            == "Results (2)"
+        )
 
         # ...and the all-owners listing is the pushed view's, opened from
         # that same button.
@@ -584,6 +601,7 @@ async def test_badge_and_table_span_every_owner(results_db):
         assert table.row_count == 3
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conflicts_badge_renders_too(results_db):
     """The Conflicts badge is the one PR-6's Results badge was copied from
@@ -609,15 +627,18 @@ async def test_conflicts_badge_renders_too(results_db):
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
 
-        assert _rendered_badge_label(
-            pilot.app.screen, "#scheduling-conflicts-badge"
-        ) == "Conflicts (1)"
+        assert (
+            _rendered_badge_label(pilot.app.screen, "#scheduling-conflicts-badge")
+            == "Conflicts (1)"
+        )
         # No results seeded -> the Results badge stays a bare label.
-        assert _rendered_badge_label(
-            pilot.app.screen, "#scheduling-results-badge"
-        ) == "Results"
+        assert (
+            _rendered_badge_label(pilot.app.screen, "#scheduling-results-badge")
+            == "Results"
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_resolves_a_server_keyed_result(results_db):
     """Live verification task 6, D3: a synced result's `definition_id` is
@@ -634,9 +655,7 @@ async def test_mark_solved_resolves_a_server_keyed_result(results_db):
     regression this pins is unmoved -- only its caller is.
     """
     db = results_db
-    local_definition_id = _seed_definition(
-        db, owner_id="local", server_id="srv-def-1"
-    )
+    local_definition_id = _seed_definition(db, owner_id="local", server_id="srv-def-1")
     _seed_result(
         db,
         # The server's id for the definition, as a mirrored row carries it.
@@ -653,9 +672,7 @@ async def test_mark_solved_resolves_a_server_keyed_result(results_db):
 
         # The eligibility gate resolves through the server id space...
         results_tab = screen.query_one(ResultsTab)
-        detail_text = str(
-            results_tab.query_one("#scheduling-results-detail").render()
-        )
+        detail_text = str(results_tab.query_one("#scheduling-results-detail").render())
         assert "Solve: eligible" in detail_text
 
         # ...and so does the action, which must hand `resolve_definition`
@@ -669,6 +686,7 @@ async def test_mark_solved_resolves_a_server_keyed_result(results_db):
         assert row["resolution_state"] == "solved"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_action_marks_local_result_read(results_db):
     """redesign PR-4 task 5: `r` used to be `action_run_task_now` routed
@@ -687,9 +705,10 @@ async def test_read_action_marks_local_result_read(results_db):
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
         workbench, screen = await _open_results_overlay(pilot)
-        assert _rendered_badge_label(
-            workbench, "#scheduling-results-badge"
-        ) == "Results (1)"
+        assert (
+            _rendered_badge_label(workbench, "#scheduling-results-badge")
+            == "Results (1)"
+        )
 
         screen.action_review_read()
         await pilot.pause()
@@ -706,11 +725,12 @@ async def test_read_action_marks_local_result_read(results_db):
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
         assert pilot.app.screen is workbench
-        assert _rendered_badge_label(
-            workbench, "#scheduling-results-badge"
-        ) == "Results"
+        assert (
+            _rendered_badge_label(workbench, "#scheduling-results-badge") == "Results"
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dismiss_action_queues_server_pushback_mutation(results_db):
     """redesign PR-4 task 5: `d` used to be `action_delete` routed by
@@ -719,9 +739,7 @@ async def test_dismiss_action_queues_server_pushback_mutation(results_db):
     result's dismissal queues its pushback mutation with the SERVER's
     result id -- is untouched and has no other home."""
     db = results_db
-    definition_id = _seed_definition(
-        db, owner_id="server:1", server_id="srv-def-1"
-    )
+    definition_id = _seed_definition(db, owner_id="server:1", server_id="srv-def-1")
     result_id = _seed_result(
         db,
         definition_id=definition_id,
@@ -752,6 +770,54 @@ async def test_dismiss_action_queues_server_pushback_mutation(results_db):
         assert mutations[0]["payload"]["server_result_id"] == "srv-res-1"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_queue_definition_detail_can_finish_during_shutdown(
+    results_db, monkeypatch
+):
+    _seed_definition(results_db)
+    app = ResultsWorkbenchTestApp(results_db)
+    workbench = SchedulesWorkbench(app_instance=app)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    fetch_counts = workbench._fetch_definition_detail_counts
+
+    async def held_counts(*args):
+        counts = await fetch_counts(*args)
+        entered.set()
+        await release.wait()
+        return counts
+
+    monkeypatch.setattr(workbench, "_fetch_definition_detail_counts", held_counts)
+    close_all = app._close_all
+    try:
+        async with app.run_test():
+            await app.push_screen(workbench)
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            detail = workbench.query_one("#scheduling-queue-definition-detail")
+            worker = next(
+                worker
+                for worker in app.workers
+                if worker.group == "schedules-load-queue-definition-detail"
+            )
+
+            async def close_with_pending_detail():
+                try:
+                    # Shutdown prunes children before their parent's worker retires.
+                    assert not app.is_running
+                    await detail.remove_children()
+                    release.set()
+                    await asyncio.wait_for(worker.wait(), timeout=5)
+                finally:
+                    release.set()
+                    await close_all()
+
+            monkeypatch.setattr(app, "_close_all", close_with_pending_detail)
+    finally:
+        release.set()
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_fans_out_per_row(results_db):
     """redesign PR-4 task 5: no tab to activate first --
@@ -772,11 +838,11 @@ async def test_mark_all_read_fans_out_per_row(results_db):
         await pilot.app.push_screen(SchedulesWorkbench(app_instance=pilot.app))
         await pilot.pause()
         workbench = pilot.app.screen
+        await settle_schedules_workbench(pilot, workbench)
 
         workbench.action_mark_all_results_read()
         await pilot.pause()
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
+        await _until_results(lambda: not list(pilot.app.workers))
 
         assert db.get_automation_result(r1)["review_state"] == "read"
         assert db.get_automation_result(r2)["review_state"] == "read"
@@ -785,6 +851,7 @@ async def test_mark_all_read_fans_out_per_row(results_db):
         assert any("Marked 2 result" in n.message for n in notifications)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_all_read_reaches_unread_rows_beyond_the_inbox_window(
     results_db,
@@ -842,9 +909,7 @@ async def test_mark_all_read_reaches_unread_rows_beyond_the_inbox_window(
         assert db.count_unread_results(owner_id=None) == 0
         assert db.get_automation_result(old_result_id)["review_state"] == "read"
         notifications = list(pilot.app._notifications)
-        assert any(
-            f"Marked {total_unread} result" in n.message for n in notifications
-        )
+        assert any(f"Marked {total_unread} result" in n.message for n in notifications)
 
         mutations = db.get_pending_mutations(
             owner_id="server:1", primitive="automation_result_review"
@@ -856,6 +921,7 @@ async def test_mark_all_read_reaches_unread_rows_beyond_the_inbox_window(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_mark_all_read_button_fans_out_and_hides_itself(results_db):
     """redesign PR-2, Task 3: the rail's `Mark all read` button reuses the
@@ -896,6 +962,7 @@ async def test_rail_mark_all_read_button_fans_out_and_hides_itself(results_db):
         assert button.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_local_round_trip(results_db):
     """redesign PR-4 task 5: driven through the pushed view's `o`
@@ -923,6 +990,7 @@ async def test_mark_solved_local_round_trip(results_db):
         assert definition["resolved_by"] == "local"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_refuses_failure_row_without_reaching_the_service(
     results_db,
@@ -934,9 +1002,7 @@ async def test_mark_solved_refuses_failure_row_without_reaching_the_service(
     own docstring: the gates stay in each CALLER)."""
     db = results_db
     definition_id = _seed_definition(db)
-    _seed_result(
-        db, definition_id=definition_id, kind="failure", dedupe_key="d1"
-    )
+    _seed_result(db, definition_id=definition_id, kind="failure", dedupe_key="d1")
 
     app = ResultsWorkbenchTestApp(db)
     async with app.run_test() as pilot:
@@ -951,19 +1017,17 @@ async def test_mark_solved_refuses_failure_row_without_reaching_the_service(
         assert definition["resolution_state"] == "open"
         notifications = list(pilot.app._notifications)
         assert any(
-            "Only findings can be marked solved." in n.message
-            for n in notifications
+            "Only findings can be marked solved." in n.message for n in notifications
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_server_round_trip(results_db):
     """redesign PR-4 task 5: driven through the pushed view's `o`; the
     local->server id translation under test is unchanged."""
     db = results_db
-    definition_id = _seed_definition(
-        db, owner_id="server:1", server_id="srv-def-1"
-    )
+    definition_id = _seed_definition(db, owner_id="server:1", server_id="srv-def-1")
     result_id = _seed_result(
         db,
         definition_id=definition_id,
@@ -998,14 +1062,13 @@ async def test_mark_solved_server_round_trip(results_db):
         assert result_id  # sanity: the local->server id translation ran
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mark_solved_refused_offline_surfaces_the_reason(results_db):
     """redesign PR-4 task 5: driven through the pushed view's `o`; the
     real `ServerUnavailableError` refusal under test is unchanged."""
     db = results_db
-    definition_id = _seed_definition(
-        db, owner_id="server:1", server_id="srv-def-1"
-    )
+    definition_id = _seed_definition(db, owner_id="server:1", server_id="srv-def-1")
     _seed_result(
         db,
         definition_id=definition_id,
@@ -1031,9 +1094,7 @@ async def test_mark_solved_refused_offline_surfaces_the_reason(results_db):
         definition = db.get_automation_definition(definition_id)
         assert definition["resolution_state"] == "open"
         notifications = list(pilot.app._notifications)
-        assert any(
-            "requires a server connection" in n.message for n in notifications
-        )
+        assert any("requires a server connection" in n.message for n in notifications)
 
 
 # redesign PR-4 task 5: `test_results_actions_refuse_off_the_results_tab`
@@ -1050,6 +1111,7 @@ async def test_mark_solved_refused_offline_surfaces_the_reason(results_db):
 # `test_rail_mark_all_read_button_fans_out_and_hides_itself` above.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inbox_lists_the_sync_window_and_says_what_it_hides(results_db):
     """HIGH (Qodo): the refresh took the DB's default `limit=50` while the
@@ -1083,9 +1145,8 @@ async def test_inbox_lists_the_sync_window_and_says_what_it_hides(results_db):
         assert table.row_count == RESULTS_INBOX_LIMIT
 
         heading = screen.query_one("#scheduling-results-heading")
-        assert (
-            f"showing newest {RESULTS_INBOX_LIMIT} of {total}"
-            in str(heading.render())
+        assert f"showing newest {RESULTS_INBOX_LIMIT} of {total}" in str(
+            heading.render()
         )
         # The badge still counts every unread result -- that honesty is
         # the whole reason the truncation has to be stated.
@@ -1094,6 +1155,7 @@ async def test_inbox_lists_the_sync_window_and_says_what_it_hides(results_db):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inbox_heading_stays_plain_when_everything_fits(results_db):
     """The count line is truncation-only -- an inbox that fits must not
@@ -1182,11 +1244,15 @@ def _push_results_host_closures(service, *, definition_id: str | None = None):
     return query, unread_ids
 
 
-async def _push_results_host_screen(pilot, service, *, definition_id: str | None = None):
+async def _push_results_host_screen(
+    pilot, service, *, definition_id: str | None = None
+):
     """Push a `ResultsHostScreen` directly (no `SchedulesWorkbench`
     involved) -- exercises the pushed view's own r/d/o/a binding surface
     and the shared service orchestration in isolation."""
-    query, unread_ids = _push_results_host_closures(service, definition_id=definition_id)
+    query, unread_ids = _push_results_host_closures(
+        service, definition_id=definition_id
+    )
     results, definitions_by_id, total = query()
 
     def _factory() -> ResultsTab:
@@ -1199,7 +1265,11 @@ async def _push_results_host_screen(pilot, service, *, definition_id: str | None
 
     await pilot.app.push_screen(
         ResultsHostScreen(
-            _factory, title="Results", service=service, query=query, unread_ids=unread_ids
+            _factory,
+            title="Results",
+            service=service,
+            query=query,
+            unread_ids=unread_ids,
         )
     )
     await pilot.pause()
@@ -1295,6 +1365,7 @@ async def test_hosted_mark_all_read_action_fans_out(results_db):
         assert db.get_automation_result(r2)["review_state"] == "read"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_results_query_merges_local_and_server_id_spaces(results_db):
     """redesign PR-4 task 2: a definition mirrored from the server can
@@ -1307,7 +1378,9 @@ async def test_definition_results_query_merges_local_and_server_id_spaces(result
     definition must not leak in."""
     db = results_db
     definition_id = _seed_definition(db, owner_id="server:1", server_id="srv-def-1")
-    local_result_id = _seed_result(db, definition_id=definition_id, dedupe_key="local-1")
+    local_result_id = _seed_result(
+        db, definition_id=definition_id, dedupe_key="local-1"
+    )
     server_result_id = _seed_result(
         db, definition_id="srv-def-1", server_id="srv-res-1", dedupe_key="server-1"
     )
@@ -1328,6 +1401,7 @@ async def test_definition_results_query_merges_local_and_server_id_spaces(result
         assert {row["id"] for row in results} == {local_result_id, server_result_id}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_definition_unread_result_ids_merges_both_id_spaces(results_db):
     """`_definition_unread_result_ids` counterpart of the query merge test
@@ -1336,7 +1410,9 @@ async def test_definition_unread_result_ids_merges_both_id_spaces(results_db):
     definition."""
     db = results_db
     definition_id = _seed_definition(db, owner_id="server:1", server_id="srv-def-1")
-    local_result_id = _seed_result(db, definition_id=definition_id, dedupe_key="local-1")
+    local_result_id = _seed_result(
+        db, definition_id=definition_id, dedupe_key="local-1"
+    )
     server_result_id = _seed_result(
         db, definition_id="srv-def-1", server_id="srv-res-1", dedupe_key="server-1"
     )
@@ -1357,3 +1433,349 @@ async def test_definition_unread_result_ids_merges_both_id_spaces(results_db):
 
         assert set(ids) == {local_result_id, server_result_id}
         assert other_result_id not in ids
+
+
+async def _until_results(predicate):
+    """Wait for a witnessed physical/worker transition, with a bounded budget."""
+    async with asyncio.timeout(8):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_mark_all_read_survives_overlapping_dismiss(
+    request, results_db, monkeypatch
+):
+    await _assert_bulk_survives_overlap(results_db, monkeypatch, "d")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["r", "o", "a"])
+@private_profile_test
+async def test_mark_all_read_refuses_related_overlaps(
+    request, results_db, monkeypatch, key
+):
+    await _assert_bulk_survives_overlap(results_db, monkeypatch, key)
+
+
+async def _assert_bulk_survives_overlap(db, monkeypatch, key):
+    definition_id = _seed_definition(db)
+    ids = [
+        _seed_result(db, definition_id=definition_id, dedupe_key=f"held{i}")
+        for i in range(3)
+    ]
+    entered, release, done = threading.Event(), threading.Event(), threading.Event()
+    original = db.get_automation_result
+
+    def held_read(*args, **kwargs):
+        if not entered.is_set():
+            entered.set()
+            try:
+                assert release.wait(8), "test must release the physical SQLite read"
+                return original(*args, **kwargs)
+            finally:
+                done.set()
+        return original(*args, **kwargs)
+
+    app = ResultsWorkbenchTestApp(db)
+    try:
+        async with app.run_test() as pilot:
+            screen = await _push_results_host_screen(pilot, app.scheduling_service)
+            monkeypatch.setattr(db, "get_automation_result", held_read)
+            await pilot.press("a")
+            await _until_results(entered.is_set)
+            await pilot.press("down")
+            await pilot.press(key)
+            # Observe the refusal while the physical read is still held;
+            # notifications can expire after the later database work settles.
+            busy_messages = [n.message for n in app._notifications]
+            assert any(
+                "busy" in message.lower() for message in busy_messages
+            ), busy_messages
+            release.set()
+            await _until_results(done.is_set)
+            await _until_results(
+                lambda: not any(worker.node is screen for worker in app.workers)
+            )
+            messages = [n.message for n in app._notifications]
+            assert [original(result_id)["review_state"] for result_id in ids] == [
+                "read"
+            ] * 3
+            assert (
+                db.get_automation_definition(definition_id)["resolution_state"]
+                == "open"
+            )
+            assert "Marked 3 results read." in messages
+            # Refusal is temporary: the next deliberate action must still work.
+            selected_id = screen._results_tab().selected_result_id()
+            await pilot.press("d")
+            await app.workers.wait_for_complete()
+            assert original(selected_id)["review_state"] == "dismissed"
+    finally:
+        release.set()
+        if entered.is_set():
+            await _until_results(done.is_set)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["r", "d", "o"])
+@private_profile_test
+async def test_hosted_mutation_captures_target_before_worker_entry(
+    request, results_db, monkeypatch, key
+):
+    """Changing the cursor/definition mapping before entry cannot retarget a gesture."""
+    db = results_db
+    first_definition = _seed_definition(db)
+    second_definition = _seed_definition(db, name="Other")
+    for i, definition in enumerate([first_definition, second_definition]):
+        _seed_result(db, definition_id=definition, dedupe_key=f"captured{i}")
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        screen = await _push_results_host_screen(pilot, app.scheduling_service)
+        tab = screen._results_tab()
+        target = dict(tab.selected_result())
+        target_definition = tab.definitions_by_id[target["definition_id"]]["id"]
+        other_definition = (
+            second_definition
+            if target_definition == first_definition
+            else first_definition
+        )
+        original_run = screen.run_worker
+        release, entered = asyncio.Event(), asyncio.Event()
+
+        def held_worker(work, **kwargs):
+            async def held():
+                entered.set()
+                await release.wait()
+                await work()
+
+            return original_run(held, **kwargs)
+
+        monkeypatch.setattr(screen, "run_worker", held_worker)
+        try:
+            await pilot.press(key)
+            await _until_results(entered.is_set)
+            await pilot.press("down")
+            assert tab.selected_result_id() != target["id"]
+            # A refresh can replace or mutate this lookup before the worker runs.
+            tab.definitions_by_id[target["definition_id"]]["id"] = other_definition
+            await pilot.press("a")
+            assert any("busy" in n.message.lower() for n in app._notifications)
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+        if key == "o":
+            assert (
+                db.get_automation_definition(target_definition)["resolution_state"]
+                == "solved"
+            )
+            assert (
+                db.get_automation_definition(other_definition)["resolution_state"]
+                == "open"
+            )
+        else:
+            assert db.get_automation_result(target["id"])["review_state"] == (
+                "read" if key == "r" else "dismissed"
+            )
+            other_rows = [
+                row
+                for row in db.list_automation_results(owner_id=None)
+                if row["id"] != target["id"]
+            ]
+            assert all(row["review_state"] == "unread" for row in other_rows)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_hosted_bulk_captures_definition_scope_and_retries_failed_rows(
+    request, results_db, monkeypatch
+):
+    db = results_db
+    definition = _seed_definition(db)
+    other = _seed_definition(db, name="Other")
+    ids = [
+        _seed_result(db, definition_id=definition, dedupe_key=f"scope{i}")
+        for i in range(2)
+    ]
+    outside = _seed_result(db, definition_id=other, dedupe_key="outside")
+    original = db.update_result_review
+    failed = []
+
+    def fail_once(result_id, *args, **kwargs):
+        if result_id == ids[0] and not failed:
+            failed.append(result_id)
+            return False
+        return original(result_id, *args, **kwargs)
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        screen = await _push_results_host_screen(
+            pilot, app.scheduling_service, definition_id=definition
+        )
+        original_run = screen.run_worker
+        release, entered = asyncio.Event(), asyncio.Event()
+
+        def held_worker(work, **kwargs):
+            async def held():
+                entered.set()
+                await release.wait()
+                await work()
+
+            return original_run(held, **kwargs)
+
+        monkeypatch.setattr(screen, "run_worker", held_worker)
+        monkeypatch.setattr(db, "update_result_review", fail_once)
+        try:
+            await pilot.press("a")
+            await _until_results(entered.is_set)
+            # Neither a new query scope nor a newly arrived result belongs to this admission.
+            screen._unread_ids = lambda: [outside]
+            late = _seed_result(db, definition_id=definition, dedupe_key="late")
+            await pilot.press("d")
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+        messages = [(n.message, n.severity) for n in app._notifications]
+        assert db.get_automation_result(ids[0])["review_state"] == "unread"
+        assert db.get_automation_result(ids[1])["review_state"] == "read"
+        assert db.get_automation_result(outside)["review_state"] == "unread"
+        assert db.get_automation_result(late)["review_state"] == "unread"
+        assert ("Marked 1 result read (1 failed).", "warning") in messages
+        monkeypatch.setattr(screen, "run_worker", original_run)
+        _, screen._unread_ids = _push_results_host_closures(
+            app.scheduling_service, definition_id=definition
+        )
+        await pilot.press("a")
+        await app.workers.wait_for_complete()
+        assert all(
+            db.get_automation_result(result_id)["review_state"] == "read"
+            for result_id in [*ids, late]
+        )
+        assert db.get_automation_result(outside)["review_state"] == "unread"
+        assert any(n.message == "Marked 2 results read." for n in app._notifications)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["r", "d"])
+@private_profile_test
+async def test_hosted_single_review_failure_is_visible_and_retryable(
+    request, results_db, monkeypatch, key
+):
+    db = results_db
+    definition = _seed_definition(db)
+    result_id = _seed_result(db, definition_id=definition, dedupe_key="retry")
+    original = db.update_result_review
+    fail = True
+
+    def fail_once(*args, **kwargs):
+        nonlocal fail
+        if fail:
+            fail = False
+            return False
+        return original(*args, **kwargs)
+
+    app = ResultsWorkbenchTestApp(db)
+    async with app.run_test() as pilot:
+        await _push_results_host_screen(pilot, app.scheduling_service)
+        monkeypatch.setattr(db, "update_result_review", fail_once)
+        await pilot.press(key)
+        await app.workers.wait_for_complete()
+        assert db.get_automation_result(result_id)["review_state"] == "unread"
+        assert any(
+            n.severity == "error" and "Could not update" in n.message
+            for n in app._notifications
+        )
+        await pilot.press(key)
+        await app.workers.wait_for_complete()
+        assert db.get_automation_result(result_id)["review_state"] == (
+            "read" if key == "r" else "dismissed"
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_hosted_mutation_worker_submission_failure_allows_retry(
+    request, results_db, monkeypatch
+):
+    definition = _seed_definition(results_db)
+    result_id = _seed_result(
+        results_db, definition_id=definition, dedupe_key="submission"
+    )
+    app = ResultsWorkbenchTestApp(results_db)
+    async with app.run_test() as pilot:
+        screen = await _push_results_host_screen(pilot, app.scheduling_service)
+        original_run = screen.run_worker
+
+        def refuse_worker(*args, **kwargs):
+            raise RuntimeError("worker manager unavailable")
+
+        monkeypatch.setattr(screen, "run_worker", refuse_worker)
+        with pytest.raises(RuntimeError, match="worker manager unavailable"):
+            screen.action_review_read()
+        monkeypatch.setattr(screen, "run_worker", original_run)
+        await pilot.press("r")
+        await app.workers.wait_for_complete()
+        assert results_db.get_automation_result(result_id)["review_state"] == "read"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_hosted_solve_refusal_releases_admission_for_review(request, results_db):
+    definition = _seed_definition(
+        results_db, owner_id="server:1", server_id="srv-definition"
+    )
+    result_id = _seed_result(
+        results_db,
+        definition_id=definition,
+        owner_id="server:1",
+        server_id="srv-result",
+        dedupe_key="solve-refusal",
+    )
+    app = ResultsWorkbenchTestApp(results_db)
+    async with app.run_test() as pilot:
+        await _push_results_host_screen(pilot, app.scheduling_service)
+        await pilot.press("o")
+        await app.workers.wait_for_complete()
+        messages = [n.message for n in app._notifications]
+        assert (
+            results_db.get_automation_definition(definition)["resolution_state"]
+            == "open"
+        )
+        assert any(
+            "requires a server connection" in message for message in messages
+        ), messages
+        await pilot.press("r")
+        await app.workers.wait_for_complete()
+        assert results_db.get_automation_result(result_id)["review_state"] == "read"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ineligible", ["failure", "solved"])
+@private_profile_test
+async def test_hosted_solve_eligibility_refusal_keeps_review_available(
+    request, results_db, ineligible
+):
+    definition = _seed_definition(
+        results_db, resolution_state="solved" if ineligible == "solved" else "open"
+    )
+    result_id = _seed_result(
+        results_db,
+        definition_id=definition,
+        kind="failure" if ineligible == "failure" else "finding",
+        dedupe_key="eligibility",
+    )
+    app = ResultsWorkbenchTestApp(results_db)
+    async with app.run_test() as pilot:
+        await _push_results_host_screen(pilot, app.scheduling_service)
+        await pilot.press("o")
+        expected = (
+            "Only findings" if ineligible == "failure" else "already marked solved"
+        )
+        assert any(expected in n.message for n in app._notifications)
+        assert results_db.get_automation_result(result_id)["review_state"] == "unread"
+        await pilot.press("d")
+        await app.workers.wait_for_complete()
+        assert (
+            results_db.get_automation_result(result_id)["review_state"] == "dismissed"
+        )

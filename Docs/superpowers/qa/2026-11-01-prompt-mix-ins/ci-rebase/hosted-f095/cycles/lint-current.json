@@ -1,0 +1,48 @@
+[
+  {
+    "cell": null,
+    "code": "SIM114",
+    "end_location": {
+      "column": 59,
+      "row": 187
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/UI/test_console_first_send_import_cycles.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": " or isinstance(node, (ast.With, ast.AsyncWith))",
+          "end_location": {
+            "column": 44,
+            "row": 184
+          },
+          "location": {
+            "column": 44,
+            "row": 184
+          }
+        },
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 188
+          },
+          "location": {
+            "column": 1,
+            "row": 186
+          }
+        }
+      ],
+      "message": "Combine `if` branches"
+    },
+    "location": {
+      "column": 9,
+      "row": 184
+    },
+    "message": "Combine `if` branches using logical `or` operator",
+    "name": "if-with-same-arms",
+    "noqa_row": 184,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/if-with-same-arms"
+  }
+]

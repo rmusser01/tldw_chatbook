@@ -213,7 +213,7 @@ async def test_focused_fallback_gets_its_actual_required_candidate():
     ],
 )
 async def test_console_compaction_real_sqlite_commit_and_provider_fence(
-    tmp_path, manual, post_failure, memory_changed, pre_failure
+    tmp_path, monkeypatch, manual, post_failure, memory_changed, pre_failure
 ):
     from Tests.Chat.test_console_context_compaction import _real_selection_controller
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -321,11 +321,13 @@ async def test_console_compaction_real_sqlite_commit_and_provider_fence(
     )
     runtime.ensure_hooks_v2(session.id, hooks, lambda *_: True)
     commit_errors = []
+    committed_epochs, published_epochs = [], []
     original_commit = repository.commit_memory_selection_if_current
 
     def inspect_commit(commit):
+        epoch = store.conversation_context_epoch(session.id)
         try:
-            return original_commit(commit)
+            committed = original_commit(commit)
         except Exception as error:
             commit_errors.append(
                 (
@@ -341,17 +343,18 @@ async def test_console_compaction_real_sqlite_commit_and_provider_fence(
                 )
             )
             raise
+        if committed:
+            committed_epochs.append(epoch)
+        return committed
 
     repository.commit_memory_selection_if_current = inspect_commit
-    transactions = []
-    compact = controller._compaction_service.compact
+    original_hook = CompactionHooks.committed
 
-    async def record_transaction(**kwargs):
-        value = await compact(**kwargs)
-        transactions.append(value)
-        return value
+    def observe_publication(hook, memory):
+        published_epochs.append(store.conversation_context_epoch(session.id))
+        return original_hook(hook, memory)
 
-    controller._compaction_service.compact = record_transaction
+    monkeypatch.setattr(CompactionHooks, "committed", observe_publication)
     try:
         if manual:
             result = await controller.summarize_up_to(target.id)
@@ -366,12 +369,15 @@ async def test_console_compaction_real_sqlite_commit_and_provider_fence(
         if pre_failure:
             assert gateway.calls == 0
             assert not payloads and state.memory is None
+            assert not committed_epochs and not published_epochs
             attempts = repository.list_auxiliary_attempts(conversation_id)
             assert [row["failure_reason"] for row in attempts] == [
                 "required_pre_compact_failed"
             ]
             return
-        assert state.memory is not None, (result, transactions, commit_errors)
+        assert state.memory is not None, (result, commit_errors)
+        assert len(committed_epochs) == 1
+        assert published_epochs == [committed_epochs[0] + 1]
         assert gateway.calls == 1
         assert "pre only" in str(auxiliary)
         assert "runtime retained" not in str(auxiliary)

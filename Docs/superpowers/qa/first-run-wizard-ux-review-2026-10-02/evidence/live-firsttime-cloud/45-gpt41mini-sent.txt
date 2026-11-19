@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                            Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Say hi in five words.                                                                                                                     │
+                       Context ◂  │   Say hi in five wor…  ✕  Say hi in five wor…  ✕    New tab     Temporary                                                                                │
+   Terminal                       │                                                                                                                                                          │
+ ───────────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                            ✕  │
+ Workspaces                  ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Conversations               ▾    │                                                                                                                                                          │
+       Archive this chat          │                                                                                                                                                          │
+         Archived chats           │                                                                                                                                                          │
+       Search all chats…          │                                                                                                                                                          │
+   Say hi in five words.          │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                          │
+  ▊  Filter visible   ▎           │                                                                                                                                                          │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  Chats                      ▾    │                                                                                                                                                          │
+   Say hi in five words.    💬    │                                                                                                                                                          │
+   Say hi in five words.    ⛔    │                                                                                                                                                          │◂ Inspect
+   Blocked                        │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Character · No chats        ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Model                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Agent                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Details                     ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │   User                                                                                                                                                   │
+                                  │   Say hi in five words.                                                                                                                                  │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │  ▊ Assistant                                                                                                                                             │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊  Hello there! Hope you're well.                                                                                                                       │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4.1-mini-2025-04-14     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                         Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

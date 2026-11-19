@@ -153,6 +153,7 @@ class TotalOnlyLibraryNotesScopeService:
         return {"items": [], "pagination": {"total": 2}}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_flashcards_entry_passes_source_snapshot_context_to_study() -> (
     None
@@ -191,6 +192,7 @@ async def test_library_flashcards_entry_passes_source_snapshot_context_to_study(
     assert "Conversations: 1" in scope_context.material_summary
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_empty_state_preserves_plain_study_section_routing() -> None:
     """With no Library sources, ``open_quizzes`` routes to a plain section
@@ -210,6 +212,7 @@ async def test_library_empty_state_preserves_plain_study_section_routing() -> No
     app.open_study_screen.assert_called_once_with(initial_section="quizzes")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("row_id", "header_label", "purpose_copy", "action_label"),
     [
@@ -277,7 +280,10 @@ async def test_library_study_related_modes_explain_handoff_context_and_wip(
         # task-32069: the ownership line now also carries the carry-over
         # promise the rail rows used to repeat three times.
         assert "generation and review run in Study." in visible
-        assert "Source snapshot is ready." in visible
+        # TASK-34000.6 (S-05): local mode says what needs a server instead of
+        # promising a generation it cannot run.
+        assert "Generating a pack from sources needs a tldw server" in visible
+        assert "Source snapshot is ready." not in visible
 
         open_button = screen.query_one(
             f"#{row_id.replace('create-', 'library-open-')}", Button
@@ -285,6 +291,7 @@ async def test_library_study_related_modes_explain_handoff_context_and_wip(
         assert open_button.has_class("console-action-primary")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_quizzes_mode_empty_state_explains_global_recovery_without_source_context() -> (
     None
@@ -327,6 +334,7 @@ async def test_library_quizzes_mode_empty_state_explains_global_recovery_without
     app.open_study_screen.assert_called_once_with(initial_section="quizzes")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_study_handoff_uses_counts_when_titles_are_unavailable() -> None:
     """Verify total-only snapshots do not render misleading no-context copy."""
@@ -363,6 +371,7 @@ async def test_library_study_handoff_uses_counts_when_titles_are_unavailable() -
     assert "Notes: 2" in scope_context.material_summary
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_flashcards_handoff_supports_keyboard_activation_with_source_context() -> (
     None
@@ -400,6 +409,7 @@ async def test_library_flashcards_handoff_supports_keyboard_activation_with_sour
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_study_displays_library_material_context_without_changing_service_scope() -> (
     None

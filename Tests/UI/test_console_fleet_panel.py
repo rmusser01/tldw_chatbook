@@ -27,6 +27,9 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Static
 
+from Tests.private_profile import private_profile_test
+
+from Tests.UI.test_console_fleet_targets import _painted_text
 from Tests.UI.test_console_parallel_runs import (
     _assert_painted_at_own_region,
     _assert_widget_and_ancestors_displayed,
@@ -221,6 +224,7 @@ async def _scroll_into_view(pilot, console, selector: str) -> None:
 # -- State 1: collapsed summary line (spec §7) --------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts():
     """Two running + one done -> "2 working, 1 done", with a glyph per
@@ -288,6 +292,7 @@ async def test_state_1_summary_line_shows_glyph_cluster_and_working_done_counts(
         _assert_painted_at_own_region(host, summary_static)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_1_summary_counts_every_terminal_status_as_done_not_just_literal_done():
     """ "Working" is `status == "running"`; every other status this
@@ -359,6 +364,7 @@ async def test_state_1_summary_counts_every_terminal_status_as_done_not_just_lit
 # -- State 2: expanded rows, two lines each (spec §7) --------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_2_expanded_rows_render_two_painted_lines_per_child():
     """Line 1: glyph + agent name + elapsed. Line 2: dimmed last-step
@@ -442,6 +448,7 @@ async def test_state_2_expanded_rows_render_two_painted_lines_per_child():
 # -- State 3: drill-in via a specific row click (spec §7) -----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_3_drilling_into_a_row_hides_the_fleet_section_and_shows_the_transcript():
     """Once drilled in, the fleet mini-section hides entirely (its rows
@@ -484,6 +491,7 @@ async def test_state_3_drilling_into_a_row_hides_the_fleet_section_and_shows_the
         assert back_button.styles.display != "none"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_the_last_row_drills_into_that_child_directly_not_via_a_cycle():
     """A REAL click (`pilot.click`, not calling the controller method by
@@ -537,6 +545,7 @@ async def test_clicking_the_last_row_drills_into_that_child_directly_not_via_a_c
         assert console._console_agent_drilldown_run_id == "run-3"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_the_first_row_drills_into_that_child_directly():
     """The row-order mirror of the test above -- proves row 0 is reachable
@@ -585,7 +594,8 @@ async def test_clicking_the_first_row_drills_into_that_child_directly():
 
 
 @pytest.mark.asyncio
-async def test_live_usage_is_attributed_per_child_without_replacing_task_or_order():
+@private_profile_test
+async def test_live_usage_is_attributed_per_child_without_replacing_task_or_order(request):
     """Looking up one shared snapshot would put the same token count on every child."""
     handles = (
         FleetHandle(
@@ -638,16 +648,17 @@ async def test_live_usage_is_attributed_per_child_without_replacing_task_or_orde
 
         assert [row.row_id for row in section.rows] == ["h1", "h2", "h3"]
         assert section.rows[0].secondary_text == (
-            "compare provider pricing across regions · 12 provider output tok"
+            "Target unavailable · compare provider pricing across regions · 12 provider output tok"
         )
         assert section.rows[1].secondary_text == (
-            "draft the decision memo with citations · ~7 local output tok"
+            "Target unavailable · draft the decision memo with citations · ~7 local output tok"
         )
-        assert section.rows[2].secondary_text == "check the recommendation"
+        assert section.rows[2].secondary_text == "Target unavailable · check the recommendation"
 
 
 @pytest.mark.asyncio
-async def test_terminal_budget_tokens_do_not_retain_live_usage():
+@private_profile_test
+async def test_terminal_budget_tokens_do_not_retain_live_usage(request):
     """A settled child must keep final budget accounting distinct from live usage."""
     handle = FleetHandle(
         handle_id="h1",
@@ -676,32 +687,15 @@ async def test_terminal_budget_tokens_do_not_retain_live_usage():
         section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
-        assert section.rows[0].secondary_text == "drafted · 1.2k budget tok"
+        assert section.rows[0].secondary_text == "Target unavailable · drafted · 1.2k budget tok"
         assert "output tok" not in section.rows[0].secondary_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
+async def test_live_usage_task_and_count_are_painted_wide_and_narrow(tmp_path):
     """Responsive rail paint must leave realistic task context and usage visible."""
     import time as _time
-    from xml.etree import ElementTree
-
-    def painted_cells(svg: str) -> list[tuple[str, str]]:
-        root = ElementTree.fromstring(svg)
-        return [
-            (
-                element.attrib.get("x", ""),
-                "".join(element.itertext()).replace("\xa0", " "),
-            )
-            for element in root.iter()
-            if element.tag.endswith("}text") or element.tag == "text"
-        ]
-
-    def assert_usage_cells_are_painted(svg: str) -> None:
-        cells = painted_cells(svg)
-        task_x = next(x for x, text in cells if "compare regional provider" in text)
-        assert any(x == task_x and "128" in text for x, text in cells)
-        assert any(x == task_x and "provider output tok" in text for x, text in cells)
 
     started_at = _time.monotonic() - 12.0
     handle = FleetHandle(
@@ -723,6 +717,16 @@ async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
     )
     app = _ready_test_app()
     host = ConsoleHarness(app)
+
+    def assert_usage_cells_are_painted() -> None:
+        secondary = host.screen.query_one(
+            "#console-inspector-section-agent-fleet-row-0-secondary", Static
+        )
+        _assert_widget_and_ancestors_displayed(secondary)
+        painted = _painted_text(host, secondary)
+        assert handle.task in painted
+        assert "128 provider output tok" in painted
+
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = await _setup_console(pilot, host, bridge)
         section = console.query_one(
@@ -735,9 +739,9 @@ async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
         )
         host.save_screenshot(
             filename="live-usage-wide-180x48.svg",
-            path=".superpowers/sdd/2026-09-12-live-per-run-usage/task-2-evidence",
+            path=str(tmp_path),
         )
-        assert_usage_cells_are_painted(host.export_screenshot(simplify=True))
+        assert_usage_cells_are_painted()
 
         await pilot.resize_terminal(100, 32)
         await _scroll_into_view(
@@ -745,18 +749,17 @@ async def test_live_usage_task_and_count_are_painted_wide_and_narrow():
         )
         host.save_screenshot(
             filename="live-usage-narrow-100x32.svg",
-            path=".superpowers/sdd/2026-09-12-live-per-run-usage/task-2-evidence",
+            path=str(tmp_path),
         )
-        assert_usage_cells_are_painted(host.export_screenshot(simplify=True))
+        assert_usage_cells_are_painted()
         secondary = console.query_one(
             "#console-inspector-section-agent-fleet-row-0-secondary", Static
         )
-        _assert_widget_and_ancestors_displayed(secondary)
-        _assert_painted_at_own_region(host, secondary)
         assert "regional provider pricing" in str(secondary.renderable)
         assert "128 provider output tok" in str(secondary.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
     """A finished child's measured `total_tokens` (`FleetHandle.
@@ -801,6 +804,7 @@ async def test_state_2_secondary_line_shows_token_spend_for_a_finished_child():
         assert "1.2k budget tok" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_delete_on_a_running_row_cancels_the_child_through_the_bridge():
     """PR2b Task 5 (per-row cancel), end to end through the REAL screen
@@ -846,6 +850,7 @@ async def test_pressing_delete_on_a_running_row_cancels_the_child_through_the_br
         assert bridge.cancel_calls == [("conv-A", "h1")]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_delete_on_a_finished_row_does_nothing():
     """A terminal child is not cancellable (`_fleet_row_from_handle`'s

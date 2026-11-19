@@ -122,9 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         k for k, v in cand.items() if v == "pass" and base.get(k) in ("fail", "error")
     )
     vanished = sorted(k for k in base if k not in cand)
-    allowed_vanished = [
-        k for k in vanished if any(p in k for p in args.allow_missing)
-    ]
+    allowed_vanished = [k for k in vanished if any(p in k for p in args.allow_missing)]
     unexplained_vanished = [k for k in vanished if k not in set(allowed_vanished)]
     new = sorted(k for k in cand if k not in base)
 

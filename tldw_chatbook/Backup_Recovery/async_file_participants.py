@@ -22,7 +22,7 @@ class _Outcome:
     cancelled: bool = False
 
 
-class _FileJob:
+class FileJob:
     """One-shot source dispatch. Native admission is acquired only by its worker.
 
     The creator keeps this context through event-loop result bookkeeping. Cancelling
@@ -64,7 +64,7 @@ class _FileJob:
 
     def _check_creator(self):
         if (
-            type(self) is not _FileJob
+            type(self) is not FileJob
             or self not in _jobs
             or self._pid != os.getpid()
             or self._thread is not threading.current_thread()
@@ -164,3 +164,6 @@ class _FileJob:
                 return _Outcome(
                     outcome.value, outcome.error, cancelled or self._executor_cancelled
                 )
+
+
+_FileJob = FileJob  # private alias kept for unmigrated importers (TASK-36948.2)

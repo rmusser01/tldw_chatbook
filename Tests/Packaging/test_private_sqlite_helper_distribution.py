@@ -39,7 +39,9 @@ PRIVATE_HELPER_CLOSURE = frozenset(
         "tldw_chatbook/TTS/profile_sqlite_proof.py",
         "tldw_chatbook/TTS/profile_types.py",
         "tldw_chatbook/TTS/profile_validation.py",
+        "tldw_chatbook/Utils/platform_files.py",
         "tldw_chatbook/Utils/private_paths.py",
+        "tldw_chatbook/Utils/windows_files.py",
     }
 )
 APPROVED_STDLIB_TOP_LEVELS = frozenset({*sys.stdlib_module_names, "__main__"})
@@ -53,6 +55,7 @@ APPROVED_PRODUCT_MODULES = frozenset(
         *(
             relative.removesuffix(".py").replace("/", ".")
             for relative in PRIVATE_HELPER_CLOSURE
+            if relative != "tldw_chatbook/Utils/windows_files.py" or os.name == "nt"
         ),
     }
 )

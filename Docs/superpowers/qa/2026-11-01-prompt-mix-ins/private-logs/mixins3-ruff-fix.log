@@ -1,0 +1,39 @@
+PLC0414 Import alias does not rename original package
+  --> Tests/Backup_Recovery/test_prompt_mixin_restore.py:10:51
+   |
+ 8 | import pytest
+ 9 |
+10 | from Tests.Chat.test_console_trace_runtime import make_database as make_database
+   |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+11 | from Tests.DB.test_console_prompt_mixins import attempt, saved_turn
+12 | from tldw_chatbook.DB.console_prompt_mixins import read_attempt, write_attempt
+   |
+help: Remove import alias
+
+SIM117 Use a single `with` statement with multiple contexts instead of nested `with` statements
+  --> Tests/Backup_Recovery/test_prompt_mixin_restore.py:36:5
+   |
+34 |       source_bytes = source.read_bytes()
+35 |       item = StorageItem(adapter.owner_id, "fixture:mixins", source, "included", ())
+36 | /     with authority.maintenance(("core", "bootstrap.unbound"), 2) as session:
+37 | |         with session.capture_scope((source,), stage):
+   | |_____________________________________________________^
+38 |               adapter.capture(item, candidate, Event())
+39 |       assert validate_candidate(adapter, candidate, Event(), migrate=True) == ()
+   |
+help: Combine `with` statements
+
+PLC0414 Import alias does not rename original package
+  --> Tests/DB/test_console_prompt_mixins.py:9:51
+   |
+ 7 | import pytest
+ 8 |
+ 9 | from Tests.Chat.test_console_trace_runtime import make_database as make_database
+   |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+10 | from tldw_chatbook.Chat.console_prompt_mixins import (
+11 |     MixinAttemptSnapshot,
+   |
+help: Remove import alias
+
+Found 16 errors (13 fixed, 3 remaining).
+No fixes available (2 hidden fixes can be enabled with the `--unsafe-fixes` option).

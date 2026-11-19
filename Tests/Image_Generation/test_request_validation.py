@@ -8,13 +8,17 @@ from PIL import Image, PngImagePlugin
 
 from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
 
+
 @pytest.fixture
 def rv():
     from tldw_chatbook.Image_Generation import request_validation as m
+
     return m
+
 
 def _codes(issues):
     return {i.path for i in issues}
+
 
 def _messages(issues):
     return {i.message for i in issues}
@@ -62,21 +66,45 @@ def _ref(**overrides):
     defaults.update(overrides)
     return ResolvedReferenceImage(**defaults)
 
+
 def test_valid_request_has_no_issues(rv):
-    ok = {"backend": "swarmui", "prompt": "cat", "width": 512, "height": 512, "steps": 20, "cfg_scale": 7.0, "extra_params": {}}
+    ok = {
+        "backend": "swarmui",
+        "prompt": "cat",
+        "width": 512,
+        "height": 512,
+        "steps": 20,
+        "cfg_scale": 7.0,
+        "extra_params": {},
+    }
     assert rv.validate_image_generation_request(ok) == []
 
+
 def test_oversize_dimensions_flagged(rv):
-    bad = {"backend": "swarmui", "prompt": "cat", "width": 9000, "height": 9000, "extra_params": {}}
+    bad = {
+        "backend": "swarmui",
+        "prompt": "cat",
+        "width": 9000,
+        "height": 9000,
+        "extra_params": {},
+    }
     issues = rv.validate_image_generation_request(bad)
     assert any("width" in p for p in _codes(issues))
 
+
 def test_negative_cfg_scale_flagged(rv):
     bad = {"backend": "swarmui", "prompt": "cat", "cfg_scale": -1.0, "extra_params": {}}
-    assert any("cfg_scale" in p for p in _codes(rv.validate_image_generation_request(bad)))
+    assert any(
+        "cfg_scale" in p for p in _codes(rv.validate_image_generation_request(bad))
+    )
+
 
 def test_extra_params_not_in_allowlist_flagged(rv):
-    bad = {"backend": "swarmui", "prompt": "cat", "extra_params": {"totally_unknown": 1}}
+    bad = {
+        "backend": "swarmui",
+        "prompt": "cat",
+        "extra_params": {"totally_unknown": 1},
+    }
     issues = rv.validate_image_generation_request(bad)
     assert any("extra_params" in p for p in _codes(issues))
 
@@ -89,16 +117,33 @@ def test_reference_image_absent_key_no_issues(rv):
 
 
 def test_reference_image_none_no_issues(rv):
-    ok = {"backend": "swarmui", "prompt": "cat", "extra_params": {}, "reference_image": None}
+    ok = {
+        "backend": "swarmui",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": None,
+    }
     assert rv.validate_image_generation_request(ok) == []
 
 
 @pytest.mark.parametrize(
     "backend",
-    ["stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio"],
+    [
+        "stable_diffusion_cpp",
+        "swarmui",
+        "openrouter",
+        "novita",
+        "together",
+        "modelstudio",
+    ],
 )
 def test_reference_image_refused_for_legacy_backends(rv, backend):
-    bad = {"backend": backend, "prompt": "cat", "extra_params": {}, "reference_image": _ref()}
+    bad = {
+        "backend": backend,
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(),
+    }
     issues = rv.validate_image_generation_request(bad)
     assert issues == [
         rv.ImageGenerationValidationIssue(
@@ -111,7 +156,12 @@ def test_reference_image_refused_for_legacy_backends(rv, backend):
 
 @pytest.mark.parametrize("backend", ["fal", "gemini"])
 def test_reference_image_accepted_for_new_backends(rv, backend):
-    ok = {"backend": backend, "prompt": "cat", "extra_params": {}, "reference_image": _ref()}
+    ok = {
+        "backend": backend,
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(),
+    }
     assert rv.validate_image_generation_request(ok) == []
 
 
@@ -132,9 +182,17 @@ def test_reference_image_webp_accepted(rv):
 
 
 def test_reference_image_gif_refused(rv):
-    bad = {"backend": "fal", "prompt": "cat", "extra_params": {}, "reference_image": _ref(mime_type="image/gif")}
+    bad = {
+        "backend": "fal",
+        "prompt": "cat",
+        "extra_params": {},
+        "reference_image": _ref(mime_type="image/gif"),
+    }
     issues = rv.validate_image_generation_request(bad)
-    assert "reference image mime 'image/gif' is not supported (png/jpeg/webp)" in _messages(issues)
+    assert (
+        "reference image mime 'image/gif' is not supported (png/jpeg/webp)"
+        in _messages(issues)
+    )
 
 
 def test_reference_image_oversize_refused(rv):
@@ -238,7 +296,9 @@ def test_reference_image_plain_builtin_bytes_remain_valid(rv):
     assert rv.validate_image_generation_request(ok) == []
 
 
-@pytest.mark.parametrize("content_factory", [memoryview, lambda value: _ExplosiveBytes(value)])
+@pytest.mark.parametrize(
+    "content_factory", [memoryview, lambda value: _ExplosiveBytes(value)]
+)
 def test_reference_image_requires_exact_builtin_bytes(rv, content_factory):
     content = content_factory(_image_bytes())
     bad = {
@@ -299,7 +359,9 @@ def test_reference_image_multiple_problems_all_reported_no_content_variant(rv):
     issues = rv.validate_image_generation_request(bad)
     messages = _messages(issues)
     assert "backend 'swarmui' does not support reference images" in messages
-    assert "reference image mime 'image/gif' is not supported (png/jpeg/webp)" in messages
+    assert (
+        "reference image mime 'image/gif' is not supported (png/jpeg/webp)" in messages
+    )
     assert "reference image has no content bytes" in messages
     assert len(issues) == 3
 
@@ -322,7 +384,9 @@ def test_reference_image_multiple_problems_all_reported_oversize_variant(rv):
     issues = rv.validate_image_generation_request(bad)
     messages = _messages(issues)
     assert "backend 'swarmui' does not support reference images" in messages
-    assert "reference image mime 'image/gif' is not supported (png/jpeg/webp)" in messages
+    assert (
+        "reference image mime 'image/gif' is not supported (png/jpeg/webp)" in messages
+    )
     assert "reference image exceeds the 10MB limit" in messages
     assert len(issues) == 3
 
@@ -349,7 +413,9 @@ def test_reference_image_truncated_decode_is_refused(rv):
         "backend": "fal",
         "prompt": "cat",
         "extra_params": {},
-        "reference_image": _ref(content=content, bytes_len=len(content), width=64, height=64),
+        "reference_image": _ref(
+            content=content, bytes_len=len(content), width=64, height=64
+        ),
     }
 
     assert "reference image could not be decoded" in _messages(
@@ -492,7 +558,9 @@ def test_reference_validation_does_not_mutate_warning_filters_during_concurrent_
                         "backend": "fal",
                         "prompt": "cat",
                         "extra_params": {},
-                        "reference_image": _ref(content=content, bytes_len=len(content)),
+                        "reference_image": _ref(
+                            content=content, bytes_len=len(content)
+                        ),
                     }
                 )
             )
@@ -646,7 +714,9 @@ def test_reference_image_over_width_cap_is_rejected_before_decode_load(rv, monke
     )
 
 
-def test_reference_image_over_height_cap_is_rejected_before_decode_load(rv, monkeypatch):
+def test_reference_image_over_height_cap_is_rejected_before_decode_load(
+    rv, monkeypatch
+):
     _assert_header_cap_precedes_load(
         rv,
         monkeypatch,

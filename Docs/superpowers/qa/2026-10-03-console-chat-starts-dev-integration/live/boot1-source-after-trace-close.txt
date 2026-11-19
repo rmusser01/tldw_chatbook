@@ -1,0 +1,52 @@
+ Trace · DEV_WORKSPACE Chat · 28 events
+ Future exchange capture: Off · c Change…
+ LIVE · FOLLOWING · 28 events
+ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ ▊  Search trace events…                                                                                                                                                                                                                 ▎
+ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ Shown 28            Kind                                               ▼ State                                              ▼ Agent                                              ▼ Provider                                            ▼
+ Matches 28
+ Total 28
+ Input             ◆
+ Model            !━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Tools             │                                       ▶▶                                                                                                                                                      ◀
+ Agents            │  ⊙⊙●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●⊙●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●⊙●●●●●●●●●●⊙●
+        13:19:11                                                                                                                                                                                                                  13:20:47
+                                                                                                                                                                                no brush · ◇ feedback ! error ▶ call ◀ result ◉ run ⊙ step
+ #     Event         Summary                   State     In    Cache  Out   Duration  Start    Done
+       Turn          ▾ Turn 1 · 28 records     Expanded
+ 1     User message  Call new_chat exactly onceComplete  —     —      —     —         13:19:16 —
+ 2     Retrieval star    ↳ Retrieval started   Started   —     —      —     —         13:19:15 —
+ 3     Retrieval fail    ↳ Retrieval failed    Failed    —     —      —     —         13:19:15 —
+ 4     Model request     ↳ model request starteStarted   —     —      —     —         13:19:16 —
+ 5     Agent run     primary run               Done      —     —      —     84.88s    13:19:17 13:20:42
+ 6     Agent run crea    ↳ Agent run created   Created   —     —      —     0.00s     13:19:17 13:19:17
+ 7     Agent run star    ↳ Agent run started   Started   —     —      —     0.00s     13:19:18 13:19:18
+ 8     Context attach    ↳ system, workspace coDone      —     —      —     0.00s     13:19:18 13:19:18
+ 9     Context inject    ↳ system, workspace coDone      —     —      —     0.00s     13:19:18 13:19:18
+ 10    Model request     ↳ Model request starteStarted   —     —      —     0.00s     13:19:18 13:19:18
+ 11    Model response    ↳ Model response complDone      —     —      —     0.00s     13:19:33 13:19:33
+ 12    Model response    ↳ ```tool_call {"name"Observed  —     —      —     0.00s     13:19:33 13:19:33
+ 13    Tool proposed     ↳ new_chat proposed   Proposed  —     —      —     0.00s     13:19:33 13:19:33
+ 14    Approval reque    ↳ Approval requested fPending   —     —      —     0.00s     13:19:33 13:19:33
+ 15    Approval appro    ↳ Approval granted forApproved  —     —      —     0.00s     13:19:33 13:19:33
+ 16    Tool execution    ↳ new_chat execution sStarted   —     —      —     0.00s     13:19:33 13:19:33
+ 17    Tool call         ↳ tool call           Observed  —     —      —     0.00s     13:19:33 13:19:33
+ 18    Tool succeeded    ↳ new_chat success    Success   —     —      —     0.00s     13:20:37 13:20:37
+ 19    Tool result       ↳ new_chat recorded   Success   —     —      —     0.00s     13:20:37 13:20:37
+ 20    Model request     ↳ Model request starteStarted   —     —      —     0.00s     13:20:37 13:20:37
+ 21    Model first to    ↳ model first token   Streaming —     —      —     —         13:20:42 —
+ 22    Model response    ↳ Model response complDone      —     —      —     0.00s     13:20:42 13:20:42
+ 23    Model response    ↳ draft               Observed  —     —      —     0.00s     13:20:42 13:20:42
+ 24    Agent run comp    ↳ Agent run completed Done      —     —      —     0.00s     13:20:42 13:20:42
+ 25    Model response    ↳ model response complDone      —     —      —     0.00s     13:20:42 13:20:42
+ 26    Tool call         ↳ new_chat -> {"title"Observed  —     —      —     0.00s     13:20:37 13:20:37
+ 27    Tool result       ↳ new_chat -> {"title"Observed  —     —      —     0.00s     13:20:37 13:20:37
+ 28    Assistant messdraft                     Complete  —     —      —     85.63s    13:19:16 13:20:42
+
+
+
+
+
+ j/k event · enter select · b range
+ [/] zoom · ,/. pan · c capture

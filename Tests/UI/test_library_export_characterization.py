@@ -159,6 +159,7 @@ class _CancelAwareExportService:
         return {"chatbook_id": 1, **kwargs}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancel_button_press_sets_the_cancel_event_and_settles_cancelled(
     tmp_path,
@@ -234,6 +235,7 @@ async def test_cancel_button_press_sets_the_cancel_event_and_settles_cancelled(
         assert len(service.export_calls) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_description_input_updates_the_export_form_state() -> None:
     """Characterization (pre-extraction): pins handle_library_export_description_changed.
@@ -266,6 +268,7 @@ async def test_description_input_updates_the_export_form_state() -> None:
         assert screen._export_state.form["description"] == "quarterly bundle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_selected_conversations_opens_export_canvas_scoped_to_the_selection() -> None:
     """Characterization (pre-extraction): pins handle_library_conversations_export_selected.
@@ -307,6 +310,7 @@ async def test_export_selected_conversations_opens_export_canvas_scoped_to_the_s
         assert screen._export_state.origin_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_selected_media_opens_export_canvas_scoped_to_the_selection() -> None:
     """Characterization (pre-extraction): pins handle_library_media_export_selected.
@@ -357,6 +361,7 @@ async def test_export_selected_media_opens_export_canvas_scoped_to_the_selection
         assert screen._export_state.origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_legacy_recovery_export_button_pushes_file_save_dialog() -> None:
     """Characterization (pre-extraction): pins choose_library_collection_legacy_recovery_export.

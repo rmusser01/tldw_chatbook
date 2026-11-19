@@ -1,0 +1,35 @@
+{
+  "base": "e96b3507be115e9790b4d37beafe471f5785252d",
+  "green01_reconstructed_source_sha256": "67a4e18ec403413d81b989e40fa6a6562692ecf930a4476b220f41183d6d4b59",
+  "default_false_executable_ast_equal_to_green01": true,
+  "storage_true_draft_false_executable_ast_equal_to_base": true,
+  "unchanged_existing_functions": 23,
+  "all_module_assignments_ceilings_equal": true,
+  "pause_idle_visit_callbacks_ceilings_unchanged": true,
+  "workflow_only_one_node_added": true,
+  "workflow_targets": [
+    "Tests/Performance/test_console_keystroke_work_census.py::test_typing_never_snapshots_the_transcript",
+    "Tests/Performance/test_console_keystroke_work_census.py::test_keystroke_work_does_not_scale_with_transcript_length",
+    "Tests/Performance/test_console_keystroke_work_census.py::test_typing_census_excludes_elapsed_draft_pause_work"
+  ],
+  "production_git_objects": {
+    "tldw_chatbook": "e4265ce072b5213a57d64359ebf0184d0dc761c4",
+    "Docs/security/production-diagnostic-inventory.json": "283912e7f06df2c37cbb1547ba0e7f9dc3a590d6"
+  },
+  "production_working_tree_clean": true,
+  "inherited_format_change_regions": 5,
+  "new_format_debt": false,
+  "sha256": {
+    "Tests/Performance/test_console_keystroke_work_census.py": "b27168b66459d914167c87f4c6c42edf9e6d521e7b96e16f25676b3f7f9bc773",
+    ".github/workflows/perf-guard.yml": "a35826e44acffc0d7c9604b063f570a1120f43475036a73f160bcf55d2aba68c",
+    "tldw_chatbook/app.py": "bd16a79f5b8e612b9a19bffc3b60a733dc55d3ed24fc38ac52ce4e6171b2c83d",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "be1c1db087f2c339a47b27e20b9d7db4d2eb8b77bc71446bd1025dec32f829ea",
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": "73c5fee2b2b1a7058c6489084b5385e162b142bd5bdba506738bcd9b8c76741a"
+  },
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "versions": {
+    "pytest": "8.3.5",
+    "textual": "8.2.8"
+  },
+  "ruff": "ruff 0.4.5"
+}

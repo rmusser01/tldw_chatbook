@@ -12,9 +12,7 @@ from textual.widgets import Static
 
 from tldw_chatbook.Utils import optional_deps
 
-SUPPORTED_IMAGE_MIME_TYPES = frozenset(
-    {"image/png", "image/jpeg", "image/webp"}
-)
+SUPPORTED_IMAGE_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/webp"})
 SUPPORTED_IMAGE_FORMATS = frozenset({"PNG", "JPEG", "WEBP"})
 IMAGE_PREVIEW_MAX_DIMENSION = 1024
 
@@ -173,12 +171,7 @@ def _mosaic_renderable(image: Any, cols: int, lines: int) -> tuple[Any, int, int
     """Return the memoized (mosaic, width, height) for one image and cell box."""
     global _MOSAIC_MEMO
     memo = _MOSAIC_MEMO
-    if (
-        memo is not None
-        and memo[0] is image
-        and memo[1] == cols
-        and memo[2] == lines
-    ):
+    if memo is not None and memo[0] is image and memo[1] == cols and memo[2] == lines:
         return memo[3], memo[4], memo[5]
 
     from tldw_chatbook.Utils.mosaic_render import mosaic_from_image
@@ -228,9 +221,7 @@ def build_media_image_widget(
             from textual_image.widget import Image as GraphicsImage
 
             widget: Widget = GraphicsImage(image)
-            width, height = fit_image_cell_size(
-                image.width, image.height, cols, lines
-            )
+            width, height = fit_image_cell_size(image.width, image.height, cols, lines)
             # ds-runtime: image aspect ratio fitted to the measured preview box
             widget.set_styles(width=width)
             # ds-runtime: image aspect ratio fitted to the measured preview box

@@ -1,0 +1,171 @@
+diff --git a/Tests/UI/test_console_checked_display_scope.py b/Tests/UI/test_console_checked_display_scope.py
+index ff60383a36..e4fa16cd9c 100644
+--- a/Tests/UI/test_console_checked_display_scope.py
++++ b/Tests/UI/test_console_checked_display_scope.py
+@@ -807,3 +807,74 @@ async def test_spoofed_bound_key_attributes_retain_fresh_native_scope(tmp_path):
+     finally:
+         await asyncio.gather(*tasks, return_exceptions=True)
+         database.close()
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("expire_during_tokenizer", [False, True])
++async def test_tokenizer_wait_never_renews_original_checked_display(
++    tmp_path, monkeypatch, expire_during_tokenizer
++):
++    """A tokenizer completion cannot grant a new config-read freshness window."""
++    from Tests.UI.test_console_tokenizer_preparation import HeldPreparation
++
++    database, _store, _controller, screen, tasks = _screen(tmp_path)
++    projection = spend.ConsoleReadinessConfigProjection.for_screen(screen)
++    request = HeldPreparation("model", "provider")
++    projection._tokenizer_request = request
++    original_current = spend._tokenizer_display.preparation_current
++    monkeypatch.setattr(
++        spend._tokenizer_display,
++        "preparation_current",
++        lambda candidate: candidate is request or original_current(candidate),
++    )
++    issued, rendered, retries = [], [], []
++    screen._request_console_control_bar_sync = lambda **_: retries.append(True)
++    monitor = sys.monitoring
++    tool = next(slot for slot in range(6) if monitor.get_tool(slot) is None)
++    code = projection.read_current.__code__
++
++    def observed(actual_code, _offset, result):
++        assert actual_code is code
++        if isinstance(result, spend.ConsoleReadinessConfigRead):
++            issued.append(result._display_proof)
++
++    monitor.use_tool_id(tool, "tokenizer-original-display-age")
++    monitor.register_callback(tool, monitor.events.PY_RETURN, observed)
++    monitor.set_local_events(tool, code, monitor.events.PY_RETURN)
++    try:
++        assert not projection.run(lambda: None)
++        assert await asyncio.to_thread(request.entered.wait, 3)
++        assert len(issued) == 1 and issued[0] in spend._checked_display_proofs
++        assert request.thread != threading.get_ident()
++        assert projection._reads, "tokenizer escaped the finite preparation owner"
++        if expire_during_tokenizer:
++            await asyncio.sleep(1.05)
++        request.release.set()
++        await asyncio.gather(*tasks)
++        assert not projection._reads
++        assert projection._tokenizer_prepared is request
++        with _actual_calls() as calls:
++            accepted = run_console_presentation_sync(
++                screen, lambda: rendered.append(True)
++            )
++        assert accepted is not expire_during_tokenizer
++        assert rendered == ([] if expire_during_tokenizer else [True])
++        assert retries == ([True] if expire_during_tokenizer else [])
++        assert calls["main_scopes"] == calls["main_opens"] == 0, calls
++        assert projection._display_proof.at == issued[0].at
++        assert projection.at == issued[0].at
++        if expire_during_tokenizer:
++            assert projection.pending
++            await asyncio.gather(*tasks)
++            assert len(issued) == 2 and issued[1].at > issued[0].at
++            assert run_console_presentation_sync(
++                screen, lambda: rendered.append(True)
++            )
++            assert rendered == [True]
++    finally:
++        request.release.set()
++        await asyncio.gather(*tasks, return_exceptions=True)
++        monitor.set_local_events(tool, code, 0)
++        monitor.register_callback(tool, monitor.events.PY_RETURN, None)
++        monitor.free_tool_id(tool)
++        database.close()
+diff --git a/Tests/UI/test_console_tab_publication_read_barrier.py b/Tests/UI/test_console_tab_publication_read_barrier.py
+index 6bdd8d94ac..2d0e5b9ae8 100644
+--- a/Tests/UI/test_console_tab_publication_read_barrier.py
++++ b/Tests/UI/test_console_tab_publication_read_barrier.py
+@@ -611,6 +611,7 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+     request, phase
+ ):
+     from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
++    from Tests.UI.test_console_tab_publication_maintenance import _loop_wait, _quiet
+ 
+     app = _ready_app()
+     host = ProductionConsoleHarness(app)
+@@ -627,22 +628,13 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+         projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+         assert type(projection) is spend.ConsoleReadinessConfigProjection
+         assert projection.max_age == 1.0
+-        assert await _settle(
+-            pilot,
+-            lambda: not projection.pending
+-            and not console._console_sync_in_progress
+-            and not getattr(console, "_console_control_bar_replay_whole_sync", False),
+-        )
++        assert await _quiet(pilot, console, projection)
+         if phase == "after_close":
+             controller.switch_session(doomed.id)
+             await _show_tabs(console, pilot, {keeper, doomed.id})
+             assert await projection.warm()
+             assert projection.key[5] == doomed.id
+-            assert await _settle(
+-                pilot,
+-                lambda: not projection.pending
+-                and not console._console_sync_in_progress,
+-            )
++            assert await _quiet(pilot, console, projection)
+         gate = _OriginalReadGate(
+             projection, controller.store, doomed.id,
+             "coalesced" if phase == "same_session_drain" else phase,
+@@ -678,9 +670,9 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+                 # Current FULL returns False for cold readiness. Hold its real
+                 # earlier Surface await, and admit the original read separately.
+                 warming = asyncio.create_task(projection.warm())
+-                assert await _settle(pilot, entry.entered.is_set)
+-                assert await _settle(
+-                    pilot, gate.entered.is_set
++                assert await _loop_wait(entry.entered.is_set)
++                assert await _loop_wait(
++                    gate.entered.is_set
+                 ), "original reader was never admitted"
+                 assert console._console_sync_in_progress
+                 assert doomed.id in _session_ids(controller.store)
+@@ -715,7 +707,9 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+             if lock_owned:
+                 surface._session_sync_lock.release()
+             try:
+-                reader_returned = await _settle(pilot, gate.reader_returned.is_set)
++                # Native retirement needs the loop, not another forced UI paint.
++                # Keep the same ten-second deadline as the original settle.
++                reader_returned = await _loop_wait(gate.reader_returned.is_set)
+                 assert reader_returned, (
+                     "released original held reader never returned; "
+                     + json.dumps(gate.reader_diagnostic(), sort_keys=True)
+diff --git a/tldw_chatbook/UI/Console_Modules/console_spend_projection.py b/tldw_chatbook/UI/Console_Modules/console_spend_projection.py
+index eef80d37e6..1eecce2dc9 100644
+--- a/tldw_chatbook/UI/Console_Modules/console_spend_projection.py
++++ b/tldw_chatbook/UI/Console_Modules/console_spend_projection.py
+@@ -449,6 +449,7 @@ class ConsoleReadinessConfigProjection:
+                 reader, creator=self, session_id=key[5], reads=self._reads,
+                 observers=observers, require_current=lambda: None,
+             )
++            read_at = time.monotonic()
+             if (
+                 tokenizer_request is not None
+                 and tokenizer_request is self._tokenizer_request
+@@ -521,7 +522,7 @@ class ConsoleReadinessConfigProjection:
+                     self._tokenizer_prepared = None
+                 self._tokenizer_retry_at = time.monotonic() + self.max_age
+             self._runtime_owner = runtime
+-            self.key, self.value, self.at = current_key, value, time.monotonic()
++            self.key, self.value, self.at = current_key, value, read_at
+             self.context_policy = result.context_policy
+             self.pricing = result.pricing
+             proof = result._display_proof
+@@ -538,7 +539,8 @@ class ConsoleReadinessConfigProjection:
+                 # The existing pristine-default handoff may change only this
+                 # owner's settings revision. Bind the issued display copy to
+                 # that final exact owner and its original one-second clock.
+-                published = replace(proof, owner=current_key, at=self.at)
++                published = replace(proof, owner=current_key)
++                self.at = proof.at
+                 _checked_display_proofs.add(published)
+                 self._display_proof = published
+         except Exception:  # noqa: BLE001 - remain cold and retryable.

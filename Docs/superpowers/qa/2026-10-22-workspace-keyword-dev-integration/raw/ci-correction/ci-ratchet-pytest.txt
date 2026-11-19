@@ -1,0 +1,106 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F..F..F.FFF...........F.F..F....F......................................  [100%]
+================================== FAILURES ===================================
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py] _
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/Chat/console_chat_controller.py grew to 29135 lines (budget 29050, +85).
+E     
+E     tldw_chatbook/Chat/console_chat_controller.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 29135 <= 29050
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_interrupt_rounds.py] _
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/Chat/console_interrupt_rounds.py grew to 6463 lines (budget 6453, +10).
+E     
+E     tldw_chatbook/Chat/console_interrupt_rounds.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 6463 <= 6453
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/MCP_Modules/mcp_workbench.py] _
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/UI/MCP_Modules/mcp_workbench.py grew to 6954 lines (budget 6760, +194).
+E     
+E     tldw_chatbook/UI/MCP_Modules/mcp_workbench.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 6954 <= 6760
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/change_review_screen.py] _
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/UI/Screens/change_review_screen.py grew to 4978 lines (budget 4967, +11).
+E     
+E     tldw_chatbook/UI/Screens/change_review_screen.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 4978 <= 4967
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/llm_screen.py] _
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/UI/Screens/llm_screen.py grew to 5185 lines (budget 5180, +5).
+E     
+E     tldw_chatbook/UI/Screens/llm_screen.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 5185 <= 5180
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/personas_screen.py] _
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/UI/Screens/personas_screen.py grew to 16617 lines (budget 16564, +53).
+E     
+E     tldw_chatbook/UI/Screens/personas_screen.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 16617 <= 16564
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Console/console_transcript.py] _
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/Widgets/Console/console_transcript.py grew to 8652 lines (budget 8353, +299).
+E     
+E     tldw_chatbook/Widgets/Console/console_transcript.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 8652 <= 8353
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/app_command_providers.py] _
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/app_command_providers.py grew to 1133 lines (budget 1123, +10).
+E     
+E     tldw_chatbook/app_command_providers.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 1133 <= 1123
+__ test_module_does_not_grow_past_its_budget[tldw_chatbook/app_lifecycle.py] __
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/app_lifecycle.py grew to 2350 lines (budget 2134, +216).
+E     
+E     tldw_chatbook/app_lifecycle.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 2350 <= 2134
+_ test_module_does_not_grow_past_its_budget[tldw_chatbook/tldw_api/client.py] _
+Tests\Architecture\test_module_size_ratchet.py:454: in test_module_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/tldw_api/client.py grew to 16795 lines (budget 16687, +108).
+E     
+E     tldw_chatbook/tldw_api/client.py is under a size ratchet (Tests/Architecture/test_module_size_ratchet.py). Put new code in a controller/widget/helper module — do NOT raise the budget to make this pass. Lower it when the file shrinks.
+E   assert 16795 <= 16687
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+83.05s call     Tests/UI/test_workspace_project_index_settings.py::test_actual_settings_card_enable_build_clear_preserves_library[textual-light-size1]
+82.00s call     Tests/UI/test_workspace_project_index_settings.py::test_actual_settings_card_enable_build_clear_preserves_library[textual-dark-size0]
+17.26s call     Tests/UI/test_settings_configuration_hub.py::test_settings_overview_ownership_rows_are_sourced_from_record
+15.78s call     Tests/UI/test_workspace_project_index_settings.py::test_saved_policy_and_stale_actions
+6.23s call     Tests/UI/test_settings_configuration_hub.py::test_settings_ownership_records_cover_categories_and_runtime_boundaries
+
+(20 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_interrupt_rounds.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/MCP_Modules/mcp_workbench.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/change_review_screen.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/llm_screen.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/personas_screen.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Console/console_transcript.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app_command_providers.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/app_lifecycle.py]
+FAILED Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/tldw_api/client.py]
+10 failed, 61 passed, 2 warnings in 212.14s (0:03:32)

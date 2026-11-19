@@ -177,17 +177,26 @@ def _spy_diff_work(monkeypatch) -> dict[str, list[int]]:
     return threads
 
 
+@pytest.fixture
+def db(tmp_path):
+    db = SubscriptionsDB(tmp_path / "subs.db", "test")
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 # --- AC#1: the HTML extraction ------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_html_extraction_runs_off_the_event_loop_thread(tmp_path, monkeypatch):
+async def test_html_extraction_runs_off_the_event_loop_thread(db, monkeypatch):
     """BeautifulSoup over a fetched page is not loop work.
 
     This is the cost EVERY url-family check pays, changed or not, so it is
     asserted on the plain first-check path with nothing else in play.
     """
-    db = SubscriptionsDB(tmp_path / "subs.db", "test")
     monitor = URLMonitor(db)
     subscription = _url_subscription(db)
     _serve(monkeypatch, lambda url, n: _PAGE_ONE)
@@ -217,12 +226,12 @@ async def test_html_extraction_runs_off_the_event_loop_thread(tmp_path, monkeypa
 # --- AC#2: the difflib work ---------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_the_diff_work_runs_off_the_event_loop_thread(tmp_path, monkeypatch):
+async def test_the_diff_work_runs_off_the_event_loop_thread(db, monkeypatch):
     """Every difflib call on the changed path leaves the loop -- and still
     produces byte-for-byte the diff, rule-match text and classification it
     always did."""
-    db = SubscriptionsDB(tmp_path / "subs.db", "test")
     monitor = URLMonitor(db)
     subscription = _url_subscription(db)
     bodies = {1: _PAGE_ONE, 2: _PAGE_TWO}
@@ -270,9 +279,10 @@ async def test_the_diff_work_runs_off_the_event_loop_thread(tmp_path, monkeypatc
 # --- AC#3: url_list -- every URL, not just the first --------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_url_list_runs_extraction_and_diff_off_loop_for_every_url(
-    tmp_path, monkeypatch
+    db, monkeypatch
 ):
     """The real `url_list` execution path, two URLs, two runs.
 
@@ -281,7 +291,6 @@ async def test_url_list_runs_extraction_and_diff_off_loop_for_every_url(
     loop -- a `url_list` source multiplies them by its URL count, which is
     exactly why the task calls it out.
     """
-    db = SubscriptionsDB(tmp_path / "subs.db", "test")
     source_id = db.add_subscription(
         name="Two pages",
         type="url_list",

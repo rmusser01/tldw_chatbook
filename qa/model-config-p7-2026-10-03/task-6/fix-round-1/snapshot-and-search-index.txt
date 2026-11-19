@@ -1,0 +1,75 @@
+Findings 1 and 2: Tests/UI/test_llamacpp_snapshot_settings.py (AC#2) and
+Tests/UI/test_settings_search_index.py (AC#10), 2026-10-04.
+Base d9b73fc412, Task 6 head 7bf5f42a79 (product code identical to 7adb151708),
+dev merge base 5e0341d1ec. The fix commit 1db0f78198 changes neither file nor
+the code they cover except the compact-workbench CSS (<=100 columns).
+
+Every run: env -i, HOME/XDG_*/TLDW_CONFIG_PATH in a scratch directory, the
+null keyring, PYTHONPATH=<tree under test>, -p no:randomly, and the scratch
+admission plugin (imports tldw_chatbook.app at collection and marks every node
+bootstrap_profile; lessons-testing-evidence "A local red wall of RecoveryRequired").
+
+1. Whole files in one process per file (-n 4 --dist loadfile), the way Task 6 ran them
+   base: 13 failed, 5 passed in 106.64s
+   head: 13 failed, 5 passed in 106.45s
+   Failure names: 13 at base, 13 at head, 13 shared, 0 head-only, 0 base-only.
+   First line of each failure, identical on both sides:
+     test_every_rendered_setting_is_in_the_search_index       Rendered settings missing from FIELD_SEARCH_INDEX
+     test_speech_provider_form_fields_match_the_panel_source  only in table: omnivoice model_root, voice_resource_directory
+     test_f9_snapshot_save_rejects_noninteger_values_without_coercion   ValidationError keep_count 'broken-private-value'
+     test_success_canonicalizes_unchanged_f9_draft_and_continues_once x6 assert 0 == 1 (len(writes))
+     test_f9_save_preserves_new_edits_while_persistence_waits           TimeoutError
+     test_f9_snapshot_draft_uses_category_save_offthread_and_reverts    ValidationError keep_count 'broken-private-value'
+     test_f9_snapshot_controls_paint_and_keyboard_save[size0/size1]     assert False (checkbox value)
+   So test_f9_snapshot_controls_paint_and_keyboard_save[*] is RED in the plugin env at
+   base and at head (the review's question).
+
+2. Why: the plugin's bootstrap_profile marker gives every node in a worker the same
+   profile (Tests/conftest.py _BOOTSTRAP_CONFIG_ROOT), so config writes leak:
+   - test_malformed_f9_preferences_..._revert_recovery[bad0..2] run first, pass, and
+     leave llamacpp_snapshots.keep_count = "broken-private-value" in the shared
+     config; later cases raise ValidationError or find the snapshot controls disabled.
+   - Alone in one process, test_f9_snapshot_controls_paint_and_keyboard_save gave
+     "1 failed, 1 passed" on both sides: [size0] passes and saves enabled = true, so
+     [size1] starts ticked and its Space un-ticks it (assert checkbox.value).
+
+3. One node per pytest process (each process gets a fresh bootstrap root), 18 nodes:
+   base: 16 passed, 2 failed      head: 16 passed, 2 failed
+   All 15 test_llamacpp_snapshot_settings.py nodes PASS on both sides, including
+     test_f9_snapshot_controls_paint_and_keyboard_save[size0] and [size1]  (Space ticks the
+       moved checkbox, Saved as llamacpp_snapshots.enabled, next-launch copy, keyboard
+       Enter on Save persists enabled)
+     test_f9_snapshot_draft_uses_category_save_offthread_and_reverts      (off-thread
+       save, then a staged 0 refused and Revert restores 27)
+     test_f9_stale_snapshot_draft_requires_revert_before_save
+     test_success_canonicalizes_unchanged_f9_draft_and_continues_once x6
+     test_f9_save_preserves_new_edits_while_persistence_waits
+     test_f9_snapshot_save_rejects_noninteger_values_without_coercion
+     test_malformed_f9_preferences_leave_provider_surface_and_revert_recovery x3
+   The two failures are both test_settings_search_index.py names (below).
+   test_non_setting_allowlist_has_no_stale_rows passes on both sides.
+
+4. test_settings_search_index.py at the dev merge base 5e0341d1ec, one node per process:
+   test_every_rendered_setting_is_in_the_search_index        FAILED
+   test_non_setting_allowlist_has_no_stale_rows               passed
+   test_speech_provider_form_fields_match_the_panel_source   FAILED
+   Both reds predate this phase on dev.
+
+5. The missing-from-index list of test_every_rendered_setting_is_in_the_search_index:
+   dev 5e0341d1ec: 18 entries; base d9b73fc412: the same 18 (diff empty);
+   head 7bf5f42a79: 16 entries, base's 18 minus
+     ('providers-models', 'settings-snapshot-enabled')
+     ('providers-models', 'settings-snapshot-keep')
+   (Task 6's new search rows). No entry was added. The other 16, all outside this card
+   except settings-provider-auth-source (present on dev):
+     console-behavior: settings-console-reasoning-history, -reasoning-native-tools,
+       -reasoning-override, settings-permission-summary-mode/-model/-provider
+     privacy-security: settings-canvas-auto-open, settings-canvas-enabled
+     providers-models: settings-provider-auth-source
+     speech-tts: settings-speech-handsfree-acoustic-barge-in, -handsfree-send-delay,
+       settings-speech-pipeline-aec-enabled, -pipeline-response-eagerness-ms
+     theme: settings-theme-preset-target
+     web-search: web-search-backend, web-search-default
+   test_speech_provider_form_fields_match_the_panel_source fails with the same message
+   on all three trees: only in table: [('omnivoice', 'model_root', 'Model root'),
+   ('omnivoice', 'voice_resource_directory', 'Voice resource directory')].

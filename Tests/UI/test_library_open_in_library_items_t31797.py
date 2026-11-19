@@ -15,6 +15,9 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from tldw_chatbook.Library.library_media_reader_state import (
+    LibraryMediaReaderSessionState,
+)
 from tldw_chatbook.Library.library_notes_session import (
     NoteFlushOutcome,
     NoteFlushOutcomeKind,
@@ -40,7 +43,7 @@ def _make_deep_link_screen() -> SimpleNamespace:
     async def _flush_note_save() -> NoteFlushOutcome:
         return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
 
-    async def _apply_active_surface() -> None:
+    async def _apply_active_surface(_build_child) -> None:
         calls.append("apply_active_surface")
 
     def _request_browse(scope: object, *, focus_identity: object) -> None:
@@ -60,7 +63,9 @@ def _make_deep_link_screen() -> SimpleNamespace:
         # screen's generated shim block was deleted in the media cleanup PR.
         # Same fixture shape as `test_library_media_trash.py`'s own fakes.
         _media_state=SimpleNamespace(
-            reader_session=SimpleNamespace(external_detail=False),
+            # TASK-34000.18: a REAL session -- the branch now canonicalises
+            # the id at the door and begins the Reader selection on it.
+            reader_session=LibraryMediaReaderSessionState(),
             # plain state fields the branch assigns to
             selected_media_id=None,
             view=None,
@@ -83,13 +88,22 @@ def _make_deep_link_screen() -> SimpleNamespace:
         _acknowledge_library_destination_change=lambda: calls.append("ack"),
         _clear_library_prompt_selection=lambda **_k: calls.append("clear_prompt"),
         _cancel_pending_review_set_resume=lambda: calls.append("cancel_resume"),
-        _library_media_reader_identity=lambda _record_id: None,
+        _library_media_reader_identity=lambda record_id: (
+            f"local:media:{int(record_id)}",
+            int(record_id),
+        ),
         _close_library_media_find=lambda: calls.append("close_find"),
         _refresh_library_media_detail=lambda *a, **k: None,
         run_worker=_run_worker,
         _request_library_media_browse=_request_browse,
         _request_library_media_facets=_request_facets,
-        _apply_library_media_active_surface=_apply_active_surface,
+        # task-31249 / task-32065: the surface is mounted through the
+        # targeted projection, and the Reader's width is reclaimed after the
+        # refresh.
+        _apply_library_open_item_surface=_apply_active_surface,
+        _build_library_media_active_child=lambda: None,
+        call_after_refresh=lambda callback, *a: calls.append("call_after_refresh"),
+        _restore_library_media_reader_width_on_open=lambda: None,
         # plain SHELL attribute the branch assigns to
         _library_selected_row_id=None,
     )
@@ -105,9 +119,12 @@ def test_open_in_library_deep_link_requests_media_browse_page() -> None:
 
     # Deep-link (non-entry_origin) path returns None after applying the surface.
     assert result is None
-    # It lands on the Media browse row with the opened item selected.
+    # It lands on the Media browse row with the opened item selected -- by
+    # its CANONICAL id (TASK-34000.18): page rows are ``local:media:N``, so a
+    # bare "5" was never on the page and the landing page highlighted row 0.
     assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
-    assert screen._media_state.selected_media_id == "5"
+    assert screen._media_state.selected_media_id == "local:media:5"
+    assert screen._media_state.reader_session.selected_id == "local:media:5"
     assert screen._media_state.view == "viewer"
 
     # The core regression: the deep-link must load an Items page (the rail's

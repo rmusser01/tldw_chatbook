@@ -12,6 +12,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from Tests.UI.app_factory import _build_test_app
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_context_rail_header_uses_the_full_collapse_button() -> None:
     app = _build_test_app()

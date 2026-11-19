@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  Conversations (6)                                   I   Conversation reader                                           │
+│ │ Navigation                     │  a       ✓ Active        Archived          All          t      Read    Info                                               │
+│ │     Import…                    │  v      Export…                                         e      Resume conversation                                        │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │          Select                                         m      Use as source                                              │
+│ │ ▊ Search Library…         ▎▊x▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  s     This conversation is not in this workspace. Pressing        │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     ▊ Filter conversations… (Enter)                  ▎        this adds it to the active workspace first, and you can     │
+│ │                                │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎        undo that.                                                  │
+│ │ ────────────────────────────── │                                                                Archive conversation                                       │
+│ │ Browse                     ▾   │      ▸ Sourdough troubleshooting                               Link to workspace                                          │
+│ │    Media (2) — your files      │          2 messages · 1m · Default · Active                                                                               │
+│ │  ▸ Conversations (6)           │                                                             Loaded Sourdough troubleshooting · 2 of 2 messages ·          │
+│ │    Notes (5)                   │        Refactor the ingest pipeline                         complete.                                                     │
+│ │    Prompts (4) — reuse         │          2 messages · 1m · Default · Active                                                                               │
+│ │    Skills (1) — AI add-ons     │<---                                                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │    Collections (0)             │        Trip planning: Lisbon in October                     ▊ Find in complete transcript…                             ▎  │
+│ │    Search / RAG — find all     │          2 messages · 1m · Default · Active                 ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │ ────────────────────────────── │                                                                                                                           │
+│ │ Artifacts                  ▾   │        The La Brea matchbook                                  Find previous     Find next                                 │
+│ │    All artifacts               │          3 messages · 1m · Default · Active           <---                                                                │
+│ │    Chatbooks                   │                                                             │ user · 1m                                                   │
+│ │    Reports                     │        Shore leave on Kepler-9                              │ My loaf is flat.                                            │
+│ │ ────────────────────────────── │          2 messages · 1m · Default · Active                                                                               │
+│ │ Create                     ▾   │                                                             │ assistant · 1m                                              │
+│ │    New note                    │        Debris field salvage                                 │ Likely under-proofed; check the poke test.                  │
+│ │    New prompt                  │<---      6 messages · 1m · Default · Active                                                                               │
+│ │    New skill                   │                                                                                                                           │
+│ │ ────────────────────────────── │                                                                                                                           │
+│ │ Study                      ▾   │                                                                                                                           │
+│ │    Study decks (0)             │                                                                                                                           │
+│ │    Flashcards due: 0           │                                                                                                                           │
+│ │    Quizzes (0)                 │                                                                                                                           │
+│ │ ────────────────────────────── │                                                                                                                           │
+│ │ Import / Export            ▾   │                                                                                                                           │
+│ │    Import…                     │                                                                                                                           │
+│ │    Export                      │                                                                                                                           │
+│ │ ────────────────────────────── │                                                                                                                           │
+│ │ Details                    ▸   │                                                                                                                           │
+│ └────────────────────────────────┘                          1-6 of 6                                                                                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,11 @@
+{
+  "tested_functional_head": "73cff62fff16fa299aef7afd938bb5b66565ca72",
+  "runtime_test_ci_domains": [
+    "tldw_chatbook",
+    "Tests",
+    "scripts"
+  ],
+  "git_diff_against_tested_head_empty_in_all_three_domains": true,
+  "native_source_hashes_verified": 23,
+  "note": "Verified before the task/QA closure commit. The later PR head still receives its own hosted checks; this source qualification is not a fabricated check status."
+}

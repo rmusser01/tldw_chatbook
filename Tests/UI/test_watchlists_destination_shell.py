@@ -121,6 +121,7 @@ class WatchlistsContextHarness:
                 yield pilot
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_shell_has_tab_strip_and_panes():
     app = _build_test_app()
@@ -148,6 +149,7 @@ async def test_watchlists_shell_has_tab_strip_and_panes():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_briefing_inspect_navigates_shell_to_exact_loaded_row():
     app = _build_test_app()
@@ -198,6 +200,7 @@ async def test_console_briefing_inspect_navigates_shell_to_exact_loaded_row():
             assert table.cursor_row == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "context",
     [
@@ -242,6 +245,7 @@ async def test_briefing_deep_link_rejects_malformed_or_wrong_backend_id(context)
             assert screen._pending_navigation_briefing_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_backend_value_is_stated_exactly_once_on_a_normal_section():
     """TASK-2313, AC#3: on a section where the Select is a live choice
@@ -271,6 +275,7 @@ async def test_the_backend_value_is_stated_exactly_once_on_a_normal_section():
         assert str(label.renderable) == "Backend"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_backend_reason_still_shows_on_a_local_only_section():
     """The counterpart: `#watchlists-backend-label` is NOT pure duplication
@@ -290,6 +295,7 @@ async def test_the_backend_reason_still_shows_on_a_local_only_section():
         assert str(label.renderable) == "Artifacts: local"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_inspector_first_run_hint_does_not_repeat_overviews_own_walkthrough():
     """TASK-2313, AC#1: UAT -- three stacked "nothing yet" messages on one
@@ -328,6 +334,7 @@ async def test_the_inspector_first_run_hint_does_not_repeat_overviews_own_walkth
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_selected_object_block_sits_above_console_actions():
     """TASK-2313, AC#5: UAT -- the Inspector's Console block permanently
@@ -359,6 +366,7 @@ async def test_the_selected_object_block_sits_above_console_actions():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_import_opml_appears_once_on_the_sources_tab():
     """TASK-2313, AC#3: UAT -- "Import OPML" twice on one screen. The
@@ -399,6 +407,7 @@ async def test_import_opml_appears_once_on_the_sources_tab():
         assert screen.query_one("#wl-centre-status")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_tab_strip_updates_active_section():
     app = _build_test_app()
@@ -412,6 +421,7 @@ async def test_watchlists_tab_strip_updates_active_section():
         assert screen.active_section == "sources"
 
 
+@pytest.mark.bootstrap_profile
 def test_watchlists_navigation_context_accepts_only_supported_sections():
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
@@ -426,6 +436,7 @@ def test_watchlists_navigation_context_accepts_only_supported_sections():
     assert screen.active_section == "notifications"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_subscriptions_alias_preserves_watchlists_navigation_context(monkeypatch):
     app = _build_test_app()
@@ -475,6 +486,7 @@ async def test_subscriptions_alias_preserves_watchlists_navigation_context(monke
     assert app.current_tab == "watchlists_collections"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_navigation_context_selects_run_after_initial_load():
     app = _build_test_app()
@@ -518,6 +530,7 @@ async def test_watchlists_navigation_context_selects_run_after_initial_load():
         assert screen.runtime_backend == "local"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_watchlists_context_retains_run_selection_across_recompose():
     app = _build_test_app()
@@ -557,6 +570,7 @@ async def test_mounted_watchlists_context_retains_run_selection_across_recompose
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_run_deep_link_selects_raw_run_id_record():
     app = _build_test_app()
@@ -587,6 +601,7 @@ async def test_watchlists_run_deep_link_selects_raw_run_id_record():
         assert screen.selected_run is runs_pane.selected_run
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_run_deep_link_matches_canonical_same_backend_record():
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
@@ -603,6 +618,7 @@ def test_raw_run_deep_link_matches_canonical_same_backend_record():
     assert screen._matching_requested_run([record]) is record
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_run_deep_link_does_not_match_canonical_other_backend_record():
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
@@ -624,6 +640,7 @@ def test_raw_run_deep_link_does_not_match_canonical_other_backend_record():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_run_deep_link_selects_server_backend_before_loading():
     app = _build_test_app()
@@ -663,6 +680,7 @@ async def test_server_run_deep_link_selects_server_backend_before_loading():
         assert runs_pane.selected_run["id"] == "server:watchlist_run:8"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_server_run_deep_link_reseeds_server_rerun_identity():
     app = _build_test_app()
@@ -731,6 +749,7 @@ async def test_mounted_server_run_deep_link_reseeds_server_rerun_identity():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_missing_run_deep_link_is_consumed_without_later_stale_selection():
     app = _build_test_app()
@@ -778,6 +797,7 @@ async def test_missing_run_deep_link_is_consumed_without_later_stale_selection()
         assert screen.selected_run is None
 
 
+@pytest.mark.bootstrap_profile
 def test_leaving_runs_clears_pending_run_deep_link():
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
@@ -797,6 +817,7 @@ def test_leaving_runs_clears_pending_run_deep_link():
     assert screen._pending_navigation_run_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_notifications_context_loads_and_updates_local_inbox():
     app = _build_test_app()
@@ -846,6 +867,7 @@ async def test_watchlists_notifications_context_loads_and_updates_local_inbox():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notification_mutation_refresh_cannot_overwrite_newer_pane_refresh():
     """A mutation reconciliation and user refresh share latest-request-wins."""
@@ -933,6 +955,7 @@ async def test_notification_mutation_refresh_cannot_overwrite_newer_pane_refresh
         assert pane.notifications == [newest]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switching_to_notifications_does_not_report_recompose_as_load_error():
     app = _build_test_app()
@@ -964,6 +987,7 @@ async def test_switching_to_notifications_does_not_report_recompose_as_load_erro
         app.notify.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notification_selection_survives_screen_recompose():
     app = _build_test_app()
@@ -1003,6 +1027,7 @@ async def test_notification_selection_survives_screen_recompose():
         assert not pane.query_one("#notifications-dismiss-button", Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_watchlists_notifications_section_reads_real_client_inbox():
     app = _build_test_app()
@@ -1056,6 +1081,7 @@ async def test_watchlists_notifications_section_reads_real_client_inbox():
 # rest of this file already uses, rather than inventing a second harness.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_existing_panes_survive_the_workbench_rehost():
     app = _build_test_app()
@@ -1081,6 +1107,7 @@ async def test_existing_panes_survive_the_workbench_rehost():
         assert screen.query("#watchlists-sources-pane")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bracket_keys_toggle_the_rails():
     app = _build_test_app()
@@ -1096,6 +1123,7 @@ async def test_bracket_keys_toggle_the_rails():
         assert screen.region_layout.is_collapsed(Region.RIGHT_RAIL)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_collapsing_a_region_persists(monkeypatch):
     saved = []
@@ -1120,6 +1148,7 @@ async def test_collapsing_a_region_persists(monkeypatch):
         assert Region.ITEMS in saved[-1].collapsed
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_route_and_class_name_are_unchanged():
     app = _build_test_app()
@@ -1133,6 +1162,7 @@ async def test_route_and_class_name_are_unchanged():
         assert screen.screen_name == "watchlists_collections"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focus_drives_which_region_z_collapses():
     """`z` is a lie unless focus tracking actually works: without
@@ -1156,6 +1186,7 @@ async def test_focus_drives_which_region_z_collapses():
         assert not screen.region_layout.is_collapsed(Region.CONTENT)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_persisted_layout_is_applied_on_mount(monkeypatch):
     """`on_mount` must push the loaded layout into the already-mounted
@@ -1184,6 +1215,7 @@ async def test_persisted_layout_is_applied_on_mount(monkeypatch):
 # write off the UI thread via `run_worker(thread=True)`.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounting_with_a_persisted_layout_performs_no_write(monkeypatch):
     """`on_mount` re-applies whatever `load_region_layout` just returned so
@@ -1209,6 +1241,7 @@ async def test_mounting_with_a_persisted_layout_performs_no_write(monkeypatch):
         assert saved == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_real_toggle_performs_exactly_one_write(monkeypatch):
     """A single genuine layout change schedules exactly one write, and it
@@ -1242,6 +1275,7 @@ async def test_a_real_toggle_performs_exactly_one_write(monkeypatch):
         assert Region.ITEMS in saved[0].collapsed
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_burst_of_toggles_persists_only_the_final_state(monkeypatch):
     """A rapid burst of toggles must not interleave writes out of order —
@@ -1288,6 +1322,7 @@ async def test_a_burst_of_toggles_persists_only_the_final_state(monkeypatch):
 # sources_pane.py.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bracket_toggle_preserves_in_progress_create_form_draft():
     app = _build_test_app()
@@ -1347,6 +1382,7 @@ async def test_bracket_toggle_preserves_in_progress_create_form_draft():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bracket_toggle_preserves_a_cleared_noise_selector_field():
     """TASK-1362, spec §2: emptiness must survive a workbench rebuild.
@@ -1415,6 +1451,7 @@ async def test_bracket_toggle_preserves_a_cleared_noise_selector_field():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_submitting_the_create_form_clears_the_draft():
     app = _build_test_app()
@@ -1448,6 +1485,7 @@ async def test_submitting_the_create_form_clears_the_draft():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelling_the_create_form_clears_the_draft():
     app = _build_test_app()
@@ -1495,6 +1533,7 @@ async def _wait_for_table_rows(
     return table
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
     app = _build_test_app()
@@ -1570,6 +1609,7 @@ async def test_bracket_toggle_preserves_loaded_sources_items_and_rules_tables():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bracket_toggle_preserves_inspector_selection():
     app = _build_test_app()
@@ -1621,6 +1661,7 @@ async def test_bracket_toggle_preserves_inspector_selection():
         assert not rebuilt_inspector.query("#inspector-empty-state")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bracket_toggle_preserves_in_progress_rule_edit():
     app = _build_test_app()
@@ -1664,6 +1705,7 @@ async def test_bracket_toggle_preserves_in_progress_rule_edit():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
     app = _build_test_app()
@@ -1769,6 +1811,7 @@ async def test_saving_a_rule_edit_does_not_leave_a_phantom_form_open():
 # pattern already established here.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_left_rail_hosts_the_tree_not_the_navigator():
     app = _build_test_app()
@@ -1780,6 +1823,7 @@ async def test_left_rail_hosts_the_tree_not_the_navigator():
         assert not screen.query("#watchlists-navigator")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_centre_hosts_the_tab_strip():
     app = _build_test_app()
@@ -1789,6 +1833,7 @@ async def test_centre_hosts_the_tab_strip():
         assert host.screen_stack[-1].query("#wl-tabs")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clicking_a_tab_switches_the_active_section():
     app = _build_test_app()
@@ -1801,6 +1846,7 @@ async def test_clicking_a_tab_switches_the_active_section():
         assert screen.active_section == "runs"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_mode_class_is_set_before_each_section_layout_swap():
     app = _build_test_app()
@@ -1843,6 +1889,7 @@ async def test_read_mode_class_is_set_before_each_section_layout_swap():
         assert screen.query_one("#wl-region-right_rail") is right
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_selection_sets_the_screen_scope():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
@@ -1863,6 +1910,7 @@ async def test_tree_selection_sets_the_screen_scope():
         assert screen.selected_scope.watchlist_id == 7
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scope_survives_a_region_toggle():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
@@ -1886,6 +1934,7 @@ async def test_scope_survives_a_region_toggle():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scoped_rows_follow_the_tree_scope():
     """Task 7: narrowing the tree scope must change what the scoped queries
@@ -1943,6 +1992,7 @@ async def test_scoped_rows_follow_the_tree_scope():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_source_scope_narrows_to_exactly_one():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
@@ -2003,6 +2053,7 @@ def _running_run_row() -> dict[str, Any]:
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_running_run_poll_cannot_resurrect_a_cleared_tree_scope():
     """`RunsPane.run_poll` ticks once a second for 60 ticks.
@@ -2080,6 +2131,7 @@ async def test_a_running_run_poll_cannot_resurrect_a_cleared_tree_scope():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_moving_the_tree_disarms_run_actions_selected_before_the_move():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
@@ -2120,6 +2172,7 @@ async def test_moving_the_tree_disarms_run_actions_selected_before_the_move():
         assert rerun.disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rerun_busy_state_survives_a_mounted_runs_pane_rebuild():
     app = _build_test_app()
@@ -2219,6 +2272,7 @@ async def test_rerun_busy_state_survives_a_mounted_runs_pane_rebuild():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unmounting_during_rerun_cleans_state_without_refreshing():
     app = _build_test_app()
@@ -2269,6 +2323,7 @@ async def test_unmounting_during_rerun_cleans_state_without_refreshing():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_external_local_check_now_paints_the_selected_run_as_checking():
     app = _build_test_app()
@@ -2335,6 +2390,7 @@ async def test_external_local_check_now_paints_the_selected_run_as_checking():
         assert not button.disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_server_rerun_deduplicates_one_job_without_blocking_another():
     app = _build_test_app()
@@ -2400,6 +2456,7 @@ async def test_server_rerun_deduplicates_one_job_without_blocking_another():
         assert screen._request_runs_refresh.call_count == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_rerun_rejects_an_old_backend_request_before_launch_or_busy_state():
     app = _build_test_app()
     screen = WatchlistsCollectionsScreen(app)
@@ -2421,6 +2478,7 @@ def test_rerun_rejects_an_old_backend_request_before_launch_or_busy_state():
     assert screen._reruns_in_flight == set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rerun_completion_after_backend_switch_does_not_repaint_old_state():
     app = _build_test_app()
@@ -2446,6 +2504,7 @@ async def test_rerun_completion_after_backend_switch_does_not_repaint_old_state(
     assert screen._reruns_in_flight == set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["queued", "running"])
 async def test_server_rerun_reports_started_and_launches_by_job_id(status):
@@ -2481,6 +2540,7 @@ async def test_server_rerun_reports_started_and_launches_by_job_id(status):
     screen._request_runs_refresh.assert_called_once_with()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_running_server_rerun_with_skipped_stats_reports_started():
     app = _build_test_app()
@@ -2512,6 +2572,7 @@ async def test_running_server_rerun_with_skipped_stats_reports_started():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unexpected_rerun_status_does_not_claim_the_run_started():
     app = _build_test_app()
@@ -2538,6 +2599,7 @@ async def test_unexpected_rerun_status_does_not_claim_the_run_started():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_rerun_reports_an_entirely_skipped_run():
     app = _build_test_app()
@@ -2571,6 +2633,7 @@ async def test_local_rerun_reports_an_entirely_skipped_run():
     screen._request_runs_refresh.assert_called_once_with()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rerun_reports_a_returned_failed_status():
     app = _build_test_app()
@@ -2601,6 +2664,7 @@ async def test_rerun_reports_a_returned_failed_status():
     screen._request_runs_refresh.assert_called_once_with()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rerun_raises_with_a_safe_stated_error_and_warning_log():
     app = _build_test_app()
@@ -2638,6 +2702,7 @@ async def test_rerun_raises_with_a_safe_stated_error_and_warning_log():
     screen._request_runs_refresh.assert_called_once_with()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_moving_the_tree_disarms_source_actions_selected_before_the_move():
     """`SourcesPane`'s own Preview/Check-now post against `self.selected_source`.
@@ -2689,6 +2754,7 @@ async def test_moving_the_tree_disarms_source_actions_selected_before_the_move()
         assert check_now.disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_moving_the_tree_clears_a_notification_selected_in_its_pane():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
@@ -2726,6 +2792,7 @@ async def test_moving_the_tree_clears_a_notification_selected_in_its_pane():
         assert screen.selected_notification is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clearing_pane_selections_degrades_quietly_when_unmounted():
     """The panes are only mounted for their own section, and the workbench
@@ -2745,6 +2812,7 @@ async def test_clearing_pane_selections_degrades_quietly_when_unmounted():
 # state, because every section switch fully recomposes the workbench ---
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_expansion_survives_a_section_switch():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
@@ -2789,6 +2857,7 @@ async def test_tree_expansion_survives_a_section_switch():
         assert tree.expanded == frozenset({1})
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_tag_filter_survives_a_section_switch():
     from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
@@ -2820,6 +2889,7 @@ async def test_tree_tag_filter_survives_a_section_switch():
         assert not screen.query("#wl-tree-node-watchlist-2")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_expansion_survives_a_tree_data_reload():
     """`_load_tree_data` and `_apply_local_wc_snapshot` both full-recompose."""
@@ -2850,6 +2920,7 @@ async def test_tree_expansion_survives_a_tree_data_reload():
         assert screen.query_one("#wl-tree", WatchlistTree).expanded == frozenset({1})
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_seeded_tree_expansion_takes_effect_on_the_first_render():
     """Seeding a `recompose=True` reactive must not cost a second compose.
@@ -2898,6 +2969,7 @@ async def test_seeded_tree_expansion_takes_effect_on_the_first_render():
 # --- Permanent Reader and management-canvas section contracts ------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_feeds_region_is_gone_and_content_stays_gated_to_read():
     """task-2513: the FEEDS region was removed outright -- it must have no
@@ -2931,6 +3003,7 @@ async def test_the_feeds_region_is_gone_and_content_stays_gated_to_read():
         assert not screen.query("#wl-region-content")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_items_toggle_off_the_read_tab_neither_collapses_nor_persists():
     """A stale Feed Items message cannot change preference off Read."""
@@ -2971,6 +3044,7 @@ async def test_the_items_toggle_off_the_read_tab_neither_collapses_nor_persists(
         assert screen.query("#wl-grip-items")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_article_focus_on_a_management_tab_is_refused():
     """Article Focus is a Read-only effective layout, never a preference."""
@@ -2997,6 +3071,7 @@ async def test_article_focus_on_a_management_tab_is_refused():
         assert screen.notify.call_args.kwargs.get("markup") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tab_switches_grips_and_article_focus_never_remove_the_centre():
     """Read keeps Reader mounted; management tabs keep their canvas mounted."""
@@ -3050,6 +3125,7 @@ async def test_tab_switches_grips_and_article_focus_never_remove_the_centre():
         assert screen.query("#wl-region-content")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_management_canvas_does_not_override_feed_items_preference():
     """Management uses ITEMS as its canvas without changing Read preference."""
@@ -3094,6 +3170,7 @@ async def test_management_canvas_does_not_override_feed_items_preference():
 # above `#wl-workbench-body`, outside every `wl-region-*`/`wl-grip-*` wrapper.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region():
     """Before this fix, a user who last focused the left rail (setting
@@ -3137,6 +3214,7 @@ async def test_z_with_focus_in_the_centre_header_does_not_toggle_a_stale_region(
         assert screen._last_persisted_collapsed == before.collapsed
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_tab_strip_is_recognized_as_the_centre_header_on_the_read_tab_too():
     """TASK-2312: before this task, the Read ("items") tab was the ONE
@@ -3179,6 +3257,7 @@ async def test_the_tab_strip_is_recognized_as_the_centre_header_on_the_read_tab_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_capital_z_in_the_header_activates_article_focus_only_effectively():
     """Article Focus is independent of stale region focus and not persisted."""
@@ -3212,6 +3291,7 @@ async def test_capital_z_in_the_header_activates_article_focus_only_effectively(
             assert screen._effective_region_layout.is_collapsed(region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_focus_leaving_the_header_for_a_non_region_widget_clears_the_flag():
     """Re-review follow-up (task-1344): the `_focus_in_centre_header` sentinel
@@ -3268,6 +3348,7 @@ async def _sources_tab(pilot, host):
     return screen, screen.query_one("#watchlists-sources-pane", SourcesPane)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_background_snapshot_lands_in_place_without_rebuilding_the_pane():
     """AC#1/AC#2: the snapshot's four surfaces update, the detail pane does not.
@@ -3330,6 +3411,7 @@ async def test_a_background_snapshot_lands_in_place_without_rebuilding_the_pane(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_background_tree_reload_lands_in_the_rail_without_rebuilding_the_pane():
     """AC#1/AC#2: newly created watchlists appear in the rail in place."""
@@ -3447,6 +3529,7 @@ def test_latest_run_status_text_reports_a_real_lookup_failure_distinctly():
     assert text != "Latest run status: no runs yet"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_background_overview_refresh_repaints_the_inspector_in_place():
     """AC#1/AC#2: `overview_data`'s two Inspector counts follow the payload.
@@ -3495,6 +3578,7 @@ async def test_a_background_overview_refresh_repaints_the_inspector_in_place():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_background_tree_reload_updates_the_first_run_copy_in_place():
     """AC#2: TASK-998's watchlist-count-dependent first-run copy still follows.
@@ -3547,6 +3631,7 @@ async def test_a_background_tree_reload_updates_the_first_run_copy_in_place():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switching_backend_clears_the_mounted_panes_selection():
     """AC#2: the backend switch's own state reset still reaches the pane.
@@ -3588,6 +3673,7 @@ async def test_switching_backend_clears_the_mounted_panes_selection():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_surface_refresh_requested_mid_drain_is_served_by_the_same_drainer():
     """TASK-2200: record intent, drain serially, never cancel.
@@ -3653,6 +3739,7 @@ async def test_a_surface_refresh_requested_mid_drain_is_served_by_the_same_drain
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_background_tree_reload_repaints_the_artifacts_scope_note():
     """Review wave I1: a rename must reach EVERY surface that names the scope.
@@ -3719,6 +3806,7 @@ async def test_a_background_tree_reload_repaints_the_artifacts_scope_note():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_surface_refresh_start_does_not_wedge_the_queue():
     """Review wave M1, the sibling of `test_a_failed_tree_write_start_...`.
@@ -3777,6 +3865,7 @@ async def test_a_failed_surface_refresh_start_does_not_wedge_the_queue():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_raising_console_follow_poll_does_not_take_the_app_down():
     """Review wave M2: every step of the drain loop must be non-fatal.
@@ -3815,6 +3904,7 @@ async def test_a_raising_console_follow_poll_does_not_take_the_app_down():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_loader_results_landing_before_textual_flips_is_mounted_still_paint():
     """Live-verification wave: the in-place updates must not use `is_mounted`.
@@ -3948,6 +4038,7 @@ async def test_loader_results_landing_before_textual_flips_is_mounted_still_pain
             screen._is_mounted = True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_section_loader_results_landing_in_the_mount_window_still_paint():
     """Re-review L1: the six section loaders share the `is_mounted` trap.
@@ -4113,6 +4204,7 @@ async def test_section_loader_results_landing_in_the_mount_window_still_paint():
             screen._is_mounted = True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_deep_linked_run_seeds_the_inspector_from_the_mount_window():
     """Qodo, PR #1331: the selection watchers are in the mount-window class too.

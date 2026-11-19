@@ -72,6 +72,7 @@ def test_real_scheduler_waits_for_readiness_on_a_slow_mount(tmp_path, monkeypatc
     assert set(census.EXPECTED_AT_READY) <= set(modules)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stop_reason", ["quit", "shutdown", "setup_failure"])
 async def test_pre_ready_exit_does_not_start_the_scheduler(monkeypatch, stop_reason):

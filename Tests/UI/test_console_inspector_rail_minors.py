@@ -89,6 +89,7 @@ def _painted_strings(app, region):
             x += width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", SUPPORTED_SIZES)
 async def test_inspector_row_text_meets_aa_on_the_background_it_paints_on(size):
@@ -137,6 +138,7 @@ async def test_inspector_row_text_meets_aa_on_the_background_it_paints_on(size):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", SUPPORTED_SIZES)
 async def test_the_refresh_tail_is_attached_to_the_section_it_refreshes(size):

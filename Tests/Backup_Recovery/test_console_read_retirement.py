@@ -27,7 +27,7 @@ if route == "history":
     call = controller._persisted_console_browser_rows
 elif route == "changes":
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-    from tldw_chatbook.UI.Screens.change_review_screen import AgentRunsChangeReviewProvider
+    from tldw_chatbook.Workspaces.change_review_provider import AgentRunsChangeReviewProvider
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
     db = AgentRunsDB(root / "runs.db")
     provider = AgentRunsChangeReviewProvider(db=db, service=None, conversation_id="none", diff_display_max_lines=50)

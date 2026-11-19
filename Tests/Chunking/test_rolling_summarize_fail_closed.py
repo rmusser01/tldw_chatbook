@@ -28,6 +28,7 @@ def test_usage_tracker_contract_is_stable() -> None:
     assert rolling_summarize.LLM_USAGE_SUCCEEDED_KEY == _SUCCEEDED_KEY
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("method_name", ["chunk", "chunk_with_metadata"])
 def test_missing_llm_fails_closed_without_marking_usage(method_name: str) -> None:
     tracker: dict[str, bool] = {}
@@ -43,6 +44,7 @@ def test_missing_llm_fails_closed_without_marking_usage(method_name: str) -> Non
     _assert_detached(exc_info.value)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("method_name", ["chunk", "chunk_with_metadata"])
 @pytest.mark.parametrize(
     "provider_result",
@@ -66,6 +68,7 @@ def test_invalid_provider_output_fails_closed_without_marking_usage(
     _assert_detached(exc_info.value)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("method_name", ["chunk", "chunk_with_metadata"])
 @pytest.mark.parametrize("error_type", [RuntimeError, TimeoutError])
 def test_provider_failure_is_sanitized_and_does_not_mark_usage(
@@ -95,6 +98,7 @@ def test_provider_failure_is_sanitized_and_does_not_mark_usage(
     _assert_detached(exc_info.value)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("method_name", ["chunk", "chunk_with_metadata"])
 def test_verified_provider_output_marks_usage(method_name: str) -> None:
     tracker: dict[str, bool] = {}
@@ -110,6 +114,7 @@ def test_verified_provider_output_marks_usage(method_name: str) -> None:
     assert tracker == {_SUCCEEDED_KEY: True}
 
 
+@pytest.mark.bootstrap_profile
 def test_runtime_handle_reaches_rolling_analyzer_without_entering_app_config() -> None:
     handle = object()
     app_config = {"local_llm": {"model": "snapshot-model"}}

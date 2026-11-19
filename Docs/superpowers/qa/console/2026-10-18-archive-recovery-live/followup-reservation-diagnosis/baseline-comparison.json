@@ -1,0 +1,58 @@
+{
+  "_project_revision_response_envelope": {
+    "path": "tldw_chatbook/Chat/console_semantic_revision.py",
+    "unchanged": true,
+    "versions": {
+      "20f3f3e24b5c9ba5a58f6793af1cad0ad76034ce": {
+        "ast_sha256": "10af2a58555b2348d1e49565f1d674bd4b44275f6f19cecbbcf042e472478430",
+        "line": 110
+      },
+      "75b671c001e84bf2713c380e30de3e587bcc8ae0": {
+        "ast_sha256": "10af2a58555b2348d1e49565f1d674bd4b44275f6f19cecbbcf042e472478430",
+        "line": 110
+      }
+    }
+  },
+  "_response_projection_profile": {
+    "path": "tldw_chatbook/Chat/console_trace_service.py",
+    "unchanged": true,
+    "versions": {
+      "20f3f3e24b5c9ba5a58f6793af1cad0ad76034ce": {
+        "ast_sha256": "f56d52df7065bcbea2131b1f68c9ad988bca878fcd492dbb659f63bacd7e7ea3",
+        "line": 6273
+      },
+      "75b671c001e84bf2713c380e30de3e587bcc8ae0": {
+        "ast_sha256": "f56d52df7065bcbea2131b1f68c9ad988bca878fcd492dbb659f63bacd7e7ea3",
+        "line": 6269
+      }
+    }
+  },
+  "_store_response": {
+    "path": "tldw_chatbook/Chat/console_trace_settlement.py",
+    "unchanged": true,
+    "versions": {
+      "20f3f3e24b5c9ba5a58f6793af1cad0ad76034ce": {
+        "ast_sha256": "882c0c6a46e593487f331f4ba4d6eaa2e53293997dd863b10c96611af9b8aff4",
+        "line": 625
+      },
+      "75b671c001e84bf2713c380e30de3e587bcc8ae0": {
+        "ast_sha256": "882c0c6a46e593487f331f4ba4d6eaa2e53293997dd863b10c96611af9b8aff4",
+        "line": 625
+      }
+    }
+  },
+  "_validate_completed_tool_turn": {
+    "path": "tldw_chatbook/Chat/console_trace_service.py",
+    "unchanged": true,
+    "versions": {
+      "20f3f3e24b5c9ba5a58f6793af1cad0ad76034ce": {
+        "ast_sha256": "8b9031581d1cf913a1fa2e5741c716cceab4526a9b400944afcae0318efba97e",
+        "line": 3182
+      },
+      "75b671c001e84bf2713c380e30de3e587bcc8ae0": {
+        "ast_sha256": "8b9031581d1cf913a1fa2e5741c716cceab4526a9b400944afcae0318efba97e",
+        "line": 3182
+      }
+    }
+  }
+}

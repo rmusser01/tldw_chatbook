@@ -65,7 +65,7 @@ try:
  assert selected.read_bytes()==original_bytes
  assert not file_lock._is_owned() and not rebuild_lock._is_owned()
  assert not storage._pending_acquisitions and not storage._raw_operations
- assert raw._runtime_operation() is None
+ assert raw.runtime_operation() is None
 finally:
  finished.set()
  config._config_file_lock=original_file_getter

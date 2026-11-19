@@ -55,6 +55,7 @@ async def _select_row(pilot, index: int = 0) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_digit_keys_switch_the_chip_and_paint_the_selected_button():
     app = WorkbenchTestApp()
@@ -85,6 +86,7 @@ async def test_digit_keys_switch_the_chip_and_paint_the_selected_button():
         assert workbench._chip == "all"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_f_key_cycles_through_every_chip_and_wraps():
     app = WorkbenchTestApp()
@@ -104,6 +106,7 @@ async def test_f_key_cycles_through_every_chip_and_wraps():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_chip_keys_work_even_when_the_chip_row_is_hidden():
     """task-4 brief: chip keys must work "at every width (incl.
@@ -143,6 +146,7 @@ async def test_chip_keys_work_even_when_the_chip_row_is_hidden():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_slash_key_focuses_the_filter_input():
     app = WorkbenchTestApp()
@@ -161,6 +165,7 @@ async def test_slash_key_focuses_the_filter_input():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_n_key_opens_the_create_chooser():
     app = WorkbenchTestApp()
@@ -178,6 +183,7 @@ async def test_n_key_opens_the_create_chooser():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_p_key_toggles_a_reminder_enabled_state(tmp_path):
     app = WorkbenchTestApp()
@@ -205,6 +211,7 @@ async def test_p_key_toggles_a_reminder_enabled_state(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_p_key_on_a_locked_reminder_refuses_honestly(tmp_path):
     """The reminder branch reuses `action_toggle_enabled` verbatim, which
@@ -240,6 +247,7 @@ async def test_p_key_on_a_locked_reminder_refuses_honestly(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_p_key_toggles_a_definition_lifecycle(tmp_path):
     app = WorkbenchTestApp()
@@ -278,6 +286,7 @@ async def test_p_key_toggles_a_definition_lifecycle(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_p_key_on_a_locked_definition_refuses_honestly(tmp_path):
     app = WorkbenchTestApp()
@@ -320,6 +329,7 @@ async def test_p_key_on_a_locked_definition_refuses_honestly(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_key_opens_the_runs_on_dropdown_for_a_reminder_row(tmp_path):
     app = WorkbenchTestApp()
@@ -349,6 +359,7 @@ async def test_m_key_opens_the_runs_on_dropdown_for_a_reminder_row(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_key_opens_the_runs_on_dropdown_for_a_definition_row(tmp_path):
     app = WorkbenchTestApp()
@@ -382,6 +393,7 @@ async def test_m_key_opens_the_runs_on_dropdown_for_a_definition_row(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_key_with_nothing_selected_refuses_honestly():
     app = WorkbenchTestApp()
@@ -402,6 +414,7 @@ async def test_m_key_with_nothing_selected_refuses_honestly():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_key_marks_a_definitions_unread_results_read(tmp_path):
     app = WorkbenchTestApp()
@@ -445,6 +458,7 @@ async def test_r_key_marks_a_definitions_unread_results_read(tmp_path):
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_key_on_a_definition_with_nothing_unread_refuses_honestly(tmp_path):
     app = WorkbenchTestApp()
@@ -476,6 +490,7 @@ async def test_r_key_on_a_definition_with_nothing_unread_refuses_honestly(tmp_pa
         db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_r_key_on_a_reminder_row_is_an_honest_no_op(tmp_path):
     app = WorkbenchTestApp()

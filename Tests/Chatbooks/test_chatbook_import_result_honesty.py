@@ -319,6 +319,7 @@ async def _run_progress_step(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reimport_of_an_already_imported_chatbook_claims_no_imports(
     chatbook_zip, destination_paths, monkeypatch
@@ -357,6 +358,7 @@ async def test_reimport_of_an_already_imported_chatbook_claims_no_imports(
     assert stats["stat-skipped"] == str(first.successful_items)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_first_import_still_reports_its_real_per_type_successes(
     chatbook_zip, destination_paths, monkeypatch
@@ -377,6 +379,7 @@ async def test_first_import_still_reports_its_real_per_type_successes(
     assert stats["stat-imported"] == str(step.import_status.successful_items)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_left_out_by_the_user_is_never_reported_as_imported(
     chatbook_zip, destination_paths, monkeypatch
@@ -555,6 +558,7 @@ def test_an_empty_chatbook_reports_nothing_rather_than_success():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_an_all_skipped_import_says_in_words_that_nothing_was_imported(
     chatbook_zip, destination_paths
 ):
@@ -592,6 +596,7 @@ def _assert_ledger_sums_to_the_aggregates(status: ImportStatus) -> None:
     ), status.to_dict()
 
 
+@pytest.mark.bootstrap_profile
 def test_per_type_results_sum_to_the_aggregate_counts(chatbook_zip, destination_paths):
     """The per-type ledger and the totals are two views of one run; a row that
     forgot to record its type would show up here."""
@@ -608,6 +613,7 @@ def test_per_type_results_sum_to_the_aggregate_counts(chatbook_zip, destination_
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_the_ledger_also_sums_when_items_skip_and_fail(
     chatbook_zip, destination_paths, monkeypatch
 ):
@@ -636,6 +642,7 @@ def test_the_ledger_also_sums_when_items_skip_and_fail(
     assert status.result_snapshot(ContentType.CHARACTER).failed > 0, status.to_dict()
 
 
+@pytest.mark.bootstrap_profile
 def test_status_dict_carries_the_per_type_breakdown(chatbook_zip, destination_paths):
     status = _import_once(chatbook_zip, destination_paths)
 
@@ -738,6 +745,7 @@ async def test_the_rename_option_is_labelled_as_a_rename_not_as_tag_merging():
     assert data["prefix_imported"] is True
 
 
+@pytest.mark.bootstrap_profile
 def test_the_prefix_option_renames_items_and_nothing_else(
     chatbook_zip, destination_paths, tmp_path, chachanotes_template_db
 ):
@@ -1067,6 +1075,7 @@ def empty_chatbook_zip(tmp_path) -> Path:
     return _write_chatbook(tmp_path / "empty.zip", _manifest_payload([]))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_chatbook_left_out_by_the_user_is_never_called_empty(
     media_only_chatbook_zip, destination_paths, monkeypatch
@@ -1090,6 +1099,7 @@ async def test_a_chatbook_left_out_by_the_user_is_never_called_empty(
     assert "were not imported" in rows["status-media"], rows["status-media"]
 
 
+@pytest.mark.bootstrap_profile
 def test_the_importer_does_not_report_an_excluded_chatbook_as_having_no_items(
     media_only_chatbook_zip, destination_paths
 ):
@@ -1110,6 +1120,7 @@ def test_the_importer_does_not_report_an_excluded_chatbook_as_having_no_items(
     assert status.excluded_items == 1, status.to_dict()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_chatbook_of_only_unsupported_types_is_never_called_empty(
     unsupported_only_chatbook_zip, destination_paths, monkeypatch
@@ -1128,6 +1139,7 @@ async def test_a_chatbook_of_only_unsupported_types_is_never_called_empty(
     assert step.import_status.unsupported_items == 8, step.import_status.to_dict()
 
 
+@pytest.mark.bootstrap_profile
 def test_the_importer_does_not_report_an_unsupported_chatbook_as_having_no_items(
     unsupported_only_chatbook_zip, destination_paths
 ):
@@ -1144,9 +1156,12 @@ def test_the_importer_does_not_report_an_unsupported_chatbook_as_having_no_items
     assert status.outcome == IMPORT_OUTCOME_EXCLUDED, status.to_dict()
     # The warnings the run already produced are still there and now agree with
     # the headline instead of contradicting it.
-    assert any("not supported by the importer" in warning for warning in status.warnings)
+    assert any(
+        "not supported by the importer" in warning for warning in status.warnings
+    )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_genuinely_empty_chatbook_is_still_reported_as_empty(
     empty_chatbook_zip, destination_paths, monkeypatch
@@ -1168,6 +1183,7 @@ async def test_a_genuinely_empty_chatbook_is_still_reported_as_empty(
     ), rows
 
 
+@pytest.mark.bootstrap_profile
 def test_the_importer_still_says_no_items_to_import_for_an_empty_chatbook(
     empty_chatbook_zip, destination_paths
 ):
@@ -1183,6 +1199,7 @@ def test_the_importer_still_says_no_items_to_import_for_an_empty_chatbook(
     assert status.outcome == IMPORT_OUTCOME_EMPTY, status.to_dict()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_mixed_chatbook_with_one_type_left_out_is_unchanged(
     chatbook_zip, destination_paths, monkeypatch
@@ -1204,6 +1221,7 @@ async def test_a_mixed_chatbook_with_one_type_left_out_is_unchanged(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unsupported_items_are_named_when_the_rest_of_the_import_lands(
     chatbook_zip, destination_paths, monkeypatch, tmp_path

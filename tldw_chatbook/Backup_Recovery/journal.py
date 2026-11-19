@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import stat
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -229,6 +229,11 @@ class _Prepared(_Evidence):
     )
 
 
+def _artifact_digest(rows: list[tuple]) -> str:
+    """Hash ordered observation rows without reading their recorded paths."""
+    return hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest()
+
+
 def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
     """Read bounded no-follow file/tree identity and bytes for local reconciliation.
 
@@ -336,9 +341,7 @@ def observe_artifact(path: Path, *, metadata: bool = False) -> dict:
         inode=before.st_ino,
         kind=kind,
         size=total,
-        sha256=hashlib.sha256(
-            json.dumps(rows, separators=(",", ":")).encode()
-        ).hexdigest(),
+        sha256=_artifact_digest(rows),
     ).model_dump()
 
 
@@ -635,7 +638,13 @@ def _encoded(record: _Event) -> bytes:
     ).encode()
 
 
-def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -> dict:
+def _validate(
+    event: str,
+    evidence: Mapping[str, object],
+    prior: list[_Event],
+    *,
+    historical: bool = False,
+) -> dict:
     events = [record.event for record in prior]
     lifecycle = [
         value
@@ -785,7 +794,9 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
             "rollback_credentials_planned",
             "rollback_credential_applied",
         }:
-            _validate_reverse_evidence(event, validated, prior, prepared_record)
+            _validate_reverse_evidence(
+                event, validated, prior, prepared_record, historical=historical
+            )
         elif isinstance(validated, _PrepublicationAbort):
             receipt = _CandidateReceipt.model_validate(prior[0].evidence)
             if (
@@ -1076,7 +1087,8 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
                     and not any(row.event == "artifact_published" for row in prior)
                 )
             if (
-                not expected and not retirement_only
+                not expected
+                and not retirement_only
                 or expected != observed
                 or len(observed) != len(validated.artifacts)
             ):
@@ -1163,7 +1175,9 @@ def _validate(event: str, evidence: Mapping[str, object], prior: list[_Event]) -
         raise ValueError("journal_evidence_invalid") from None
 
 
-def _validate_reverse_evidence(event, value, prior, prepared_record):
+def _validate_reverse_evidence(
+    event, value, prior, prepared_record, *, historical=False
+):
     prepared = _Prepared.model_validate(prepared_record.evidence)
     items = {item.logical_id: item for item in prepared.artifacts}
     rolling = next((row for row in prior if row.event == "rollback_started"), None)
@@ -1392,7 +1406,19 @@ def _validate_reverse_evidence(event, value, prior, prepared_record):
         ):
             raise ValueError("original_metadata_invalid")
     elif event == "rollback_activation_recorded":
-        from .owner_registry import install_adapters
+        # Historical copied records cannot authorize execution. Validate their
+        # recorded owner syntax without importing services or today's owner set.
+        # Live journal admission retains the installed-owner equality check.
+        if historical:
+            owners = sorted(set(value.owners))
+            if any(not owner or len(owner) > 256 or "\0" in owner for owner in owners):
+                raise ValueError("rollback_activation_invalid")
+        else:
+            from .owner_registry import install_adapters
+
+            owners = sorted(
+                {row.owner_id for row in install_adapters() if row.activation_required}
+            )
 
         if (
             value.generation != rolling.evidence["generation"]
@@ -1401,10 +1427,7 @@ def _validate_reverse_evidence(event, value, prior, prepared_record):
             or any(row.kind != "file" for row in value.records)
             or value.selectors
             != sorted(row["config"] for row in rolling.evidence["profiles"])
-            or value.owners
-            != sorted(
-                {row.owner_id for row in install_adapters() if row.activation_required}
-            )
+            or value.owners != owners
         ):
             raise ValueError("rollback_activation_invalid")
     elif event == "rolled_back":
@@ -1468,6 +1491,55 @@ def _validate_reverse_evidence(event, value, prior, prepared_record):
             raise ValueError("rollback_metadata_invalid")
 
 
+def parse_event_records(
+    operation_id: str,
+    members: Iterable[tuple[str, dict]],
+    *,
+    historical: bool = False,
+) -> list[_Event]:
+    """Parse ordered records without opening any path or constructing authority.
+
+    Args:
+        operation_id: Expected operation identity, supplied independently of rows.
+        members: Bounded ordered member names and already decoded JSON objects.
+        historical: Check inert copied history; never discover live owner state.
+
+    Returns:
+        Strictly validated events, including transition and hash-chain evidence.
+
+    Raises:
+        ValueError: The sequence, schema, identity, or event evidence is invalid.
+    """
+    if (
+        type(operation_id) is not str  # noqa: E721 - Match native journal identity validation.
+        or not 0 < len(operation_id) <= 256
+        or "\0" in operation_id
+    ):
+        raise ValueError("operation_id_invalid")
+    records = []
+    previous = ""
+    for index, (name, value) in enumerate(members):
+        if index >= MAX_EVENTS:
+            raise ValueError("journal_limit")
+        if name != f"{index:06d}.json":
+            raise ValueError("journal_sequence_invalid")
+        if not isinstance(value, dict):
+            raise ValueError("record_version")
+        if type(value.get("version")) is not int or value["version"] != 1:  # noqa: E721 - JSON bool is not an integer
+            raise ValueError("record_version")
+        record = _Event.model_validate(value)
+        if (
+            record.operation_id != operation_id
+            or record.sequence != index
+            or record.previous != previous
+        ):
+            raise ValueError("journal_sequence_invalid")
+        _validate(record.event, record.evidence, records, historical=historical)
+        records.append(record)
+        previous = hashlib.sha256(_encoded(record)).hexdigest()
+    return records
+
+
 class Journal:
     """Serialize local records under a stable lock and retain incomplete writes.
 
@@ -1478,7 +1550,7 @@ class Journal:
 
     def __init__(self, root: Path, operation_id: str):
         if (
-            type(operation_id) is not str
+            type(operation_id) is not str  # noqa: E721 - Exact identity type is part of native admission.
             or not 0 < len(operation_id) <= 256
             or "\0" in operation_id
         ):
@@ -1539,24 +1611,13 @@ class Journal:
         )
         if len(names) > MAX_EVENTS:
             raise ValueError("journal_limit")
-        records = []
-        previous = ""
-        for index, name in enumerate(names):
-            if name != f"{index:06d}.json":
-                raise ValueError("journal_sequence_invalid")
-            record = _Event.model_validate(
-                _read(parent, name, max_bytes=RECOVERY_RECORD_BYTES)
-            )
-            if (
-                record.operation_id != self.operation_id
-                or record.sequence != index
-                or record.previous != previous
-            ):
-                raise ValueError("journal_sequence_invalid")
-            _validate(record.event, record.evidence, records)
-            records.append(record)
-            previous = hashlib.sha256(_encoded(record)).hexdigest()
-        return records
+        return parse_event_records(
+            self.operation_id,
+            (
+                (name, _read(parent, name, max_bytes=RECOVERY_RECORD_BYTES))
+                for name in names
+            ),
+        )
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
         """Flush one strictly typed exclusive record; failed writes remain evidence."""
@@ -1627,7 +1688,9 @@ class Journal:
         """Revalidate and flush accepted history under the held journal lock."""
         for row in self._records(parent):
             self._flush_record(
-                parent, f"{row.sequence:06d}.json", row.model_dump(),
+                parent,
+                f"{row.sequence:06d}.json",
+                row.model_dump(),
                 max_bytes=RECOVERY_RECORD_BYTES,
             )
         flush_directory(parent)

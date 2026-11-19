@@ -58,16 +58,10 @@ async def test_settings_splash_viewer_can_compose(request, splash_app):
 async def test_settings_splash_viewer_loads_defaults(request, splash_app):
     """Test that viewer loads defaults when config has no configured values."""
 
-    def fake_get_cli_setting(section, key=None, default=None):
-        # Return the default parameter to simulate no configured values
-        # This tests the fallback behavior
-        return default
-
     with patch(
-        "tldw_chatbook.Widgets.settings_splash_screen_viewer.get_cli_setting",
-        side_effect=fake_get_cli_setting,
+        "tldw_chatbook.Widgets.settings_splash_screen_viewer.load_cli_config_and_ensure_existence",
+        return_value={},
     ):
-        # Recreate the app with patched get_cli_setting
         splash_app = _SplashTestApp()
         async with splash_app.run_test(size=(120, 50)) as pilot:
             await pilot.pause()
@@ -295,6 +289,7 @@ async def test_splash_animation_speed_persists_to_the_section_it_loads(
 ):
     """A speed saved in Settings must survive recreating the viewer."""
     from tldw_chatbook import config
+    from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
     async with splash_app.run_test(size=(120, 50)) as pilot:
         viewer = splash_app.query_one(SettingsSplashScreenViewer)
@@ -309,6 +304,7 @@ async def test_splash_animation_speed_persists_to_the_section_it_loads(
             == 1.75
         )
         assert SettingsSplashScreenViewer()._load_config()["animation_speed"] == 1.75
+        assert SplashScreen().config["animation_speed"] == 1.75
 
 
 @pytest.mark.asyncio

@@ -119,6 +119,7 @@ def test_import_type_toggle_and_queue_row_read_from_the_legend() -> None:
     assert row.line.startswith("– skipped · weird.xyz")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)])
 async def test_the_sources_panel_paints_checkboxes_at_both_sizes(size) -> None:
@@ -347,6 +348,7 @@ async def test_ctrl_a_selects_the_whole_file_name(tmp_path) -> None:
         assert tuple(field.selection) == (0, len("report.zip"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_missing_provider_key_paints_one_line_and_no_owner_block(
     monkeypatch,

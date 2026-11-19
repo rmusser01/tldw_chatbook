@@ -3,12 +3,12 @@
 Status: Accepted
 Date: 2026-07-27
 Related Task: [TASK-1213](../tasks/task-1213%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)
-Amends: [ADR-029 File Notes disk authority](029-file-notes-disk-authority.md)
+Amends: [ADR-296 File Notes disk authority](296-file-notes-disk-authority.md)
 Conforms to: [ADR-033 Application Session State Ownership](033-application-session-state-ownership.md)
 
 ## Context
 
-ADR-029 keeps Markdown/text files authoritative, stores an independent SQLite
+ADR-296 keeps Markdown/text files authoritative, stores an independent SQLite
 search/recovery replica, and leaves Git external. File Notes now provides a
 usable disk-backed work session and records only the paths Chatbook changed.
 That log currently belongs to one workspace/service instance even though
@@ -152,6 +152,6 @@ unless Chatbook can prove it is reversing its own index action.
 ## Links
 
 - [Design specification](../../Docs/superpowers/specs/2026-07-27-file-notes-session-git-staging-design.md)
-- [ADR-029](029-file-notes-disk-authority.md)
+- [ADR-296](296-file-notes-disk-authority.md)
 - [ADR-033](033-application-session-state-ownership.md)
 - [TASK-1213](../tasks/task-1213%20-%20Add-session-scoped-Git-status-and-staging-to-File-Notes.md)

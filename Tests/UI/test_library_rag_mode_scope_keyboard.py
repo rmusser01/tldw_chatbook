@@ -19,6 +19,7 @@ from Tests.UI.test_product_maturity_gate16_library_search_rag import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -68,6 +69,7 @@ async def test_keyboard_toggle_and_reverse_keep_visible_focus(theme, size, kind)
         _assert_painted(screen, screen.focused)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mode", "scope"])
 @pytest.mark.parametrize("outside_panel", [False, True])
@@ -109,6 +111,7 @@ async def test_deferred_toggle_restore_respects_newer_focus(
         assert service.calls == [] and answers == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mode", "scope"])
 @pytest.mark.parametrize("phase", ["retrieval", "answer"])

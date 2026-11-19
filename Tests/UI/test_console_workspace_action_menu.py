@@ -61,9 +61,7 @@ def _stub_registry():
             workspace_id="ws-beta", name="Workspace Beta", active=False
         ),
     }
-    return SimpleNamespace(
-        get_workspace=lambda ws_id: records.get(ws_id)
-    )
+    return SimpleNamespace(get_workspace=lambda ws_id: records.get(ws_id))
 
 
 def _request_menu(console, *, kind: str, **kwargs) -> None:
@@ -121,6 +119,7 @@ def test_row_action_menu_open_tracks_only_live_unpruned_menus(
     assert screen._console_row_action_menu_open() is expected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_rows_paint_distinct_right_edge_affordances() -> None:
     """Workspace and chat rows carry distinct openers in one edge column."""
@@ -149,15 +148,14 @@ async def test_tree_rows_paint_distinct_right_edge_affordances() -> None:
         start, end = conversation_zone
         # The affordance press is recognized inside the zone and not outside.
         tree._pressed_x = start
-        assert tree._pressed_menu_affordance(
-            tree.conversation_nodes["conv-a0"].data
-        )
+        assert tree._pressed_menu_affordance(tree.conversation_nodes["conv-a0"].data)
         tree._pressed_x = end
         assert not tree._pressed_menu_affordance(
             tree.conversation_nodes["conv-a0"].data
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_marker_menus_claim_escape_before_hands_free_exit(monkeypatch) -> None:
     """A row popup owns Escape before the priority hands-free binding.
@@ -182,7 +180,7 @@ async def test_marker_menus_claim_escape_before_hands_free_exit(monkeypatch) -> 
         await pilot.pause(_MENU_SETTLE_SECONDS)
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
 
         await _click_tree_marker(pilot, tree, tree.workspace_nodes["ws-alpha"])
@@ -221,6 +219,7 @@ async def test_marker_menus_claim_escape_before_hands_free_exit(monkeypatch) -> 
         assert fake.stop_calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("node_key", "menu_type", "handler_name"),
@@ -273,6 +272,7 @@ async def test_real_marker_menu_dismisses_on_outside_click(
         assert pilot.app.focused is composer
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_focus_restore_keeps_two_row_workspace_tree_visible() -> None:
     """The restored focus cue remains visible without overpainting rows."""
@@ -297,9 +297,7 @@ async def test_escape_focus_restore_keeps_two_row_workspace_tree_visible() -> No
         focused_cursor = tree.get_component_styles("tree--cursor").background
         # task-31264: $ds-focus-bg is the polarity-aware generated focus tint
         # (block-cursor-blurred-background), no longer the #51677e literal.
-        expected = Color.parse(
-            host.theme_variables["block-cursor-blurred-background"]
-        )
+        expected = Color.parse(host.theme_variables["block-cursor-blurred-background"])
         assert focused_cursor == expected
         rendered = "\n".join(
             tree.render_line(row).text for row in range(tree.region.height)
@@ -315,6 +313,7 @@ async def test_escape_focus_restore_keeps_two_row_workspace_tree_visible() -> No
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_menu_opens_with_the_six_approved_entries(
     monkeypatch,
@@ -338,14 +337,13 @@ async def test_workspace_menu_opens_with_the_six_approved_entries(
         ]
         # The stub registry reports ws-beta inactive, so Activate is live and
         # RAG scope states its precondition instead of being silently dead.
-        actions = {
-            getattr(b, "workspace_action_id", ""): b for b in menu.query(Button)
-        }
+        actions = {getattr(b, "workspace_action_id", ""): b for b in menu.query(Button)}
         assert actions["activate"].disabled is False
         assert actions["rag-scope"].disabled is True
         assert actions["rag-scope"].tooltip
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_menu_pages_and_escapes_like_the_conversation_menu(
     monkeypatch,
@@ -366,9 +364,10 @@ async def test_workspace_menu_pages_and_escapes_like_the_conversation_menu(
         await pilot.pause(0.5)
         menu = console.query_one(ConsoleWorkspaceActionMenu)
         assert menu.page == "more"
-        assert [
-            getattr(b, "workspace_action_id", "") for b in menu.query(Button)
-        ] == ["page:root", "archive"]
+        assert [getattr(b, "workspace_action_id", "") for b in menu.query(Button)] == [
+            "page:root",
+            "archive",
+        ]
 
         await pilot.press("escape")
         await pilot.pause(0.5)
@@ -378,6 +377,7 @@ async def test_workspace_menu_pages_and_escapes_like_the_conversation_menu(
         assert not console.query(ConsoleWorkspaceActionMenu)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unsaved_native_rows_get_none_and_gate_saved_only_actions() -> None:
     """A synthetic `native:` tree identity must not reach persistence.
@@ -432,6 +432,7 @@ async def test_unsaved_native_rows_get_none_and_gate_saved_only_actions() -> Non
         assert rename.tooltip == "Send or save this chat first."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_menu_target_carries_the_row_title() -> None:
     """The row's title reaches the menu target (rename/delete copy)."""
@@ -448,6 +449,7 @@ async def test_tree_menu_target_carries_the_row_title() -> None:
         assert menu.target.title == "Alpha conversation 0"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_chat_does_not_create_when_activation_cannot_land(
     monkeypatch,
@@ -498,9 +500,7 @@ async def test_new_chat_does_not_create_when_activation_cannot_land(
         assert calls == [], "created a chat for a vanished workspace"
 
         # Workspace exists but the switch cannot land (still inactive): no create.
-        record = SimpleNamespace(
-            workspace_id="ws-beta", name="Beta", active=False
-        )
+        record = SimpleNamespace(workspace_id="ws-beta", name="Beta", active=False)
         console.app_instance.workspace_registry_service = SimpleNamespace(
             get_workspace=lambda ws_id: record
         )
@@ -526,14 +526,13 @@ async def test_new_chat_does_not_create_when_activation_cannot_land(
         assert calls[-1] == "created"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_chat_row_opens_the_shared_conversation_menu() -> None:
     async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
         console = pilot.app.screen
 
-        _request_menu(
-            console, kind="conversation", conversation_id="conv-a0"
-        )
+        _request_menu(console, kind="conversation", conversation_id="conv-a0")
         await pilot.pause(_MENU_SETTLE_SECONDS)
 
         menu = console.query_one(ConsoleConversationActionMenu)
@@ -542,6 +541,7 @@ async def test_tree_chat_row_opens_the_shared_conversation_menu() -> None:
         assert menu.target.conversation_id == "conv-a0"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_m_binding_opens_the_menu_for_the_cursor_workspace_row(
     monkeypatch,
@@ -576,6 +576,7 @@ async def test_m_binding_opens_the_menu_for_the_cursor_workspace_row(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_menu_dismisses_on_outside_click_and_stranded_escape(
     monkeypatch,
@@ -607,6 +608,7 @@ async def test_workspace_menu_dismisses_on_outside_click_and_stranded_escape(
         assert pilot.app.focused is composer
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_actions_route_through_the_existing_seams(
     monkeypatch,
@@ -693,9 +695,7 @@ async def test_workspace_actions_route_through_the_existing_seams(
             ACTION_RAG_SCOPE,
             ACTION_ARCHIVE,
         ):
-            console.on_workspace_action_chosen(
-                WorkspaceActionChosen(action, target)
-            )
+            console.on_workspace_action_chosen(WorkspaceActionChosen(action, target))
         await pilot.pause(0.8)
 
         routed = {name for name, _ in calls}
@@ -713,6 +713,7 @@ async def test_workspace_actions_route_through_the_existing_seams(
         assert ("show-files", "ws-beta") in calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_contextual_star_button_and_selection_line_are_retired() -> None:
     """The single Star control is gone; row menus own the actions now."""
@@ -725,6 +726,7 @@ async def test_contextual_star_button_and_selection_line_are_retired() -> None:
         assert not console.query("#console-workspace-context-action-row")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_press_folds_the_workspace_menu() -> None:
     """ADR-068 parity: transcript presses fold the workspace menu too."""

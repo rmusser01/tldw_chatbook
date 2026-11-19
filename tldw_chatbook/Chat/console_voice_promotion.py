@@ -150,13 +150,20 @@ class VoicePromotionContext:
 
 @dataclass(frozen=True, slots=True)
 class ResolvedVoicePromotionDestination:
-    """Store-resolved durable or temporary destination for one claimed pair."""
+    """Store-resolved durable or temporary destination for one claimed pair.
+
+    ``user_root_fork`` is set when the pair's prompt is a new root-level
+    branch -- sent at a before-first cursor beside an existing root -- so it is
+    saved with the ``root_fork`` marker (TASK-33628.12). Such a prompt has no
+    parent, so the flag refuses an ``expected_persisted_leaf_id``.
+    """
 
     session_id: str
     session_incarnation: int
     persisted_conversation_id: str | None
     expected_persisted_leaf_id: str | None
     capture_eligible_at_dispatch: bool
+    user_root_fork: bool = False
 
     def __post_init__(self) -> None:
         _required_string(self.session_id, "session_id", maximum=_OPAQUE_ID_MAX_LENGTH)
@@ -175,6 +182,10 @@ class ResolvedVoicePromotionDestination:
             self.capture_eligible_at_dispatch,
             "capture_eligible_at_dispatch",
         )
+        if _boolean(self.user_root_fork, "user_root_fork") and (
+            self.expected_persisted_leaf_id is not None
+        ):
+            raise ValueError("a root fork destination cannot have a parent")
 
 
 class ConsoleVoicePromotionClaimStatus(str, Enum):

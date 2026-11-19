@@ -142,6 +142,7 @@ async def test_linking_clears_the_inline_refusal(widget_pilot) -> None:
         assert link.display is False
 
 
+@pytest.mark.bootstrap_profile
 def test_link_to_workspace_makes_the_conversation_eligible() -> None:
     """AC#2: the remedy writes the membership the eligibility rule wants."""
     from Tests.UI.app_factory import _build_test_app
@@ -184,6 +185,7 @@ def test_link_to_workspace_makes_the_conversation_eligible() -> None:
     ) == (True, "")
 
 
+@pytest.mark.bootstrap_profile
 def test_conversation_open_console_has_a_keyboard_route() -> None:
     """AC#1: 'c' reaches the hand-off, mirroring Media's own binding."""
     from Tests.UI.app_factory import _build_test_app
@@ -231,6 +233,7 @@ def test_conversation_open_console_has_a_keyboard_route() -> None:
     assert screen.check_action("library_conversation_open_console", ()) is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_reader_offers_the_link_then_enables_the_handoff() -> None:
     """End to end: the seeded (unlinked) conversation, then the remedy.
@@ -397,6 +400,7 @@ async def test_non_linkable_block_keeps_its_own_recovery_copy(
         assert "Select an active workspace" in tooltip
 
 
+@pytest.mark.bootstrap_profile
 def test_link_remedy_refuses_a_stale_retained_transcript() -> None:
     """Review round 2: the persisting seam re-checks the fence it renders."""
     from dataclasses import replace
@@ -466,6 +470,7 @@ async def test_blocked_state_paints_the_action_name_once(widget_pilot) -> None:
         assert "not in this workspace" in str(blocked.renderable)
 
 
+@pytest.mark.bootstrap_profile
 def test_blocked_c_key_says_what_the_resume_control_says() -> None:
     """Keep dev's explanatory key while fencing the original loaded identity."""
     from dataclasses import replace
@@ -499,6 +504,7 @@ def test_blocked_c_key_says_what_the_resume_control_says() -> None:
     assert screen.check_action("library_conversation_open_console", ()) is False
 
 
+@pytest.mark.bootstrap_profile
 def test_ready_resume_key_ignores_source_workspace_membership() -> None:
     """Original-ID resume remains available when the source handoff is refused."""
     from unittest.mock import Mock
@@ -527,6 +533,7 @@ def test_ready_resume_key_ignores_source_workspace_membership() -> None:
     app.open_chat_with_handoff.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dispatch", ["button", "key"])
 @pytest.mark.parametrize("exists_now", [True, False])

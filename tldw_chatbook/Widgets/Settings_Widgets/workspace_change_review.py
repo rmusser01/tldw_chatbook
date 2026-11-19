@@ -118,7 +118,7 @@ class WorkspaceChangeReviewPanel(Vertical):
             return
         self._poll_worker = self._refresh_preparing()
 
-    @work(exclusive=True, exit_on_error=False)
+    @work(exclusive=True, exit_on_error=False, group="workspace-readiness-poll")
     async def _refresh_preparing(self) -> None:
         observed = self._status
         latest = await asyncio.to_thread(self._read_status)

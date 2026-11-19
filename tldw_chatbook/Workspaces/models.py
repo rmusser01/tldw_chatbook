@@ -171,6 +171,8 @@ class WorkspaceRecord:
     assistant_defaults_explicit_none: bool = False
     created_at: str = field(default_factory=registry_now_iso)
     updated_at: str = field(default_factory=registry_now_iso)
+    archived_at: str | None = None
+    archive_revision: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(

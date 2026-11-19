@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌───────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically. │
+│ │ Navigation                     │  a  │ Library notes · Ready                                 │  o    ‹ Notes   Advisor meeting 2026-09-24                  │
+│ │     Import…                    │  v  │ Notes (122)                                           │  t                                                          │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ These notes live in the Library's own database — for  │  e                                                          │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ notes that live in a folder on disk, switch to Folder │  s   In the Library database only — no file on disk         │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ files. To copy or keep a folder synced, choose Add    │     Saved                                                   │
+│ │                                │     │ from files.                                           │         Edit     Preview     Info                           │
+│ │ ─────────────────────────────  │     │                                                       │         Save     Use in Console                             │
+│ │ Browse                    ▾    │     │ Filter                                                │     Title                                                   │
+│ │    Media (23) — your files     │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │    Conversations (0)           │     │ ▊ Filter notes… (Enter)                             ▎ │     ▊ Advisor meeting 2026-09-24                          ▎ │
+│ │  ▸ Notes (122)                 │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │    Prompts (0) — reuse         │     │                                                       │                                                             │
+│ │    Skills (1) — AI add-ons     │<--- │    New     Sort: Newest     Select                    │     Keywords                                                │
+│ │    Collections (0)             │     │    Add from files…     Export                         │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │    Search / RAG — find all     │     │ Folders & placement                                   │     ▊ meeting, thesis                                     ▎ │
+│ │ ─────────────────────────────  │     │    New folder     Add to folder     Move note         │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │ Artifacts                 ▾    │     │    Remove placement                                   │                                                             │
+│ │    All artifacts               │     │                                                       │<--- Body                                                    │
+│ │    Chatbooks                   │     │                                                       │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │    Reports                     │     │  ▸ Agent_Lessons                                      │     ▊ # Advisor meeting — 2026-09-24                      ▎ │
+│ │ ─────────────────────────────  │     │  ▸ Journal                                            │     ▊                                                     ▎ │
+│ │ Create                    ▾    │     │  ▾ Meetings                                           │     ▊ Attendees: me, Dr. Okafor                           ▎ │
+│ │    New note                    │<--- │    Advisor meeting 2026-09-24 · now                   │     ▊                                                     ▎ │
+│ │    New prompt                  │     │    Standup 2026-09-29 · now                           │     ▊ ## Notes                                            ▎ │
+│ │    New skill                   │     │    Advisor meeting 2026-09-10 · now                   │     ▊ - Chapter 2 is too broad; cut the history           ▎ │
+│ │ ─────────────────────────────  │     │    ملاحظات الاجتماع — مراجعة المشروع · now            │     ▊ section.                                            ▎ │
+│ │ Study                     ▾    │     │    Meeting: design critique — Library rail · now      │     ▊ - Use the reranker results as the main table.       ▎ │
+│ │    Study decks (0)             │     │    Meeting notes 2026-09-30 · now                     │     ▊                                                     ▎ │
+│ │    Flashcards due: 0           │     │  ▸ Projects                                           │     ▊ ## Action items                                     ▎ │
+│ │    Quizzes (0)                 │     │  ▸ Recipes                                          ▂ │     ▊ - [ ] Trim lit review to 8k words                   ▎ │
+│ │ ─────────────────────────────  │     │  ▸ Research                                           │     ▊ - [x] Send sweep results                            ▎ │
+│ │ Import / Export           ▾    │     │  ▸ Study                                              │     ▊ - [ ] Draft method chapter by Oct 15                ▎ │
+│ │    Import…                     │     │  ▾ Unfiled                                            │     ▊                                                     ▎ │
+│ │    Export                    ▇ │     │    Quotes · now                                       │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │  ▾ scroll for more             │     │    Scratch · now                                      │                                                             │
+│ └────────────────────────────────┘     └───────────────────────────────────────────────────────┘                                             60 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

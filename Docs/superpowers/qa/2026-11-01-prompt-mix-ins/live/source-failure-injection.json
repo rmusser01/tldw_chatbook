@@ -1,0 +1,11 @@
+{
+  "method": "controlled private fixture source soft-delete with version increment and timestamp through parameterized SQLite UPDATE; triggers retained, no Console state mutation",
+  "first_attempt": "omitting version increment refused by existing trigger, rolled back",
+  "record_before": [
+    "fe10900a-94d6-4df8-8e3b-f464937b9519",
+    "Scene",
+    2,
+    0
+  ],
+  "database": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-task9-live-otdkzk5l/live/data/rp_review/tldw_chatbook_prompts.db"
+}

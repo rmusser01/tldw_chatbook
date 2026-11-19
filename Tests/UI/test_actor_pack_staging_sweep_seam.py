@@ -64,9 +64,7 @@ def test_ensure_staging_sweep_absorbs_sweep_failure():
     def failing_sweep() -> None:
         raise ActorPackImportError("actor_pack_import_cleanup_denied")
 
-    app.actor_pack_import_service = SimpleNamespace(
-        ensure_staging_swept=failing_sweep
-    )
+    app.actor_pack_import_service = SimpleNamespace(ensure_staging_swept=failing_sweep)
 
     app.ensure_actor_pack_staging_sweep()  # must not raise
 

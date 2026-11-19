@@ -76,6 +76,7 @@ async def _enter_conversations_select_mode(screen, pilot):
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_checkbox_toggle_does_not_recompose_screen(monkeypatch):
     """A select-mode checkbox press updates in place, not via a screen
@@ -143,6 +144,7 @@ async def test_checkbox_toggle_does_not_recompose_screen(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_checkbox_toggle_leaves_rail_untouched():
     """AC #2: selection/checkbox interactions never change rail counts, so
@@ -169,6 +171,7 @@ async def test_checkbox_toggle_leaves_rail_untouched():
         assert str(rail_row_after.label) == label_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_browse_row_selection_routes_through_canvas_sync_state(monkeypatch):
     """Clicking a conversation row outside select mode (choosing which row
@@ -220,6 +223,7 @@ async def test_browse_row_selection_routes_through_canvas_sync_state(monkeypatch
         assert reader.state.selected_id == "chat-2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tier2_canvas_sync_releases_mouse_capture_first():
     """The shared tier-2 canvas-sync helper releases ``App.mouse_captured``
@@ -255,6 +259,7 @@ async def test_tier2_canvas_sync_releases_mouse_capture_first():
         assert None in capture_calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tier1_toggle_falls_back_to_recompose_on_query_one_failure(monkeypatch):
     """If the tier-1 in-place helper's ``query_one`` raises (e.g. the

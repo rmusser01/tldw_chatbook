@@ -17,6 +17,7 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationSkip,
     ReconciliationAttentionKind,
     ReconciliationInput,
+    ReconciliationItemSkip,
     ReconciliationSkipKind,
     assert_review_current,
     assert_review_token,
@@ -640,3 +641,75 @@ def test_a_file_import_once_already_turned_into_a_note_is_skipped_not_recreated(
         bindings=(replace(bindings[0], bound=True, note_digest=BASE_NOTE),),
     )
     assert plan_reconciliation(bound).item_skips == ()
+
+
+def test_refused_files_become_item_skips_and_change_the_observation_token() -> None:
+    """TASK-34000.16: a refused file is in the plan AND in the review token."""
+    skip = ReconciliationItemSkip("legacy/latin1.md", "unsupported_encoding")
+    plain = ReconciliationInput(
+        root_id="root-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        bindings=(_binding(),),
+        observation_generation=7,
+        expected_generation=7,
+    )
+    refused = replace(plain, refused_files=(skip,))
+    assert plan_reconciliation(refused).item_skips == (skip,)
+    assert plan_reconciliation(plain).item_skips == ()
+    # The binding's own action is untouched by the skip: the rest of the
+    # folder is planned exactly as it would be without the bad file (action
+    # ids derive from the token, so compare what the actions ARE).
+    assert [(a.kind, a.binding_id) for a in plan_reconciliation(refused).safe_actions] == [
+        (a.kind, a.binding_id) for a in plan_reconciliation(plain).safe_actions
+    ]
+    assert (
+        plan_reconciliation(refused).observation_token
+        != plan_reconciliation(plain).observation_token
+    )
+
+
+def test_a_refused_path_cannot_also_be_observed_as_a_binding() -> None:
+    """TASK-34000.16 Review Focus: a refused file can never be read as a deleted one."""
+    with pytest.raises(ValueError, match="refused file cannot also be observed"):
+        ReconciliationInput(
+            root_id="root-1",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            bindings=(_binding(relative_path="note.md"),),
+            observation_generation=7,
+            expected_generation=7,
+            refused_files=(ReconciliationItemSkip("note.md", "mixed_newlines"),),
+        )
+
+
+def test_refused_files_must_be_a_tuple_of_item_skips() -> None:
+    with pytest.raises(TypeError, match="refused_files must be a tuple"):
+        ReconciliationInput(
+            root_id="root-1",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            bindings=(_binding(),),
+            observation_generation=7,
+            expected_generation=7,
+            refused_files=[ReconciliationItemSkip("a.md", "mixed_newlines")],  # type: ignore[arg-type]
+        )
+
+
+def test_a_refused_file_can_be_marked_as_a_bound_note_file_and_the_token_sees_it() -> None:
+    """TASK-34000.16 fix round 2 (R2-2): ``bound`` says a binding's own file is
+    the refused one; it defaults to False, is type-checked, and is in the token."""
+    plain = ReconciliationItemSkip("legacy/latin1.md", "unsupported_encoding")
+    bound = ReconciliationItemSkip("legacy/latin1.md", "unsupported_encoding", bound=True)
+    assert plain.bound is False and bound.bound is True
+    with pytest.raises(TypeError, match="bound"):
+        ReconciliationItemSkip("a.md", "mixed_newlines", bound="yes")  # type: ignore[arg-type]
+    base = ReconciliationInput(
+        root_id="root-1",
+        direction=NotesSyncDirection.BIDIRECTIONAL,
+        bindings=(_binding(),),
+        observation_generation=7,
+        expected_generation=7,
+    )
+    assert (
+        plan_reconciliation(replace(base, refused_files=(plain,))).observation_token
+        != plan_reconciliation(replace(base, refused_files=(bound,))).observation_token
+    )
+    assert plan_reconciliation(replace(base, refused_files=(bound,))).item_skips == (bound,)

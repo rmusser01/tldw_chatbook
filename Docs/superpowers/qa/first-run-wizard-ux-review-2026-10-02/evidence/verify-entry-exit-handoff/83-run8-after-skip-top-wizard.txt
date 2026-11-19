@@ -1,0 +1,50 @@
+                                        ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                        │                                                 Set up tldw chatbook                                                 │
+                                        │                                                                                                                      │
+                                        │▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│
+                                        │ ┌──┐               ┌──┐               ┌──┐                ┌──┐               ┌──┐                     ┌──┐           │
+                                        │ │1 │               │2 │               │3 │                │4 │               │5 │                     │6 │           │
+                                        │ └──┘               └──┘               └──┘                └──┘               └──┘                     └──┘           │
+                                        │ Welcome            Provider           Model               Voice              Protect                  Summary        │
+                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                               Welcome to tldw chatbook                                               │
+                                        │                                                                                                                      │
+                                        │      Chat with cloud or local AI models, keep notes, and work with your own documents — all in your terminal.        │
+                                        │                                                                                                                      │
+                                        │      Quick takes about 2 minutes; Full about 10. Everything can be changed later in Settings, and most steps         │
+                                        │      can be skipped wi╭──────────────────────────────────────────────────────────────────────╮                       │
+                                        │                       │                                                                      │                       │
+                                        │      ┌────────────────│  Check model lists online?                                           │────────────────┐      │
+                                        │      │ █▐●▌ Quick setu│                                                                      │                │      │
+                                        │      │ ▐○▌ Full setup │  tldw can fetch up-to-date model lists from your configured cloud    │                │      │
+                                        │      │                │  providers (OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter,      │                │      │
+                                        │      └────────────────│  QwenCloud, ZAI) at startup. This contacts those endpoints over the  │────────────────┘      │
+                                        │       Restore a backup│  network using your configured API keys.                             │                       │
+                                        │                       │                                                                      │                       │
+                                        │                       │  Allow this once and it stays on until you turn it off in Settings.  │                       │
+                                        │                       │  Nothing is checked until you say yes.                               │                       │
+                                        │                       │                                                                      │                       │
+                                        │                       │                                                                      │                       │
+                                        │                       │                                     Don't check      Check online    │                       │
+                                        │                       │                                                                      │                       │
+                                        │                       │                                                                      │                       │
+                                        │                       ╰──────────────────────────────────────────────────────────────────────╯                       │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+                                        │                                                                                                                      │
+                                        │    Step 1 of 6                                                            ← Back          Next →       Skip setup    │
+                                        │                                                                                                                      │
+                                        └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                           Enter / Ctrl+N next · Ctrl+B back · Esc skip setup

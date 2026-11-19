@@ -84,6 +84,7 @@ def _gated_run_executor(gate: asyncio.Event, *, items: list[dict] | None = None)
     return _executor
 
 
+@pytest.mark.bootstrap_profile
 def test_local_check_and_rerun_share_the_canonical_source_operation_key():
     screen = WatchlistsCollectionsScreen(_build_test_app())
     source_id = screen._check_source_id({"id": "local:subscription:5"})
@@ -94,6 +95,7 @@ def test_local_check_and_rerun_share_the_canonical_source_operation_key():
     assert screen._rerun_operation_key("local", 5) == expected
 
 
+@pytest.mark.bootstrap_profile
 def test_server_check_and_rerun_use_distinct_source_and_job_namespaces():
     screen = WatchlistsCollectionsScreen(_build_test_app())
 
@@ -105,6 +107,7 @@ def test_server_check_and_rerun_use_distinct_source_and_job_namespaces():
     assert source_key != job_key
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_check_now_gives_an_immediate_toast_and_a_busy_button():
     """AC#1: acknowledgment before the worker even finishes, and a busy
@@ -160,6 +163,7 @@ async def test_pressing_check_now_gives_an_immediate_toast_and_a_busy_button():
         ), f"no completion signal, got: {notified.calls!r}"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_second_press_while_checking_is_refused_not_duplicated():
     """AC#2: a second activation while the same source is mid-check is
@@ -215,6 +219,7 @@ async def test_a_second_press_while_checking_is_refused_not_duplicated():
         await pilot.pause(0.3)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_check_now_blocks_rerun_for_the_same_raw_source():
     app = _build_test_app()
@@ -262,6 +267,7 @@ async def test_local_check_now_blocks_rerun_for_the_same_raw_source():
                 break
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_local_rerun_blocks_check_now_for_the_same_raw_source():
     app = _build_test_app()
@@ -316,6 +322,7 @@ async def test_local_rerun_blocks_check_now_for_the_same_raw_source():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_different_source_can_still_be_checked_while_one_is_busy():
     """The debounce is per-source, not global: `run_worker` uses a named
@@ -375,6 +382,7 @@ async def test_a_different_source_can_still_be_checked_while_one_is_busy():
         await pilot.pause(0.3)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failed_check_still_clears_the_busy_state():
     """AC#1's failure half: the busy state must clear in a `finally`, so a
@@ -415,6 +423,7 @@ async def test_a_failed_check_still_clears_the_busy_state():
         assert str(button.label) == "Check now"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_inspector_check_now_button_shows_the_same_busy_state():
     """Both activation sites (Sources pane, Inspector) post the identical
@@ -468,6 +477,7 @@ async def test_the_inspector_check_now_button_shows_the_same_busy_state():
         assert not inspector_button.disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_leaving_the_screen_mid_check_does_not_cancel_accepted_execution():
     """Unmount stops UI following while app-owned execution continues."""
@@ -512,6 +522,5 @@ async def test_leaving_the_screen_mid_check_does_not_cancel_accepted_execution()
                 break
 
         assert runs and runs[0]["status"] == "completed", (
-            "accepted execution must survive screen navigation; "
-            f"got {runs!r}"
+            f"accepted execution must survive screen navigation; got {runs!r}"
         )

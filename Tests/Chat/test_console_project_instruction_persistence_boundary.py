@@ -7,6 +7,7 @@ import time
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from loguru import logger
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
@@ -90,6 +91,7 @@ def _native_fs_read():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surface(
     tmp_path,
 ):
@@ -181,6 +183,7 @@ def test_automatic_nested_body_is_absent_from_every_durable_and_diagnostic_surfa
     assert MODEL_QUOTATION in repr(store.messages_for_session(session.id))
 
 
+@pytest.mark.bootstrap_profile
 def test_activation_callback_failure_is_content_free_and_does_not_block_provider(
     tmp_path, monkeypatch
 ):

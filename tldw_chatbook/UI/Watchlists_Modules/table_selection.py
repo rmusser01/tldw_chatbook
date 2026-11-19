@@ -80,18 +80,14 @@ class IdSelectionModel:
         if direction not in {-1, 1} or source_id not in self.visible_ids:
             return source_id
         current_index = self.visible_ids.index(source_id)
-        target_index = min(
-            max(current_index + direction, 0), len(self.visible_ids) - 1
-        )
+        target_index = min(max(current_index + direction, 0), len(self.visible_ids) - 1)
         target_id = self.visible_ids[target_index]
         if self.anchor_id not in self.visible_ids:
             self.anchor_id = source_id
         anchor_index = self.visible_ids.index(self.anchor_id)
         old_start, old_end = sorted((anchor_index, current_index))
         new_start, new_end = sorted((anchor_index, target_index))
-        self._selected_ids.difference_update(
-            self.visible_ids[old_start : old_end + 1]
-        )
+        self._selected_ids.difference_update(self.visible_ids[old_start : old_end + 1])
         self._selected_ids.update(self.visible_ids[new_start : new_end + 1])
         return target_id
 

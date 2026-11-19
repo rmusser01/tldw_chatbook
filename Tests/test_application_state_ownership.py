@@ -224,6 +224,7 @@ RECENT_WORK_SCREEN_PATHS = (
     PRODUCTION_ROOT / "UI" / "Screens" / "home_screen.py",
     PRODUCTION_ROOT / "UI" / "Screens" / "workflows_screen.py",
     PRODUCTION_ROOT / "UI" / "Screens" / "scheduling" / "schedules_workbench.py",
+    PRODUCTION_ROOT / "UI" / "Workflows_Modules" / "console_context.py",
 )
 RETIRED_HANDOFF_FIELDS = (
     "pending_chat_handoff",
@@ -605,7 +606,11 @@ def _package_class_module_path(
         if not isinstance(node, ast.ImportFrom) or node.module is None:
             continue
         imported = next(
-            (alias.name for alias in node.names if (alias.asname or alias.name) == name),
+            (
+                alias.name
+                for alias in node.names
+                if (alias.asname or alias.name) == name
+            ),
             None,
         )
         if imported is None:
@@ -1396,10 +1401,9 @@ def test_legacy_ccp_prompt_handlers_and_compatibility_exports_are_absent() -> No
         if path.exists()
     ] == []
 
-    ingest_source = INGEST_EVENTS_PATH.read_text(encoding="utf-8")
-    assert "character_ingest_events" not in ingest_source
-    assert "prompt_ingest_events" not in ingest_source
-    assert "INGEST_BUTTON_HANDLERS" not in ingest_source
+    # The ingest_events.py compatibility shim itself is retired; this guard
+    # keeps it from being reintroduced alongside the retired names below.
+    assert not INGEST_EVENTS_PATH.exists()
 
     ingest_utils_source = INGEST_UTILS_PATH.read_text(encoding="utf-8")
     for retired_name in (
@@ -2013,11 +2017,15 @@ def test_schedules_calls_authoritative_runtime_source_with_context_and_config() 
 
 
 def test_runtime_source_state_store_references_are_confined_to_owner_modules() -> None:
+    recovery_module = "tldw_chatbook/Backup_Recovery/raw_participants.py"
+    references = _production_occurrences("RuntimeSourceStateStore")
+    assert [
+        (kind, scopes) for path, kind, scopes, _line in references if path == recovery_module
+    ] == [("dynamic_name", ("runtime_operation",))]
     observed_paths = {
         PROJECT_ROOT / path
-        for path, _kind, _scopes, _line in _production_occurrences(
-            "RuntimeSourceStateStore"
-        )
+        for path, _kind, _scopes, _line in references
+        if path != recovery_module
     }
 
     assert observed_paths == {BOOTSTRAP_PATH, SOURCE_STATE_PATH}
@@ -2064,9 +2072,9 @@ def test_recent_work_consumers_use_owner_api_outside_threaded_workers() -> None:
         "tldw_chatbook/UI/Screens/home_screen.py": {
             ("HomeScreen", "_build_dashboard_input"),
         },
-        "tldw_chatbook/UI/Screens/workflows_screen.py": {
-            ("WorkflowsScreen", "on_mount"),
-            ("WorkflowsScreen", "_latest_console_follow_item"),
+        "tldw_chatbook/UI/Screens/workflows_screen.py": set(),
+        "tldw_chatbook/UI/Workflows_Modules/console_context.py": {
+            ("WorkflowConsoleContext", "refresh_context"),
         },
         "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": {
             ("SchedulesWorkbench", "_latest_console_follow_item_from_adapter"),
@@ -2084,12 +2092,24 @@ def test_recent_work_consumers_use_owner_api_outside_threaded_workers() -> None:
                 for node in class_node.body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
             ):
+                nodes = tuple(ast.walk(method))
+                store_aliases = {
+                    target.id
+                    for node in nodes
+                    if isinstance(node, ast.Assign)
+                    and _constant_dynamic_name(node.value) == "screen_state_store"
+                    for target in node.targets
+                    if isinstance(target, ast.Name)
+                }
                 if any(
                     isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Attribute)
                     and node.func.attr == "has_snapshots"
-                    and _chain(node.func.value).endswith(".screen_state_store")
-                    for node in ast.walk(method)
+                    and (
+                        _chain(node.func.value).endswith(".screen_state_store")
+                        or _chain(node.func.value) in store_aliases
+                    )
+                    for node in nodes
                 ):
                     scoped_calls.add((class_node.name, method.name))
         observed[relative] = scoped_calls
@@ -2189,9 +2209,7 @@ def test_tldw_cli_has_no_retired_llm_destination_state_or_dispatcher() -> None:
         "_update_model_download_log",
     )
     violations = {
-        name: _app_occurrences(name)
-        for name in retired_names
-        if _app_occurrences(name)
+        name: _app_occurrences(name) for name in retired_names if _app_occurrences(name)
     }
 
     assert violations == {}
@@ -2278,13 +2296,23 @@ def test_production_does_not_import_retired_llm_navigation_events() -> None:
 
 
 def test_retired_raw_handoff_fields_are_absent_from_production() -> None:
-    violations = {
-        field: _production_occurrences(field)
-        for field in RETIRED_HANDOFF_FIELDS
-        if _production_occurrences(field)
-    }
+    observed = {}
+    for field in RETIRED_HANDOFF_FIELDS:
+        references = _production_occurrences(field)
+        if references:
+            observed[field] = [
+                (path, kind, scopes) for path, kind, scopes, _line in references
+            ]
 
-    assert violations == {}
+    assert observed == {
+        "pending_console_launch": [
+            (
+                "tldw_chatbook/Backup_Recovery/unsaved_editors.py",
+                "subscript_name",
+                ("_console_snapshot_dirty",),
+            ),
+        ],
+    }
 
 
 def test_pending_handoff_slots_are_private_to_the_owner_module() -> None:

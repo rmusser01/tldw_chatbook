@@ -117,6 +117,7 @@ async def _start_blocked_root_change(pilot, workspace, blocked, new_root):
     return workspace._structural_wait
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_folder_change_wait_reports_still_working_and_offers_cancel(
     blocked_root_change,
@@ -158,6 +159,7 @@ async def test_folder_change_wait_reports_still_working_and_offers_cancel(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_leaves_files_while_a_folder_change_is_still_running(
     blocked_root_change,
@@ -183,6 +185,7 @@ async def test_escape_leaves_files_while_a_folder_change_is_still_running(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_quit_and_navigation_are_never_vetoed_by_a_structural_wait(
     blocked_root_change,
@@ -209,6 +212,7 @@ async def test_quit_and_navigation_are_never_vetoed_by_a_structural_wait(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelling_a_folder_change_keeps_the_previous_folder(
     blocked_root_change,
@@ -242,6 +246,7 @@ async def test_cancelling_a_folder_change_keeps_the_previous_folder(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_import_wait_reports_still_working_and_can_be_cancelled(
     tmp_path, monkeypatch
@@ -330,6 +335,7 @@ async def test_skill_import_wait_reports_still_working_and_can_be_cancelled(
         assert screen._library_structural_wait_for(WAIT_OWNER_SKILL_IMPORT) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_wait_reports_still_working_beside_its_cancel(
     tmp_path, monkeypatch
@@ -415,6 +421,7 @@ async def test_export_wait_reports_still_working_beside_its_cancel(
         assert _static_text(screen, "#library-export-status-line") == "Cancelling…"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_skill_import_patience_repaint_stays_off_other_rows(
     tmp_path, monkeypatch
@@ -459,6 +466,7 @@ async def test_skill_import_patience_repaint_stays_off_other_rows(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_folder_change_never_steals_another_surfaces_wait(
     blocked_root_change,
@@ -504,6 +512,7 @@ async def test_a_folder_change_never_steals_another_surfaces_wait(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_folder_change_that_never_lands_times_out_and_keeps_the_folder(
     blocked_root_change, monkeypatch
@@ -531,6 +540,7 @@ async def test_folder_change_that_never_lands_times_out_and_keeps_the_folder(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancel_that_loses_to_the_commit_reports_the_folder_that_landed(
     tmp_path, monkeypatch
@@ -687,6 +697,7 @@ def lock_holding_root_change(tmp_path, monkeypatch):
             blocked.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_abandoned_folder_scan_does_not_block_the_next_folder_change(
     lock_holding_root_change, monkeypatch
@@ -738,6 +749,7 @@ async def test_abandoned_folder_scan_does_not_block_the_next_folder_change(
         replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_timeout_reason_owns_the_folder_row_until_the_next_attempt(
     blocked_root_change, monkeypatch
@@ -798,6 +810,7 @@ async def test_timeout_reason_owns_the_folder_row_until_the_next_attempt(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_slow_scan_reports_the_entries_it_has_seen(
     blocked_root_change,
@@ -823,6 +836,7 @@ async def test_a_slow_scan_reports_the_entries_it_has_seen(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keep_waiting_grants_exactly_one_more_deadline(
     blocked_root_change, monkeypatch
@@ -869,6 +883,7 @@ async def test_keep_waiting_grants_exactly_one_more_deadline(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_choose_another_abandons_the_change_and_reopens_the_picker(
     blocked_root_change, monkeypatch
@@ -909,6 +924,7 @@ async def test_choose_another_abandons_the_change_and_reopens_the_picker(
     replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_scan_that_ignores_its_cancel_still_bounds_the_next_change(
     lock_holding_root_change, monkeypatch
@@ -959,6 +975,7 @@ async def test_a_scan_that_ignores_its_cancel_still_bounds_the_next_change(
         replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_closing_folder_files_stops_the_progress_timer(
     blocked_root_change,
@@ -984,6 +1001,7 @@ async def test_closing_folder_files_stops_the_progress_timer(
         replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keep_waiting_also_extends_the_wait_for_the_shared_lock(
     lock_holding_root_change, monkeypatch
@@ -1051,6 +1069,7 @@ async def test_keep_waiting_also_extends_the_wait_for_the_shared_lock(
         replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_abandoning_one_attempt_never_cancels_another_attempts_scan(
     tmp_path, monkeypatch
@@ -1119,6 +1138,7 @@ async def test_abandoning_one_attempt_never_cancels_another_attempts_scan(
         replica.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_folder_change_reports_progress_from_the_real_scan(
     tmp_path,

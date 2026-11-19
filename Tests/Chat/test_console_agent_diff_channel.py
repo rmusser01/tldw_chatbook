@@ -159,6 +159,7 @@ def test_write_file_marker_carries_session_only_diff(
     assert "raw after text" not in persisted
 
 
+@pytest.mark.bootstrap_profile
 def test_non_diff_tool_marker_has_no_diff(tmp_path, monkeypatch, diff_execute):
     """AC4: ordinary tool results render exactly as before (no tool_diff)."""
     scripts = [

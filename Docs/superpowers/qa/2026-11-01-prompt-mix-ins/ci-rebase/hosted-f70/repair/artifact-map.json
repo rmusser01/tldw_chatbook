@@ -1,0 +1,170 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/report.md",
+      "bytes": 6737,
+      "sha256": "00544bd11adabeac044da78685943c6a4915030c1c3f48e8c132e9e966352397"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/implementation-report.md",
+      "bytes": 5511,
+      "sha256": "10067c1a2a98cecf41dee82ec3228879fd203ad85c24cc3c406028e8ce03c939"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/source-proof.json",
+      "bytes": 2683,
+      "sha256": "57eab5b15331d042a16c32a371149de84f48895f462d8d0f8b0f3736a3eebb09"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-source.json",
+      "bytes": 458,
+      "sha256": "9c23c59f0192b4f27f219dccd9daa861dd0d857d7c540033dcfda90824787f9a"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-static-proof.json",
+      "bytes": 1338,
+      "sha256": "c8bc2a1ad1564e9660090180f28d1d967c78b59fca75abfc7d3e5066bcb60f79"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/evidence-summary.json",
+      "bytes": 7306,
+      "sha256": "6c3e30a11517925a337da5ab8e79ff60cf39c6f959335208d0d4c19ea9b02325"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/commands.json",
+      "bytes": 7515,
+      "sha256": "4e0f59bd3aa91e94658e089aa4f476e5f4268a6ed2669313e731888c99cf5bc9"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner_probe.py",
+      "bytes": 3155,
+      "sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-events.jsonl",
+      "bytes": 905,
+      "sha256": "238bb394e352e720e0b4ac79c6c58fe068c247b11d95fb2ddf6911881de91091"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-probe.log",
+      "bytes": 279961,
+      "sha256": "3187faed49a3b69f35f6d7fd3dcd6849f9e0ed4fa6f9fb44d64724254f51ac73"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-probe.xml",
+      "bytes": 7827,
+      "sha256": "9d815951c3380e559b2c3bf126604b09293ad6f0e6c849abf2906ac1f1150b43"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/permanent-red.log",
+      "bytes": 36347,
+      "sha256": "6e2a415450d8b046a1e3592e76fe1796b672b8d7a67c176d5c89381bed5e6edc"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/permanent-red.xml",
+      "bytes": 14553,
+      "sha256": "0b2d991d3d5fef04bcb4696f5547ed8cefbb91103643a7ef3fd4b7fa4f90cdb2"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/frozen-red.log",
+      "bytes": 36380,
+      "sha256": "aead881ca6723ca1eb0d53758e35e0a5d9168cbfa445853788de96c976e53474"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/frozen-red.xml",
+      "bytes": 14586,
+      "sha256": "58dcbcd0f20abc9b7eb925fb56e9bd8440a6bc15cae3c6d4206aa8a8e49f068d"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-red.log",
+      "bytes": 36380,
+      "sha256": "77f6e1722fef34531b1bbe2a7759eb174d6ad8ae2375ac654fbd64de0d59b42a"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-red.xml",
+      "bytes": 14586,
+      "sha256": "8971f7649186daeae0aac21b353305391bd62f81d4e405b8775c5ae30deaec15"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/frozen-green.log",
+      "bytes": 30144,
+      "sha256": "56ce18b91c5586ce791402bcf271683bb72baf03e587c279663053b5dc584599"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/frozen-green.xml",
+      "bytes": 31493,
+      "sha256": "acca06ee0d63fb846fecbe007d746e59cb99d339a5592810fbbed1692d678b0e"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/inherited-bootstrap.log",
+      "bytes": 1245,
+      "sha256": "0ae05df44b8b6cff3c2d2389c9161a6836947ac806e464da1ab1216a62749f3e"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/inherited-bootstrap.xml",
+      "bytes": 1413,
+      "sha256": "2fba36b62c5b97af262f1bf85f22be946a0e11217eb0c24dfd3c5f0ec949bdc6"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-native.log",
+      "bytes": 435,
+      "sha256": "55d7e08e2eeae09bfa6e0202313c4d125fce9f2b6f0aeee98226618f70df7459"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-native.xml",
+      "bytes": 774,
+      "sha256": "389e53c95fe5b1bcf2133e2b7ec7796d39693cb11f0790d0c8e74f5a5de11968"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/bootstrap_selected.py",
+      "bytes": 219,
+      "sha256": "469fd1a6191c34f26044c8ef423660f47a23af0ddd5a1be52d889d9a1291fbbd"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/baseline-library_entry_canvases.py",
+      "bytes": 23385,
+      "sha256": "20c2b3254062022297a366c4f224071e5822223b99429198ef59788b3bf0f073"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/baseline-ruff.json",
+      "bytes": 2478,
+      "sha256": "8968932e7f4de94f1b56896db1f31f459b61186ada9805cf37455a092b3ac632"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-ruff.json",
+      "bytes": 2572,
+      "sha256": "5619600d3a1b085f4c6a9344cc599500bdc93e7b7e6cc39f1d6b03667eaf53a1"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/new-test-ruff.json",
+      "bytes": 1331,
+      "sha256": "34e056623da663ad0272bdfe04ad65067ce744cf77b220bff5ce5d0318843136"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/final-format.log",
+      "bytes": 26,
+      "sha256": "3bc53bf3e981a98a34a852e175bf9b77af841edea74fca595d9aedcbaf9a4938"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner_probe.py",
+      "bytes": 3155,
+      "sha256": "3f5ddf50a926a16a602e99f4712bfc8f9f82d4e9c0e316be29aa1d343f2e1011"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-events.jsonl",
+      "bytes": 934,
+      "sha256": "282c57dfac45a7868e797064db0f78e827545562c81aaaa61b167f5e6eb0f217"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-probe.log",
+      "bytes": 445,
+      "sha256": "8b1346d48692a2e49790158573dfceda0943f9af3d247610bee8ceb469a9aef5"
+    },
+    {
+      "path": "/private/tmp/mixins-f70-ui19-diagnosis/owner-green/owner-probe.xml",
+      "bytes": 435,
+      "sha256": "f750f015cb230a4bcf7497aed52ae03a52e5d12bc3059ee9097c4729f092bef7"
+    }
+  ],
+  "excluded": "pytest temporary/bootstrap profiles and caches; source metadata lists the exact production/test files separately"
+}

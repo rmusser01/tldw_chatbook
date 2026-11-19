@@ -1,0 +1,37 @@
+{
+  "name": "source-whitespace",
+  "revision": "fc1627e99b8722a0a69812530d950410e8356ba0",
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "git",
+    "-c",
+    "gc.auto=0",
+    "diff",
+    "--check",
+    "--",
+    "tldw_chatbook/Chat/console_chat_start.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/Chat/message_metadata.py",
+    "tldw_chatbook/DB/automatic_work.py",
+    "Tests/Chat/test_console_chat_start.py",
+    "Tests/DB/test_automatic_chat_starts.py",
+    "Tests/Chat/test_console_durable_commit_offload.py",
+    "Tests/Chat/test_console_durable_commit_diagnostics.py",
+    "Tests/Chat/test_console_close_during_durable_postcommit.py"
+  ],
+  "environment": {
+    "TLDW_TEST_CONFIG_ROOT": null
+  },
+  "sha256": {
+    "tldw_chatbook/Chat/console_chat_start.py": "d0cd0a4da8dd3a4cd2f185b2323d26a3517a975bc2860cf815f8437cea300c0a",
+    "tldw_chatbook/Chat/console_chat_controller.py": "c61b7eef26668563ce94dc27fe9d3f9ce180183b06b735aa367b163ed7511b03",
+    "tldw_chatbook/Chat/message_metadata.py": "c8aa1bdf33d9297dce415cc0332460f89f3720bdb3cedab6c872171ca61a99a0",
+    "tldw_chatbook/DB/automatic_work.py": "05c65a259f916744541e569b5f6f4812d0a3add79016a40bd23a69f16318617b",
+    "Tests/Chat/test_console_chat_start.py": "c293994106834cbc20b631117206134ad1e656a91ae76d0ba527edf8bd30388b",
+    "Tests/DB/test_automatic_chat_starts.py": "7b1fc6168b003491f95b03156141d0aff151f9df4e87358fce2547655a67ace6",
+    "Tests/Chat/test_console_durable_commit_offload.py": "d9a419f072b32e1610a7953fb0720809f68b69c6321072a617aa0eb431cc0761",
+    "Tests/Chat/test_console_durable_commit_diagnostics.py": "fbe8cc67be106f259dc7dc1fdec91d8f133a701edc4f91e8109a8ccd7e4207a9",
+    "Tests/Chat/test_console_close_during_durable_postcommit.py": "e19fad99ef7412fda7834553ef74c1ccdfc670171cfd9ca4733970686b8e9648"
+  },
+  "exit": 0
+}

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation        Collapse     ││ Export bundle (.zip)                                                                                                   │ │
+│ │     Import…                    ││ Media · 23 items                                                                                                       │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │ │
+│ │ ▊ Search Library…         ▎▊x▎ ││ ▊ Library export 2026-10-05                                                                                         ▎  │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │ │
+│ │                                ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │ │
+│ │ Browse                     ▾   ││ ▊ Description (optional)                                                                                            ▎  │ │
+│ │    Media (23) — your files     ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │ │
+│ │    Conversations (12)          ││                                                                                                                        │ │
+│ │    Notes (122)                 ││   quality: original                                                                                                    │ │
+│ │    Prompts (10) — reuse        ││ copies full media files into the zip                                                                                   │ │
+│ │    Skills (4) — AI add-ons     ││                                                                                                                        │ │
+│ │    Collections (6)             ││   Choose destination…                                                                                                  │ │
+│ │    Search / RAG — find all     ││ No destination chosen                                                                                                  │ │
+│ │ ────────────────────────────── ││ Bundle: 23 media items · text only · about 117 KB before compression                                                   │ │
+│ │ Artifacts                  ▾   ││                                                                                                                        │ │
+│ │    All artifacts               ││ Q3 planning memo                                                                                                       │ │
+│ │    Chatbooks                   ││ API design guidelines                                                                                                  │ │
+│ │    Reports                     ││ Employee handbook — remote work policy                                                                                 │ │
+│ │ ────────────────────────────── ││ How SQLite FTS5 ranks results                                                                                          │ │
+│ │ Create                     ▾   ││ The case for local-first software                                                                                      │ │
+│ │    New note                    ││ Spaced repetition, explained                                                                                           │ │
+│ │    New prompt                  ││ Why your sourdough is flat                                                                                             │ │
+│ │    New skill                   ││ A field guide to Markdown tables                                                                                       │ │
+│ │ ────────────────────────────── ││ Podcast: Deep Work revisited (ep. 112) — transcript                                                                    │ │
+│ │ Study                      ▾   ││ Podcast: Learning languages as an adult — transcript                                                                   │ │
+│ │    Study decks (0)             ││ Voice memo 2026-09-29                                                                                                  │ │
+│ │    Flashcards due: 0           ││ Lecture 4 — Transformers (transcript)                                                                                  │ │
+│ │    Quizzes (0)                 ││ Conference talk: Search UX in 2026                                                                                     │ │
+│ │ ────────────────────────────── ││ Tutorial: Textual layouts in 20 minutes                                                                              ▁ │ │
+│ │ Import / Export            ▾   ││ Lewis et al. 2020 — Retrieval-Augmented Generation (PDF)                                                               │ │
+│ │    Import…                     ││ Make It Stick — chapter 2 (PDF excerpt)                                                                                │ │
+│ │  ▸ Export                      ││ Lease agreement 2026 (scanned)                                                                                         │ │
+│ │ ────────────────────────────── ││ Meditations — Book II (ebook excerpt)                                                                                  │ │
+│ │ Details                    ▸   ││ The Dispossessed — sample chapter                                                                                      │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to Media | F1 help · Ctrl+P palette · Ctrl+Q quit

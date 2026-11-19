@@ -174,6 +174,35 @@ using filename-based or shortened immutable identities, resolving managed select
 to raw store paths, releasing leases at worker completion, removing llamafile's
 embedded mode, and applying this GGUF contract to vLLM or MLX.
 
+## 0.2.4 Lightning Whisper MLX availability amendment (2026-11-08)
+
+TASK-39402.8 records the owner-approved temporary release deferral of
+`lightning-whisper-mlx`. It is unavailable through public Chatbook discovery,
+install recipes, defaults, transcription, Console, dictation, Meetings and
+Library admission even when its package is installed or already imported.
+The retained `lightning-whisper` alias remains readable, as do canonical local
+provider/privacy/IPC identities and private compatibility backends.
+
+An explicit or inherited deferred selection is refused before audio capture,
+conversion, model/runtime loading or worker creation, with this complete copy:
+
+> Lightning Whisper MLX is deferred for Chatbook 0.2.4. Select another supported
+> transcription provider, such as faster-whisper. Your saved settings have not
+> been changed.
+
+Reading, mounting or refreshing does not rewrite saved provider/model values,
+including the raw alias. Only a deliberate supported replacement persists a new
+selection through the existing cleanup and atomic settings owners. A supported
+explicit Meetings override is honored independently of a deferred global choice;
+an absent or deferred exact override is refused without fallback. No private
+compatibility fork or automatic provider substitution is introduced.
+
+The reviewed `tiktoken==0.14.0` dependency, immutable assets, explicit cache
+authority and offline guard remain governed by ADR-335 and ADR-318 unchanged.
+This is a release availability restriction within existing ownership/routing,
+not a new provider architecture, tokenizer relaxation, fresh upstream resolver
+claim, model/device qualification or deletion of users' caches/settings.
+
 ## Context
 
 The current transcription service combines optional imports, provider routing,
@@ -330,3 +359,29 @@ own local binary artifacts and is not superseded by this decision.
 - [Community Parakeet v3 INT8 comparison requiring local verification](https://huggingface.co/Olicorne/parakeet-tdt-0.6b-v3-smoothquant-onnx)
 - [NVIDIA Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2)
 - [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+
+
+## Library URL source transport (2026-10-31, TASK-38207)
+
+Library HTTP(S) jobs use an explicit `URLIngestSource` in the local STT executor
+request. Its immutable, repr-hidden URL text is transported unchanged to the
+existing parse pipeline. The source validates an HTTP(S) scheme and authority;
+this is shape validation, never network authorization. The pipeline retains
+source classification, download and egress checks.
+
+`FileAudioSource` remains a strict filesystem Path; buffer sources and the
+provider-facing `TranscriptionRequest` keep their existing contracts. Only the
+Library/executor parse boundary accepts URL ingest sources. Executor generation,
+cancellation, resident model identity and dependency leases are unchanged.
+
+Passing a URL through Path was rejected because POSIX collapses separators and
+Windows also changes separators within the authority/path. Repairing a prefix
+afterward cannot recover exact query/path spelling and can reinterpret a local
+filename as a network source. A parallel downloader was rejected because the
+parse pipeline already owns guarded retrieval.
+
+
+The default executor parser adapter forwards the existing UrlProvenance enum
+under ADR-207. Missing or forged string values remain unknown. Neither a URL
+source nor a Library job ID establishes user entry; the parent boundary owns
+that decision. The URL text and its provenance remain distinct inputs.

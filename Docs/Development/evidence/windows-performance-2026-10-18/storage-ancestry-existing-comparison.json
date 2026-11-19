@@ -1,0 +1,37 @@
+{
+  "baseline_revision": "579de70851ca4c655947f9962671be774296c80f",
+  "files": [
+    "Tests/Backup_Recovery/test_native_files.py",
+    "Tests/Backup_Recovery/test_pending_directory_durability.py",
+    "Tests/Backup_Recovery/test_config_companion_missing_record_eligibility.py"
+  ],
+  "candidate": {
+    "passed": 42,
+    "failed": 6,
+    "skipped": 7,
+    "seconds": 4.46,
+    "log": "storage-ancestry-existing.log"
+  },
+  "baseline": {
+    "passed": 42,
+    "failed": 6,
+    "skipped": 7,
+    "seconds": 4.18,
+    "log": "storage-ancestry-existing-baseline.log"
+  },
+  "matching_failures": [
+    "Tests/Backup_Recovery/test_native_files.py::test_directory_publication_refuses_linked_payload",
+    "Tests/Backup_Recovery/test_native_files.py::test_non_private_staged_objects_are_refused[fifo]",
+    "Tests/Backup_Recovery/test_native_files.py::test_non_private_staged_objects_are_refused[symlink]",
+    "Tests/Backup_Recovery/test_native_files.py::test_preexisting_target_of_any_type_is_preserved[symlink]",
+    "Tests/Backup_Recovery/test_native_files.py::test_private_creation_and_native_identity",
+    "Tests/Backup_Recovery/test_native_files.py::test_unqualified_operations_and_symlink_storage_are_visible"
+  ],
+  "mechanism": "storage_baseline_tests.py installs original storage_admission, control_records, and native_files before first import in pytest and Python -c children; genuine native fixture default-owner wrapper retained. Loaded source PID/module/SHA256 receipts in storage-lifetimes-baseline-receipts.jsonl.",
+  "classification": {
+    "test_private_creation_and_native_identity": "Existing stdlib Path.stat mode assertion expects POSIX0700; Windows reports0777 despite native ACL projection.",
+    "symlink_cases": "Four unchanged fixtures fail creating actual symlinks with WinError1314 (missing privilege).",
+    "fifo_case": "Unchanged fixture calls os.mkfifo, absent on Windows.",
+    "seven_skips": "Existing module marks ordinary derived-evidence reuse POSIX-only; no new skips introduced."
+  }
+}

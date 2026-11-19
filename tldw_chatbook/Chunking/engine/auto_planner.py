@@ -88,7 +88,9 @@ class AutoChunkingPlan:
             max_size=int(metadata.get("max_size") or _GOAL_SIZES["balanced"][0]),
             overlap=int(metadata.get("overlap") or _GOAL_SIZES["balanced"][1]),
             template_name=metadata.get("template_name"),
-            derived_views=tuple(str(view) for view in metadata.get("derived_views") or []),
+            derived_views=tuple(
+                str(view) for view in metadata.get("derived_views") or []
+            ),
             fallback_reason=metadata.get("fallback_reason"),
             rationale=str(metadata.get("rationale") or ""),
             profile=dict(metadata.get("profile") or {}),
@@ -110,14 +112,19 @@ _GOAL_SIZES: dict[str, tuple[int, int]] = {
 }
 
 _TEXT_SCAN_CHARS = 200_000
-_HEADING_RE = re.compile(r"^\s{0,3}(#{1,6}\s+\S+|chapter\s+\d+|section\s+\d+)", re.IGNORECASE | re.MULTILINE)
+_HEADING_RE = re.compile(
+    r"^\s{0,3}(#{1,6}\s+\S+|chapter\s+\d+|section\s+\d+)", re.IGNORECASE | re.MULTILINE
+)
 _LIST_RE = re.compile(r"^\s*(?:[-*+]\s+\S+|\d+[.)]\s+\S+)", re.MULTILINE)
 _TABLE_RE = re.compile(r"^\s*\|.+\|\s*$", re.MULTILINE)
 _TIMECODE_RE = re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\b")
 _SPEAKER_RE = re.compile(
-    r"^\s*(?:speaker\s*\d+|speaker|host|guest|interviewer|interviewee)\s*:", re.IGNORECASE | re.MULTILINE
+    r"^\s*(?:speaker\s*\d+|speaker|host|guest|interviewer|interviewee)\s*:",
+    re.IGNORECASE | re.MULTILINE,
 )
-_CHAPTER_RE = re.compile(r"^\s*(?:chapter|book|part)\s+[\w.-]+", re.IGNORECASE | re.MULTILINE)
+_CHAPTER_RE = re.compile(
+    r"^\s*(?:chapter|book|part)\s+[\w.-]+", re.IGNORECASE | re.MULTILINE
+)
 
 
 def profile_from_source(
@@ -145,7 +152,9 @@ def profile_from_source(
     )
 
 
-def profile_from_text(text: str | None, *, max_scan_chars: int = _TEXT_SCAN_CHARS) -> AutoChunkingProfile:
+def profile_from_text(
+    text: str | None, *, max_scan_chars: int = _TEXT_SCAN_CHARS
+) -> AutoChunkingProfile:
     """Build planner signals by scanning extracted text."""
     sample = (text or "")[: max(0, int(max_scan_chars))]
     return AutoChunkingProfile(
@@ -211,14 +220,18 @@ def plan_auto_chunking(
         normalized_goal,
         semantic_available=semantic_available,
     )
-    fallback_reasons.extend(_template_fallback_reasons(template_status, template_error, rationale_bits))
+    fallback_reasons.extend(
+        _template_fallback_reasons(template_status, template_error, rationale_bits)
+    )
 
     # Adapter availability is an explicit caller contract. Do not infer it from
     # configured chat providers until a boundary assistant adapter owns that check.
     used_llm = bool(requested_llm and llm_available)
     if requested_llm and not llm_available:
         fallback_reasons.append("ai_assist_unavailable")
-        rationale_bits.append("AI assist was requested but no boundary adapter is available.")
+        rationale_bits.append(
+            "AI assist was requested but no boundary adapter is available."
+        )
 
     max_size, overlap = _size_for_goal(normalized_goal, base_profile)
     if base_profile.media_type == "email":
@@ -301,12 +314,16 @@ def _choose_method(
 
     if media_type == "ebook":
         derived_views.append("chapter_outline")
-        rationale_bits.append("Detected ebook content; selected chapter-based chunking.")
+        rationale_bits.append(
+            "Detected ebook content; selected chapter-based chunking."
+        )
         return "ebook_chapters", derived_views, rationale_bits, fallback_reasons
 
     if media_type == "email":
         derived_views.append("message_boundaries")
-        rationale_bits.append("Detected email content; selected message-friendly sentence chunks.")
+        rationale_bits.append(
+            "Detected email content; selected message-friendly sentence chunks."
+        )
         return "sentences", derived_views, rationale_bits, fallback_reasons
 
     if media_type in {"audio", "video"}:
@@ -314,22 +331,32 @@ def _choose_method(
             derived_views.append("time_ranges")
         if profile.has_speaker_labels:
             derived_views.append("speaker_segments")
-        rationale_bits.append("Detected transcript-like media; selected sentence chunks.")
+        rationale_bits.append(
+            "Detected transcript-like media; selected sentence chunks."
+        )
         return "sentences", derived_views, rationale_bits, fallback_reasons
 
     if media_type in {"document", "pdf", "web"}:
         if profile.has_headings or profile.has_tables or profile.has_lists:
             derived_views.extend(_structure_views(profile, goal))
-            rationale_bits.append("Detected document structure; selected structure-aware chunking.")
+            rationale_bits.append(
+                "Detected document structure; selected structure-aware chunking."
+            )
             return "structure_aware", derived_views, rationale_bits, fallback_reasons
         if semantic_available:
-            rationale_bits.append("Detected unstructured long text; selected semantic chunking.")
+            rationale_bits.append(
+                "Detected unstructured long text; selected semantic chunking."
+            )
             return "semantic", derived_views, rationale_bits, fallback_reasons
         fallback_reasons.append("semantic_unavailable")
-        rationale_bits.append("Semantic chunking is unavailable; selected sentence fallback.")
+        rationale_bits.append(
+            "Semantic chunking is unavailable; selected sentence fallback."
+        )
         return "sentences", derived_views, rationale_bits, fallback_reasons
 
-    rationale_bits.append("No specialized media signals detected; selected sentence chunks.")
+    rationale_bits.append(
+        "No specialized media signals detected; selected sentence chunks."
+    )
     return "sentences", derived_views, rationale_bits, fallback_reasons
 
 
@@ -353,10 +380,14 @@ def _template_fallback_reasons(
         rationale_bits.append("Applied matched chunking template as a planner input.")
         return []
     if template_status == "no_match":
-        rationale_bits.append("No chunking template matched; used deterministic media rules.")
+        rationale_bits.append(
+            "No chunking template matched; used deterministic media rules."
+        )
         return ["template_no_match"]
     if template_status == "error":
         message = template_error or "template classifier error"
-        rationale_bits.append(f"Template classifier failed ({message}); used deterministic media rules.")
+        rationale_bits.append(
+            f"Template classifier failed ({message}); used deterministic media rules."
+        )
         return ["template_error"]
     return []

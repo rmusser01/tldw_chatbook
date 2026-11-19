@@ -1,0 +1,40 @@
+{
+  "observed_at": "2026-10-28T22:10:41.974966+00:00",
+  "allocation_ceiling": 37236,
+  "lead_buffer": 30,
+  "tasks": [
+    {
+      "id": 37266,
+      "key": "character",
+      "path": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "priority": "medium",
+      "ac": 4,
+      "sha256": "129fd5ec7ffe24b9823d99b5c63cdb34ef43a584346b921752b15dd34f826005",
+      "recovered_existing_creation": true,
+      "cli_stdout": "Recovered the already-created exact task after the empty-template postcheck; no second mutation.",
+      "cli_stderr": ""
+    },
+    {
+      "id": 37267,
+      "key": "research",
+      "path": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "priority": "medium",
+      "ac": 5,
+      "sha256": "037076f319917793f3f8d1ad5b91e25598e2a1b2ee4f5c5e9ac9c4d5fe9c2a9d",
+      "recovered_existing_creation": false,
+      "cli_stdout": "TASK-37267 - Keep Research Runs refresh tied to its current source and selection (To Do)\n",
+      "cli_stderr": ""
+    },
+    {
+      "id": 37268,
+      "key": "notes",
+      "path": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "priority": "medium",
+      "ac": 4,
+      "sha256": "94b2b74d6599d8697c8e57924ade34b2eb29881cc14c54e79569ec3feb8ccd72",
+      "recovered_existing_creation": false,
+      "cli_stdout": "TASK-37268 - Keep Library note export writes off the UI loop (To Do)\n",
+      "cli_stderr": ""
+    }
+  ]
+}

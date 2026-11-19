@@ -14,17 +14,17 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from tldw_chatbook.Actor_Packs.export import (
-    ActorPackExportError,
-    ActorPackExportService,
-    ActorPackExportSnapshot,
-    write_actor_pack_archive,
-)
 from tldw_chatbook.Actor_Packs.contracts import (
     ZIP_COMPRESSION,
     ZIP_CREATE_SYSTEM,
     ZIP_EXTERNAL_ATTR,
     ZIP_TIMESTAMP,
+)
+from tldw_chatbook.Actor_Packs.export import (
+    ActorPackExportError,
+    ActorPackExportService,
+    ActorPackExportSnapshot,
+    write_actor_pack_archive,
 )
 from tldw_chatbook.Actor_Packs.repository import ActorPackRepository
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
@@ -39,7 +39,6 @@ from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
 from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 
 from .conftest import PNG_1X1, canonical_json
-
 
 PORTABLE_UUID = "123e4567-e89b-42d3-a456-426614174000"
 
@@ -580,7 +579,9 @@ def test_archive_bytes_are_deterministic_and_independently_readable(
 @pytest.mark.parametrize("actor_kind", ("character", "persona"))
 def test_archive_matches_independent_golden_bytes(
     actor_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("tldw_chatbook.Actor_Packs.export.__version__", "0.1.8.0")
     payload = canonical_json(
         {
             "schema": "tldw.actor/v1",
@@ -615,6 +616,7 @@ def test_archive_matches_independent_golden_bytes(
     assert b"private-local-id" not in golden
     with zipfile.ZipFile(io.BytesIO(golden)) as archive:
         root = json.loads(archive.read("actor-pack.json"))
+        assert root["producer"]["version"] == "0.1.8.0"
         assert root["actor"]["kind"] == actor_kind
         assert set(archive.namelist()) == {
             "actor-pack.json",
@@ -643,3 +645,34 @@ def test_archive_validation_failure_keeps_assigned_uuid_and_writes_nothing(
 
     assert output.getvalue() == b""
     assert repository.get_identity("character", character_id) is not None
+
+
+def test_local_performance_does_not_change_portable_actor_archive(export_components):
+    from Tests.Character_Chat.test_portrait_compositing import core, scene
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        capture_performance_source,
+    )
+
+    base, recipe, components = scene()
+    export, _repository, _local_service, database = export_components
+    character_id = database.add_character_card({"name": "Local radio", "image": base})
+    before = export.capture_snapshot("character", str(character_id), source="local")
+    source, _ = capture_performance_source(
+        database, character_id=character_id, requested_state="idle"
+    )
+    regions_revision = database.save_character_portrait_regions(
+        source, recipe, expected_revision=0
+    )
+    database.apply_character_portrait_performance(
+        source,
+        core().assemble_components(base, recipe, components),
+        expected_revision=0,
+        composition_recipe=recipe,
+        expected_regions_revision=regions_revision,
+    )
+
+    after = export.capture_snapshot("character", str(character_id), source="local")
+    first, second = io.BytesIO(), io.BytesIO()
+    write_actor_pack_archive(before, first)
+    write_actor_pack_archive(after, second)
+    assert first.getvalue() == second.getvalue()

@@ -13,14 +13,12 @@ zero monkeypatching of the accessor (the C1 lesson: accessor mocks hid an
 inert feature through five review gates).
 """
 
-import os
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-
 import tldw_chatbook.config as config_mod
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook.config import get_cli_setting
-
 
 SCRATCH_TOML = """
 [general]
@@ -47,21 +45,14 @@ custom_image_path = "/tmp/custom.png"
 
 
 @contextmanager
-def _real_config(tmp_path, monkeypatch, toml_text: str):
-    """Point the real loader at a scratch TOML; restore + reload afterwards."""
+def _real_config(tmp_path, monkeypatch, toml_text: str, *consumers):
+    """Select the scratch TOML and bind the exact test and its consumers."""
     config_path = tmp_path / "scratch-nested-config.toml"
     config_path.write_text(toml_text, encoding="utf-8")
-    original_env = os.environ.get("TLDW_CONFIG_PATH")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    config_mod.load_cli_config_and_ensure_existence(force_reload=True)
-    try:
+    with monkeypatch.context() as selected:
+        source = select_config_source(selected, config_path, globals(), *consumers)
+        source.load_cli_config_and_ensure_existence(force_reload=True)
         yield
-    finally:
-        if original_env is not None:
-            monkeypatch.setenv("TLDW_CONFIG_PATH", original_env)
-        else:
-            monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-        config_mod.load_cli_config_and_ensure_existence(force_reload=True)
 
 
 class TestRepairedReaderTuples:
@@ -160,16 +151,23 @@ class TestConsumerPath:
     DocumentGenerator's ctor reads the three-level document configs."""
 
     def test_document_generator_reads_configured_prompt(self, tmp_path, monkeypatch):
-        from tldw_chatbook.Chat.document_generator import DocumentGenerator
+        from tldw_chatbook.Chat import document_generator
 
-        with _real_config(tmp_path, monkeypatch, SCRATCH_TOML):
-            generator = DocumentGenerator(
+        with _real_config(
+            tmp_path, monkeypatch, SCRATCH_TOML, vars(document_generator)
+        ):
+            generator = document_generator.DocumentGenerator(
                 str(tmp_path / "docgen-test.db"), client_id="task-229-test"
             )
-            assert generator.timeline_config["prompt"] == "Configured timeline prompt."
-            assert generator.timeline_config["max_tokens"] == 123
-            # briefing has no override in the scratch TOML -> ctor default
-            assert generator.briefing_config["max_tokens"] == 2500
+            try:
+                assert (
+                    generator.timeline_config["prompt"] == "Configured timeline prompt."
+                )
+                assert generator.timeline_config["max_tokens"] == 123
+                # briefing has no override in the scratch TOML -> ctor default
+                assert generator.briefing_config["max_tokens"] == 2500
+            finally:
+                generator.db.close()
 
 
 TRANSCRIPTION_SCRATCH_TOML = """
@@ -250,7 +248,8 @@ class TestDottedFormStringDefaultRegression:
         method only needs the current ingest path field, so it can be invoked
         unbound with a minimal empty-form receiver.
         """
-        from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+        from tldw_chatbook.Library import library_browse_location
+        from tldw_chatbook.UI.Screens import library_screen
 
         remembered_dir = tmp_path / "last-imported"
         remembered_dir.mkdir()
@@ -258,10 +257,14 @@ class TestDottedFormStringDefaultRegression:
             tmp_path,
             monkeypatch,
             f'[library.ingest]\nlast_directory = "{remembered_dir}"\nbackend = "local"\n',
+            vars(library_screen),
+            vars(library_browse_location),
         ):
             receiver = SimpleNamespace(
                 _ingest_state=SimpleNamespace(form=SimpleNamespace(path=""))
             )
-            result = LibraryScreen._library_ingest_browse_location(receiver)
+            result = library_screen.LibraryScreen._library_ingest_browse_location(
+                receiver
+            )
 
         assert result == str(remembered_dir)

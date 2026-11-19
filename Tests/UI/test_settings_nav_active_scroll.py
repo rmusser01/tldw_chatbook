@@ -72,6 +72,7 @@ def _settings_button_fully_visible(screen) -> bool:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_nav_bar_scrolls_active_destination_into_view():
     """task-4024 AC#1/#3: after navigating to Settings (80 cols, where the

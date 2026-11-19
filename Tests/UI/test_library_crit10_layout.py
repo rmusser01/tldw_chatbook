@@ -136,6 +136,7 @@ async def _open_first_conversation(host, pilot):
 _MAJORITY_SIZES = {(200, 52): 90, (235, 52): 100}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size, reader_floor", sorted(_MAJORITY_SIZES.items()))
 @pytest.mark.asyncio
 async def test_the_conversation_reader_takes_the_majority_of_a_wide_terminal(
@@ -157,6 +158,7 @@ async def test_the_conversation_reader_takes_the_majority_of_a_wide_terminal(
         assert reader.region.width >= reader_floor, reader.region
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_empty_conversation_reader_still_gives_its_width_away() -> None:
     """task-32217 stays intact: nothing open means the list takes the stage."""
@@ -188,6 +190,7 @@ def _painted_column(app, widget) -> str:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30), (60, 24)])
 @pytest.mark.asyncio
 async def test_both_pane_grips_paint_their_name(size) -> None:
@@ -210,6 +213,7 @@ async def test_both_pane_grips_paint_their_name(size) -> None:
         assert _painted_column(host.app, grips["items"]).startswith("Items")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("size", [(235, 52), (100, 30), (60, 24)])
 @pytest.mark.asyncio
 async def test_the_grips_never_overlap_the_panes_beside_them(size) -> None:
@@ -313,6 +317,7 @@ def _memberships(host) -> list:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_use_as_source_links_an_unlinked_conversation_and_proceeds() -> None:
     """task-32107 AC#2: one gesture links and stages, with a receipt."""
@@ -345,6 +350,7 @@ async def test_use_as_source_links_an_unlinked_conversation_and_proceeds() -> No
         assert staged[0].source_id == CONVERSATION_ID
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_undo_removes_the_membership_the_press_added() -> None:
     """task-32107 AC#2: the widening is reversible from where it happened."""
@@ -406,6 +412,7 @@ async def test_a_block_a_link_cannot_resolve_still_refuses(widget_pilot) -> None
         ).display
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_receipt_does_not_survive_a_different_conversation() -> None:
     """The receipt belongs to the conversation it was written for."""
@@ -464,6 +471,7 @@ def _painted_footer(chips, size) -> str:
     return _run()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("field_focused", [False, True])
 @pytest.mark.asyncio
 async def test_the_narrow_stage_return_is_painted_in_both_focus_states(
@@ -611,6 +619,7 @@ async def test_the_focused_rail_row_is_a_shape_not_a_second_blue(size) -> None:
         assert "Conversations" in rows[conversations.region.y]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_only_one_context_chip_paints_at_sixty_columns() -> None:
     """task-32360 AC#1, fix round 1: the budget the chip choice turns on.
@@ -634,6 +643,7 @@ async def test_only_one_context_chip_paints_at_sixty_columns() -> None:
         assert ("esc back to Library" in shown) is return_survives, (chips, shown)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("refresh", ["sync", "recompose"])
 async def test_undo_unlinks_the_workspace_the_receipt_names(refresh) -> None:
@@ -688,6 +698,7 @@ async def test_undo_unlinks_the_workspace_the_receipt_names(refresh) -> None:
         assert remaining == {"workspace-b"}, remaining
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("context", ["different", "missing", "unavailable", "stale"])
 async def test_undo_rechecks_workspace_before_the_reader_refreshes(
@@ -753,6 +764,7 @@ async def test_the_reason_line_sits_directly_under_the_action_it_describes(
         ), order
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_receipt_never_stands_beside_the_refusal_it_resolved() -> None:
     """task-32107 (re-review P3): "can now be used in Console" has to stay true.
@@ -796,6 +808,7 @@ async def test_the_receipt_never_stands_beside_the_refusal_it_resolved() -> None
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_undo_is_withheld_when_the_membership_already_existed() -> None:
     """Qodo #2 (High): Undo must never delete a link this press did not make.
@@ -837,6 +850,7 @@ async def test_undo_is_withheld_when_the_membership_already_existed() -> None:
         assert _memberships(host), "the pre-existing membership is untouched"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_stale_page_refuses_instead_of_promising_a_link() -> None:
     """Qodo #3 (Medium): no pressable promise that silently does nothing.

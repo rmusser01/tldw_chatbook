@@ -1,0 +1,7 @@
+...................................................................      [100%]
+============================= slowest 25 durations =============================
+36.24s call     Tests/Backup_Recovery/test_console_artifacts_roundtrip.py::test_accepted_console_artifacts_restore_with_fresh_passive_reads
+15.91s call     Tests/Backup_Recovery/test_core_owners.py::test_committed_wal_domain_records_blobs_and_soft_deletes[chachanotes]
+
+(23 durations < 1s hidden.)
+67 passed in 74.68s (0:01:14)

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tldw_chatbook.Chatbooks.chatbook_creator import ChatbookCreator
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from tldw_chatbook.Chatbooks.chatbook_models import (
@@ -44,6 +46,7 @@ def _provenance_document() -> dict[str, object]:
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_chatbook_media_round_trip_preserves_validated_provenance(
     tmp_path,
     monkeypatch,

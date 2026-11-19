@@ -56,12 +56,14 @@ from tldw_chatbook.Widgets.Console.console_style_picker_modal import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_search_style_templates_empty_query_returns_all_thirteen():
     results = search_style_templates("")
     assert len(results) == 13
     assert len(BUILTIN_TEMPLATES) == 13
 
 
+@pytest.mark.bootstrap_profile
 def test_search_style_templates_filters_by_id_prefix():
     results = search_style_templates("style_")
     assert {t.id for t in results} == {
@@ -71,16 +73,19 @@ def test_search_style_templates_filters_by_id_prefix():
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_search_style_templates_filters_by_name_substring():
     results = search_style_templates("water")
     assert [t.id for t in results] == ["style_watercolor"]
 
 
+@pytest.mark.bootstrap_profile
 def test_search_style_templates_filters_by_category_case_insensitive():
     results = search_style_templates("CHAT")
     assert {t.id for t in results} == {"chat_character_visual", "chat_scene_visual"}
 
 
+@pytest.mark.bootstrap_profile
 def test_search_style_templates_unknown_query_returns_empty():
     assert search_style_templates("zzz-no-such-style") == []
 
@@ -155,6 +160,7 @@ async def test_modal_typing_filters_rows_by_id_prefix():
         assert app.screen.query_one(f"#{ROW_ID_PREFIX}style_cyberpunk", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_modal_unmatched_filter_shows_empty_copy():
     app = ModalHarness()
@@ -268,6 +274,7 @@ async def test_modal_detail_updates_when_highlight_moves():
         assert str(detail.renderable) == format_style_preview(second_template)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_modal_detail_shows_placeholder_when_no_matches():
     app = ModalHarness()
@@ -314,6 +321,7 @@ async def test_modal_detail_disables_markup_interpretation(monkeypatch):
         assert "[red]bold[/red] injected" in str(detail.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_modal_lists_user_defined_template_after_merge(monkeypatch):
     """AC4 integration: a config-section-defined user template shows up in
@@ -365,6 +373,7 @@ async def test_modal_row_click_dismisses_with_id_and_name():
     assert app.dismissed_with == {"id": "style_anime", "name": "Anime Style"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_modal_enter_on_highlighted_row_dismisses_with_that_record():
     app = ModalHarness()
@@ -384,6 +393,7 @@ async def test_modal_enter_on_highlighted_row_dismisses_with_that_record():
     assert app.dismissed_with == {"id": "style_watercolor", "name": "Watercolor Style"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_modal_escape_dismisses_none():
     app = ModalHarness()
@@ -395,6 +405,7 @@ async def test_modal_escape_dismisses_none():
     assert app.dismissed_with is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_modal_filter_has_focus_on_open():
     app = ModalHarness()
@@ -440,6 +451,7 @@ def test_modal_css_blocks_pinned_in_source_and_bundle():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_command_provider_lists_insert_image_style():
     app = _build_test_app()
@@ -457,6 +469,7 @@ async def test_console_command_provider_lists_insert_image_style():
         assert matching[0].command == console.action_open_console_style_insert
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_action_open_console_style_insert_opens_picker():
     app = _build_test_app()
@@ -477,6 +490,7 @@ async def test_action_open_console_style_insert_opens_picker():
         assert filter_input.value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_action_open_console_style_insert_is_unavailable_when_ephemeral():
     """F5 (task-9 review): this picker's only purpose is to insert an
@@ -524,6 +538,7 @@ async def test_action_open_console_style_insert_is_unavailable_when_ephemeral():
         assert notified == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_style_picker_selection_inserts_style_token_into_draft():
     """An empty draft is prefixed with the command word AND the style token
@@ -544,7 +559,13 @@ async def test_style_picker_selection_inserts_style_token_into_draft():
         await pilot.pause(0.2)
         assert len(host.screen_stack) == baseline_depth + 1
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        row = host.screen.query_one(f"#{ROW_ID_PREFIX}style_anime", Button)
+        row.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        assert row.is_mounted and row.display and not row.disabled
+        assert row.parent.content_region.contains_region(row.region)
+        assert host.get_widget_at(row.region.x, row.region.y)[0] is row
+        assert await pilot.click(row)
         await pilot.pause(0.2)
 
         assert len(host.screen_stack) == baseline_depth, (
@@ -553,6 +574,7 @@ async def test_style_picker_selection_inserts_style_token_into_draft():
         assert composer.draft_text() == "/generate-image @style_anime "
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_style_picker_insert_composes_valid_command_after_command_word():
     """The insert must land the `@style` token right AFTER the command word,
@@ -580,6 +602,7 @@ async def test_style_picker_insert_composes_valid_command_after_command_word():
         assert composer.draft_text() == "/generate-image @style_anime a red dragon"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_style_picker_insert_replaces_existing_leading_style_token():
     """A draft that already carries a leading `@style` token gets that token
@@ -599,7 +622,13 @@ async def test_style_picker_insert_replaces_existing_leading_style_token():
         console.action_open_console_style_insert()
         await pilot.pause(0.2)
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        row = host.screen.query_one(f"#{ROW_ID_PREFIX}style_anime", Button)
+        row.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        assert row.is_mounted and row.display and not row.disabled
+        assert row.parent.content_region.contains_region(row.region)
+        assert host.get_widget_at(row.region.x, row.region.y)[0] is row
+        assert await pilot.click(row)
         await pilot.pause(0.2)
 
         assert (
@@ -608,6 +637,7 @@ async def test_style_picker_insert_replaces_existing_leading_style_token():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_style_picker_insert_result_parses_as_generate_image_command():
     """Closes the insert-to-send gap at the actual choke point: the
@@ -642,6 +672,7 @@ async def test_style_picker_insert_result_parses_as_generate_image_command():
         assert args.prompt == "a red dragon"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_style_picker_escape_leaves_draft_untouched():
     app = _build_test_app()

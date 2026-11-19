@@ -1,0 +1,45 @@
+{
+  "method": "fresh -S interpreter, explicit existing venv site path, no app imports or sys.modules removal",
+  "ordered_current_inventory": [
+    "webencodings",
+    "six",
+    "html5lib"
+  ],
+  "observations": {
+    "previous": [
+      {
+        "step": "webencodings",
+        "relevant_packages": [
+          "webencodings"
+        ]
+      },
+      {
+        "step": "html5lib",
+        "relevant_packages": [
+          "html5lib",
+          "six"
+        ]
+      }
+    ],
+    "current": [
+      {
+        "step": "webencodings",
+        "relevant_packages": [
+          "webencodings"
+        ]
+      },
+      {
+        "step": "six",
+        "relevant_packages": [
+          "six"
+        ]
+      },
+      {
+        "step": "html5lib",
+        "relevant_packages": [
+          "html5lib"
+        ]
+      }
+    ]
+  }
+}

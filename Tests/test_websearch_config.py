@@ -1,8 +1,11 @@
 """Inspect current web-search configuration keys without revealing secrets."""
 
+import pytest
+
 from tldw_chatbook.Web_Scraping.WebSearch_APIs import initialize_config
 
 
+@pytest.mark.bootstrap_profile
 def test_current_search_configuration_contains_supported_fields():
     keys = initialize_config()["search_engines"]
     assert {

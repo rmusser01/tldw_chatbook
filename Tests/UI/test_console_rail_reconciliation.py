@@ -14,7 +14,10 @@ from textual.events import Click, MouseDown, MouseScrollDown, MouseScrollUp, Mou
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+    _sync_console_control_bar_now,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -537,6 +540,7 @@ async def test_all_open_context_sections_keep_their_own_complete_ceiling_and_out
         assert app.section_toggles == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_production_deliberate_context_activation_reveals_the_complete_section(
     monkeypatch: pytest.MonkeyPatch,
@@ -594,6 +598,7 @@ async def test_production_deliberate_context_activation_reveals_the_complete_sec
         assert persisted == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_production_context_outer_and_local_offsets_reconcile_independently(
     monkeypatch: pytest.MonkeyPatch,
@@ -849,6 +854,7 @@ async def _open_all_production_context_sections(host, pilot) -> ConsoleLeftRail:
     return rail
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflow(
     monkeypatch: pytest.MonkeyPatch,
@@ -1113,6 +1119,7 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         assert conversation_requests == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_workspace_tree_press_does_not_request_early_reveal(
     monkeypatch: pytest.MonkeyPatch,
@@ -1170,6 +1177,7 @@ async def _open_production_inspector(host, pilot) -> ConsoleInspectorRail:
     return rail
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "terminal_size",
@@ -1244,6 +1252,19 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
         assert sources.region.contains_region(sources.viewport.region)
         assert sources.region.contains_region(sources.hint.region)
         assert not sources.viewport.region.overlaps(sources.hint.region)
+        inspector_body = inspector.query_one(
+            "#console-inspector-rail-body", VerticalScroll
+        )
+        if sources.hint.region.y >= inspector_body.content_region.bottom:
+            sources.hint.scroll_visible(animate=False, immediate=True)
+            await _wait_for_rail_condition(
+                pilot,
+                context,
+                lambda: (
+                    sources.hint.region.x + 1,
+                    sources.hint.region.y,
+                ) in inspector_body.content_region,
+            )
         outer_hint = inspector.query_one("#console-inspector-outer-scroll-hint", Static)
         assert outer_hint.display
         assert _shows_outer_hint(outer_hint.renderable)
@@ -1280,6 +1301,7 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
         assert sources.hint.region == hint_region
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_production_content_demand_counts_internal_box_only() -> None:
     """Internal padding and margins count in D; external chrome does not."""
@@ -1342,6 +1364,7 @@ async def test_production_content_demand_counts_internal_box_only() -> None:
         assert sources.desired_content_lines == 22
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_production_inspector_counterfactual_ten_eleven_ten_reconciles() -> None:
     """The real Inspector adds and removes its pinned slot without feedback."""
@@ -1405,6 +1428,7 @@ async def test_production_inspector_counterfactual_ten_eleven_ten_reconciles() -
         assert outer.scroll_y == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_geometry_only_generation_reconciles_without_owner_pass() -> (
     None
@@ -1460,6 +1484,7 @@ async def test_inspector_geometry_only_generation_reconciles_without_owner_pass(
         assert inspector._outer_owner_reconcile_count == logical_owner_count
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_owner_demand_latches_while_geometry_generation_pending(
     monkeypatch: pytest.MonkeyPatch,
@@ -1497,6 +1522,7 @@ async def test_inspector_owner_demand_latches_while_geometry_generation_pending(
         assert inspector._outer_owner_reconcile_count == baseline + 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_owner_demand_survives_hint_toggle_continuation(
     monkeypatch: pytest.MonkeyPatch,
@@ -1543,6 +1569,7 @@ async def test_inspector_owner_demand_survives_hint_toggle_continuation(
         assert inspector._outer_owner_reconcile_count == baseline + 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_unmount_before_callback_clears_pending_generation(
     monkeypatch: pytest.MonkeyPatch,
@@ -1578,6 +1605,7 @@ async def test_inspector_unmount_before_callback_clears_pending_generation(
         assert inspector._outer_owner_reconcile_count == baseline
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_size", [(120, 30), (80, 24)])
 async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_section(
@@ -1688,6 +1716,7 @@ async def test_production_css_uses_uncompressed_header_demand_and_reaches_every_
                 assert bounded.viewport.region.overlaps(outer.content_region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
     monkeypatch: pytest.MonkeyPatch,
@@ -1919,6 +1948,7 @@ async def test_focus_and_pointer_activation_are_transient_and_open_close_falls_b
         assert rail._active_section_id == "character"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("owner_name", ("sources", "settings", "run"))
 @pytest.mark.asyncio
 async def test_inspector_descendant_owners_reconcile_local_then_outer(
@@ -2033,6 +2063,7 @@ async def test_inspector_descendant_owners_reconcile_local_then_outer(
             assert rail.query_one("#console-bounded-section-world-books")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("mutation_path", ("sources", "settings", "run"))
 @pytest.mark.asyncio
 async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
@@ -2089,7 +2120,9 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
             owner._on_reconcile = observe_outer
             state = replace(owner.state, model_row="Model: screen-path-probe")
             monkeypatch.setattr(
-                screen, "_build_console_settings_summary_state", lambda: state
+                screen._context_spend,
+                "_build_console_settings_summary_state",
+                lambda: state,
             )
             screen._sync_console_settings_summary()
         else:
@@ -2113,7 +2146,7 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
                 "_build_console_inspector_state",
                 lambda _launch: state,
             )
-            screen._sync_console_control_bar(screen._current_console_rail_state())
+            await _sync_console_control_bar_now(screen, screen._current_console_rail_state())
         await _settle(pilot, passes=10)
 
         assert "local" in events
@@ -3018,6 +3051,7 @@ async def _wheel_to_bottom(pilot, body: VerticalScroll) -> int:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pure_inspector_scroll_never_relayouts_the_rail(
     monkeypatch: pytest.MonkeyPatch,
@@ -3120,6 +3154,7 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inspector_section_collapse_still_runs_the_full_reconcile(
     monkeypatch: pytest.MonkeyPatch,
@@ -3202,6 +3237,7 @@ def _assert_outer_fold_contract(
     assert _shows_outer_hint(hint.renderable) is should_show_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scroll_cost_probe_still_detects_pre_split_routing(
     monkeypatch: pytest.MonkeyPatch,
@@ -3263,6 +3299,7 @@ async def test_scroll_cost_probe_still_detects_pre_split_routing(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_character_header_missing_during_prepare_does_not_latch_reconciliation():
     host = ConsoleHarness(_build_test_app())

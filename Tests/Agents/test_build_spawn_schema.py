@@ -26,7 +26,9 @@ def test_definitions_add_optional_agent_enum_and_roster():
     assert props["agent"]["enum"] == ["researcher", "critic"]
     # Prose roster for fence-protocol models (they read descriptions,
     # not enums): one "name — description" line each.
-    assert "researcher — Searches and summarizes sources." in props["agent"]["description"]
+    assert (
+        "researcher — Searches and summarizes sources." in props["agent"]["description"]
+    )
     assert "- critic" in props["agent"]["description"]
     # agent stays OPTIONAL: required is untouched.
     assert schema.parameters["required"] == ["task"]

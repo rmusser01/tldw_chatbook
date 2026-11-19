@@ -1,0 +1,46 @@
+{
+  "scope": "Current dev integration of four Chatbook Buddy repairs; no repeated human UAT",
+  "tested_head": "709434b5aff9b3a5c983546a27f9b6c97c7da001",
+  "integrated_dev": "7446e3a6270473a5cb248bfe5af3827ded01fff7",
+  "production_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "a25b8a88daf4392153e8af5ed72b3c35d501ca74402da865bfe6bf5d07d4d290",
+    "tldw_chatbook/UI/Screens/home_screen.py": "2ae1c5962527c6229d4e06868f11bf42dde57c9675982faf7aa799674f1755e0",
+    "tldw_chatbook/config.py": "8a156b9d3ee76953c76f1b2a79abc84281fd14611cdebf6ab27df64c6bf248c1",
+    "tldw_chatbook/app_service_wiring.py": "702f3d34193aeced083900874e7532f09c17da6afcc5d9f4ef0170e340a14daa",
+    "tldw_chatbook/app_lifecycle.py": "b5fd115b5868100378250370d94319c40e9b6269b3025f7a2532f7c993b9dc41",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba"
+  },
+  "targeted_tests": {
+    "passed": 22,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_seconds": 128.77,
+    "files": [
+      "Tests/UI/test_home_console_resume.py",
+      "Tests/UI/test_console_shutdown_recompose.py",
+      "Tests/Persona_Buddy/test_buddy_interaction_config_projection.py",
+      "Tests/Persona_Buddy/test_buddy_management_coordinator.py::test_cold_saved_binding_is_named_and_presentation_apply_keeps_it",
+      "Tests/Persona_Buddy/test_buddy_management_coordinator.py::test_cold_saved_binding_rejects_unavailable_or_repurposed_owner"
+    ],
+    "junit_sha256": "4506da2be9dd6311fbce928fbfea5294db60d52d22550bca8509804ad0346d88",
+    "log_sha256": "0e535c167a216a73088702005ebbfbbb44984cc167dbf5fe3bf38d4ad70b07e1"
+  },
+  "static": {
+    "compile": "six production modules passed",
+    "ruff": {
+      "base_count": 511,
+      "current_count": 511,
+      "introduced": []
+    },
+    "bandit": {
+      "base_count": 24,
+      "current_count": 24,
+      "introduced": []
+    },
+    "comparison": "Diagnostic identity and multiplicity compared by relative filename/code/message; shifted locations and embedded line references excluded"
+  },
+  "prior_evidence": "334 unique prior targeted passes and human acceptance remain attributed to their original sources; these 22 repeated integration cases are not added to that unique total",
+  "isolation": "HF_HUB_OFFLINE=1, PYTHONDONTWRITEBYTECODE=1, disposable pytest basetemp; no provider/audio/native UAT run",
+  "review": "Independent read-only review of integrated dev diff found no actionable findings."
+}

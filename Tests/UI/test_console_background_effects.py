@@ -148,6 +148,7 @@ def test_console_transcript_surface_preserves_transcript_identity_and_id():
     assert surface.transcript.id == "console-native-transcript"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_surface_keeps_effect_behind_transcript():
     app = SurfaceHarness()
@@ -343,6 +344,7 @@ async def test_frame_cache_invalidates_on_tick_settings_and_resize():
         assert after_settings is not smaller
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_effect_is_painted_in_empty_transcript_space_without_changing_messages(
@@ -445,6 +447,7 @@ async def test_effect_is_painted_in_empty_transcript_space_without_changing_mess
             assert transcript.selected_message_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_background_layer_does_not_change_scrollback_or_reconcile_rows():
     from tldw_chatbook.Chat.console_chat_models import (

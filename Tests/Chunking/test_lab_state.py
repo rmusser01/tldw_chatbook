@@ -74,6 +74,7 @@ def _run_b(session: LabSession) -> tuple[LabSession, RunRequest]:
     return accept_result(installed, _completed(request)), request
 
 
+@pytest.mark.bootstrap_profile
 def test_repeated_failed_reruns_keep_last_success_as_previous():
     session, successful = _run_b(new_session("profile"))
     for status in ("failed", "canceled", "limited"):
@@ -109,6 +110,7 @@ def test_many_edits_keep_only_one_content_undo():
     assert reverted.undo == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_repeated_runs_and_samples_prune_unused_payloads():
     session = new_session("profile")
     for index in range(25):
@@ -132,6 +134,7 @@ def test_over_limit_view_refuses_transition_without_losing_prior_value():
     assert "oversized" not in session.view
 
 
+@pytest.mark.bootstrap_profile
 def test_large_draft_edits_reuse_result_measurements_and_prune_dead_cache(monkeypatch):
     from tldw_chatbook.Chunking import lab_recovery
 
@@ -165,6 +168,7 @@ def test_large_draft_edits_reuse_result_measurements_and_prune_dead_cache(monkey
     assert "_recovery_measurements" not in session.model_dump()
 
 
+@pytest.mark.bootstrap_profile
 def test_invalid_json_keeps_last_valid_document_until_explicit_discard():
     session = new_session("profile")
     candidate_id = _candidate_b(session)
@@ -191,6 +195,7 @@ def test_invalid_json_keeps_last_valid_document_until_explicit_discard():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_invalid_control_owns_exact_raw_text_and_blocks_json_until_discarded():
     session = new_session("profile")
     candidate_id = _candidate_b(session)
@@ -312,6 +317,7 @@ def test_same_text_source_replacement_is_undoable_without_changing_identity():
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_batch_capture_is_pure_and_freezes_sample_recipe_and_loaded_record():
     source = {"kind": "library", "locator": {"media_id": 7}}
     body = {"chunking": {"method": "words"}, "metadata": {"x": [1]}}
@@ -346,6 +352,7 @@ def test_batch_capture_is_pure_and_freezes_sample_recipe_and_loaded_record():
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_same_sample_different_configs_have_distinct_recipe_identities():
     session = replace_sample(new_session("profile"), "same", {"kind": "paste"})
     session, _ = _run_b(session)
@@ -366,6 +373,7 @@ def test_same_sample_different_configs_have_distinct_recipe_identities():
     assert len({request.recipe.recipe_hash for request in requests}) == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_result_staleness_tracks_sample_and_candidate_recipe_not_template_name():
     session = replace_sample(new_session("profile"), "sample", {"kind": "paste"})
     candidate_id = _candidate_b(session)
@@ -406,6 +414,7 @@ def test_result_staleness_tracks_sample_and_candidate_recipe_not_template_name()
     assert is_result_stale(sample_changed, candidate_id, request.run_id)
 
 
+@pytest.mark.bootstrap_profile
 def test_pin_requires_current_completed_b_and_replacement_is_deliberate_and_undoable():
     session = new_session("profile")
     with pytest.raises(ValueError, match="completed current B"):
@@ -465,6 +474,7 @@ def test_view_only_transition_keeps_content_undo_available():
         update_view(viewed, {"sample_hash": "missing"})
 
 
+@pytest.mark.bootstrap_profile
 def test_install_rejects_capture_after_inputs_change_and_late_results_are_fenced():
     session = new_session("profile")
     candidate_id = _candidate_b(session)
@@ -488,6 +498,7 @@ def test_install_rejects_capture_after_inputs_change_and_late_results_are_fenced
         accept_result(installed, not_member)
 
 
+@pytest.mark.bootstrap_profile
 def test_failed_current_batch_member_cannot_borrow_previous_completed_result():
     session, first = _run_b(new_session("profile"))
     candidate_id = _candidate_b(session)
@@ -509,6 +520,7 @@ def test_failed_current_batch_member_cannot_borrow_previous_completed_result():
         pin_baseline(accepted)
 
 
+@pytest.mark.bootstrap_profile
 def test_undo_pin_invalidates_batch_that_captured_removed_baseline():
     session, _ = _run_b(new_session("profile"))
     pinned = pin_baseline(session)
@@ -530,6 +542,7 @@ def test_undo_pin_invalidates_batch_that_captured_removed_baseline():
             accept_result(undone, _completed(request))
 
 
+@pytest.mark.bootstrap_profile
 def test_pure_draft_edits_reuse_large_result_and_sample_maps():
     session, _ = _run_b(new_session("profile"))
     changed = edit_json(session, _candidate_b(session), '{"chunking":')
@@ -588,6 +601,7 @@ def test_publication_revalidates_nested_snapshot_mutation():
         session.model_dump(mode="json")
 
 
+@pytest.mark.bootstrap_profile
 def test_run_result_status_and_session_reference_integrity_are_validated():
     session = new_session("profile")
     request = capture_batch(session, (_candidate_b(session),))[0]

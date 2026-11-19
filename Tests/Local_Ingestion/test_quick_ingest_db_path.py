@@ -17,6 +17,8 @@ patching them on the ``lfi`` module works as expected.
 
 from pathlib import Path
 
+import pytest
+
 
 def test_configured_media_db_path_is_honored(tmp_path, monkeypatch):
     import tldw_chatbook.Local_Ingestion.local_file_ingestion as lfi
@@ -39,7 +41,9 @@ def test_configured_media_db_path_is_honored(tmp_path, monkeypatch):
         config_module,
         "get_cli_setting",
         lambda section, key=None, default=None: (
-            str(configured) if (section, key) == ("database", "media_db_path") else default
+            str(configured)
+            if (section, key) == ("database", "media_db_path")
+            else default
         ),
     )
 
@@ -47,6 +51,7 @@ def test_configured_media_db_path_is_honored(tmp_path, monkeypatch):
     assert seen["db_path"] == str(configured)
 
 
+@pytest.mark.bootstrap_profile
 def test_fallback_applies_only_when_the_key_is_absent(tmp_path, monkeypatch):
     import tldw_chatbook.Local_Ingestion.local_file_ingestion as lfi
     import tldw_chatbook.config as config_module
@@ -62,20 +67,23 @@ def test_fallback_applies_only_when_the_key_is_absent(tmp_path, monkeypatch):
 
     monkeypatch.setattr(lfi, "MediaDatabase", _FakeMediaDatabase)
     monkeypatch.setattr(lfi, "ingest_local_file", lambda *a, **k: {"ok": True})
+    get_cli_setting = config_module.get_cli_setting
     monkeypatch.setattr(
         config_module,
         "get_cli_setting",
-        lambda section, key=None, default=None: default,
+        lambda section, key=None, default=None: (
+            default
+            if (section, key) == ("database", "media_db_path")
+            else get_cli_setting(section, key, default)
+        ),
     )
 
     lfi.quick_ingest(tmp_path / "some_file.txt")
-    assert Path(seen["db_path"]) == config_module.get_media_db_path()
+    assert Path(seen["db_path"]) == config_module.get_media_db_path(ignore_override=True)
 
 
 def test_a_traversal_path_in_config_is_rejected(tmp_path, monkeypatch):
     """A config-sourced db_path is validated before it reaches the filesystem."""
-    import pytest
-
     import tldw_chatbook.Local_Ingestion.local_file_ingestion as lfi
     import tldw_chatbook.config as config_module
 

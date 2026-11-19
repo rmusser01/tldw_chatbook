@@ -72,7 +72,11 @@ _HOME_INGEST_JOB_ACTIVE_STATES = frozenset(
 # re-reads the real seams" contract still holds -- a stale window of a few
 # seconds is invisible to a human clicking around, but collapses bursts of
 # calls (rapid rail clicks, back-to-back triage syncs) onto one real query.
-_ACTIVE_WORK_CACHE_TTL_SECONDS = 3.0
+# Public (TASK-2763): HomeScreen's auto-refresh timer keys its poll cadence
+# off this TTL so a background refresh never busy-loops inside a fresh
+# cache window.
+ACTIVE_WORK_CACHE_TTL_SECONDS = 3.0
+_ACTIVE_WORK_CACHE_TTL_SECONDS = ACTIVE_WORK_CACHE_TTL_SECONDS
 _HOME_RECENT_WORK_LIMIT = 8
 _MAX_CHATBOOK_ARTIFACT_PREVIEW_CHARS = 1000
 _MAX_CHATBOOK_FILE_PATH_CHARS = 2000
@@ -635,6 +639,24 @@ class LocalNotificationHomeActiveWorkAdapter(UnavailableHomeActiveWorkAdapter):
         with self._active_work_cache_lock:
             self._active_work_cache = None
             self._active_work_cache_at = 0.0
+
+    def active_work_change_signature(self) -> tuple:
+        """Hashable signature of the LIVE-read active-work feeds.
+
+        TASK-2763: unlike the watchlist/notification/server-event seams
+        (which this adapter TTL-caches), Library ingest jobs are read
+        straight from the in-memory registry on every
+        ``build_dashboard_input`` -- so an ingest job can progress queued ->
+        parsing -> done while the TTL cache is still fresh. HomeScreen's
+        auto-refresh tick compares this signature between ticks to decide
+        whether a re-sync is warranted before the cache expires.
+
+        Returns:
+            Tuple of ``(job_id, state)`` pairs (order-stable registry
+            snapshot). Any provider failure degrades to ``()`` -- a
+            degraded signature simply reads as "no live change".
+        """
+        return tuple((job.job_id, job.state) for job in self._ingest_jobs_snapshot())
 
     def _active_work_seams_confirmed_file_backed(self) -> bool:
         """True only when every present sqlite seam is positively file-backed.

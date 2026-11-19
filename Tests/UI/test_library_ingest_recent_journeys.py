@@ -14,6 +14,7 @@ from Tests.UI.test_library_shell import _wait_for_condition
 RECENT_TITLE = "#library-ingest-recent > CollapsibleTitle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size,theme", [((170, 48), "textual-dark"), ((80, 24), "textual-light")]
@@ -66,6 +67,7 @@ async def test_recent_disclosure_survives_queue_transition(
         assert screen._ingest_state.form.path == str(source)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size,theme", [((170, 48), "textual-dark"), ((80, 24), "textual-light")]

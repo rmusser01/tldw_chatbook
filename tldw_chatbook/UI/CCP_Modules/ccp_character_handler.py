@@ -1,4 +1,5 @@
 """Handler for character-related operations in the Personas screen."""
+
 import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -8,7 +9,7 @@ from rich.text import Text
 from textual.widgets import Input, Select, Static, TextArea
 
 from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_prefix
-from ..character_display_text import (
+from tldw_chatbook.Utils.character_display_text import (
     sanitize_character_display_items,
     sanitize_character_display_label,
     sanitize_character_display_text,
@@ -43,6 +44,21 @@ def _default_character_db() -> Any:
     from ...config import get_chachanotes_db_lazy
 
     return get_chachanotes_db_lazy()
+
+
+async def _read_character_list(database, operation, /, *args, **kwargs):
+    """Retire any newly opened file-backed handle on the worker that read it."""
+
+    def read():
+        from ...DB.base_db import operation_owned_connection
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
+        if type(database) is CharactersRAGDB and not database.is_memory_db:
+            with operation_owned_connection(database):
+                return operation(*args, **kwargs)
+        return operation(*args, **kwargs)
+
+    return await asyncio.to_thread(read)
 
 
 def _normalize_character_payload(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -158,8 +174,7 @@ def delete_character(character_id: CharacterId, expected_version: int) -> bool:
 def import_character_card(file_path: str) -> Any:
     """Compatibility helper for character import.
 
-    Delegates to ``import_and_save_character_from_file`` (the previous
-    ``ccv3_parser.import_character_card_json`` target is an empty module).
+    Delegates to ``import_and_save_character_from_file``.
     Returns the imported character's DB id, or ``None`` when the file does
     not contain a valid character card.
     """
@@ -225,10 +240,13 @@ class CCPCharacterHandler:
         return "local"
 
     def _notify(self, message: str, severity: str = "warning") -> None:
-        """Surface a notification when CCP execution helpers cannot complete."""
+        """Surface a notification when CCP execution helpers cannot complete.
+
+        Literal text (TASK-34400): messages quote server and exception text.
+        """
         notifier = getattr(self.window, "notify", None)
         if callable(notifier):
-            notifier(message, severity=severity)
+            notifier(message, severity=severity, markup=False)
 
     def _call_from_thread(self, callback: Any, *args: Any) -> Any:
         """Schedule a callback on Textual's main thread from a handler worker."""
@@ -1033,8 +1051,9 @@ class CCPCharacterHandler:
             filters = Filters(
                 (
                     "Character Cards",
-                    lambda p: p.suffix.lower()
-                    in (".json", ".png", ".webp", ".yaml", ".yml"),
+                    lambda p: (
+                        p.suffix.lower() in (".json", ".png", ".webp", ".yaml", ".yml")
+                    ),
                 ),
                 ("JSON Files", lambda p: p.suffix.lower() == ".json"),
                 (

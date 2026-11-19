@@ -30,6 +30,7 @@ class _TitleRecorder:
         return "msg-render"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rename_modal_persists_saved_conversation_title():
     app = _build_test_app()
@@ -40,7 +41,7 @@ async def test_rename_modal_persists_saved_conversation_title():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         store = console._ensure_console_chat_store()
         recorder = _TitleRecorder()

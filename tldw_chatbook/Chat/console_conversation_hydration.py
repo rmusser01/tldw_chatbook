@@ -54,6 +54,10 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsSnapshot,
     parse_console_generation_settings,
 )
+from tldw_chatbook.Chat.console_prompt_mixins import (
+    MixinPreferenceRead,
+    decode_mixin_preferences,
+)
 from tldw_chatbook.Chat.console_prefill import (
     pinned_prefill_from_conversation_metadata,
 )
@@ -242,9 +246,13 @@ def console_messages_from_conversation_tree(
         )
         metadata = (
             None
-            if video_metadata is not None or fork_metadata is not None
+            if video_metadata is not None
             else MessageMetadata.from_json(raw_metadata_json)
         )
+        if fork_metadata is not None and (
+            metadata is None or metadata.mixin_snapshot_schema_version is None
+        ):
+            metadata = None
         raw_id = node.get("id")
         node_persisted_id = str(raw_id) if raw_id is not None else None
         generation_state = node.get("assistant_generation_state")
@@ -312,6 +320,63 @@ def console_messages_from_conversation_tree(
 
     _batch_fetch_resume_attachments(db, messages)
     return messages
+
+
+def _refresh_console_message_parents(
+    nodes: Sequence[ConsoleChatMessage], rows: Sequence[Mapping[str, Any]]
+) -> None:
+    """Mutate current durable parents, keeping absent truly-empty rows transparent.
+
+    Unresolved or malformed ancestry leaves the supplied structural link intact.
+    Only successfully resolved skipped chains are cached, within this one refresh.
+    """
+    raw_by_id = {str(row["id"]): row for row in rows if row.get("id") is not None}
+    retained = {
+        str(node.persisted_message_id)
+        for node in nodes
+        if node.persisted_message_id is not None
+    }
+    resolved: dict[str, str | None] = {}
+    for node in nodes:
+        if node.persisted_message_id is None:
+            continue
+        node_id = str(node.persisted_message_id)
+        row = raw_by_id.get(node_id)
+        if row is None:
+            continue
+        parent = (
+            str(row["parent_message_id"])
+            if row.get("parent_message_id") is not None
+            else None
+        )
+        visited = {node_id}
+        skipped: list[str] = []
+        while True:
+            if parent in visited:
+                break
+            if parent is None or parent in retained:
+                node.parent_message_id = parent
+                for ancestor in skipped:
+                    resolved[ancestor] = parent
+                break
+            if parent in resolved:
+                parent = resolved[parent]
+                continue
+            ancestor = raw_by_id.get(parent)
+            if ancestor is None or (
+                bool(str(ancestor.get("content") or ""))
+                or isinstance(ancestor.get("image_data"), (bytes, bytearray))
+                or ancestor.get("assistant_generation_state") is not None
+                or ancestor.get("provider_continuation_json") is not None
+            ):
+                break
+            visited.add(parent)
+            skipped.append(parent)
+            parent = (
+                str(ancestor["parent_message_id"])
+                if ancestor.get("parent_message_id") is not None
+                else None
+            )
 
 
 async def load_console_conversation_tree(
@@ -457,6 +522,8 @@ class ConsoleConversationHydrationData:
     active_leaf_before_id: str | None
     continuation_rows: list[dict[str, Any]] | None = field(repr=False)
     generation_rows: dict[str, Any] | None = field(repr=False)
+    mixin_preferences: MixinPreferenceRead | None = field(default=None, repr=False)
+    mixin_usage_counts: dict[str, int | None] = field(default_factory=dict, repr=False)
 
 
 async def prepare_console_session_data(
@@ -522,6 +589,38 @@ async def prepare_console_session_data(
                     logger.warning(
                         "Console resume generation-metadata batch fetch failed."
                     )
+            mixin_preferences = decode_mixin_preferences(None)
+            mixin_reader = getattr(
+                persistence, "get_conversation_mixin_preferences", None
+            )
+            if callable(mixin_reader):
+                try:
+                    mixin_preferences = mixin_reader(conversation_id)
+                except Exception:  # noqa: BLE001 - unreadable selections must remain unavailable.
+                    mixin_preferences = MixinPreferenceRead("corrupt", None, None)
+            mixin_counts = {}
+            attempt_reader = getattr(
+                persistence, "get_conversation_mixin_attempt", None
+            )
+            if callable(attempt_reader):
+                for row in continuation_rows or ():
+                    if str(row.get("sender", "")).lower() != "assistant":
+                        continue
+                    message_id = str(row["id"])
+                    try:
+                        replay = attempt_reader(
+                            conversation_id, assistant_message_id=message_id
+                        )
+                        mixin_counts[message_id] = (
+                            len(replay.snapshot.items)
+                            if replay.status == "recorded"
+                            and replay.snapshot is not None
+                            else 0
+                            if replay.status == "legacy"
+                            else None
+                        )
+                    except Exception:  # noqa: BLE001 - unknown/corrupt raw markers cannot imply legacy.
+                        mixin_counts[message_id] = None
             return ConsoleConversationHydrationData(
                 conversation_id,
                 tuple(nodes),
@@ -529,6 +628,8 @@ async def prepare_console_session_data(
                 before,
                 continuation_rows,
                 generation_rows,
+                mixin_preferences,
+                mixin_counts,
             )
         finally:
             if threaded:
@@ -554,6 +655,7 @@ async def hydrate_console_session(
     target_scope_type: str | None = None,
     target_workspace_id: str | None = None,
     activate: bool = True,
+    session_id: str | None = None,
     prepared_data: ConsoleConversationHydrationData | None = None,
 ) -> Any:
     """Create a Console session from a persisted tree.
@@ -682,6 +784,7 @@ async def hydrate_console_session(
         settings = replace(settings, character_label=character_name or "")
     prior_active_session_id = store.active_session_id
     session = store.restore_persisted_session(
+        session_id=session_id,
         title=title,
         workspace_id=workspace_id,
         persisted_conversation_id=target,
@@ -702,6 +805,7 @@ async def hydrate_console_session(
         character_system_template=roleplay_context.character_system_template,
         **({"prepared_data": prepared_data} if prepared_data is not None else {}),
         activate=False,
+        prepare_progress=False,
     )
     session.persona_system_template = roleplay_context.persona_system_template
     # Opening a saved chat is not a use of it. Keep the row's last change as
@@ -711,6 +815,12 @@ async def hydrate_console_session(
     if stored_updated_at is not None:
         session.updated_at = stored_updated_at.isoformat()
     try:
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        try:
+            await store.prepare_progress_inbox_owned(session.id)
+        except MessageError:
+            pass  # Saved report refusal does not invalidate the native chat.
         await store.hydrate_session_library_policy(session.id)
         await store.reconcile_pending_workspace_projection(session.id)
         if activate:
@@ -723,3 +833,26 @@ async def hydrate_console_session(
         )
         raise
     return session
+
+
+def restored_project_instruction_state(
+    persistence, persisted_conversation_id, initial_project_instruction_state
+):
+    """Decode existing durable controls without publishing a restored session."""
+    from .console_project_instructions import (
+        ProjectInstructionControlState,
+        decode_project_context_json,
+    )
+
+    project_instruction_state = ProjectInstructionControlState.legacy_disabled()
+    getter = getattr(persistence, "get_conversation_console_project_context", None)
+    if callable(getter):
+        try:
+            raw_project_context = getter(conversation_id=str(persisted_conversation_id))
+        except Exception:  # noqa: BLE001 - preserve existing durable-control fallback
+            logger.warning("project_instruction_state_read_failed")
+        else:
+            project_instruction_state = decode_project_context_json(raw_project_context)
+    if initial_project_instruction_state is not None:
+        project_instruction_state = initial_project_instruction_state
+    return project_instruction_state

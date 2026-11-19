@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widgets import Button, Input, Static
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
 
 
 async def open_canvas_with_textual(gateway: Any, scope: Any, app: Any) -> Any:
@@ -36,6 +39,27 @@ class ConsoleCanvasCardPresentation:
     digest: str
     reopenable: bool
     error_code: str | None
+
+
+def canvas_card_presentations(
+    message: ConsoleChatMessage,
+) -> tuple[ConsoleCanvasCardPresentation, ...]:
+    """Project validated Canvas metadata without ever accepting source bytes."""
+
+    metadata = message.metadata
+    if metadata is None:
+        return ()
+    return tuple(
+        ConsoleCanvasCardPresentation(
+            canvas_id=card.canvas_id,
+            revision_id=card.revision_id,
+            label=f"{card.title} · revision {card.sequence} · {card.status}",
+            digest=card.digest,
+            reopenable=card.reopenable,
+            error_code=card.error_code,
+        )
+        for card in metadata.canvas_cards
+    )
 
 
 def canvas_card_signature(card: ConsoleCanvasCardPresentation) -> tuple:

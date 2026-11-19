@@ -1,6 +1,7 @@
 """Mounted regressions for the collapsible Console composer."""
 
 import inspect
+import time
 from itertools import pairwise
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -65,12 +66,16 @@ async def test_improvement_recovery_row_tracks_exact_composer_lifecycle() -> Non
         def assert_recovery(visible: bool) -> None:
             row = composer.query_one("#console-prompt-improvement-recovery")
             assert row.display is visible
-            assert composer.query_one(
-                "#console-prompt-improvement-undo", Button
-            ).disabled is not visible
-            assert composer.query_one(
-                "#console-prompt-improvement-review", Button
-            ).disabled is not visible
+            assert (
+                composer.query_one("#console-prompt-improvement-undo", Button).disabled
+                is not visible
+            )
+            assert (
+                composer.query_one(
+                    "#console-prompt-improvement-review", Button
+                ).disabled
+                is not visible
+            )
 
         apply_replacement()
         await pilot.pause()
@@ -167,8 +172,8 @@ def test_adjacent_collapsed_pastes_have_one_literal_newline_and_expand_copy():
 
     assert composer.draft_text() == first + "\n" + second
     assert composer._display_draft_text() == (
-        f"Pasted text | {len(first)} characters | Expand\n"
-        f"Pasted text | {len(second)} characters | Expand"
+        f"Pasted text | {len(first)} characters | Ctrl+E expand\n"
+        f"Pasted text | {len(second)} characters | Ctrl+E expand"
     )
     assert [
         (segment.text, segment.origin, segment.collapse_state)
@@ -220,7 +225,7 @@ def test_adjacent_paste_snapshot_restore_preserves_boundary_and_block_states():
 
 
 def _paste_token(text: str) -> str:
-    return f"Pasted text | {len(text)} characters | Expand"
+    return f"Pasted text | {len(text)} characters | Ctrl+E expand"
 
 
 @pytest.mark.parametrize(
@@ -518,6 +523,7 @@ def _assert_full_button_label_fits(button: Button, expected_label: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapse_button_moves_focus_to_transcript_without_sending():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -538,6 +544,7 @@ async def test_collapse_button_moves_focus_to_transcript_without_sending():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_expand_button_and_one_escape_expand_and_focus_draft():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -564,6 +571,7 @@ async def test_expand_button_and_one_escape_expand_and_focus_draft():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapsed_composer_hidden_input_and_paste_do_not_mutate_or_send():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -599,6 +607,7 @@ async def test_collapsed_composer_hidden_input_and_paste_do_not_mutate_or_send()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapsed_escape_action_is_dynamic_and_setup_controls_are_inert(
     monkeypatch,
 ):
@@ -626,11 +635,28 @@ async def test_collapsed_escape_action_is_dynamic_and_setup_controls_are_inert(
             assert composer.collapsed is True
 
 
+# The app factory reads the real collection-bound config source.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expanded_escape_clears_transcript_selection_before_focus_fallback():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
+        # Composer mount precedes worker-owned attach/resume, which can still
+        # replace the session. Seed only after that work and its focus restore.
+        deadline = time.monotonic() + 30.0
+        while (
+            not console._console_attach_reconciled
+            or console._console_attach_resume_in_progress
+            or any(
+                timer._callback == console._restore_console_workbench_focus
+                and timer._task is not None
+                and not timer._task.done()
+                for timer in list(console._timers)
+            )
+        ):
+            assert time.monotonic() < deadline, "Console attach/resume never settled"
+            await pilot.pause(0.05)
         store = console._ensure_console_chat_store()
         message = store.append_message(
             store.active_session_id,
@@ -638,10 +664,18 @@ async def test_expanded_escape_clears_transcript_selection_before_focus_fallback
             content="selected answer",
         )
         await console._sync_native_console_chat_ui()
+        # A broad sync may coalesce and return False. Direct idle mutations
+        # use the real transcript publication path, bypassing only its cache.
+        await console._sync_native_console_transcript(force=True)
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        # The row lands on a later tick, and select_message ignores an id the
+        # transcript does not hold yet. Esc then had nothing to clear, which
+        # since TASK-33622.4 returns to the composer instead.
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         transcript.focus()
         await pilot.pause()
+        assert transcript.selected_message_id == message.id
 
         await pilot.press("escape")
         await pilot.pause()
@@ -651,6 +685,7 @@ async def test_expanded_escape_clears_transcript_selection_before_focus_fallback
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_screen_collapse_disarms_unfurl_without_changing_pasted_content():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -671,6 +706,7 @@ async def test_screen_collapse_disarms_unfurl_without_changing_pasted_content():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapsed_stop_routes_native_run_control_without_expanding():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -687,13 +723,20 @@ async def test_collapsed_stop_routes_native_run_control_without_expanding():
         console._stop_console_generation_from_visible_action = stop_run
 
         composer.query_one("#console-collapsed-stop-generation", Button).press()
-        await pilot.pause()
+        # Bounded wait, not one pause: under load the press could still be
+        # queued after a single pause (on dev too; more often with this
+        # branch's focus work as the collapse moves focus to the transcript).
+        for _ in range(40):
+            if stop_run.await_count:
+                break
+            await pilot.pause(0.05)
 
         stop_run.assert_awaited_once_with()
         assert composer.collapsed is True
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_collapsed_stop_is_inert_while_setup_blocks(monkeypatch):
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -718,6 +761,7 @@ async def test_collapsed_stop_is_inert_while_setup_blocks(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_stale_composer_layout_revision_does_not_override_current_focus():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -739,6 +783,7 @@ async def test_stale_composer_layout_revision_does_not_override_current_focus():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_rapid_toggle_ignores_stale_collapse_focus_callback():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -757,6 +802,7 @@ async def test_rapid_toggle_ignores_stale_collapse_focus_callback():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_rapid_collapse_then_priority_escape_ignores_stale_focus_callback():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -775,6 +821,7 @@ async def test_rapid_collapse_then_priority_escape_ignores_stale_focus_callback(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_anchored_tail_and_selection_survive_collapse_round_trip():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -800,6 +847,7 @@ async def test_anchored_tail_and_selection_survive_collapse_round_trip():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_manual_reading_position_and_selection_survive_collapse_round_trip():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -826,6 +874,7 @@ async def test_manual_reading_position_and_selection_survive_collapse_round_trip
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_replacement_composer_inherits_screen_state_and_active_session_draft():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
@@ -847,6 +896,7 @@ async def test_replacement_composer_inherits_screen_state_and_active_session_dra
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_defaults_expanded_and_toggles_idempotently():
     host = _ready_console_host()
 
@@ -909,6 +959,7 @@ async def test_console_composer_default_geometry_is_single_row():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_bottom_stack_single_separator_contract():
     """task-17651: one border row between transcript text and the chips.
 
@@ -922,9 +973,7 @@ async def test_console_bottom_stack_single_separator_contract():
 
     async with host.run_test(size=(150, 44)) as pilot:
         console = await _mounted_console(host, pilot)
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         region = console.query_one("#console-transcript-region")
         grid = console.query_one("#console-workspace-grid")
         chips = console.query_one("#console-status-chips")
@@ -950,12 +999,16 @@ async def test_console_bottom_stack_single_separator_contract():
         assert composer.region.height == 1
         assert footer.region.y == composer.region.y + composer.region.height + 1
         strips = host.screen._compositor.render_strips()
-        for gap_y in (composer.region.y - 1, composer.region.y + composer.region.height):
+        for gap_y in (
+            composer.region.y - 1,
+            composer.region.y + composer.region.height,
+        ):
             gap_row = "".join(seg.text for seg in strips[gap_y])
             assert not gap_row.strip(), (gap_y, repr(gap_row[:20]))
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_focus_edge_is_live_and_stable():
     """task-17651: the dense-form focus edge actually renders.
 
@@ -973,9 +1026,7 @@ async def test_console_composer_focus_edge_is_live_and_stable():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         # The Console auto-focuses the composer on mount; move focus away
         # to capture the genuine rest state first.
-        console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        ).focus()
+        console.query_one("#console-native-transcript", ConsoleTranscript).focus()
         await pilot.pause()
         rest_kind, rest_color = composer.styles.border_left
         rest_region = composer.region
@@ -983,8 +1034,7 @@ async def test_console_composer_focus_edge_is_live_and_stable():
         # Painted evidence for the REST edge too — style reads cannot see
         # the global *:focus outline overpainting the row (task-17651).
         rest_row = "".join(
-            seg.text
-            for seg in host.screen._compositor.render_strips()[rest_region.y]
+            seg.text for seg in host.screen._compositor.render_strips()[rest_region.y]
         )
         assert rest_row[0] == "│", repr(rest_row[:4])
 
@@ -1006,6 +1056,7 @@ async def test_console_composer_focus_edge_is_live_and_stable():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_transcript_focus_marks_title_without_changing_collapsed_layout():
     """F6 marks the stable title without restoring the old transcript frame."""
     app = _build_test_app()
@@ -1161,6 +1212,7 @@ async def test_console_composer_compact_geometry_keeps_status_and_expand_visible
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(140, 42), (100, 32)])
+@pytest.mark.bootstrap_profile
 async def test_console_responsive_collapsed_geometry_preserves_controls_and_rows(size):
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1228,6 +1280,7 @@ async def test_console_responsive_collapsed_geometry_preserves_controls_and_rows
         ),
     ],
 )
+@pytest.mark.bootstrap_profile
 async def test_console_collapsed_status_uses_presence_only(
     draft: str,
     attachment: str | None,
@@ -1257,6 +1310,7 @@ async def test_console_collapsed_status_uses_presence_only(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_collapsed_status_sync_does_not_join_canonical_draft(
     monkeypatch,
 ):
@@ -1287,6 +1341,7 @@ async def test_console_collapsed_status_sync_does_not_join_canonical_draft(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_round_trip_preserves_editor_and_attachment_state():
     host = _ready_console_host()
 
@@ -1335,6 +1390,7 @@ async def test_console_composer_round_trip_preserves_editor_and_attachment_state
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_collapse_preserves_pending_unfurl_segment():
     host = _ready_console_host()
 
@@ -1357,6 +1413,7 @@ async def test_console_composer_collapse_preserves_pending_unfurl_segment():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_composer_collapse_pauses_cursor_timer_despite_lingering_focus():
     host = _ready_console_host()
 

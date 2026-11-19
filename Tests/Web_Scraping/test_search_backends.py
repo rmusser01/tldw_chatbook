@@ -18,7 +18,9 @@ class _FakeResponse:
         # searx's response is inspected for Content-Type before .json()/.text
         # is chosen -- every OTHER engine's fake response never reads this,
         # so a JSON-flavored default is a safe, additive default for them.
-        self.headers = headers if headers is not None else {"Content-Type": "application/json"}
+        self.headers = (
+            headers if headers is not None else {"Content-Type": "application/json"}
+        )
         self.text = ""
 
     def json(self):
@@ -38,7 +40,9 @@ class _FakeResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise WebSearch_APIs.requests.exceptions.HTTPError(f"status {self.status_code}", response=self)
+            raise WebSearch_APIs.requests.exceptions.HTTPError(
+                f"status {self.status_code}", response=self
+            )
 
 
 class _FakeRequests:
@@ -68,7 +72,9 @@ def _patch_requests(monkeypatch, payload, status_code=200):
 
 
 def _set_key(monkeypatch, key, value):
-    monkeypatch.setitem(config.load_cli_config_and_ensure_existence()["SearchEngines"], key, value)
+    monkeypatch.setitem(
+        config.load_cli_config_and_ensure_existence()["SearchEngines"], key, value
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -83,9 +89,14 @@ def _set_key(monkeypatch, key, value):
 # Google
 # ---------------------------------------------------------------------------
 
-_GOOGLE_PAYLOAD = {"items": [{"title": "G Title", "link": "https://g.example/", "snippet": "g snippet"}]}
+_GOOGLE_PAYLOAD = {
+    "items": [
+        {"title": "G Title", "link": "https://g.example/", "snippet": "g snippet"}
+    ]
+}
 
 
+@pytest.mark.bootstrap_profile
 def test_google_request_carries_timeout(monkeypatch):
     _set_key(monkeypatch, "google_search_api_key", "test-google-key")
     _set_key(monkeypatch, "google_search_engine_id", "test-cx")
@@ -96,6 +107,7 @@ def test_google_request_carries_timeout(monkeypatch):
         assert call["timeout"] == 30
 
 
+@pytest.mark.bootstrap_profile
 def test_google_timeout_raises_existing_error_contract(monkeypatch):
     """AC #2: a simulated hang must surface as a bounded-time error, not
     block indefinitely. search_web_google's existing contract (unchanged by
@@ -121,10 +133,20 @@ def test_google_timeout_raises_existing_error_contract(monkeypatch):
 # Brave
 # ---------------------------------------------------------------------------
 
-_BRAVE_PAYLOAD = {"web": {"results": [{"title": "Br Title", "url": "https://br.example/",
-                                        "description": "br snippet"}]}}
+_BRAVE_PAYLOAD = {
+    "web": {
+        "results": [
+            {
+                "title": "Br Title",
+                "url": "https://br.example/",
+                "description": "br snippet",
+            }
+        ]
+    }
+}
 
 
+@pytest.mark.bootstrap_profile
 def test_brave_request_carries_timeout(monkeypatch):
     _set_key(monkeypatch, "brave_search_api_key", "test-brave-key")
     fake = _patch_requests(monkeypatch, _BRAVE_PAYLOAD)
@@ -156,6 +178,7 @@ class _FakeDDGRequests:
         return response
 
 
+@pytest.mark.bootstrap_profile
 def test_duckduckgo_request_carries_timeout(monkeypatch):
     if not WebSearch_APIs.LXML_AVAILABLE:
         pytest.skip("lxml not available")
@@ -168,6 +191,7 @@ def test_duckduckgo_request_carries_timeout(monkeypatch):
         assert call["timeout"] == 30
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("status_code", [200, 202])
 @pytest.mark.parametrize("page_text", [b"Select ducks", b"No  results."])
 def test_duckduckgo_challenge_is_a_failure(monkeypatch, status_code, page_text):
@@ -183,6 +207,7 @@ def test_duckduckgo_challenge_is_a_failure(monkeypatch, status_code, page_text):
     assert len(fake.calls) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("status_code", [403, 429, 500])
 def test_duckduckgo_http_failure_is_not_empty_results(monkeypatch, status_code):
     pytest.importorskip("lxml")
@@ -198,6 +223,7 @@ def test_duckduckgo_missing_parser_is_a_failure(monkeypatch):
         WebSearch_APIs.search_web_duckduckgo("cherry cake")
 
 
+@pytest.mark.bootstrap_profile
 def test_duckduckgo_results_and_confirmed_empty_are_distinct(monkeypatch):
     pytest.importorskip("lxml")
     fake = _FakeDDGRequests(
@@ -221,9 +247,19 @@ def test_duckduckgo_results_and_confirmed_empty_are_distinct(monkeypatch):
 # Kagi
 # ---------------------------------------------------------------------------
 
-_KAGI_PAYLOAD = {"data": [{"t": 0, "title": "K Title", "url": "https://k.example/", "snippet": "k snippet"}]}
+_KAGI_PAYLOAD = {
+    "data": [
+        {
+            "t": 0,
+            "title": "K Title",
+            "url": "https://k.example/",
+            "snippet": "k snippet",
+        }
+    ]
+}
 
 
+@pytest.mark.bootstrap_profile
 def test_kagi_request_carries_timeout(monkeypatch):
     _set_key(monkeypatch, "kagi_search_api_key", "test-kagi-key")
     fake = _patch_requests(monkeypatch, _KAGI_PAYLOAD)
@@ -239,14 +275,24 @@ def test_kagi_request_carries_timeout(monkeypatch):
 
 _SERPER_PAYLOAD = {
     "organic": [
-        {"title": "Result One", "link": "https://one.example/", "snippet": "first snippet",
-         "position": 1, "date": "2026-01-01"},
-        {"title": "Result Two", "link": "https://two.example/", "snippet": "second snippet",
-         "position": 2},
+        {
+            "title": "Result One",
+            "link": "https://one.example/",
+            "snippet": "first snippet",
+            "position": 1,
+            "date": "2026-01-01",
+        },
+        {
+            "title": "Result Two",
+            "link": "https://two.example/",
+            "snippet": "second snippet",
+            "position": 2,
+        },
     ]
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_request_shape(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
     fake = _patch_requests(monkeypatch, _SERPER_PAYLOAD)
@@ -260,6 +306,7 @@ def test_serper_request_shape(monkeypatch):
     assert body == {"q": "cherry cake", "gl": "us", "hl": "en", "num": 7}
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_request_defaults(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
     fake = _patch_requests(monkeypatch, _SERPER_PAYLOAD)
@@ -268,6 +315,7 @@ def test_serper_request_defaults(monkeypatch):
     assert body["gl"] == "us" and body["hl"] == "en" and body["num"] == 10
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_missing_key_raises(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "")
     _patch_requests(monkeypatch, _SERPER_PAYLOAD)
@@ -293,15 +341,20 @@ def test_serper_parser_standard_shape():
     assert out2["results"] == []
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_end_to_end_through_process(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
     _patch_requests(monkeypatch, _SERPER_PAYLOAD)
     raw = WebSearch_APIs.search_web_serper("q", "US", "en", 5)
     result = WebSearch_APIs.process_web_search_results(raw, "serper")
     assert result["processing_error"] is None
-    assert [r["url"] for r in result["results"]] == ["https://one.example/", "https://two.example/"]
+    assert [r["url"] for r in result["results"]] == [
+        "https://one.example/",
+        "https://two.example/",
+    ]
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_http_error_raises(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", "test-serper-key")
     _patch_requests(monkeypatch, {}, status_code=429)
@@ -309,6 +362,7 @@ def test_serper_http_error_raises(monkeypatch):
         WebSearch_APIs.search_web_serper("q", "US", "en", 5)
 
 
+@pytest.mark.bootstrap_profile
 def test_serper_http_error_via_perform_websearch(monkeypatch):
     """perform_websearch's dispatch try/except (spec 5) must turn a backend
     HTTPError into its {"processing_error": ...} envelope, not crash the
@@ -329,13 +383,24 @@ def test_serper_http_error_via_perform_websearch(monkeypatch):
 
 _EXA_PAYLOAD = {
     "results": [
-        {"title": "Exa One", "url": "https://exa-one.example/", "publishedDate": "2026-02-02",
-         "author": "Ada", "highlights": ["highlight text one", "second highlight"]},
-        {"title": "Exa Two", "url": "https://exa-two.example/", "author": None, "highlights": []},
+        {
+            "title": "Exa One",
+            "url": "https://exa-one.example/",
+            "publishedDate": "2026-02-02",
+            "author": "Ada",
+            "highlights": ["highlight text one", "second highlight"],
+        },
+        {
+            "title": "Exa Two",
+            "url": "https://exa-two.example/",
+            "author": None,
+            "highlights": [],
+        },
     ]
 }
 
 
+@pytest.mark.bootstrap_profile
 def test_exa_request_shape(monkeypatch):
     _set_key(monkeypatch, "exa_search_api_key", "test-exa-key")
     fake = _patch_requests(monkeypatch, _EXA_PAYLOAD)
@@ -345,10 +410,15 @@ def test_exa_request_shape(monkeypatch):
     assert call["headers"]["x-api-key"] == "test-exa-key"
     assert call["timeout"] == 30
     body = call.get("json") or json.loads(call["data"])
-    assert body == {"query": "cherry cake", "numResults": 5, "type": "auto",
-                    "contents": {"highlights": True}}
+    assert body == {
+        "query": "cherry cake",
+        "numResults": 5,
+        "type": "auto",
+        "contents": {"highlights": True},
+    }
 
 
+@pytest.mark.bootstrap_profile
 def test_exa_missing_key_raises(monkeypatch):
     _set_key(monkeypatch, "exa_search_api_key", "")
     _patch_requests(monkeypatch, _EXA_PAYLOAD)
@@ -370,6 +440,7 @@ def test_exa_parser_standard_shape():
     assert second["content"] == ""  # empty highlights tolerated
 
 
+@pytest.mark.bootstrap_profile
 def test_exa_end_to_end_through_process(monkeypatch):
     _set_key(monkeypatch, "exa_search_api_key", "test-exa-key")
     _patch_requests(monkeypatch, _EXA_PAYLOAD)
@@ -379,6 +450,7 @@ def test_exa_end_to_end_through_process(monkeypatch):
     assert len(result["results"]) == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_exa_http_error_raises(monkeypatch):
     _set_key(monkeypatch, "exa_search_api_key", "test-exa-key")
     _patch_requests(monkeypatch, {}, status_code=401)
@@ -426,6 +498,7 @@ def _yandex_payload(xml_bytes):
     return {"rawData": base64.b64encode(xml_bytes).decode("ascii")}
 
 
+@pytest.mark.bootstrap_profile
 def test_yandex_request_shape(monkeypatch):
     _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
     _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
@@ -443,6 +516,7 @@ def test_yandex_request_shape(monkeypatch):
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_yandex_missing_key_or_folder_raises(monkeypatch):
     _patch_requests(monkeypatch, _yandex_payload(_YANDEX_XML))
     _set_key(monkeypatch, "yandex_search_api_key", "")
@@ -461,21 +535,24 @@ def test_yandex_parser_flattens_hlwords_and_passages():
     assert len(out["results"]) == 2
     first, second = out["results"]
     assert first["url"] == "https://ya-one.example/"
-    assert first["title"] == "Ya One Title"                # hlword flattened
+    assert first["title"] == "Ya One Title"  # hlword flattened
     assert first["content"] == "First passage text. Second passage."
     assert first["metadata"]["snippet"] == "First passage text. Second passage."
-    assert second["content"] == ""                          # passage-less doc tolerated
+    assert second["content"] == ""  # passage-less doc tolerated
 
 
 def test_yandex_error_through_process_sets_processing_error():
     """In-XML <error> (quota/auth inside HTTP 200) must surface via the
     processing_error seam — never a silent empty result list."""
-    result = WebSearch_APIs.process_web_search_results(_yandex_payload(_YANDEX_ERROR_XML), "yandex")
+    result = WebSearch_APIs.process_web_search_results(
+        _yandex_payload(_YANDEX_ERROR_XML), "yandex"
+    )
     assert result["processing_error"] is not None
     assert result["processing_error"] == "Search provider returned an invalid response."
     assert result["results"] == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("code", ["15", "32", "42"])
 def test_yandex_no_results_and_errors_reach_web_tool(monkeypatch, code):
     from tldw_chatbook.Tools import web_tool_impls
@@ -509,6 +586,7 @@ def test_yandex_no_results_and_errors_reach_web_tool(monkeypatch, code):
         web_tool_impls._reset_state_for_tests()
 
 
+@pytest.mark.bootstrap_profile
 def test_yandex_end_to_end_through_process(monkeypatch):
     _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
     _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
@@ -516,9 +594,13 @@ def test_yandex_end_to_end_through_process(monkeypatch):
     raw = WebSearch_APIs.search_web_yandex("q", 5)
     result = WebSearch_APIs.process_web_search_results(raw, "yandex")
     assert result["processing_error"] is None
-    assert [r["url"] for r in result["results"]] == ["https://ya-one.example/", "https://ya-two.example/"]
+    assert [r["url"] for r in result["results"]] == [
+        "https://ya-one.example/",
+        "https://ya-two.example/",
+    ]
 
 
+@pytest.mark.bootstrap_profile
 def test_yandex_http_error_raises(monkeypatch):
     _set_key(monkeypatch, "yandex_search_api_key", "test-ya-key")
     _set_key(monkeypatch, "yandex_search_folder_id", "test-folder")
@@ -536,10 +618,19 @@ def test_yandex_http_error_raises(monkeypatch):
 _TAVILY_PAYLOAD = {
     "query": "cherry cake",
     "results": [
-        {"title": "Tavily One", "url": "https://tavily-one.example/", "content": "first content",
-         "score": 0.87, "published_date": "2026-03-03"},
-        {"title": "Tavily Two", "url": "https://tavily-two.example/", "content": "second content",
-         "score": 0.42},
+        {
+            "title": "Tavily One",
+            "url": "https://tavily-one.example/",
+            "content": "first content",
+            "score": 0.87,
+            "published_date": "2026-03-03",
+        },
+        {
+            "title": "Tavily Two",
+            "url": "https://tavily-two.example/",
+            "content": "second content",
+            "score": 0.42,
+        },
     ],
 }
 
@@ -584,6 +675,7 @@ def test_tavily_error_string_raises_and_surfaces_as_processing_error():
     assert result["results"] == []
 
 
+@pytest.mark.bootstrap_profile
 def test_tavily_end_to_end_through_process(monkeypatch):
     _set_key(monkeypatch, "tavily_search_api_key", "test-tavily-key")
     _patch_requests(monkeypatch, _TAVILY_PAYLOAD)
@@ -591,10 +683,12 @@ def test_tavily_end_to_end_through_process(monkeypatch):
     result = WebSearch_APIs.process_web_search_results(raw, "tavily")
     assert result["processing_error"] is None
     assert [r["url"] for r in result["results"]] == [
-        "https://tavily-one.example/", "https://tavily-two.example/",
+        "https://tavily-one.example/",
+        "https://tavily-two.example/",
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_tavily_request_carries_timeout(monkeypatch):
     """task-3060."""
     _set_key(monkeypatch, "tavily_search_api_key", "test-tavily-key")
@@ -640,12 +734,22 @@ def test_tavily_non_dict_item_surfaces_as_processing_error():
 # always returns a JSON-encoded STRING (not a dict), of either a hit list
 # or an error dict -- unlike every other backend in this file.
 _SEARX_HITS = [
-    {"title": "Searx One", "link": "https://searx-one.example/", "snippet": "first snippet",
-     "publishedDate": "2026-04-04"},
-    {"title": "Searx Two", "link": "https://searx-two.example/", "snippet": "second snippet"},
+    {
+        "title": "Searx One",
+        "link": "https://searx-one.example/",
+        "snippet": "first snippet",
+        "publishedDate": "2026-04-04",
+    },
+    {
+        "title": "Searx Two",
+        "link": "https://searx-two.example/",
+        "snippet": "second snippet",
+    },
 ]
 _SEARX_PAYLOAD = json.dumps(_SEARX_HITS)
-_SEARX_ERROR_PAYLOAD = json.dumps({"error": "No information was found online for the search query."})
+_SEARX_ERROR_PAYLOAD = json.dumps(
+    {"error": "No information was found online for the search query."}
+)
 
 
 class _FakeSearxSession:
@@ -668,6 +772,7 @@ class _FakeSearxSession:
         return _FakeResponse(self._payload, self._status_code)
 
 
+@pytest.mark.bootstrap_profile
 def test_searx_request_carries_timeout(monkeypatch):
     """Every SearX HTTP attempt carries the bounded provider timeout."""
     _set_key(monkeypatch, "searx_search_api_url", "https://search.example.org/search")
@@ -679,6 +784,7 @@ def test_searx_request_carries_timeout(monkeypatch):
         assert call["timeout"] == 30
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("outcome", ["empty", "http_failure", "unconfigured"])
 def test_searx_backend_empty_and_failures_reach_web_tool(monkeypatch, outcome):
     from tldw_chatbook.Tools import web_tool_impls
@@ -745,7 +851,13 @@ def test_searx_parser_falls_back_to_raw_searxng_shape_keys():
     fallback pair)."""
     out = {}
     WebSearch_APIs.parse_searx_results(
-        [{"title": "Raw SearXNG Hit", "url": "https://raw.example/", "content": "raw content"}],
+        [
+            {
+                "title": "Raw SearXNG Hit",
+                "url": "https://raw.example/",
+                "content": "raw content",
+            }
+        ],
         out,
     )
     assert out["results"][0]["url"] == "https://raw.example/"
@@ -806,9 +918,11 @@ def test_searx_parser_non_dict_item_raises_value_error():
 
 def test_searx_non_dict_item_surfaces_as_processing_error():
     """Non-dict items in searx results must surface as processing_error via the seam."""
-    bad_payload = json.dumps([
-        "not a dict",  # Bad: string at index 0
-    ])
+    bad_payload = json.dumps(
+        [
+            "not a dict",  # Bad: string at index 0
+        ]
+    )
     result = WebSearch_APIs.process_web_search_results(bad_payload, "searx")
     assert result["processing_error"] is not None
     assert result["processing_error"] == "Search provider returned an invalid response."
@@ -818,6 +932,7 @@ def test_searx_non_dict_item_surfaces_as_processing_error():
 # ---------------------------------------------------------------------------
 # process_web_search_results type-guard scoping (task-2990 review round)
 # ---------------------------------------------------------------------------
+
 
 def test_type_guard_rejects_string_payload_for_non_string_engines():
     """The (dict, str-for-tavily/searx) type guard in
@@ -858,19 +973,42 @@ _KNOWN_BROKEN_PARSERS = set()  # see task-2990
 # the payload constants already defined above for their dedicated tests.
 _ENGINE_SAMPLE_PAYLOADS = {
     "google": {
-        "items": [{"title": "G Title", "link": "https://g.example/", "snippet": "g snippet"}]
+        "items": [
+            {"title": "G Title", "link": "https://g.example/", "snippet": "g snippet"}
+        ]
     },
     "bing": {
-        "webPages": {"value": [{"name": "B Title", "url": "https://b.example/", "snippet": "b snippet"}]}
+        "webPages": {
+            "value": [
+                {"name": "B Title", "url": "https://b.example/", "snippet": "b snippet"}
+            ]
+        }
     },
     "duckduckgo": {
-        "results": [{"title": "D Title", "href": "https://d.example/", "body": "d snippet"}]
+        "results": [
+            {"title": "D Title", "href": "https://d.example/", "body": "d snippet"}
+        ]
     },
     "brave": {
-        "web": {"results": [{"title": "Br Title", "url": "https://br.example/", "description": "br snippet"}]}
+        "web": {
+            "results": [
+                {
+                    "title": "Br Title",
+                    "url": "https://br.example/",
+                    "description": "br snippet",
+                }
+            ]
+        }
     },
     "kagi": {
-        "data": [{"t": 0, "title": "K Title", "url": "https://k.example/", "snippet": "k snippet"}]
+        "data": [
+            {
+                "t": 0,
+                "title": "K Title",
+                "url": "https://k.example/",
+                "snippet": "k snippet",
+            }
+        ]
     },
     "exa": _EXA_PAYLOAD,
     "serper": _SERPER_PAYLOAD,
@@ -890,9 +1028,12 @@ def test_agent_enum_engines_all_dispatchable():
     """
     assert _KNOWN_BROKEN_PARSERS == set(), "task-2990 allowlist should stay empty"
     from tldw_chatbook.Tools.web_tool_impls import SEARCH_ENGINES
+
     for engine in SEARCH_ENGINES:
         payload = _ENGINE_SAMPLE_PAYLOADS.get(engine)
-        assert payload is not None, f"no sample payload registered for advertised engine {engine!r}"
+        assert payload is not None, (
+            f"no sample payload registered for advertised engine {engine!r}"
+        )
         result = WebSearch_APIs.process_web_search_results(payload, engine)
         assert result["processing_error"] is None, (
             f"{engine}: unexpected processing_error parsing a minimal {engine} payload: "
@@ -931,6 +1072,7 @@ def _key_file(name):
 # in-test env-flag monkeypatch can't retrigger it -- unit-test the predicate
 # directly instead of the decorator machinery, and never touch a real key.)
 # ---------------------------------------------------------------------------
+
 
 def test_usable_key_missing_file_is_unusable(tmp_path, monkeypatch):
     monkeypatch.setattr(sys.modules[__name__], "_REPO_ROOT", tmp_path)
@@ -989,7 +1131,9 @@ def _live_gate(*key_names):
         return pytest.mark.skip(reason="TLDW_LIVE_SEARCH_TESTS != 1")
     missing = [n for n in key_names if not _usable_key(n)]
     if missing:
-        return pytest.mark.skip(reason=f"missing/unusable key file(s): {', '.join(missing)}")
+        return pytest.mark.skip(
+            reason=f"missing/unusable key file(s): {', '.join(missing)}"
+        )
     return pytest.mark.live
 
 
@@ -997,7 +1141,8 @@ def _live_gate(*key_names):
 def test_live_serper(monkeypatch):
     _set_key(monkeypatch, "serper_search_api_key", _key_file("serper-api-key.txt"))
     result = WebSearch_APIs.process_web_search_results(
-        WebSearch_APIs.search_web_serper("python programming language", "US", "en", 3), "serper"
+        WebSearch_APIs.search_web_serper("python programming language", "US", "en", 3),
+        "serper",
     )
     assert result["processing_error"] is None
     assert result["results"] and result["results"][0]["url"]

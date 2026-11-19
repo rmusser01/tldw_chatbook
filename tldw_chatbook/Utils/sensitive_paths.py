@@ -103,7 +103,7 @@ is kept deliberately small and biased toward names that are credential
 stores by definition; a name is added only when a false refusal would be
 a curiosity rather than routine obstruction -- which is why ``.env`` is
 deliberately NOT here (as often build configuration as secrets, and
-refusing it would break the ADR-032 coding-agent use case this module
+refusing it would break the ADR-300 coding-agent use case this module
 must not break). The cost is real and accepted: an agent cannot read a
 test fixture named ``credentials``, and the refusal names it as protected
 rather than failing silently.
@@ -112,7 +112,7 @@ The two families' HIDDEN-COMPONENT policies still differ, and that
 difference is design, not residue. Family 1 confines through
 ``validate_path_multi``, which defaults ``allow_hidden=False`` and so
 refuses any dotted component before this module is consulted; family 2
-passes ``allow_hidden=True`` (ADR-032 -- a coding agent that cannot read
+passes ``allow_hidden=True`` (ADR-300 -- a coding agent that cannot read
 ``.github/`` or ``.gitignore`` is useless). Family 1 is therefore
 strictly stricter for dotted NAMES, which is acceptable because the two
 roots are different kinds of place: family 1's sandbox root is app-owned
@@ -208,6 +208,8 @@ import threading
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
 
+from tldw_chatbook.Utils.path_validation import fold_path_part
+
 #: Resolution failures seen on this thread; ``_raw_inputs`` never memoizes a
 #: snapshot built while one occurred (it would keep a gap in the deny list).
 _failures = threading.local()
@@ -234,6 +236,7 @@ def _debug(message: str) -> None:
     except ImportError:
         return
     logger.debug(message)
+
 
 #: Directory prefixes that are refused along with everything beneath them.
 #: The LOCATION rule (see the module docstring): used where the directory
@@ -577,7 +580,9 @@ def _db_sidecar_paths(db_path: Path) -> tuple[Path, ...]:
         equality: appending is not the same as matching anything that
         merely starts with the DB's name.
     """
-    return tuple(db_path.with_name(db_path.name + suffix) for suffix in _DB_SIDECAR_SUFFIXES)
+    return tuple(
+        db_path.with_name(db_path.name + suffix) for suffix in _DB_SIDECAR_SUFFIXES
+    )
 
 
 class SensitivePathContext(NamedTuple):
@@ -756,6 +761,10 @@ def resolve_sensitive_context() -> SensitivePathContext:
     )
 
 
+# Direct call-shape anchor; no sensitive-path data is retained.
+_RESOLVE_SENSITIVE_CONTEXT_ORIGINAL = (resolve_sensitive_context, resolve_sensitive_context.__code__, resolve_sensitive_context.__defaults__)
+
+
 def merge_sensitive_context(
     base: SensitivePathContext,
     *,
@@ -845,9 +854,9 @@ def _compare_key(path: Path) -> tuple[str, ...]:
         path: An already-resolved absolute path.
 
     Returns:
-        The path's components, each casefolded.
+        The path's components, each folded by :func:`fold_path_part`.
     """
-    return tuple(part.casefold() for part in path.parts)
+    return tuple(fold_path_part(part) for part in path.parts)
 
 
 def _same_path(a: Path, b: Path) -> bool:
@@ -991,6 +1000,10 @@ def is_sensitive_path(
             return True
 
     return False
+
+
+# Direct call-shape anchor; no sensitive-path data is retained.
+_IS_SENSITIVE_PATH_ORIGINAL = (is_sensitive_path, is_sensitive_path.__code__, is_sensitive_path.__defaults__)
 
 
 class SensitiveExclusion(NamedTuple):
@@ -1346,7 +1359,7 @@ def is_git_metadata_write(path: Path) -> bool:
 
     Deliberately WRITE-only and deliberately NOT part of
     :func:`is_sensitive_path`: that denylist governs reads as well, and an
-    agent reading repository state is legitimate (ADR-032 adopted
+    agent reading repository state is legitimate (ADR-300 adopted
     ``allow_hidden`` precisely so a coding agent can see dotfiles). The
     read-side question -- ``.git/config`` can embed a credential in a remote
     URL -- is tracked separately rather than smuggled in here.

@@ -1,0 +1,84 @@
+{
+  "server": "ollama_cloud",
+  "base_url": "https://ollama.com/v1",
+  "probe_model": "nemotron-3-nano:30b",
+  "listing": {
+    "status": 200,
+    "entries": [
+      {
+        "id": "kimi-k3"
+      },
+      {
+        "id": "deepseek-v4-pro:0813"
+      },
+      {
+        "id": "kimi-k2.6"
+      },
+      {
+        "id": "nemotron-3-super"
+      },
+      {
+        "id": "glm-5.2"
+      },
+      {
+        "id": "nemotron-3-nano:30b"
+      },
+      {
+        "id": "minimax-m2.7"
+      },
+      {
+        "id": "nemotron-3-ultra"
+      },
+      {
+        "id": "gpt-oss:120b"
+      },
+      {
+        "id": "minimax-m3"
+      },
+      {
+        "id": "mistral-large-3:675b"
+      },
+      {
+        "id": "deepseek-v4.1-flash"
+      },
+      {
+        "id": "gpt-oss:20b"
+      },
+      {
+        "id": "gemma4:31b"
+      },
+      {
+        "id": "glm-5.3"
+      },
+      {
+        "id": "glm-5.3-flash"
+      },
+      {
+        "id": "kimi-k2.7-code"
+      }
+    ]
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Unauthorized",
+        "type": "api_error",
+        "param": null,
+        "code": null
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Unauthorized",
+        "type": "api_error",
+        "param": null,
+        "code": null
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:19:55+00:00"
+}

@@ -114,9 +114,7 @@ async def test_ontime_task_clears_the_notice():
     async with _DetailHarnessApp().run_test() as pilot:
         detail = pilot.app.query_one(TaskDetail)
         # First show it, then clear it: the clearing branch is what's pinned.
-        detail.set_task(
-            _reminder(missed_at=NOW, missed_count=1)
-        )
+        detail.set_task(_reminder(missed_at=NOW, missed_count=1))
         await pilot.pause()
         _, visible_before = await _notice_text(detail)
         assert visible_before

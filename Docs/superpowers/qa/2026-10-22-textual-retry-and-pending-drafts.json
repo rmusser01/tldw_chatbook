@@ -1,0 +1,275 @@
+{
+  "scope": "TASK-36360..TASK-36363; no full local suite; current-head hosted CI and final whole-branch review recorded in PR",
+  "tasks": [
+    {
+      "id": 36360,
+      "status": "Done",
+      "acceptance_criteria": 4,
+      "path": "backlog/tasks/task-36360 - Keep-quiz-final-answer-retry-from-duplicating-answers-and-inflating-scores.md"
+    },
+    {
+      "id": 36361,
+      "status": "Done",
+      "acceptance_criteria": 4,
+      "path": "backlog/tasks/task-36361 - Preserve-newer-Appearance-Storage-and-Console-Behavior-drafts-after-pending-Saves.md"
+    },
+    {
+      "id": 36362,
+      "status": "Done",
+      "acceptance_criteria": 5,
+      "path": "backlog/tasks/task-36362 - Keep-newer-Recurring-Question-drafts-when-an-earlier-Save-completes.md"
+    },
+    {
+      "id": 36363,
+      "status": "Done",
+      "acceptance_criteria": 4,
+      "path": "backlog/tasks/task-36363 - Keep-newer-audiobook-source-edits-when-a-pending-file-import-completes.md"
+    }
+  ],
+  "new_concrete_ui_nodes": 48,
+  "census": {
+    "original_prefix": 603,
+    "current_floor": 651,
+    "shards": 13,
+    "existing_positions_preserved": true,
+    "new_tail_only_balanced": true,
+    "timing_baseline_run": 39840153541
+  },
+  "targeted_outcomes": {
+    "quiz_new": 5,
+    "quiz_focused": 36,
+    "settings_new": 19,
+    "settings_final_real_fault": 4,
+    "settings_adjacent_pass": 29,
+    "recurring_new": 20,
+    "recurring_adjacent": 30,
+    "recurring_guard_fix": 4,
+    "audiobook_final_required": 16,
+    "integration": 106
+  },
+  "qualifications": [
+    "Settings and Recurring outcomes use sealed composite receipts after bounded test-only refinements; no broad redundant rerun.",
+    "Legacy quiz15 and Settings1 startup failures; representative exact-base/current qualification, not full legacy passes.",
+    "Audiobook13 optional legacy startup errors; fresh parent reproduction and representative exact-base/current qualification.",
+    "Audiobook clear is public production keyboard-action dispatch after Pilot selection; edit/replace use actual Pilot printable input.",
+    "Inherited lint/format/deprecation/optional-dependency debt is retained and explicitly baseline-qualified in QA Markdown."
+  ],
+  "source_guards": "All7pass across sealed initial5 plus finalworker,diagnostic,census validation. No worker census, privacy admission, dependency or timeout increase.",
+  "reviews": [
+    {
+      "artifact": "task-1-review.md",
+      "sha256": "3e258582b6a68b86c0331dc521131b8e0b9c535a5c8a1205a17fe5082314bfe4"
+    },
+    {
+      "artifact": "task-2-review.md",
+      "sha256": "d7ad82cf3ca5e58bab7788e58242eaf67c809513c06495e591ed12e2afb6c0ab"
+    },
+    {
+      "artifact": "task-3-review.md",
+      "sha256": "eeed9c4c862d9eb3168eb44a317eeafb7234e061b997046574989f410742e03c"
+    },
+    {
+      "artifact": "task-3-fix1-review.md",
+      "sha256": "169f2097e3406ae835bc2b9c0eaa3099724711a7d088455eb52be0531397d20f"
+    },
+    {
+      "artifact": "task-4-review.md",
+      "sha256": "43b4e1ad58871cdd883749d79eb92481e3336687e3f77b28f34e554ffd8e2e28"
+    }
+  ],
+  "canonical_lf_source_sha256": {
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": "6ff3e2c5344cbda7c75e42fd57f2c138987caaa0c688e89a5dc68b0e0eaee816",
+    "tldw_chatbook/UI/Screens/settings_screen.py": "46f621eff7e6832d0f78edca8052d326f6c0f18c800f4278b26a7ef0dcede404",
+    "tldw_chatbook/UI/Settings_Modules/staged_save_ack.py": "1978606345e904d652f8637c69d7a8d1a891d7e046a21536e6b278cd8fd03286",
+    "tldw_chatbook/UI/Screens/scheduling/forms/automation_definition_form.py": "380fc8b8c924a12e08a72254b97155f5bb3f7658f79e62df6bdc07177bdea0c6",
+    "tldw_chatbook/UI/STTS_Window.py": "ff5a52fb64092cc133ceffa7fc693bb87c82c2000e8d491fa7c2dfaf022a2f6e"
+  },
+  "diagnostic_change": "Exactly one new routing-owner/local-row-ID diagnostic and its owner pin2→3; no sink change.",
+  "evidence_root": ".test-tmp/task-36360-36363/",
+  "rebase_after_pr3208": {
+    "base": "31bb928ab8886162e48db9cd6c5751ff1ce83f40",
+    "prior_head": "bf43738c2db44eed50859ede17320e83ab2aa13a",
+    "dev_prefix": 604,
+    "our_nodes": 48,
+    "total": 652,
+    "shards": 13,
+    "unchanged_our_node_shards": 47,
+    "moved": [
+      {
+        "node": "Tests/UI/test_automation_definition_pending_save_drafts.py::test_saved_identity_survives_metadata_read_and_later_keyboard_input[held-read]",
+        "old_shard": 6,
+        "new_shard": 2
+      }
+    ],
+    "moved_node_prior_call_seconds": 2.36,
+    "prior_job_seconds": {
+      "shard2": 908,
+      "shard6": 900
+    },
+    "prior_ci": 39888816506,
+    "caps_changed": false,
+    "source_prefix_preserved": true,
+    "targeted_guards": {
+      "tests": 96,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 14.685,
+      "receipt": ".test-tmp/task-36360-36363/rebase-3219-after3208-guards-01"
+    },
+    "diagnostic_inventory_check": "verified:692owners/7734TASK494calls/16sinkfiles"
+  },
+  "rebase_after_pr3218": {
+    "base": "23bd46cbcdb9532f6ea9ece27d2f0e3fc173da38",
+    "conflict": "Settings module-size ratchet only; production auto-merges cleanly",
+    "settings_lines_and_budget": 35618,
+    "incoming_line_delta": -5,
+    "pr_line_delta": -45,
+    "census": 652,
+    "shards": 13,
+    "targeted_native": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 239.653,
+      "receipt": ".test-tmp/task-36360-36363/rebase-3219-after3218-integration-01",
+      "junit_sha256": "de695c214d8e0250de8a7c895ab8b24a1710baba47a29cb33b20ced16043e435"
+    },
+    "qualification": "Earlier size/head/CI receipts remain historical. Current pushed-head CI and integration review are recorded in PR3219."
+  },
+  "rebase_after_pr3210": {
+    "old_head": "a22305c3450b267f5aa345c35eff55c74eaf734a",
+    "base": "28d7ab2c9ae29c69849fdd81983943ddcc2da745",
+    "dev_entries": 605,
+    "new_nodes": 48,
+    "total": 653,
+    "unchanged_dev_prefix": true,
+    "all_new_nodes_preserved": true,
+    "moved": [
+      {
+        "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[different-storage]",
+        "old_shard": 7,
+        "new_shard": 3
+      }
+    ],
+    "one_floor_assignment": 653,
+    "lesson2_characters": 656,
+    "shared_lessons_equal_dev": true,
+    "moved_case_prior_call_s": 45.36,
+    "prior_complete_jobs_s": {
+      "3": 1052,
+      "7": 1027
+    },
+    "new_shard3_projection_s": 1097.36,
+    "projection_qualification": "Prior hosted job plus moved call only; not a measured new-head duration or guarantee.",
+    "lesson_file": "backlog/docs/lessons-textual-ui-verification.md",
+    "qualification": "Native combined results, independent review and new-head CI recorded in PR3219; earlier652counts and head-bound receipts are historical."
+  },
+  "rebase_after_pr3217": {
+    "base": "52b3207ff1cfecdd057272de0312b9e10fde363f",
+    "prefix": 616,
+    "new": 48,
+    "total": 664,
+    "moved": [
+      {
+        "node": "Tests/UI/test_automation_definition_pending_save_drafts.py::test_saved_identity_survives_metadata_read_and_later_keyboard_input[held-read]",
+        "from": 2,
+        "to": 6
+      },
+      {
+        "node": "Tests/UI/test_settings_pending_save_drafts.py::test_staged_save_acknowledges_only_saved_values[different-storage]",
+        "from": 3,
+        "to": 7
+      }
+    ],
+    "projection": "Not measured on new head; 46 of48 PR nodes retain shard, every inherited selector retains slot.",
+    "estimated_max_job_seconds": 1108.86,
+    "estimate_basis": "Parent required run39927516646 job wall time plus previous-head39915260015 measured new-case call durations. Not a new-head measurement or guarantee; setup/runtime variance remains.",
+    "projection_by_shard": [
+      {
+        "shard": 1,
+        "parent_job_seconds": 828.0,
+        "new_call_seconds": 86.9,
+        "projected": 914.9
+      },
+      {
+        "shard": 2,
+        "parent_job_seconds": 983.0,
+        "new_call_seconds": 4.45,
+        "projected": 987.45
+      },
+      {
+        "shard": 3,
+        "parent_job_seconds": 989.0,
+        "new_call_seconds": 2.59,
+        "projected": 991.59
+      },
+      {
+        "shard": 4,
+        "parent_job_seconds": 1091.0,
+        "new_call_seconds": 4.69,
+        "projected": 1095.69
+      },
+      {
+        "shard": 5,
+        "parent_job_seconds": 1032.0,
+        "new_call_seconds": 23.4,
+        "projected": 1055.4
+      },
+      {
+        "shard": 6,
+        "parent_job_seconds": 977.0,
+        "new_call_seconds": 7.94,
+        "projected": 984.94
+      },
+      {
+        "shard": 7,
+        "parent_job_seconds": 918.0,
+        "new_call_seconds": 85.78,
+        "projected": 1003.78
+      },
+      {
+        "shard": 8,
+        "parent_job_seconds": 1040.0,
+        "new_call_seconds": 5.01,
+        "projected": 1045.01
+      },
+      {
+        "shard": 9,
+        "parent_job_seconds": 990.0,
+        "new_call_seconds": 40.0,
+        "projected": 1030.0
+      },
+      {
+        "shard": 10,
+        "parent_job_seconds": 1007.0,
+        "new_call_seconds": 63.5,
+        "projected": 1070.5
+      },
+      {
+        "shard": 11,
+        "parent_job_seconds": 982.0,
+        "new_call_seconds": 126.86,
+        "projected": 1108.86
+      },
+      {
+        "shard": 12,
+        "parent_job_seconds": 974.0,
+        "new_call_seconds": 45.06,
+        "projected": 1019.06
+      },
+      {
+        "shard": 13,
+        "parent_job_seconds": 981.0,
+        "new_call_seconds": 18.26,
+        "projected": 999.26
+      }
+    ],
+    "prior_head": "91a9d20b99c8e9016debe4b90991001a556c0efe",
+    "prior_derived_run": 39915260015,
+    "prior_perf_run": 39915260016,
+    "prior_hosted_result": "Both workflows SUCCESS;48exactnewnodesonceacross13successfulUIjobs.",
+    "native_qualification": "Previous286passed/oneinheritedWindowsassertion is not an all-pass run. Fresh census/CSS/size and inventory checks are delivery gates."
+  }
+}

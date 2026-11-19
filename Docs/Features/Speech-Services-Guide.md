@@ -265,7 +265,7 @@ recovery evidence rather than silently creating an empty database. Do not
 replace an open profile database with a raw file copy.
 
 See
-[ADR-028](../../backlog/decisions/028-character-tts-generation-profile-ownership.md)
+[ADR-294](../../backlog/decisions/294-character-tts-generation-profile-ownership.md)
 for the ownership, privacy, backup, and deferred-scope decisions.
 
 ### Setting up audio.cpp
@@ -1337,7 +1337,7 @@ vad_preroll_ms = 240
 #     above), so that difference is the whole gap between commands feeling
 #     instant and feeling dead.
 #   - Unset and the resolved provider is anything else (parakeet-mlx,
-#     parakeet-onnx, lightning-whisper-mlx, ...): dictation passes no model
+#     parakeet-onnx, ...): dictation passes no model
 #     at all, letting that provider's own transcription path load its own
 #     default (parakeet-mlx: `mlx-community/parakeet-tdt-0.6b-v2`).
 #   - Set (any provider): this value always wins, including setting it to
@@ -1385,6 +1385,12 @@ auto_clear_buffer = true
 `parakeet-onnx`, `parakeet-mlx`, `lightning-whisper-mlx`, `faster-whisper`,
 `qwen2audio`, `parakeet` and `canary`. Only a provider that sends audio off the
 machine (`remote-whisper`) is substituted.
+
+The Lightning identities remain local for privacy and legacy IPC, but are
+unavailable in Chatbook 0.2.4. A saved canonical or legacy selection is refused
+before capture/model/worker effects, without fallback or a settings rewrite.
+Meetings may use an explicitly selected installed supported provider while the
+global choice remains deferred; an absent exact override is refused.
 
 > **First run:** the Console loads the speech model *before* it opens the
 > microphone, and the composer's voice chip says so ("Preparing speech

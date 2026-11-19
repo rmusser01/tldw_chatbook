@@ -77,6 +77,7 @@ async def _tab_to(screen, host, pilot, selector, label):
     await _focus(screen, host, pilot, selector, label)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -224,6 +225,7 @@ async def test_more_collections_done_apply_and_cancel_preserve_draft(
         assert all(field.is_attached for field in fields)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "size,theme", [((170, 48), "textual-dark"), ((80, 24), "textual-light")]

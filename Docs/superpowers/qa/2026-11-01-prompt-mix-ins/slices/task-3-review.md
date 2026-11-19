@@ -1,0 +1,46 @@
+### Spec Compliance
+
+- ❌ Issues found: the required fork integration regresses existing fork status, attachment-label and trace-lineage hydration because the new top-level markers invalidate the strict fork metadata envelope (`tldw_chatbook/Chat/console_conversation_hydration.py:239`; unchanged parser `tldw_chatbook/Chat/console_chat_fork.py:134`). The marker-preservation trigger also permits valid non-object JSON to discard both markers (`tldw_chatbook/DB/migrations/chachanotes_prompt_mixins.sql:86`), weakening the required unavailable-versus-legacy distinction.
+- ✅ The remaining inspected storage scope follows the brief: caller-owned cursor operations, narrow revocable writer capability, exact acceptance identity maps, immutable conversation-owned records, explicit empty attempts, bounded strict values, preference CAS/future preservation, native fork/promotion ownership, and installed v81→v82 recovery migration. Runtime capture/composition and queue integration belong to Tasks 4/5 and are not missing Task 3 work.
+- ⚠️ Whole-DB inventory/group/lifetime ownership and the existing contribution fingerprint implementation are unchanged; their broader behavior is supported by the implementer's targeted evidence, not re-established by this diff-only review. No broader runtime or integration claim is made.
+
+### Strengths
+
+- The contribution adds one narrow capability rather than exposing arbitrary SQL or a cursor, and performs the existing active-lifetime check (`tldw_chatbook/Chat/console_transaction_contribution.py:167`). Fresh acceptance separates exact native IDs from legacy role aliases (`tldw_chatbook/Chat/console_dispatch_repository.py:453`); the adversarial `user`/`assistant` ID tests exercise that distinction (`Tests/DB/test_console_prompt_mixins.py:227`).
+- Schema ownership is explicit: same-conversation composite item FKs, conversation purge cascades, retained attempts after message deletion, deferred retry links, and update guards (`tldw_chatbook/DB/migrations/chachanotes_prompt_mixins.sql:26`, `:50`, `:62`). The new SQLite tests verify rollback, missing-item refusal and owner isolation rather than replacing persistence with mocks (`Tests/DB/test_console_prompt_mixins.py:68`, `:107`, `:424`).
+- Constructor-free recovery extends the installed restricted migration and frozen current catalog while retaining historical v81 variants (`tldw_chatbook/DB/recovery_core.py:510`; `tldw_chatbook/DB/recovery_core_schema.py:1026`; `tldw_chatbook/Backup_Recovery/sqlite_validation.py:1267`). The approved FTS correction is restricted to the new migration/current catalog (`tldw_chatbook/DB/migrations/chachanotes_prompt_mixins.sql:91`), with exact-BASE failure evidence and a native combined lifecycle test.
+- Content/name/raw fields are representation-hidden and stored separately from the body-free message/checkpoint projections (`tldw_chatbook/Chat/console_prompt_mixins.py:90`, `:127`, `:184`; `tldw_chatbook/Chat/message_metadata.py:422`). No new body-bearing logging or generic metadata fields appear in this diff.
+
+### Issues
+
+#### Critical (Must Fix)
+
+- None found.
+
+#### Important (Should Fix)
+
+1. **Preserve the fork envelope when adding mix-in markers.** `tldw_chatbook/Chat/console_conversation_hydration.py:239` still passes the entire raw object to `parse_console_fork_message_metadata`; that unchanged parser (`tldw_chatbook/Chat/console_chat_fork.py:134`) requires exactly the single fork namespace key. The new storage copy adds `mixin_attempt_id` and `mixin_snapshot_schema_version` alongside that key. Consequently a marked fork always yields `fork_metadata=None`, and the new guard at hydration line 247 never handles it. On reopen a stopped/failed fork assistant becomes `complete`, its attachment label is lost, and its trace-turn alias disappears (`console_conversation_hydration.py:272`, `:283`, `:284`, `:294`). This also affects subsequent forks that consume those hydrated facts. Teach the fork codec to admit and validate the precise body-free companion marker fields, or give its existing strict parser a deliberately extracted fork envelope while parsing the markers separately. Keep unknown-field rejection and inert-history authority semantics. Extend the integrated fork regression with a stopped or failed assistant, a nonempty attachment label and trace-turn alias; after persistence and hydration assert all original facts and the mix-in marker/snapshot, and preferably exercise a second fork.
+
+2. **Do not let non-object JSON erase the durable lost-record discriminator.** `tldw_chatbook/DB/migrations/chachanotes_prompt_mixins.sql:86` applies `json_set(COALESCE(NEW.metadata_json, '{}'), ...)`. `COALESCE` repairs SQL NULL only: SQLite leaves JSON `null`, arrays and scalar strings unchanged when asked to add object properties. Thus a valid non-object metadata rewrite commits successfully and removes both markers. Once a settled attempt row is missing, the reader can report `legacy` instead of `unavailable`; there is no active checkpoint left to recover the distinction. The public existing metadata writer accepts strings directly (`tldw_chatbook/DB/ChaChaNotes_DB.py:15876`), so the storage invariant needs to enforce this boundary itself. Normalize a non-object incoming payload to an object before restoring the old marker pair, or reject it with a bounded error so the old row remains intact. Update the current recovery catalog alongside the migration. Add a focused native DB regression covering JSON `null`, `[]` and a scalar string on a marked settled assistant; then remove its operational attempt and require `unavailable`. Preserve the existing object/SQL-NULL rewrite cases.
+
+#### Minor (Nice to Have)
+
+- The targeted regression output is not pristine: `task-3-evidence/mixins3-regressions.log:228` reports open descriptors growing by 742 (14→756; limit 200), emitted from `Tests/conftest.py:706`. The implementer identifies this as existing aggregate noise; this review does not attribute it to Task 3. Keep it visible and separately investigate/track it rather than claiming the whole regression run is clean.
+- The static check is a differential pass, not a clean pass: `task-3-evidence/ruff-differential.json` records 753 current and 753 BASE diagnostics with no introductions. This is correctly disclosed and is not a request for unrelated cleanup in this slice.
+
+### Checks and review limits
+
+- Read the supplied diff once in sequential chunks; did not regenerate a diff, inspect Git state, or rerun any suite.
+- Named cross-cutting risk: switching fresh acceptance to exact-ID contributions might break existing Canvas contributors. Checked the exact-ID implementation census and the unchanged implementations in `Canvas/staging.py:107` and `Chat/console_canvas_controller.py:153`, `:224`; they consume exact maps, consistent with the new dispatch.
+- Named fork interoperability risk: new markers may invalidate the existing strict envelope or restore execution authority. Checked the unchanged fork serializer/parser (`Chat/console_chat_fork.py:80`, `:123`), identifying Important #1. Read the continuation of the changed hydration function because the diff stopped before its message-construction consumers; this supplied the status/label/trace impact at `console_conversation_hydration.py:255`–`:315`. No other changed product file was re-read.
+- Named marker durability risk: valid scalar JSON may evade `json_set`. A focused stdlib SQLite expression probe confirmed `json_set` returns `null`, `[]`, and `"metadata"` unchanged, each with no `mixin_attempt_id`; `{}` receives the marker normally. This was not a native DB lifecycle test, and no weakened product fixture was offered as implementation evidence. Checked the existing metadata writer for its input contract (`ChaChaNotes_DB.py:15838`).
+- A direct import-based pure fork-codec probe stopped at the existing `Recovery required: recovery_scope_uncertain` admission guard. It did not run the assertion, and no admission bypass was attempted. Important #1 is established by the exact strict-key predicate and hydration consumers above, not claimed as a passing executable reproduction.
+- Read the reported new-file result (29 passed), schema/migration result (51 passed), exact-BASE failure evidence and static differential. The two regression failures are exact-BASE qualified: sparse context-policy postcommit write and seven unrelated decorative migration scripts (`task-3-evidence/mixins3-baseline-regressions.log:235`). They are not Task 3 regressions. The exact-BASE FTS probe fails with disk-image-malformed at the second owner's soft-delete (`task-3-evidence/mixins3-base-fts.log:4`), supporting the controller-approved minimal FTS fix.
+
+### Assessment
+
+**Task quality: Needs fixes.**
+
+The transaction, identity and recovery design is appropriately scoped and has meaningful native persistence evidence. The two marker interoperability defects break the promised durable interpretation of forked or damaged attempts and should be fixed before Task 3 passes its gate.
+
+Skipped: full suites, live UI/provider/server checks, later runtime capture/composition and unrelated baseline cleanup. Integration risk remains: rebase/renumber and requalify v82 if newer dev has occupied that migration number.

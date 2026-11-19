@@ -192,7 +192,6 @@ async def crawl_site(
     # Keep track of the domain to stay on the same site
     base_domain = urlparse(base_url).netloc
 
-
     # Track statistics
     pages_crawled = 0
     errors_count = 0

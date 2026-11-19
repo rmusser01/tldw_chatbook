@@ -332,6 +332,7 @@ def test_webm_video_card_survives_real_screen_state_round_trip(tmp_path):
     assert spec.file_path == str(stored_path)
 
 
+@pytest.mark.bootstrap_profile
 def test_console_video_store_prefers_explicit_test_override(tmp_path):
     app_store = VideoStore(root=tmp_path / "app")
     override = VideoStore(root=tmp_path / "override")
@@ -342,6 +343,7 @@ def test_console_video_store_prefers_explicit_test_override(tmp_path):
     assert screen._video._ensure_console_video_store() is override
 
 
+@pytest.mark.bootstrap_profile
 def test_console_video_store_borrows_app_owner_without_cleanup(
     monkeypatch,
     tmp_path,
@@ -359,6 +361,7 @@ def test_console_video_store_borrows_app_owner_without_cleanup(
     assert screen._video._ensure_console_video_store() is store
 
 
+@pytest.mark.bootstrap_profile
 def test_console_video_store_fails_loudly_without_app_owner():
     app = _build_test_app()
     del app.generated_video_store
@@ -418,6 +421,7 @@ def test_video_card_uses_native_id_when_message_is_not_persisted(tmp_path):
     assert specs[message.id].file_path == str(stored_path)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.integration
 def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_path):
     """A fresh Console resolves WebM from metadata persisted in SQLite."""
@@ -489,6 +493,7 @@ def test_webm_video_message_reload_round_trip_and_image_reader_isolation(tmp_pat
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.integration
 def test_historical_video_message_without_container_reloads_as_mp4(tmp_path):
     db = CharactersRAGDB(tmp_path / "historical_video_reload.sqlite", "test_client")

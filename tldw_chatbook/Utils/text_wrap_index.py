@@ -96,7 +96,9 @@ class WrapIndex:
 
     _SEGMENT_CACHE_LIMIT = 512
 
-    def __init__(self, lines: Sequence[str], width: int, starts: list[int], height: int):
+    def __init__(
+        self, lines: Sequence[str], width: int, starts: list[int], height: int
+    ):
         """Initialize a wrap index (use :meth:`build` instead).
 
         Args:

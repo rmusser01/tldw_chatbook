@@ -1,0 +1,89 @@
+from __future__ import annotations
+import asyncio, hashlib, inspect, json
+from pathlib import Path
+import pytest
+from textual.widgets import Button, DataTable, Input
+from Tests.private_profile import private_profile_test
+from Tests.UI.test_schedules_reminder_edit_identity import ReminderHost, seed, select_reminder, until, settle
+from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import SchedulesWorkbench
+from tldw_chatbook.UI.Screens.scheduling.forms.reminder_form import ReminderForm
+from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
+
+pytestmark = pytest.mark.asyncio
+OUT = Path(__file__).parent
+
+class AcceptedClient:
+    notifications_service = None
+    def __init__(self):
+        self.entered, self.release = asyncio.Event(), asyncio.Event()
+        self.calls, self.commits, self.cancelled = [], {}, []
+    async def update_reminder(self, server_id, **payload):
+        self.calls.append((server_id, dict(payload)))
+        # A controlled external effect occurs before the response await.
+        self.commits[server_id] = dict(payload)
+        if server_id == 'server-a' and len(self.calls) == 1:
+            self.entered.set()
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                self.cancelled.append(server_id)
+                raise
+        return {'id': server_id, 'title': server_id, 'schedule_kind': 'recurring', 'cron': '0 9 * * *', 'timezone':'UTC', **payload}
+
+async def full_form(app, screen, pilot, task_id, title):
+    await select_reminder(screen, pilot, task_id)
+    screen.query_one('#scheduling-task-table', DataTable).focus()
+    await pilot.press('e')
+    await until(lambda: isinstance(app.screen, ReminderForm))
+    await pilot.pause()
+    form = app.screen
+    field=form.query_one('#reminder-title',Input)
+    field.focus()
+    await pilot.press('home', 'shift+end', 'backspace', *title)
+    await pilot.pause()
+    assert field.value == title
+    form.query_one('#reminder-save',Button).focus()
+    await pilot.press('enter')
+    await until(lambda: app.screen is screen)
+    await pilot.pause()
+
+@pytest.mark.parametrize('scenario',['serial','overlap'])
+@private_profile_test
+async def test_full_forms_keep_both_accepted_saves(request,tmp_path,scenario):
+    expected_root=Path.cwd().resolve()
+    identities={}
+    for obj in (SchedulesWorkbench, ReminderForm, SchedulingService, ScheduledTasksDB):
+        path=Path(inspect.getfile(obj)).resolve()
+        assert path.is_relative_to(expected_root), str(path)
+        identities[obj.__name__]={'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+    db=ScheduledTasksDB(tmp_path/'fullforms.db')
+    client=AcceptedClient()
+    ids=seed(db)
+    app=ReminderHost(db,client)
+    observation={}
+    try:
+        async with app.run_test(size=(180,60)) as pilot:
+            screen=SchedulesWorkbench(app_instance=app)
+            await app.push_screen(screen)
+            try:
+                await settle(app,pilot)
+                await full_form(app,screen,pilot,ids[0],'EditedA')
+                await asyncio.wait_for(client.entered.wait(),15)
+                if scenario=='serial':
+                    client.release.set()
+                    await settle(app,pilot)
+                await full_form(app,screen,pilot,ids[1],'EditedB')
+                client.release.set()
+                await settle(app,pilot)
+                observation={'scenario':scenario,'module_identity':identities,'calls':client.calls,'controlled_external_effects':client.commits,'cancelled':client.cancelled,'local_titles':[db.get_reminder_task(i)['title'] for i in ids],'queue_titles':[t.title for t in screen._tasks], 'notifications':[n.message for n in app._notifications], 'exception':repr(app._exception)}
+            finally:
+                client.release.set()
+                await settle(app,pilot)
+            (OUT/f'observation-{scenario}.json').write_text(json.dumps(observation,indent=2),encoding='utf-8')
+            assert app._exception is None
+            assert observation['local_titles']==['EditedA','EditedB'], observation
+    finally:
+        client.release.set()
+        db.close()
+

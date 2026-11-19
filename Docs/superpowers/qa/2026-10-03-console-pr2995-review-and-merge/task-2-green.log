@@ -1,0 +1,9 @@
+....................................                                     [100%]
+============================= slowest 25 durations =============================
+4.40s call     Tests/Chat/test_console_runtime_shutdown.py::test_v2_hooks_share_app_loop_viewless_and_seal_before_drain
+3.03s call     Tests/Chat/test_console_runtime_shutdown.py::test_v2_dispose_cancellation_retains_cleanup_and_reaps_child
+1.10s call     Tests/Chat/test_console_runtime_shutdown.py::test_session_fences_include_exact_hook_custody[False]
+1.06s call     Tests/Chat/test_console_runtime_shutdown.py::test_session_fences_include_exact_hook_custody[True]
+
+(21 durations < 1s hidden.)
+36 passed in 15.03s

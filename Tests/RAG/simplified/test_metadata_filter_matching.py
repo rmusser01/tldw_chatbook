@@ -10,6 +10,7 @@ from tldw_chatbook.RAG_Search.simplified.rag_service import (
     RAGService,
     _metadata_filter_value_matches,
 )
+from tldw_chatbook.RAG_Search.simplified.config import SearchConfig
 from tldw_chatbook.RAG_Search.simplified.simple_cache import SimpleRAGCache
 from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult
 from tldw_chatbook.RAG_Search.simplified.citations import SearchResultWithCitations
@@ -117,9 +118,10 @@ async def test_keyword_citations_use_membership_filter():
     assert excluded is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_search_bypasses_cache_for_non_serializable_membership_filter(
-    monkeypatch,
+    monkeypatch, tmp_path,
 ):
     """Public search still filters correctly when $in cannot form a cache key."""
 
@@ -143,6 +145,11 @@ async def test_search_bypasses_cache_for_non_serializable_membership_filter(
         default_top_k=2,
         include_citations=False,
         score_threshold=0.0,
+        search=SearchConfig(
+            media_db_path=tmp_path / "media.db",
+            chachanotes_db_path=tmp_path / "notes.db",
+            prompts_db_path=tmp_path / "prompts.db",
+        ),
     )
     service.embeddings = Embeddings()
     service.vector_store = vector_store

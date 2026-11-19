@@ -64,6 +64,7 @@ def _pre_written_config_app(gates: _LibraryEvidenceGates, *, lifecycle=None):
     return app
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_pre_written_config_with_no_content_lands_on_get_started() -> None:
     gates = _LibraryEvidenceGates()
@@ -89,6 +90,7 @@ async def test_a_pre_written_config_with_no_content_lands_on_get_started() -> No
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_returning_user_with_content_never_sees_the_starter_rail() -> None:
     """The reason the EXPANDED default exists: no compact-rail flash."""
@@ -116,6 +118,7 @@ async def test_a_returning_user_with_content_never_sees_the_starter_rail() -> No
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_explicit_explore_keeps_the_expanded_rail_when_empty() -> None:
     gates = _LibraryEvidenceGates()
@@ -140,6 +143,7 @@ async def test_an_explicit_explore_keeps_the_expanded_rail_when_empty() -> None:
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_explore_survives_the_next_evidence_read_in_the_same_session() -> None:
     """The demotion reads storage as it is NOW, not as it was at construction.
@@ -191,6 +195,7 @@ async def test_explore_survives_the_next_evidence_read_in_the_same_session() -> 
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_corrupt_stored_lifecycle_is_not_a_decision_either() -> None:
     """(review finding 3) Garbage coerces to EXPANDED too, and nobody pressed
@@ -218,6 +223,7 @@ async def test_a_corrupt_stored_lifecycle_is_not_a_decision_either() -> None:
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_landing_card_counts_the_failures_it_is_asking_about() -> None:
     """task-32351 AC#2: the queue was exact, the landing card was not."""
@@ -252,6 +258,7 @@ async def test_the_landing_card_counts_the_failures_it_is_asking_about() -> None
         assert action.action_kind == "ingest-review"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_single_failure_is_named_in_the_singular() -> None:
     app = _build_test_app()
@@ -273,6 +280,7 @@ async def test_a_single_failure_is_named_in_the_singular() -> None:
         assert action.message == "Last import: 1 file failed."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_card_counts_the_last_import_not_every_unreviewed_one() -> None:
     """(review finding 1) Two unreviewed imports summed into one sentence that
@@ -344,6 +352,7 @@ def _attention_for(jobs):
     return screen._library_landing_attention_action()
 
 
+@pytest.mark.bootstrap_profile
 def test_the_count_matches_what_the_review_queue_shows() -> None:
     """(Qodo 2) ``jobs()`` hides only dismissed/superseded, so a permanent
     failure is still a row in the queue. Excluding it from the tally made the
@@ -367,6 +376,7 @@ def test_the_count_matches_what_the_review_queue_shows() -> None:
     assert action.message == "Last import: 3 files failed, 1 skipped."
 
 
+@pytest.mark.bootstrap_profile
 def test_a_permanent_only_import_still_offers_no_retry() -> None:
     """The pre-existing trigger is unchanged: nothing here can be retried."""
     assert (
@@ -385,6 +395,7 @@ def test_a_permanent_only_import_still_offers_no_retry() -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_the_last_import_is_the_one_that_finished_last_by_the_clock() -> None:
     """(Qodo 3) ``submitted_at`` is ``time.monotonic()`` with no fixed epoch,
     so a job restored from before a reboot can carry a HIGHER value than one

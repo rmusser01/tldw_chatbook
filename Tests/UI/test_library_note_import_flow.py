@@ -86,6 +86,7 @@ async def _open_import_once(screen, pilot, selected_path: Path | None) -> list[o
     return dialogs
 
 
+@pytest.mark.bootstrap_profile
 async def test_picker_file_enters_destination_without_immediate_note_mutation(
     tmp_path: Path,
 ) -> None:
@@ -112,6 +113,7 @@ async def test_picker_file_enters_destination_without_immediate_note_mutation(
         assert app.notes_scope_service.save_calls == []
 
 
+@pytest.mark.bootstrap_profile
 async def test_import_back_retains_canvas_and_shows_truthful_lasting_availability() -> (
     None
 ):
@@ -148,6 +150,7 @@ async def test_import_back_retains_canvas_and_shows_truthful_lasting_availabilit
         assert screen._notes_state.view == "lasting_add"
 
 
+@pytest.mark.bootstrap_profile
 async def test_hidden_import_snapshot_is_retained_without_dom_sync() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -174,6 +177,7 @@ async def test_hidden_import_snapshot_is_retained_without_dom_sync() -> None:
         sync.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 async def test_receipt_back_to_list_can_reopen_the_exact_same_session_receipt() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -211,6 +215,7 @@ async def test_receipt_back_to_list_can_reopen_the_exact_same_session_receipt() 
         assert controller.snapshot.latest_receipt is receipt
 
 
+@pytest.mark.bootstrap_profile
 async def test_back_during_import_offers_view_and_reopens_same_progress() -> None:
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -317,6 +322,7 @@ async def test_last_receipt_is_hidden_while_a_new_selection_is_active() -> None:
     assert selecting.can_revisit_receipt is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_real_file_backed_screen_check_is_read_only_then_import_refreshes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -418,6 +424,7 @@ async def test_real_file_backed_screen_check_is_read_only_then_import_refreshes(
         database.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_hidden_import_fences_notes_mutations_until_receipt(
     tmp_path: Path,
 ) -> None:
@@ -507,6 +514,7 @@ async def test_hidden_import_fences_notes_mutations_until_receipt(
         assert screen._notes_state.view == "lasting_add"
 
 
+@pytest.mark.bootstrap_profile
 async def test_real_import_then_back_offers_last_import_and_names_the_skips(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -660,6 +668,7 @@ def _import_ready_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         database.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -716,6 +725,7 @@ async def test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vau
             assert _vault_tree_digest(vault) == digest_before
 
 
+@pytest.mark.bootstrap_profile
 async def test_a_plain_folder_offers_no_obsidian_toggle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -738,6 +748,7 @@ async def test_a_plain_folder_offers_no_obsidian_toggle(
             assert "Daily" in _review_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 async def test_importing_a_vault_writes_notes_and_never_writes_to_the_vault(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

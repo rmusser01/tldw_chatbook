@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from html import escape as html_escape
 from pathlib import PurePath
-from typing import Any, Literal, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
 from rich.cells import cell_len
 
@@ -22,6 +23,10 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
+from tldw_chatbook.Chat.console_rail_state import (
+    CONSOLE_ROW_EVIDENCE,
+    CONSOLE_ROW_PROVIDER,
+)
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 from tldw_chatbook.RAG_Search.local_citation_capture import (
@@ -29,8 +34,12 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
     format_console_evidence_context,
     normalize_console_evidence_references,
 )
-from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Utils.token_counter import count_tokens_messages
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
+
 
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID = "console-inspector-review-approval"
 CONSOLE_INSPECTOR_REVIEW_APPROVAL_LABEL = "Review approval"
@@ -65,6 +74,15 @@ _SOURCE_STATUS_CLASS_MAP = {
     "running": {"retrieving", "running", "searching", "stale"},
     "blocked": {"blocked", "missing", "unavailable"},
 }
+
+
+from . import console_memory_banner as _memory_banner
+
+CONSOLE_SUMMARY_BANNER_COPY = _memory_banner.CONSOLE_SUMMARY_BANNER_COPY
+ConsoleMemoryBannerPresentation = _memory_banner.ConsoleMemoryBannerPresentation
+derive_console_memory_banner_presentation = (
+    _memory_banner.derive_console_memory_banner_presentation
+)
 
 
 def normalize_console_source_status(status: Any) -> str:
@@ -242,6 +260,8 @@ def _mcp_inspector_row(
 #: presentation's vocabulary). While a run owns the slot the reason strip
 #: names these states instead of blaming provider setup or saying "Send".
 SEND_LABEL_PREPARING = "Preparing..."
+#: TASK-33620.5: an Enter acknowledged on screen before its admission ran.
+SEND_LABEL_SENDING = "Sending..."
 SEND_LABEL_QUEUE_FULL = "Queue full"
 SEND_LABEL_QUEUE = "Queue"
 
@@ -252,8 +272,211 @@ SEND_LABEL_QUEUE = "Queue"
 #: "Preparing...") with no chain, so that hold names the run it waits on
 #: rather than promising a queue that never opens.
 QUEUE_REASON_PREPARING = "Queue opens once this turn is accepted"
+QUEUE_REASON_RECEIVED_PREPARING = "Preparing this turn; draft kept until acceptance."
 QUEUE_REASON_FULL = "Queue full — manage it to make room"
 QUEUE_REASON_RUN_HOLD = "Wait for the current run to finish"
+
+#: TASK-33620.1: the global emergency stop's hold as the Console shows it: the
+#: header badge (wide, then single-pane), the status strip's segment and its
+#: Clear, and Send's reason. Send's reason rides the queue-reason slot because
+#: that slot is shown verbatim, never as setup copy or a setup-wizard link.
+CONSOLE_EMERGENCY_STOP_HEADER_LABEL = "Held · emergency stop"
+CONSOLE_EMERGENCY_STOP_HEADER_SHORT_LABEL = "Held"
+CONSOLE_EMERGENCY_STOP_STRIP_LABEL = "Emergency stop: runs and schedules held"
+CONSOLE_EMERGENCY_STOP_CLEAR_LABEL = "Clear"
+CONSOLE_EMERGENCY_STOP_SEND_REASON = "Send held — emergency stop is on"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleAttachmentBlock:
+    """A staged attachment the selected model can't take (TASK-33620.2).
+
+    Typed apart from provider setup: it used to ride ``setup_blocked_reason``,
+    where the word "model" in it read as "choose a model" and the strip
+    became a link into the first-run wizard.
+
+    Attributes:
+        notice: Short copy naming the model and the cause, e.g.
+            ``"claude-2.1 can't accept images"``.
+        reason: The send gate's verbatim refusal (Send tooltip, System row).
+    """
+
+    notice: str
+    reason: str
+
+
+#: TASK-33621.11: a staged attachment the selected model can't take.
+CONSOLE_BLOCKER_IMAGE_UNSUPPORTED = "image_unsupported"
+#: The send gate's codes (``ChatScreen._console_send_gate``). A refused
+#: Enter's System row shows the setup sentence only when the gate stopped on
+#: provider setup; otherwise the gate's own sentence (prompt_queue).
+CONSOLE_BLOCKER_PROVIDER_SETUP = "provider_setup"
+CONSOLE_BLOCKER_LIBRARY_EVIDENCE = "library_evidence_unavailable"
+CONSOLE_BLOCKER_ARCHIVE_INFLIGHT = "archive_inflight"
+#: The Send strip per blocker code. Chosen from the code the reason was
+#: built for, never from its words: "model" in "Providers & Models" and in
+#: "<model> can't accept images" both read "choose a model" before. A code
+#: absent here (``provider_setup``, or none) reads as generic setup.
+_SETUP_STRIP_COPY: Mapping[str, str] = {
+    "subscription_pending": "Checking Claude subscription credential",
+    "subscription_login": "Send blocked — log in with Claude Code",
+    "credential_rejected": "Send blocked — key rejected; update the API key",
+    "credential_missing": "Send blocked — add an API key to continue",
+    "endpoint_not_saved": "Send blocked — save the endpoint to continue",
+    "model_missing": "Send blocked — choose a model to continue",
+    "provider_missing": "Send blocked — choose a provider to continue",
+    "endpoint_unreachable": "Send blocked — retry the connection to continue",
+}
+_SETUP_STRIP_FALLBACK = "Send blocked — finish provider setup to continue"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleBlockedReason:
+    """A Send blocker's sentence and, beside it, its code (TASK-33621.11).
+
+    The reason strip, its setup link and a refused Enter's System row are
+    chosen by ``code`` (and ``notice``), never by the words. The code rides
+    beside the sentence, not inside a ``str``: the first cut subclassed
+    ``str``, so the coded value reached transcript rows and a row's
+    ``copy.deepcopy`` (the Inspect Context view) raised. Only ``text`` -- a
+    plain ``str`` -- reaches a tooltip, a row or a toast.
+
+    Attributes:
+        text: The blocker's sentence; ``""`` when nothing blocks.
+        code: A ``_SETUP_STRIP_COPY`` key, or a ``CONSOLE_BLOCKER_*`` code;
+            ``""`` for an uncoded sentence, which reads as generic setup.
+        notice: Short strip copy for a blocker that is not provider setup.
+    """
+
+    text: str = ""
+    code: str = ""
+    notice: str = ""
+
+    def __bool__(self) -> bool:
+        return bool(self.text)
+
+
+def console_blocked_reason(value: object) -> ConsoleBlockedReason:
+    """Normalize a Send blocker; a plain sentence (or None) is uncoded."""
+    if isinstance(value, ConsoleBlockedReason):
+        text = value.text.strip()
+        return value if text == value.text else replace(value, text=text)
+    return ConsoleBlockedReason(str(value or "").strip())
+
+
+def console_blocker_opens_setup(reason: object) -> bool:
+    """Whether a Send blocker is provider setup (its strip links the wizard)."""
+    blocker = console_blocked_reason(reason)
+    return bool(blocker) and blocker.code != CONSOLE_BLOCKER_IMAGE_UNSUPPORTED
+
+
+def console_image_blocker(
+    refusal: str | None, model: str | None
+) -> ConsoleBlockedReason:
+    """Code the send gate's image refusal so it never reads as setup.
+
+    Args:
+        refusal: ``vision_block_reason``'s sentence, or None when allowed.
+        model: The selected model it names.
+
+    Returns:
+        An empty reason when nothing blocks; otherwise the refusal, coded.
+    """
+    if not refusal:
+        return ConsoleBlockedReason()
+    return ConsoleBlockedReason(
+        refusal,
+        code=CONSOLE_BLOCKER_IMAGE_UNSUPPORTED,
+        notice="this model can't accept images",
+    )
+
+
+def console_setup_blocker(readiness: ConsoleSettingsReadiness) -> ConsoleBlockedReason:
+    """Return the native composer's setup blocker: its sentence and code.
+
+    ``build_console_disabled_reason`` turns the code into the reason strip's
+    "Send blocked — ..." copy. Each code is assigned per recovery action
+    (review of TASK-33621.11): an HTTP-status or invalid-payload failure is
+    blocker ``endpoint_unreachable`` too, but its recovery is to review the
+    provider settings, so it must not read "retry the connection".
+
+    Args:
+        readiness: The active Console session's settings readiness.
+
+    Returns:
+        An empty reason when the readiness can send, or while an active run
+        owns admission; otherwise one sentence naming the setup step.
+    """
+    action = readiness.recovery_action
+    if readiness.operability == "ready_to_send" or action == "wait_for_active_run":
+        # The prompt-queue presentation owns active-run admission: it
+        # blocks while a turn is preparing, then enables Queue once the
+        # provider has accepted it. Settings readiness still blocks
+        # mutations during the run, but must not override that composer
+        # lifecycle with a second, permanently-blocked gate.
+        return ConsoleBlockedReason()
+    text, code = "Finish provider setup before sending.", CONSOLE_BLOCKER_PROVIDER_SETUP
+    if action == "select_model":
+        text, code = "Choose a model in Chat settings before sending.", "model_missing"
+    elif action == "select_provider":
+        text = "Choose a provider in Chat settings before sending."
+        code = "provider_missing"
+    elif action == "configure_credential":
+        if readiness.subscription_status == "pending":
+            text = "Checking Claude subscription credential."
+            code = "subscription_pending"
+        elif readiness.subscription_status in {"missing", "expired"}:
+            text = "Log in with Claude Code to refresh the subscription credential."
+            code = "subscription_login"
+        elif readiness.blocker == "credential_rejected":  # TASK-33005.7
+            text = "API key rejected. Update it in Settings > Providers & Models."
+            code = "credential_rejected"
+        else:
+            text = "Add API key in Settings > Providers & Models before sending."
+            code = "credential_missing"
+    elif action == "save_endpoint":
+        text = "Save provider endpoint in Chat settings before sending."
+        code = "endpoint_not_saved"
+    elif action == "retry_connection":
+        text = "Provider unreachable. Retry connection before sending."
+        code = "endpoint_unreachable"
+    return ConsoleBlockedReason(text, code=code)
+
+
+def console_setup_blocked_reason(readiness: ConsoleSettingsReadiness) -> str:
+    """Return the setup blocker's sentence alone (``""`` when none blocks).
+
+    ``ChatScreen._console_setup_blocked_reason`` returns this: the Send
+    tooltip, a refused Enter's System row and a Library prompt insert read
+    the sentence; only the composer's strip reads the code
+    (``console_setup_blocker``).
+    """
+    return console_setup_blocker(readiness).text
+
+
+def console_send_gate_setup_copy(readiness: ConsoleSettingsReadiness) -> str:
+    """Return the send gate's refusal for a provider-setup gap, or ``""``.
+
+    Active-run admission belongs to the prompt queue: it refuses while the
+    turn is preparing and admits Queue after acceptance; only actual
+    provider setup gaps belong in this gate.
+    """
+    action = readiness.recovery_action
+    if readiness.operability != "not_ready" or action == "wait_for_active_run":
+        return ""
+    if action == "configure_credential":
+        if readiness.subscription_status == "pending":
+            return "Checking Claude subscription credential. Your draft is preserved."
+        if readiness.subscription_status in {"missing", "expired"}:
+            return "Console send blocked: Log in with Claude Code to refresh the subscription credential."
+        provider = readiness.provider_display_name or "this provider"
+        return f"Console send blocked: Add an API key for {provider} before sending."
+    return {
+        "select_model": "Console send blocked: Select a model before sending.",
+        "save_endpoint": "Console send blocked: Save the provider endpoint before sending.",
+        "configure_endpoint": "Console send blocked: Enter a valid provider endpoint before sending.",
+        "retry_connection": "Console send blocked: Retry the provider connection before sending.",
+    }.get(action or "", "Console send blocked: Finish provider setup before sending.")
 
 
 def build_console_disabled_reason(
@@ -261,11 +484,12 @@ def build_console_disabled_reason(
     action_id: str,
     has_draft: bool,
     send_blocked: bool,
-    setup_blocked_reason: str = "",
+    setup_blocked_reason: str | ConsoleBlockedReason = "",
     wake_turn_active: bool = False,
     dispatch_recovery_blocked: bool = False,
     send_label: str = "Send",
     queue_blocked_reason: str = "",
+    attachment_block: ConsoleAttachmentBlock | None = None,
 ) -> str:
     """Return concise disabled copy for Console action controls.
 
@@ -273,7 +497,12 @@ def build_console_disabled_reason(
         action_id: Canonical action id, such as ``send``.
         has_draft: Whether the composer currently has message text.
         send_blocked: Whether sending is blocked by setup or run state.
-        setup_blocked_reason: Provider/setup blocker copy, when present.
+        setup_blocked_reason: The send blocker, when present. Its strip
+            copy comes from the code a ``ConsoleBlockedReason`` carries
+            (TASK-33621.11), never from its words; a plain sentence is
+            uncoded and reads as generic provider setup.
+        attachment_block: A staged attachment the model can't take. Named
+            as itself, below a setup blocker and above a queue state.
         dispatch_recovery_blocked: An unresolved response needs explicit recovery.
         send_label: The send control's current label. TASK-33625.1: mid-run it
             reads a queue state (``Preparing...``, ``Queue``, ``Queue full``);
@@ -308,9 +537,12 @@ def build_console_disabled_reason(
     if send_blocked and wake_turn_active:
         return "Send blocked — delivering a sub-agent result"
 
-    setup_reason = _clean(setup_blocked_reason, "")
+    setup_reason = console_blocked_reason(setup_blocked_reason)
     queue_reason = _clean(queue_blocked_reason, "")
-    queue_blocked = send_blocked and bool(queue_reason) and not setup_reason
+    attachment_notice = _clean(attachment_block.notice, "") if attachment_block else ""
+    queue_blocked = (
+        send_blocked and bool(queue_reason) and not (setup_reason or attachment_notice)
+    )
     if queue_blocked and send_label == SEND_LABEL_PREPARING:
         # TASK-33620.4: a chainless hold (regenerate / continue / wake) is
         # labelled Preparing too, but no queue ever opens behind it.
@@ -319,32 +551,16 @@ def build_console_disabled_reason(
         return QUEUE_REASON_PREPARING
     if queue_blocked and send_label == SEND_LABEL_QUEUE_FULL:
         return QUEUE_REASON_FULL
-    setup_reason_lower = setup_reason.lower()
     if send_blocked and setup_reason:
-        if setup_reason == "Checking Claude subscription credential.":
-            return "Checking Claude subscription credential"
-        if setup_reason == "Log in with Claude Code to refresh the subscription credential.":
-            return "Send blocked — log in with Claude Code"
-        # TX-07 follow-up (TASK-2154.12): "api key"/"endpoint" must be
-        # checked BEFORE "model" -- the real blocker copy points at the
-        # "Settings > Providers & Models" screen (e.g. "Add API key in
-        # Settings > Providers & Models before sending."), so a naive
-        # "model" substring match swallowed the missing-key state and
-        # named the wrong blocker.
-        if "api key" in setup_reason_lower:
-            return "Send blocked — add an API key to continue"
-        if "endpoint" in setup_reason_lower:
-            return "Send blocked — configure the endpoint to continue"
-        if "model" in setup_reason_lower:
-            return "Send blocked — choose a model to continue"
-        if (
-            "choose a provider" in setup_reason_lower
-            or "missing provider" in setup_reason_lower
-        ):
-            return "Send blocked — choose a provider to continue"
-        if "retry connection" in setup_reason_lower:  # TASK-33005.2
-            return "Send blocked — retry the connection to continue"
-        return "Send blocked — finish provider setup to continue"
+        # TASK-33621.11 AC#5: by the code the blocker carries -- the words
+        # matched before ("model" in "Providers & Models", in an image
+        # refusal) named the wrong blocker every time a sentence changed.
+        if setup_reason.code == CONSOLE_BLOCKER_IMAGE_UNSUPPORTED:  # AC#2
+            notice = setup_reason.notice or "this model can't accept images"
+            return f"Send blocked — {notice}"
+        return _SETUP_STRIP_COPY.get(setup_reason.code, _SETUP_STRIP_FALLBACK)
+    if send_blocked and attachment_notice:
+        return f"Send blocked — {attachment_notice}"
     if queue_blocked:
         # TASK-33620.4: any other queue refusal names itself -- it never
         # falls through to provider-setup or active-run copy.
@@ -368,6 +584,7 @@ class ConsoleDisplayRow:
     value: Any
     status: str = "ready"
     recovery: str = ""
+    code: str = ""
 
     @property
     def text(self) -> str:
@@ -707,9 +924,11 @@ class ConsoleLibraryPolicyDisplayState:
             chip_label = "Library: blocked · policy unavailable"
             source_status = "Unavailable — using Never and Blocked"
         else:
+            # TASK-34100.5 AC#9: say what is off (the agent's Library access),
+            # not "blocked" -- the normal default read as an error on arrival.
             chip_label = (
                 f"Library · Auto {'on' if automatic else 'off'} · "
-                f"Agent {'allowed' if allowed else 'blocked'}"
+                f"Agent access {'on' if allowed else 'off'}"
             )
             source_status = {
                 "durable": "Saved on this device · not synced",
@@ -747,6 +966,8 @@ class ConsoleControlState:
     sources_active: bool = False
     tools_active: bool = False
     approvals_active: bool = False
+    #: TASK-33620.1: the global emergency stop holds new runs (header + strip).
+    emergency_stop_held: bool = False
 
     @classmethod
     def from_values(
@@ -765,6 +986,9 @@ class ConsoleControlState:
         approval_count: int = 0,
         system_prompt_set: bool = False,
         app_config: Mapping[str, object] | None = None,
+        selected_tool_count: int | None = None,
+        tools_estimate: bool = False,
+        emergency_stop_held: bool = False,
     ) -> "ConsoleControlState":
         """Build the Console control-bar chip state from raw run values.
 
@@ -787,8 +1011,10 @@ class ConsoleControlState:
             approval_count: Pending MCP approvals.
             system_prompt_set: Whether the active session has a system prompt;
                 the chip then reads ``System Prompt: set``.
-            app_config: Config holding the ADR-146 endpoint registry, so a
+            app_config: Config holding the ADR-343 endpoint registry, so a
                 ``custom-ep`` provider shows its entry's name.
+            emergency_stop_held: Whether the global emergency stop is active
+                (TASK-33620.1); the header and status strip show the hold.
 
         Returns:
             A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
@@ -825,7 +1051,14 @@ class ConsoleControlState:
         # count > 0`. TASK-2154.12 (TX-04): the placeholder is now an inert
         # dash and the chip HIDES at zero, so the lazy-loading detail
         # ("not loaded") no longer renders at all.
-        tools_label = f"Tools: {_tools_ready_text(effective_tool_count)}"
+        if selected_tool_count is not None:
+            effective_tool_count = selected_tool_count
+            tool_text = f"{effective_tool_count} offered" if effective_tool_count else "—"
+        elif tools_estimate and effective_tool_count:
+            tool_text = f"{effective_tool_count} available"
+        else:
+            tool_text = _tools_ready_text(effective_tool_count)
+        tools_label = f"Tools: {tool_text}"
         if library_policy is None:
             library_policy = ConsoleLibraryPolicySnapshot(
                 auto_retrieve=ConsoleAutoRetrieve.NEVER,
@@ -851,6 +1084,7 @@ class ConsoleControlState:
             sources_active=staged_source_count > 0,
             tools_active=effective_tool_count > 0,
             approvals_active=approval_count > 0,
+            emergency_stop_held=bool(emergency_stop_held),
         )
 
 
@@ -1072,6 +1306,28 @@ def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
     return len(formatted.entries) if formatted is not None else 0
 
 
+def console_sent_source_count(launch: ConsoleLiveWorkLaunch | None, result: Any) -> int:
+    """Return the accepted capture count, with a prompted estimate fallback.
+
+    The capture's repair contract has one ordinal per formatted prompt entry,
+    so that count is exact; the formatted pre-authority estimate covers a
+    capture that could not build one. Neither proves provider contact.
+
+    Args:
+        launch: The staged launch the send captured.
+        result: The capture's ``LocalRagContextResult``.
+
+    Returns:
+        The captured entry count or existing pre-authority prompted estimate.
+    """
+    ordinals = getattr(
+        getattr(result, "citation_repair_contract", None), "allowed_ordinals", None
+    )
+    if isinstance(ordinals, tuple) and ordinals:
+        return len(ordinals)
+    return console_prompted_source_count(launch)
+
+
 def console_prompted_evidence_text(launch: ConsoleLiveWorkLaunch | None) -> str:
     """Return the zero-I/O formatted pre-authority evidence estimate.
 
@@ -1199,23 +1455,21 @@ class ConsoleStagedEvidenceRow:
 class ConsoleStagedEvidenceStripState:
     """Display state for the staged-evidence strip above the composer.
 
-    Three mutually exclusive shapes, all built by
-    :func:`build_console_staged_evidence_strip_state`:
+    Two shapes, both built by :func:`build_console_staged_evidence_strip_state`:
 
-    * hidden -- nothing staged and nothing just sent;
+    * hidden -- nothing staged;
     * staged -- a heading, up to
       :data:`CONSOLE_STAGED_EVIDENCE_STRIP_MAX_ROWS` rows, an optional
-      "+N more" overflow line, and the single un-stage action;
-    * sent -- the one-send ``notice`` line, which is the only confirmation
-      an unpersisted session ever gets that evidence went out with the
-      message (the transcript's ``Sources (N)`` row needs persistence).
+      "+N more" overflow line, and the single un-stage action.
+
+    TASK-33620.7: what a send carried is shown on its reply ("Sources (N)"),
+    not here; the strip only ever describes the NEXT send.
     """
 
     visible: bool = False
     heading: str = ""
     rows: tuple[ConsoleStagedEvidenceRow, ...] = ()
     overflow: str = ""
-    notice: str = ""
     unstage_label: str = CONSOLE_STAGED_EVIDENCE_UNSTAGE_LABEL
 
 
@@ -1225,20 +1479,14 @@ def _source_noun(count: int) -> str:
 
 def build_console_staged_evidence_strip_state(
     launch: ConsoleLiveWorkLaunch | None,
-    *,
-    sent_source_count: int | None = None,
 ) -> ConsoleStagedEvidenceStripState:
     """Build the staged-evidence strip state for the current Console turn.
 
     Args:
         launch: Currently staged live-work launch, if any.
-        sent_source_count: Source count of the evidence consumed by the most
-            recent send, when that send has not yet been superseded.
 
     Returns:
-        The hidden, staged, or just-sent strip state. Live staging always
-        wins over a stale "sent" notice -- a strip that showed both would
-        claim evidence was consumed while new evidence sits waiting.
+        The hidden or staged strip state.
     """
     if launch is not None:
         bundle = evidence_bundle_from_launch(launch)
@@ -1271,14 +1519,6 @@ def build_console_staged_evidence_strip_state(
             rows=shown,
             overflow=f"+{hidden_count} more" if hidden_count > 0 else "",
         )
-
-    if sent_source_count:
-        count = int(sent_source_count)
-        return ConsoleStagedEvidenceStripState(
-            visible=True,
-            notice=f"Evidence sent with this message · {count} {_source_noun(count)}",
-        )
-
     return ConsoleStagedEvidenceStripState()
 
 
@@ -1396,6 +1636,24 @@ class ConsoleRetrievalScopeState:
 
 
 @dataclass(frozen=True)
+class _ConsoleInspectorPendingInputs:
+    provider: str
+    model: str
+    sources: str
+    tools: int
+    live_work_title: str
+
+    def recipe(self, approvals: int, scope_item_count: int | None) -> str:
+        value = (
+            f"{self.provider} / {self.model} / sources {self.sources} / "
+            f"tools {self.tools} / approvals {approvals}"
+        )
+        if scope_item_count is not None and scope_item_count > 0:
+            value = f"{value} / scope {scope_item_count} items"
+        return value
+
+
+@dataclass(frozen=True)
 class ConsoleInspectorState:
     """Display state for Console run/readiness inspection."""
 
@@ -1419,16 +1677,147 @@ class ConsoleInspectorState:
     #: transcript that said the run had failed.
     run_failed: bool = False
     run_failure_reason: str = ""
+    #: TASK-33621.2: why the viewed chat's accepted turn is stuck unsent
+    #: (paused for trace recovery); empty when no turn is blocked.
+    run_blocked_reason: str = ""
+    #: TASK-33621.4: the chat is over its Ask compaction trigger, so the next
+    #: send will pause for compaction approval.
+    compaction_pause_expected: bool = False
+    compaction_forecast_unavailable: bool = False
     staged_source_count: int = 0
     pending_approval_count: int = 0
     scope_item_count: int | None = None
     ephemeral: bool = False
+
+    _pending_inputs: _ConsoleInspectorPendingInputs | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    # A current pending observation has no complete readiness or recipe authority.
+    pending_only: bool = False
+
+    @classmethod
+    def from_pending_facts(
+        cls, approval_count: int, pending_copy: str
+    ) -> ConsoleInspectorState:
+        """Show only fresh pending facts; unrelated display fields stay unknown."""
+        if (
+            type(approval_count) is not int  # hostile metaclass equality must not run.
+            or approval_count < 0
+            or type(pending_copy) is not str  # no metaclass equality dispatch.
+        ):
+            raise ValueError("invalid_pending_display_facts")
+        if pending_copy not in (
+            "",
+            "Waiting for your approval",
+            "Waiting for your answer",
+            "Waiting for your confirmation",
+        ):
+            raise ValueError("invalid_pending_display_copy")
+        live = (
+            "Waiting for your approval"
+            if approval_count
+            else pending_copy or "Refreshing…"
+        )
+        unknown = "Refreshing…"
+        rows = (
+            ConsoleDisplayRow(
+                "Run recipe",
+                f"{unknown} / {unknown} / sources {unknown} / tools {unknown} / approvals {approval_count} / scope {unknown}",
+                status="running",
+            ),
+            ConsoleDisplayRow(
+                "Live work",
+                live,
+                status="blocked" if approval_count or pending_copy else "running",
+            ),
+            ConsoleDisplayRow(
+                "Approvals",
+                f"{approval_count} pending",
+                status="blocked" if approval_count else "running",
+            ),
+            *(
+                ConsoleDisplayRow(label, unknown, status="running")
+                for label in (
+                    "Provider",
+                    "Retrieval",
+                    "Tools",
+                    "MCP",
+                    "Evidence",
+                    "Authority",
+                    "Artifacts",
+                    "Workspace",
+                    "Selected conversation",
+                )
+            ),
+        )
+        return cls(
+            rows=rows,
+            actions=(
+                ConsoleInspectorAction(
+                    widget_id=CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+                    label="Review",
+                    enabled=bool(approval_count or pending_copy),
+                    disabled_reason="No decision is pending.",
+                ),
+            ),
+            has_pending_approval=approval_count > 0,
+            pending_approval_count=approval_count,
+            pending_only=True,
+        )
+
+    def with_pending_facts(
+        self, approval_count: int, pending_copy: str
+    ) -> ConsoleInspectorState | None:
+        """Replace only current in-memory pending display facts in this base."""
+        if self.pending_only:
+            return None
+        inputs = self._pending_inputs
+        if type(inputs) is not _ConsoleInspectorPendingInputs or type(
+            inputs.live_work_title
+        ) not in (str,):
+            return None
+        count = coerce_non_negative_int(approval_count)
+        live = (
+            "Waiting for your approval"
+            if count > 0
+            else _clean(pending_copy, "")
+            or ("Generating…" if self.run_active else inputs.live_work_title)
+        )
+        rows = tuple(
+            replace(row, value=inputs.recipe(count, self.scope_item_count))
+            if row.label == "Run recipe"
+            else replace(row, value=live)
+            if row.label == "Live work"
+            else replace(
+                row,
+                value=f"{count} pending",
+                status="blocked" if count > 0 else "ready",
+            )
+            if row.label == "Approvals"
+            else row
+            for row in self.rows
+        )
+        actions = tuple(
+            replace(action, enabled=count > 0)
+            if action.widget_id == CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID
+            else action
+            for action in self.actions
+        )
+        return replace(
+            self,
+            rows=rows,
+            actions=actions,
+            has_pending_approval=count > 0,
+            pending_approval_count=count,
+        )
 
     @classmethod
     def from_values(
         cls,
         *,
         live_work_title: Any = None,
+        pending_interrupt_copy: str = "",
         provider_label: Any = None,
         model_label: Any = None,
         provider_ready: bool = True,
@@ -1450,6 +1839,9 @@ class ConsoleInspectorState:
         # in flight. Defaults preserve every existing caller.
         run_failed: bool = False,
         run_failure_reason: str = "",
+        run_blocked_reason: str = "",
+        compaction_pause_expected: bool = False,
+        compaction_forecast_unavailable: bool = False,
         ephemeral: bool = False,
         change_review_available: bool = False,
         staged_source_count: int = 0,
@@ -1466,6 +1858,8 @@ class ConsoleInspectorState:
                 "Generating…" -- and ignored while ``approval_count`` is
                 non-zero, which reads "Waiting for your approval" instead
                 (task-32345: outranks ``run_active`` too).
+            pending_interrupt_copy: Waiting copy derived from the session's
+                registered interrupt kinds, ahead of active generation copy.
             provider_label: Active provider name for the run-recipe line.
             model_label: Active model name for the run-recipe line.
             provider_ready: Whether the provider can be sent to. ``False``
@@ -1498,6 +1892,10 @@ class ConsoleInspectorState:
                 (TASK-24602).
             run_failure_reason: Visible copy for that failure, surfaced on
                 the pinned authority line.
+            run_blocked_reason: Why an accepted turn is stuck unsent, or ""
+                (TASK-33621.2).
+            compaction_pause_expected: The next send will pause for
+                compaction approval (TASK-33621.4).
             ephemeral: Whether this is a temporary conversation, which
                 blocks the Save Chatbook action.
             change_review_available: Whether change tracking has anything to
@@ -1530,37 +1928,40 @@ class ConsoleInspectorState:
         # "Tools: 4 ready". That is the third instance of this divergence:
         # TASK-1843 (see the `Tools` row's own comment) already fixed it on
         # the status chip and then on the row, and missed the recipe line.
-        run_recipe = (
-            f"{provider_value} / {model_value} / sources {source_summary} / "
-            f"tools {effective_tool_count} / approvals {normalized_approval_count}"
+        stock_title = live_work_title is None or type(live_work_title) in (str,)
+        recipe_inputs = _ConsoleInspectorPendingInputs(
+            provider_value,
+            model_value,
+            source_summary,
+            effective_tool_count,
+            _clean(live_work_title, "No active work")
+            if stock_title
+            else "No active work",
         )
-        # task-9: an active conversation RAG retrieval scope surfaces on the
-        # run recipe line ("... / scope N items"). ``None`` (unscoped, the
-        # overwhelming common case) leaves the line unchanged; a scope with
-        # zero items never reaches here (see ``ConsoleRetrievalScopeState``).
-        if scope_item_count is not None and scope_item_count > 0:
-            run_recipe = f"{run_recipe} / scope {scope_item_count} items"
+        # A customized title keeps the original complete-render coercion, but
+        # is never retained for another call after that checked body retires.
+        pending_inputs = recipe_inputs if stock_title else None
+        run_recipe = recipe_inputs.recipe(normalized_approval_count, scope_item_count)
         rows = [
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow(
                 "Live work",
-                # task-32345: a pending approval outranks everything below
-                # -- it is a fact about the USER (a card is waiting on
-                # them), more current than "a generation is in flight".
-                # TASK-347: else a running generation shows "Generating…";
-                # else the pending Library-RAG launch title, else no
-                # active work.
+                # Session-owned decisions outrank generation and launch copy.
+                # Approval has priority over questions and confirmations.
                 "Waiting for your approval"
                 if normalized_approval_count > 0
-                else "Generating…"
-                if run_active
-                else _clean(live_work_title, "No active work"),
+                else _clean(pending_interrupt_copy, "") or (
+                    "Generating…"
+                    if run_active
+                    else _clean(live_work_title, "No active work")
+                ),
             ),
             ConsoleDisplayRow(
                 "Provider",
                 provider_status,
                 status=provider_status,
                 recovery=_clean(provider_recovery, "") if not provider_ready else "",
+                code=CONSOLE_ROW_PROVIDER,
             ),
             # TASK-24610: "Retrieval", not "Sources". This row reports whether
             # RETRIEVAL has anything to read; the tray heading, the pinned
@@ -1599,6 +2000,7 @@ class ConsoleInspectorState:
                     _clean(evidence_summary, ""),
                     status=_clean(evidence_status, "ready"),
                     recovery=_clean(evidence_recovery, ""),
+                    code=CONSOLE_ROW_EVIDENCE,
                 )
             )
         if _clean(evidence_authority, ""):
@@ -1642,8 +2044,12 @@ class ConsoleInspectorState:
             run_active=run_active,
             run_failed=run_failed,
             run_failure_reason=_clean(run_failure_reason, ""),
+            run_blocked_reason=_clean(run_blocked_reason, ""),
+            compaction_pause_expected=bool(compaction_pause_expected),
+            compaction_forecast_unavailable=bool(compaction_forecast_unavailable),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
+            _pending_inputs=pending_inputs,
             scope_item_count=scope_item_count,
             ephemeral=ephemeral,
         )
@@ -2058,6 +2464,55 @@ def _cap_text_to_byte_budget(text: str, budget_bytes: int, tail: str) -> str:
     return "\n".join(kept) + tail_line
 
 
+def _hunk_containing_line(
+    hunks: "list[DiffHunk]", line_index: int
+) -> "tuple[int, DiffHunk | None]":
+    """Find the hunk covering ``line_index`` over the file's FULL diff text.
+
+    TASK-18060 Task 7 (review-rail spec §3/§4): a ``diff_line`` note's
+    hunk fields are ALSO populated with the hunk the cursor's line falls
+    in — ``split_unified_diff`` segments a diff into ``DiffHunk``s but
+    does not carry each hunk's absolute line offset, so this reconstructs
+    it by walking the hunks in order: hunk *k* occupies its header line
+    (one line) plus its body lines, contiguously, right after the shared
+    file prelude — ``split_unified_diff``'s own segmentation guarantees no
+    gaps between one hunk's last body line and the next hunk's header.
+
+    Args:
+        hunks: ``split_unified_diff``'s output for the file's full diff.
+        line_index: 0-based index over the SAME full diff text (the
+            screen's own ``_cursor_line``, which under the display cap
+            equals the full-diff line index — the cap truncates only the
+            tail).
+
+    Returns:
+        ``(hunk_index, hunk)`` for the hunk covering ``line_index``. A
+        line in the shared prelude (before any hunk header) degrades to
+        the first hunk rather than reporting "no hunk" — a line comment
+        always has SOME hunk context when the diff has hunks at all. A
+        line past every hunk's tracked span (should not happen for a real
+        cursor line) degrades to the last hunk. ``(-1, None)`` only when
+        ``hunks`` itself is empty.
+    """
+    if not hunks:
+        return -1, None
+    if len(hunks) == 1 and not hunks[0].header:
+        # The fallback shape (binary/rename-no-change, split_unified_
+        # diff's own docstring): no real hunk headers at all — every line
+        # belongs to the one synthetic hunk.
+        return 0, hunks[0]
+    prelude = hunks[0].file_prelude
+    offset = len(prelude.splitlines()) if prelude else 0
+    if line_index < offset:
+        return 0, hunks[0]
+    for index, hunk in enumerate(hunks):
+        span = 1 + len(hunk.body_lines)  # the header line + its body
+        if offset <= line_index < offset + span:
+            return index, hunk
+        offset += span
+    return len(hunks) - 1, hunks[-1]
+
+
 def hunk_excerpt(
     hunk: DiffHunk, cap: int = 40, byte_cap: int = _EXCERPT_BYTE_CAP
 ) -> str:
@@ -2327,3 +2782,94 @@ def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
             location = f"{note['path']} {note['hunk_header']}"
         lines.append(f'📝 Diff feedback attached — {location}: "{note["note"]}"')
     return "\n".join(lines)
+
+
+_CONSOLE_PENDING_MODEL_SOURCES = tuple(
+    (
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        ConsoleInspectorState.with_pending_facts,
+        _ConsoleInspectorPendingInputs.recipe,
+        _clean,
+        coerce_non_negative_int,
+        ConsoleInspectorState.from_pending_facts.__func__,
+        ConsoleInspectorState.__init__,
+        ConsoleDisplayRow.__init__,
+        ConsoleInspectorAction.__init__,
+        ConsoleInspectorState.__setattr__,
+        ConsoleInspectorState.__delattr__,
+        ConsoleDisplayRow.__setattr__,
+        ConsoleDisplayRow.__delattr__,
+        ConsoleInspectorAction.__setattr__,
+        ConsoleInspectorAction.__delattr__,
+    )
+)
+
+_CONSOLE_PENDING_MODEL_SLOTS = (
+    (
+        ConsoleInspectorState,
+        "with_pending_facts",
+        ConsoleInspectorState.with_pending_facts,
+    ),
+    (_ConsoleInspectorPendingInputs, "recipe", _ConsoleInspectorPendingInputs.recipe),
+    (
+        ConsoleInspectorState,
+        "from_pending_facts",
+        vars(ConsoleInspectorState)["from_pending_facts"],
+    ),
+    (ConsoleInspectorState, "__init__", ConsoleInspectorState.__init__),
+    (ConsoleDisplayRow, "__init__", ConsoleDisplayRow.__init__),
+    (ConsoleInspectorAction, "__init__", ConsoleInspectorAction.__init__),
+    (ConsoleInspectorState, "__dict__", vars(ConsoleInspectorState)["__dict__"]),
+    (ConsoleInspectorState, "pending_only", False),
+    (ConsoleInspectorState, "_pending_inputs", None),
+    (
+        _ConsoleInspectorPendingInputs,
+        "__dict__",
+        vars(_ConsoleInspectorPendingInputs)["__dict__"],
+    ),
+)
+
+_CONSOLE_PENDING_MODEL_CLASSES = tuple(
+    (name, globals()[name])
+    for name in (
+        "ConsoleInspectorState",
+        "ConsoleDisplayRow",
+        "ConsoleInspectorAction",
+        "_ConsoleInspectorPendingInputs",
+    )
+)
+
+_CONSOLE_PENDING_MODEL_ABSENT_FIELD = object()
+_CONSOLE_PENDING_MODEL_CONSTRUCTION = tuple(
+    (
+        owner,
+        owner.__bases__,
+        tuple(
+            (
+                name,
+                inspect.getattr_static(
+                    owner, name, _CONSOLE_PENDING_MODEL_ABSENT_FIELD
+                ),
+            )
+            for name in (
+                "__new__",
+                "__setattr__",
+                "__delattr__",
+                "__getattribute__",
+                "__dict__",
+                "__slots__",
+                *owner.__dataclass_fields__,
+            )
+        ),
+    )
+    for owner in (ConsoleInspectorState, ConsoleDisplayRow, ConsoleInspectorAction)
+)

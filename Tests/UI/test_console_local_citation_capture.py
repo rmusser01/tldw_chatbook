@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 from Tests.UI.test_console_dictionary_send_integration import (
     _CapturingGateway,
     _final_user_content,
@@ -29,17 +31,20 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
 )
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchRequest
 from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
-from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
+from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 from Tests.UI.app_factory import attach_chachanotes_db
 
 
-def _repair_contract(context: str) -> CitationRepairContract:
+def _repair_contract(
+    context: str, *, require_markers: bool = True
+) -> CitationRepairContract:
     return CitationRepairContract(
         schema_version=1,
         marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
         allowed_ordinals=(1,),
         evidence_context=context,
+        require_markers=require_markers,
     )
 
 
@@ -59,9 +64,12 @@ def _controller_builder() -> CitationTraceBuilder:
 
 
 @pytest.mark.asyncio
-async def test_controller_returns_same_repair_contract_object_at_capture_boundary():
+@pytest.mark.parametrize("require_markers", [True, False])
+async def test_controller_returns_same_repair_contract_object_at_capture_boundary(
+    require_markers,
+):
     context = "[S1] MEDIA — Source\nexact body"
-    contract = _repair_contract(context)
+    contract = _repair_contract(context, require_markers=require_markers)
     builder = _controller_builder()
     capture = AsyncMock(
         return_value=LocalRagContextResult(
@@ -189,7 +197,10 @@ async def test_controller_rejects_duck_typed_repair_contract():
 
 
 @pytest.mark.asyncio
-async def test_console_controller_wires_current_staged_rag_capture(monkeypatch):
+@private_profile_test
+async def test_console_controller_wires_current_staged_rag_capture(
+    request, monkeypatch
+):
     app = _build_test_app()
     attach_chachanotes_db(app)
     launch = ConsoleLiveWorkLaunch.from_values(
@@ -205,7 +216,7 @@ async def test_console_controller_wires_current_staged_rag_capture(monkeypatch):
         )
     )
     monkeypatch.setattr(
-        retrieval_module,
+        chat_rag_events,
         "capture_console_staged_evidence_for_chat",
         capture,
     )

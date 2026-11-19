@@ -201,9 +201,7 @@ class ABTestRunner:
             # Wait for both to complete
             run_a_id, run_b_id = await asyncio.gather(model_a_task, model_b_task)
 
-            await _invoke_callback(
-                progress_callback, 100, 100, "Analyzing results..."
-            )
+            await _invoke_callback(progress_callback, 100, 100, "Analyzing results...")
 
             # Get results
             results_a = self.orchestrator.get_run_results(run_a_id)

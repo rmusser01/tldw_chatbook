@@ -305,7 +305,7 @@ def test_validator_rejects_a_scope_that_contradicts_adr_039() -> None:
         records[index], scope=SpeechTTSOwnershipScope.STUDIO_PREFERENCE
     )
 
-    with pytest.raises(ValueError, match="ADR-039"):
+    with pytest.raises(ValueError, match="ADR-304"):
         validate_speech_tts_ownership_inventory(records)
 
 
@@ -319,7 +319,7 @@ def test_validator_rejects_a_provider_owner_that_contradicts_adr_039() -> None:
     )
     records[index] = replace(records[index], owner_id="elevenlabs")
 
-    with pytest.raises(ValueError, match="ADR-039"):
+    with pytest.raises(ValueError, match="ADR-304"):
         validate_speech_tts_ownership_inventory(records)
 
 

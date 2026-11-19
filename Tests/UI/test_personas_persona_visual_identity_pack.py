@@ -197,7 +197,9 @@ async def _open_persona_editor(pilot):
     await pilot.click("#personas-mode-personas")
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
-    await pilot.click("#personas-library-row-persona-p-1")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(pilot, pilot.app.screen, "persona:p-1", via="click")
     await pilot.pause()
     screen.post_message(EditPersonaProfileRequested("p-1"))
     await pilot.pause()
@@ -290,6 +292,7 @@ async def test_server_persona_disables_shared_identity_with_save_local_copy_firs
         assert not host.query(PersonasVisualIdentityPackWidget)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_loads_canonical_unbound_shared_identity_for_local_persona(
     monkeypatch, mock_app_instance, stub_characters, local_scope
@@ -314,6 +317,7 @@ async def test_workbench_loads_canonical_unbound_shared_identity_for_local_perso
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workbench_discards_shared_identity_when_persona_revision_changes(
     monkeypatch, mock_app_instance, stub_characters, local_scope
@@ -357,6 +361,7 @@ async def test_workbench_discards_shared_identity_when_persona_revision_changes(
         assert "unavailable" in str(host.children[0].renderable).lower()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_persona_preview_stale_after_resolve_does_not_paint(
     monkeypatch, mock_app_instance, stub_characters, local_scope
@@ -401,6 +406,7 @@ async def test_persona_preview_stale_after_resolve_does_not_paint(
         unavailable.assert_called_with(asset_id=asset.asset_id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_old_persona_editor_generation_cannot_mutate_replacement_session(
     monkeypatch, mock_app_instance, stub_characters, local_scope
@@ -453,6 +459,7 @@ async def test_normal_and_80x24_compact_layout_paints_labelled_focusable_actions
         assert all(button.can_focus for button in browser.query(Button))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_persona_replace_clear_save_and_cancel_own_one_unpublished_candidate(
     monkeypatch, mock_app_instance, stub_characters, local_scope
@@ -489,6 +496,7 @@ async def test_persona_replace_clear_save_and_cancel_own_one_unpublished_candida
         assert screen._persona_shared_visual_identity_authoring is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_persona_publication_preserves_draft_and_active_pack(
     monkeypatch, mock_app_instance, stub_characters, local_scope
@@ -527,6 +535,7 @@ async def test_failed_persona_publication_preserves_draft_and_active_pack(
         assert browser.pack == authoritative_pack
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_successful_persona_save_invalidates_only_exact_actor_result(
     monkeypatch, mock_app_instance, stub_characters, local_scope
@@ -576,6 +585,7 @@ async def test_successful_persona_save_invalidates_only_exact_actor_result(
         assert screen._persona_shared_visual_identity_authoring is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_duplicate_persona_save_is_rejected_until_first_publish_drains(
     monkeypatch, mock_app_instance, stub_characters, local_scope
@@ -628,6 +638,7 @@ async def test_duplicate_persona_save_is_rejected_until_first_publish_drains(
         assert await first is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dirty_navigation_decline_preserves_persona_reaction_draft_and_accept_drains(
     monkeypatch, mock_app_instance, stub_characters, local_scope

@@ -24,6 +24,7 @@ def _write_theme(themes_dir: Path, name: str, primary: str) -> None:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_startup_registers_saved_user_themes(tmp_path, monkeypatch):
     themes_dir = tmp_path / "themes"

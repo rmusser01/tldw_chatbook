@@ -217,7 +217,9 @@ def _track_transport_sessions(
         sessions.append(session)
         return session
 
-    monkeypatch.setattr(hosted_chat, "create_default_session", create_session)
+    monkeypatch.setattr(
+        hosted_chat, "create_pooled_default_session", lambda **kwargs: create_session()
+    )
     return sessions
 
 
@@ -1081,7 +1083,9 @@ def test_owned_json_post_sends_exact_route_headers_payload_and_timeout(
         "Bearer SECRET-TRANSPORT-CANARY"
     )
     assert server.requests[0]["headers"]["Content-Type"] == "application/json"
-    assert sessions[0].close_calls == 1
+    # ADR-222 (TASK-34418): the session is per-thread registry-owned and
+    # outlives the call; only the response is closed, once per attempt.
+    assert sessions[0].close_calls == 0
     assert sessions[0].response_close_calls == [1]
 
 
@@ -1106,8 +1110,11 @@ def test_owned_json_post_retries_statuses_with_one_global_budget(
 
     assert result == {"ok": True}
     assert len(server.requests) == 3
+    # One session for all three attempts (in-call reuse is unchanged), one
+    # response close per attempt; ADR-222: the session itself stays open
+    # for the thread's registry.
     assert sessions[0].response_close_calls == [1, 1, 1]
-    assert sessions[0].close_calls == 1
+    assert sessions[0].close_calls == 0
 
 
 @pytest.mark.allow_network
@@ -1310,7 +1317,10 @@ def test_owned_sse_stream_transfers_ownership_and_closes_exactly_once(
         stream.close()
 
     assert sessions[0].response_close_calls == [1]
-    assert sessions[0].close_calls == 1
+    # ADR-222 (TASK-34418): the stream closes its response exactly once
+    # (idempotent double close above); the registry owns the session, so
+    # it is never closed by the stream or the call.
+    assert sessions[0].close_calls == 0
 
 
 @pytest.mark.allow_network
@@ -1341,4 +1351,6 @@ def test_owned_sse_stream_does_not_retry_after_any_body_byte(
 
     assert len(server.requests) == 1
     assert sessions[0].response_close_calls == [1]
-    assert sessions[0].close_calls == 1
+    # ADR-222: read failure closes the response once; the registry-owned
+    # session stays open for the thread's next call.
+    assert sessions[0].close_calls == 0

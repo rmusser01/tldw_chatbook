@@ -99,6 +99,7 @@ async def _open_notes_tree(host, pilot):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_notes_new_folder_opens_the_folder_name_dialog() -> None:
     """"New folder" with nothing selected pushes the name dialog.
@@ -127,6 +128,7 @@ async def test_notes_new_folder_opens_the_folder_name_dialog() -> None:
         assert screen._notes_state.notice == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_work_pane_editor_ready_arms_dirty_tracking_on_the_editor_route() -> None:
     """``EditorReady`` arms the editor once the retained children mount.
@@ -155,6 +157,7 @@ async def test_work_pane_editor_ready_arms_dirty_tracking_on_the_editor_route() 
         assert screen._notes_state.editor_armed is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_work_pane_editor_ready_is_ignored_off_the_editor_route() -> None:
     """The route guard: the same message off the editor route arms nothing.

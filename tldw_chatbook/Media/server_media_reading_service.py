@@ -198,7 +198,6 @@ class ServerMediaReadingService:
             include_keywords=include_keywords,
         )
 
-
     async def create_file_artifact(
         self,
         *,
@@ -272,22 +271,9 @@ class ServerMediaReadingService:
         )
         return await self._require_client().purge_file_artifacts(payload)
 
-
-
-
-
-
     async def delete_media_item(self, media_id: Any) -> Any:
         self._enforce(self._media_item_action_id("delete"))
         return await self._require_client().delete_media_item(int(media_id))
-
-
-
-
-
-
-
-
 
     async def check_media_file(
         self, media_id: Any, *, file_type: str = "original"
@@ -394,7 +380,6 @@ class ServerMediaReadingService:
         self._enforce(self._transcription_models_action_id("list"))
         return await self._require_client().get_media_transcription_models()
 
-
     async def add_media(
         self,
         request_data: AddMediaRequest | None = None,
@@ -421,7 +406,6 @@ class ServerMediaReadingService:
             if hasattr(response, "model_dump")
             else response
         )
-
 
     async def list_unified_items(self, **filters: Any) -> Any:
         self._enforce(self._media_item_action_id("list"))
@@ -451,12 +435,6 @@ class ServerMediaReadingService:
             if hasattr(response, "model_dump")
             else response
         )
-
-
-
-
-
-
 
     async def process_email(
         self, request_data: ProcessEmailRequest, file_paths: list[str] | None = None
@@ -537,7 +515,6 @@ class ServerMediaReadingService:
             int(media_id), request_data
         )
 
-
     async def get_media_item(
         self,
         media_id: Any,
@@ -616,8 +593,6 @@ class ServerMediaReadingService:
         return await self._require_client().download_media_file(
             int(media_id), file_type=file_type
         )
-
-
 
     async def delete_media(self, media_id: Any) -> Any:
         self._enforce(self._reading_action_id("delete"))
@@ -1837,7 +1812,6 @@ class ServerMediaReadingService:
     async def list_ingestion_source_items(self, source_id: Any) -> Any:
         self._enforce(self._ingestion_job_action_id("observe"))
         return await self._require_client().list_ingestion_source_items(int(source_id))
-
 
     async def trigger_ingestion_source_sync(self, source_id: Any) -> Any:
         self._enforce(self._ingestion_job_action_id("launch"))

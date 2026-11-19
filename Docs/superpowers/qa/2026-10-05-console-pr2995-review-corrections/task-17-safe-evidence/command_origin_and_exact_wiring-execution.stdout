@@ -1,0 +1,59 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.6.0 -- /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook
+configfile: pyproject.toml
+plugins: anyio-4.12.1, mock-3.15.1, asyncio-1.2.0, Faker-40.15.0, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, hypothesis-6.152.3
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+collecting ... collected 8 items
+
+Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[enter] --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 12%]
+Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[send-button] --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 25%]
+Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[appended] --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 37%]
+Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[replaced] --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 50%]
+Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[doctor] --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 62%]
+Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[skills] --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 75%]
+Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[fewer-permission-prompts] --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [ 87%]
+Tests/UI/test_console_command_origin_chat.py::test_a_command_never_starts_in_a_chat_it_was_not_sent_from --- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PASSED [100%]
+
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-safe-evidence/command_origin_and_exact_wiring-execution.xml -
+============================= slowest 25 durations =============================
+5.89s call     Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[enter]
+5.83s call     Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[appended]
+5.47s call     Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[replaced]
+5.33s call     Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[doctor]
+5.32s call     Tests/UI/test_console_command_origin_chat.py::test_a_command_never_starts_in_a_chat_it_was_not_sent_from
+5.25s call     Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[send-button]
+4.73s call     Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[fewer-permission-prompts]
+4.68s call     Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[skills]
+
+(16 durations < 1s hidden.)
+============================== 8 passed in 47.89s ==============================

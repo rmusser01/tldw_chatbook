@@ -95,6 +95,7 @@ async def _open_media_shell(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_shell_mounts_library_items_reader_and_its_two_grips():
     host = LibraryProductionCSSHarness(_build_media_test_app())
@@ -121,6 +122,7 @@ async def test_media_shell_mounts_library_items_reader_and_its_two_grips():
         assert screen.query_one("#library-rail-collapse", Button).display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_wrapper_preserves_shell_ids_classes_messages_and_aliases():
     host = LibraryProductionCSSHarness(_build_media_test_app())
@@ -145,6 +147,7 @@ async def test_media_wrapper_preserves_shell_ids_classes_messages_and_aliases():
         assert MediaShellResized is AdaptiveReaderShellResized
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expanded_and_collapsed_grip_copy_names_its_action():
     host = LibraryProductionCSSHarness(_build_media_test_app())
@@ -166,6 +169,7 @@ async def test_expanded_and_collapsed_grip_copy_names_its_action():
             assert MEDIA_GRIP_EXPAND in _painted_text_in_region(pilot.app, grip.region)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_grips_are_focusable_clickable_and_geometry_stable():
     host = LibraryProductionCSSHarness(_build_media_test_app())
@@ -190,6 +194,7 @@ async def test_grips_are_focusable_clickable_and_geometry_stable():
             assert grip.region.width == MEDIA_GRIP_WIDTH
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_grip_hover_focus_and_press_keep_neutral_paint_without_endcaps():
     host = LibraryProductionCSSHarness(_build_media_test_app())
@@ -230,6 +235,7 @@ async def test_grip_hover_focus_and_press_keep_neutral_paint_without_endcaps():
         assert _painted_backgrounds_in_region(host, region) == rest_backgrounds
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_is_never_a_collapse_target():
     host = LibraryProductionCSSHarness(_build_media_test_app())
@@ -252,6 +258,7 @@ async def test_reader_is_never_a_collapse_target():
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compact_reader_keeps_every_toolbar_action_inside_reader():
     host = LibraryProductionCSSHarness(_build_media_test_app())
@@ -296,6 +303,7 @@ async def test_compact_reader_keeps_every_toolbar_action_inside_reader():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_row_activation_keeps_items_mounted_and_loads_permanent_reader():
     app = _build_media_test_app()
@@ -341,6 +349,7 @@ def _long_title_media_items():
     return items
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(235, 52), (100, 30)])
 async def test_empty_reader_lets_the_list_paint_a_long_title_and_restores_on_open(
@@ -397,6 +406,7 @@ async def test_empty_reader_lets_the_list_paint_a_long_title_and_restores_on_ope
             assert opened.reader_width > empty.reader_width
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_non_media_library_routes_keep_the_existing_shell():
     host = LibraryProductionCSSHarness(_build_media_test_app())
@@ -411,6 +421,7 @@ async def test_non_media_library_routes_keep_the_existing_shell():
         assert not screen.query(".library-media-pane-grip")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 50), (120, 35), (100, 30), (80, 24)])
 async def test_media_shell_resize_uses_resolver_without_reads_or_recompose(size):
@@ -523,6 +534,7 @@ async def test_two_grips_leave_fifty_columns_for_reader_at_sixty_shell_columns()
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_manual_grip_persists_preference_but_responsive_collapse_does_not(
     monkeypatch,
@@ -591,6 +603,7 @@ async def test_manual_grip_persists_preference_but_responsive_collapse_does_not(
     assert next_screen._media_state.reader_preferences.library_open is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shared_library_pane_choice_round_trips_between_media_and_conversations(
     monkeypatch,
@@ -647,6 +660,7 @@ async def test_shared_library_pane_choice_round_trips_between_media_and_conversa
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_conversations_library_pane_write_restores_shared_choice_and_warns(
     monkeypatch,
@@ -688,6 +702,7 @@ async def test_failed_conversations_library_pane_write_restores_shared_choice_an
         assert "could not be saved" in notices[-1][0]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_manual_grip_persistence_restores_previous_preference(
     monkeypatch,
@@ -728,6 +743,7 @@ async def test_failed_manual_grip_persistence_restores_previous_preference(
         assert notices[-1][1]["severity"] == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rapid_manual_grip_changes_persist_in_order(monkeypatch):
     app = _build_media_test_app()
@@ -777,6 +793,7 @@ async def test_rapid_manual_grip_changes_persist_in_order(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shared_library_pane_writes_settle_latest_across_destinations(
     monkeypatch,
@@ -837,6 +854,7 @@ async def test_shared_library_pane_writes_settle_latest_across_destinations(
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_shared_library_pane_double_failure_restores_durable_choice(
     monkeypatch,
@@ -892,6 +910,7 @@ async def test_shared_library_pane_double_failure_restores_durable_choice(
         assert media.effective_layout.library_open
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("destination", "pane", "config_section", "preference_key", "authority"),
     (
@@ -983,6 +1002,7 @@ async def test_settings_refresh_repairs_started_stale_pane_write(
         assert getattr(shell.effective_layout, preference_key)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_settings_repair_rolls_back_to_physical_durable_value(
     monkeypatch,
@@ -1049,6 +1069,7 @@ async def test_failed_settings_repair_rolls_back_to_physical_durable_value(
         assert notices and notices[-1][1]["severity"] == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_repair_coalesces_newer_grip_intent(monkeypatch):
     app = _build_media_test_app()
@@ -1111,6 +1132,7 @@ async def test_settings_repair_coalesces_newer_grip_intent(monkeypatch):
         assert not shell.effective_layout.library_open
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_delayed_settings_refresh_repairs_exited_stale_grip_write(monkeypatch):
     app = _build_media_test_app()
@@ -1164,6 +1186,7 @@ async def test_delayed_settings_refresh_repairs_exited_stale_grip_write(monkeypa
         assert shell.effective_layout.library_open
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clean_first_mounted_settings_refresh_starts_no_repair(monkeypatch):
     app = _build_media_test_app()
@@ -1212,6 +1235,7 @@ async def test_clean_first_mounted_settings_refresh_starts_no_repair(monkeypatch
         assert shell.effective_layout.library_open
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_completed_manual_write_yields_to_later_settings_without_repair(
     monkeypatch,
@@ -1250,6 +1274,7 @@ async def test_completed_manual_write_yields_to_later_settings_without_repair(
         assert shell.effective_layout.library_open
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_manual_write_gets_one_bounded_settings_repair(monkeypatch):
     app = _build_media_test_app()
@@ -1296,6 +1321,7 @@ async def test_failed_manual_write_gets_one_bounded_settings_repair(monkeypatch)
         assert workers.call_count == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_settings_reconciliation_does_not_project_cached_guess(
     monkeypatch,
@@ -1386,6 +1412,7 @@ async def test_persisted_items_read_uses_default_when_key_is_absent(
     assert physical_value is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_delayed_settings_repair_projects_stale_disk_truth(monkeypatch):
     app = _build_media_test_app()
@@ -1451,6 +1478,7 @@ async def test_failed_delayed_settings_repair_projects_stale_disk_truth(monkeypa
         assert notices and notices[-1][1]["severity"] == "warning"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_library_pane_write_resyncs_mounted_peer_shell(monkeypatch):
     app = _build_media_test_app()
@@ -1499,6 +1527,7 @@ async def test_failed_library_pane_write_resyncs_mounted_peer_shell(monkeypatch)
         assert media.effective_layout.library_open
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_refresh_reconciles_panes_without_media_reads(
     monkeypatch,

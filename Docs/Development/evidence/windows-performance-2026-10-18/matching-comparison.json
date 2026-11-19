@@ -1,0 +1,157 @@
+{
+  "before": {
+    "input_ms": [
+      444.08970000222325,
+      1241.0253999987617,
+      1418.6291999940295,
+      1333.5274000128265,
+      1488.126199983526,
+      1749.2911000153981
+    ],
+    "median_input_ms": 1376.078300003428,
+    "worst_input_ms": 1749.2911000153981,
+    "median_attach_ms": 1458.503899993957,
+    "median_max_heartbeat_ms": 426.1270999995759,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "sample_counts": {
+      "_check_selectors": 43,
+      "_ordered_candidates": 4,
+      "_config_file_posture": 9,
+      "_build_console_inspector_state": 7,
+      "_unread_notification_count": 29
+    }
+  },
+  "control1": {
+    "input_ms": [
+      1815.1964000135195,
+      979.421199997887,
+      820.9942000103183,
+      936.9053000118583,
+      730.3864999848884,
+      933.6416000151075
+    ],
+    "median_input_ms": 935.273450013483,
+    "worst_input_ms": 1815.1964000135195,
+    "median_attach_ms": 938.1381499988493,
+    "median_max_heartbeat_ms": 271.7092999955639,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "sample_counts": {
+      "_check_selectors": 33,
+      "_ordered_candidates": 5,
+      "_config_file_posture": 7,
+      "_build_console_inspector_state": 5,
+      "_unread_notification_count": 0
+    }
+  },
+  "after1": {
+    "incomplete": true,
+    "completed_returns": 4
+  },
+  "control2": {
+    "input_ms": [
+      1199.6838999912143,
+      953.1424999877345,
+      942.4670000153128,
+      991.4653999730945,
+      927.678800013382,
+      1106.5320999769028
+    ],
+    "median_input_ms": 972.3039499804145,
+    "worst_input_ms": 1199.6838999912143,
+    "median_attach_ms": 977.0391499769175,
+    "median_max_heartbeat_ms": 320.3174000082072,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "sample_counts": {
+      "_check_selectors": 38,
+      "_ordered_candidates": 5,
+      "_config_file_posture": 10,
+      "_build_console_inspector_state": 5,
+      "_unread_notification_count": 9
+    }
+  },
+  "after2": {
+    "input_ms": [
+      1043.2470999949146,
+      774.8176000022795,
+      758.6865999910515,
+      958.7318999983836,
+      752.3298000160139,
+      942.0257000019774
+    ],
+    "median_input_ms": 858.4216500021284,
+    "worst_input_ms": 1043.2470999949146,
+    "median_attach_ms": 863.4892499976559,
+    "median_max_heartbeat_ms": 208.71060001081787,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "sample_counts": {
+      "_check_selectors": 15,
+      "_ordered_candidates": 2,
+      "_config_file_posture": 8,
+      "_build_console_inspector_state": 6,
+      "_unread_notification_count": 6
+    }
+  },
+  "after3": {
+    "input_ms": [
+      1257.8121999977157,
+      823.7647000059951,
+      804.7738999885041,
+      806.0575999843422,
+      789.3132000172045,
+      917.474099987885
+    ],
+    "median_input_ms": 814.9111499951687,
+    "worst_input_ms": 1257.8121999977157,
+    "median_attach_ms": 817.2895499883452,
+    "median_max_heartbeat_ms": 230.08739999204408,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "sample_counts": {
+      "_check_selectors": 14,
+      "_ordered_candidates": 8,
+      "_config_file_posture": 7,
+      "_build_console_inspector_state": 8,
+      "_unread_notification_count": 9
+    }
+  },
+  "control3": {
+    "input_ms": [
+      1445.5549000122119,
+      1055.068299989216,
+      895.0624999997672,
+      927.9150000074878,
+      888.2924999925308,
+      886.3104000047315
+    ],
+    "median_input_ms": 911.4887500036275,
+    "worst_input_ms": 1445.5549000122119,
+    "median_attach_ms": 912.6025500008836,
+    "median_max_heartbeat_ms": 293.79270000208635,
+    "all_drafts_retained": true,
+    "all_attached": true,
+    "network_attempts": 0,
+    "profile_refusals": 0,
+    "sample_counts": {
+      "_check_selectors": 31,
+      "_ordered_candidates": 5,
+      "_config_file_posture": 9,
+      "_build_console_inspector_state": 8,
+      "_unread_notification_count": 15
+    }
+  },
+  "source_sha256": "7febf4d80e5b79b91c215d7e9111b4068d64731583087a990e6f302d239b93e4"
+}

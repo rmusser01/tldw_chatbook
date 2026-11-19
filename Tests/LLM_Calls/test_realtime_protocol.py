@@ -154,31 +154,24 @@ def test_realtime_session_is_a_runtime_checkable_protocol():
 
 def test_minimal_conforming_stub_satisfies_the_protocol():
     class _StubSession:
-        async def connect(self) -> None:
-            ...
+        async def connect(self) -> None: ...
 
-        def append_audio(self, frames: bytes) -> None:
-            ...
+        def append_audio(self, frames: bytes) -> None: ...
 
-        def send_seed(self, items, instructions):
-            ...
+        def send_seed(self, items, instructions): ...
 
-        def send_text_item(self, text: str, *, request_response: bool) -> None:
-            ...
+        def send_text_item(self, text: str, *, request_response: bool) -> None: ...
 
-        def cancel_response(self, played_ms: int) -> None:
-            ...
+        def cancel_response(self, played_ms: int) -> None: ...
 
-        async def close(self) -> None:
-            ...
+        async def close(self) -> None: ...
 
     assert isinstance(_StubSession(), RealtimeSession)
 
 
 def test_object_missing_methods_does_not_satisfy_the_protocol():
     class _Incomplete:
-        async def connect(self) -> None:
-            ...
+        async def connect(self) -> None: ...
 
     assert not isinstance(_Incomplete(), RealtimeSession)
 
@@ -231,7 +224,9 @@ def test_realtime_package_import_does_not_pull_in_websockets():
         text=True,
         timeout=30,
     )
-    assert baseline_result.returncode == 0, baseline_result.stdout + baseline_result.stderr
+    assert baseline_result.returncode == 0, (
+        baseline_result.stdout + baseline_result.stderr
+    )
     baseline_seconds = float(baseline_result.stdout.strip().splitlines()[-1])
 
     realtime_result = subprocess.run(
@@ -240,7 +235,9 @@ def test_realtime_package_import_does_not_pull_in_websockets():
         text=True,
         timeout=30,
     )
-    assert realtime_result.returncode == 0, realtime_result.stdout + realtime_result.stderr
+    assert realtime_result.returncode == 0, (
+        realtime_result.stdout + realtime_result.stderr
+    )
     realtime_seconds = float(realtime_result.stdout.strip().splitlines()[-1])
 
     incremental_seconds = realtime_seconds - baseline_seconds
@@ -296,6 +293,7 @@ async def test_connect_without_the_extra_names_the_extra(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_connect_below_the_version_floor_names_the_floor(monkeypatch):
     """websockets 12/13's legacy client takes `extra_headers`, so our call
     dies with a bare "unexpected keyword argument" that reads as an app
@@ -320,6 +318,7 @@ async def test_connect_below_the_version_floor_names_the_floor(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_connect_does_not_swallow_unrelated_type_errors(monkeypatch):
     """Only the signature mismatch is translated; anything else is a real
     bug and must keep its own traceback."""

@@ -9,6 +9,8 @@ from Tests.Chat.test_automatic_wake_budget import (
 from Tests.Chat.test_console_fleet_wake import _controller_rig, _settle
 from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def rig(tmp_path):
@@ -113,6 +115,33 @@ async def test_failed_startup_audit_is_visible_and_never_admits_work(rig, monkey
         assert notices == [rig[4].id]
         assert rig[5].payloads == []
     finally:
+        await close_rig(rig)
+
+
+@pytest.mark.asyncio
+async def test_a_console_with_no_runs_db_has_nothing_to_recover(rig):
+    """TASK-38971: with no agent-runs DB there is no wake to audit.
+
+    The bridge, and the runs DB it carries, is absent when there is no
+    durable ChaChaNotes DB. ``recover`` still read
+    ``self._runs_db().automatic_work``, raised AttributeError, logged "wake
+    recovery failed" and kept goal runs fenced as ``history_unavailable``
+    for the runtime's life, since recovery runs once.
+    """
+    from loguru import logger
+
+    rig[7]._agent_bridge = None
+    wake = replacement(rig)
+    warnings = []
+    sink = logger.add(warnings.append, format="{message}", level="WARNING")
+    try:
+        await wake.recover()
+        assert await wake.wait_for_recovery()
+        assert wake.recovery_result is None
+        assert wake.pause_reason(rig[4].id) is None
+        assert not [line for line in warnings if "wake recovery failed" in line]
+    finally:
+        logger.remove(sink)
         await close_rig(rig)
 
 

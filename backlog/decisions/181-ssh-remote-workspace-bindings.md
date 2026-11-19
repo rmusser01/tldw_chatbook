@@ -94,7 +94,7 @@ that runs past its deadline is a typed tool error that never changes the
 binding's status, with automatic debounced recovery. Nothing is installed,
 persisted, or left behind on the server, and no SSH credentials are stored.
 The remote binding can be the Console working folder, so remote AGENTS.md /
-AGENTS.override.md load under all existing ADR-068/069 rules (byte caps,
+AGENTS.override.md load under all existing ADR-316/069 rules (byte caps,
 untrusted content, activation ledger, first-use consent) and never grant
 tool permission. Server prerequisites: sshd with exec, and `python3` ≥ 3.10
 (overridable per binding via an interpreter setting).
@@ -118,10 +118,10 @@ tool permission. Server prerequisites: sshd with exec, and `python3` ≥ 3.10
 - [Session worker and bundle cache design (2026-09-27 amendment)](../../Docs/superpowers/specs/2026-09-27-ssh-session-worker-and-bundle-cache-design.md)
 - [ADR-005](005-console-workspace-server-readiness.md)
 - [ADR-028](028-settings-workspaces-category-and-folder-roots.md)
-- [ADR-032](032-local-agent-tool-permission-boundary.md)
-- [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300](300-local-agent-tool-permission-boundary.md)
+- [ADR-317](317-console-project-instruction-local-state-and-preflight.md)
 - [ADR-101](101-one-shot-pinned-workspace-tool-execution.md)
-- [ADR-102](102-console-run-admitted-local-path-authority.md)
+- [ADR-340](340-console-run-admitted-local-path-authority.md)
 - [ADR-174](174-workspace-binding-exclusions.md)
 - [ADR-175](175-one-strict-json-acceptance-contract.md)
 

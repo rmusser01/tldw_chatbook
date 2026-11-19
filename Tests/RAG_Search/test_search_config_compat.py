@@ -36,6 +36,7 @@ def loguru_caplog(caplog):
         loguru_logger.remove(sink_id)
 
 
+@pytest.mark.bootstrap_profile
 def test_saved_config_with_retired_parent_keys_loads(loguru_caplog):
     """A saved config still carrying the three retired keys loads, warns, drops them."""
     data = {
@@ -57,6 +58,7 @@ def test_saved_config_with_retired_parent_keys_loads(loguru_caplog):
     assert any("parent_inclusion_strategy" in m for m in messages), messages
 
 
+@pytest.mark.bootstrap_profile
 def test_unknown_search_key_is_dropped_with_notice(loguru_caplog):
     """Any unknown search key degrades to an ignored key with a logged notice."""
     cfg = RAGConfig.from_dict({"search": {"never_a_field": 1}})
@@ -74,6 +76,7 @@ def test_no_profile_sets_parent_inclusion():
     assert "parent_inclusion_strategy" not in src
 
 
+@pytest.mark.bootstrap_profile
 def test_saved_profile_json_with_retired_keys_still_loads():
     """The real-world compat path: a user's saved custom profile JSON.
 

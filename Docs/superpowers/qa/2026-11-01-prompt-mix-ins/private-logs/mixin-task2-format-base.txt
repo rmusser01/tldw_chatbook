@@ -1,0 +1,117 @@
+unformatted: File would be reformatted
+    --> tldw_chatbook/DB/Prompts_DB.py:3015:36
+     |
+3014 |                                 LIMIT ? OFFSET ?"""
+     -                     cursor.execute(query, (include_deleted_flag, artifact_type, artifact_type, per_page, offset))
+3015 +                     cursor.execute(
+3016 +                         query,
+3017 +                         (
+3018 +                             include_deleted_flag,
+3019 +                             artifact_type,
+3020 +                             artifact_type,
+3021 +                             per_page,
+3022 +                             offset,
+3023 +                         ),
+3024 +                     )
+3025 |                     results_data = [dict(row) for row in cursor.fetchall()]
+     |
+
+unformatted: File would be reformatted
+    --> tldw_chatbook/Prompt_Management/prompt_scope_service.py:817:23
+     |
+816  |
+     -     def count_prompts(self, *, include_deleted: bool = False, artifact_type: str | None = None, **_kwargs: Any) -> int:
+817  +     def count_prompts(
+818  +         self,
+819  +         *,
+820  +         include_deleted: bool = False,
+821  +         artifact_type: str | None = None,
+822  +         **_kwargs: Any,
+823  +     ) -> int:
+824  |         """Count local prompts without fetching a full page.
+--------------------------------------------------------------------------------
+843  |                 include_deleted=include_deleted,
+     -                 **({"artifact_type": artifact_type} if artifact_type is not None else {}),
+844  +                 **(
+845  +                     {"artifact_type": artifact_type}
+846  +                     if artifact_type is not None
+847  +                     else {}
+848  +                 ),
+849  |             )
+--------------------------------------------------------------------------------
+1678 |         if artifact_type is not None and normalized_mode != PromptBackend.LOCAL:
+     -             raise PromptCapabilityError(normalized_mode.value, "artifact type filtering")
+1679 +             raise PromptCapabilityError(
+1680 +                 normalized_mode.value, "artifact type filtering"
+1681 +             )
+1682 |         self._enforce_policy(self._action_id(normalized_mode, "list"))
+--------------------------------------------------------------------------------
+1690 |                 sort_order=sort_order,
+     -                 **({"artifact_type": artifact_type} if artifact_type is not None else {}),
+1691 +                 **(
+1692 +                     {"artifact_type": artifact_type}
+1693 +                     if artifact_type is not None
+1694 +                     else {}
+1695 +                 ),
+1696 |             )
+--------------------------------------------------------------------------------
+1770 |                 sort_order=sort_order,
+     -                 **({"artifact_type": artifact_type} if artifact_type is not None else {}),
+1771 +                 **(
+1772 +                     {"artifact_type": artifact_type}
+1773 +                     if artifact_type is not None
+1774 +                     else {}
+1775 +                 ),
+1776 |                 page=page,
+--------------------------------------------------------------------------------
+1786 |
+     -     async def count_prompts(self, *, mode: PromptBackend | str = "local", artifact_type: str | None = None) -> int:
+1787 +     async def count_prompts(
+1788 +         self, *, mode: PromptBackend | str = "local", artifact_type: str | None = None
+1789 +     ) -> int:
+1790 |         """Count prompts in the given backend without fetching a full page.
+--------------------------------------------------------------------------------
+1818 |         def count_local_prompts() -> Any:
+     -             result = service.count_prompts(**({"artifact_type": artifact_type} if artifact_type is not None else {}))
+1819 +             result = service.count_prompts(
+1820 +                 **(
+1821 +                     {"artifact_type": artifact_type}
+1822 +                     if artifact_type is not None
+1823 +                     else {}
+1824 +                 )
+1825 +             )
+1826 |             return asyncio.run(result) if inspect.isawaitable(result) else result
+1827 |
+1828 |         from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+1829 |
+     -         return int(await asyncio.to_thread(run_finite_local_worker, count_local_prompts))
+1830 +         return int(
+1831 +             await asyncio.to_thread(run_finite_local_worker, count_local_prompts)
+1832 +         )
+1833 |
+--------------------------------------------------------------------------------
+1902 |         if artifact_type is not None and normalized_mode != PromptBackend.LOCAL:
+     -             raise PromptCapabilityError(normalized_mode.value, "artifact type filtering")
+1903 +             raise PromptCapabilityError(
+1904 +                 normalized_mode.value, "artifact type filtering"
+1905 +             )
+1906 |         if normalized_mode == PromptBackend.SERVER and not query.strip():
+--------------------------------------------------------------------------------
+1945 |                 **local_kwargs,
+     -                 **({"artifact_type": artifact_type} if artifact_type is not None else {}),
+1946 +                 **(
+1947 +                     {"artifact_type": artifact_type}
+1948 +                     if artifact_type is not None
+1949 +                     else {}
+1950 +                 ),
+1951 |             )
+--------------------------------------------------------------------------------
+2046 |                 payload.setdefault(field, current.get(field))
+     -             payload["expected_version"] = expected_version if expected_version is not None else current["version"]
+2047 +             payload["expected_version"] = (
+2048 +                 expected_version if expected_version is not None else current["version"]
+2049 +             )
+2050 |         raw_definition = deserialize_definition(payload.get("prompt_definition"))
+     |
+
+2 files would be reformatted, 13 files already formatted

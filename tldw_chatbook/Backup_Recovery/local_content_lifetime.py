@@ -7,6 +7,7 @@ from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
+from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -87,6 +88,29 @@ def operation(paths=(), *, _parent=None):
             finally:
                 scope.live = False
                 _current.reset(token)
+
+
+def require_operation(paths: tuple[str | Path | None, ...]) -> None:
+    """Check that the current operation already holds the selected sources.
+
+    Args:
+        paths: The sources the caller needs to borrow.
+
+    Raises:
+        RecoveryRequired: The operation or its selected custody is unavailable.
+    """
+    scope = _current.get()
+    if scope is None or scope.identity != _identity():
+        raise RecoveryRequired("local_content_operation_missing")
+    scope.check()
+    for path in paths:
+        if path is None or str(path) == ":memory:":
+            continue
+        selected = lexical_path(path)
+        lease = scope.leases.get(selected)
+        if lease is None:
+            raise RecoveryRequired("execution_scope_not_admitted")
+        lease.execution_context(selected)
 
 
 def call(sources, *, detached=False):

@@ -41,9 +41,11 @@ from tldw_chatbook.RAG_Search.simplified.enhanced_rag_service_v2 import (  # noq
 class TestRAGServiceBasics:
     """Test basic RAG service functionality."""
 
-    def test_service_initialization(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_service_initialization(self, test_rag_config, request):
         """Test RAG service initialization."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Should always return V2
         assert isinstance(service, EnhancedRAGServiceV2)
@@ -58,6 +60,7 @@ class TestRAGServiceBasics:
         assert service._searches_performed == 0
         assert service._total_chunks_created == 0
 
+    @pytest.mark.bootstrap_profile
     def test_service_with_default_config(self, temp_dir):
         """Test service with default configuration."""
         # Create a minimal config with required persist_directory
@@ -72,6 +75,7 @@ class TestRAGServiceBasics:
             assert service.embeddings is not None
             assert service.vector_store is not None
 
+    @pytest.mark.bootstrap_profile
     def test_close_releases_vector_store(self, test_rag_config):
         """Test that service cleanup closes its vector-store resources."""
         service = create_rag_service_from_config(config=test_rag_config)
@@ -83,9 +87,11 @@ class TestRAGServiceBasics:
         vector_store.close.assert_called_once_with()
 
     @pytest.mark.asyncio
-    async def test_index_simple_document(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_index_simple_document(self, test_rag_config, request):
         """Test indexing a simple document."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         result = await service.index_document(
             doc_id="test_doc_1",
@@ -102,9 +108,11 @@ class TestRAGServiceBasics:
         assert result.error is None
 
     @pytest.mark.asyncio
-    async def test_index_empty_document(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_index_empty_document(self, test_rag_config, request):
         """Test indexing an empty document."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # The service validates that content is non-empty, so we expect an error
         with pytest.raises(ValueError, match="content must be a non-empty string"):
@@ -113,9 +121,11 @@ class TestRAGServiceBasics:
             )
 
     @pytest.mark.asyncio
-    async def test_index_large_document(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_index_large_document(self, test_rag_config, request):
         """Test indexing a large document that creates multiple chunks."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Create content larger than chunk size
         large_content = " ".join(
@@ -134,9 +144,11 @@ class TestRAGServiceBasics:
         assert result.error is None
 
     @pytest.mark.asyncio
-    async def test_search_basic(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_search_basic(self, test_rag_config, request):
         """Test basic search functionality."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Index a document first
         await service.index_document(
@@ -154,9 +166,11 @@ class TestRAGServiceBasics:
         assert all(isinstance(r, SearchResultWithCitations) for r in results)
 
     @pytest.mark.asyncio
-    async def test_search_with_filter(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_search_with_filter(self, test_rag_config, request):
         """Test search with metadata filter."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Index documents with different metadata
         await service.index_document(
@@ -184,9 +198,11 @@ class TestRAGServiceBasics:
                 assert result.metadata.get("category") == "programming"
 
     @pytest.mark.asyncio
-    async def test_get_stats(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_get_stats(self, test_rag_config, request):
         """Test getting service statistics."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Get initial metrics - the method is get_metrics() not get_stats()
         metrics = service.get_metrics()
@@ -228,9 +244,11 @@ class TestRAGServiceSearch:
     """Test search functionality in detail."""
 
     @pytest.mark.asyncio
-    async def test_semantic_search(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_semantic_search(self, test_rag_config, request):
         """Test semantic search mode."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Index test documents
         await service.index_document(
@@ -256,9 +274,11 @@ class TestRAGServiceSearch:
             assert results[0].score >= results[1].score
 
     @pytest.mark.asyncio
-    async def test_keyword_search(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_keyword_search(self, test_rag_config, request):
         """Test keyword search mode."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Index documents
         await service.index_document(
@@ -278,9 +298,11 @@ class TestRAGServiceSearch:
         assert len(results) == 0
 
     @pytest.mark.asyncio
-    async def test_hybrid_search(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_hybrid_search(self, test_rag_config, request):
         """Test hybrid search mode."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Index documents
         await service.index_document(
@@ -306,9 +328,11 @@ class TestRAGServiceSearch:
         assert any("hybrid1" in id for id in doc_ids)
 
     @pytest.mark.asyncio
-    async def test_search_with_citations(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_search_with_citations(self, test_rag_config, request):
         """Test that search results include citations."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Index document with citation metadata
         await service.index_document(
@@ -344,9 +368,11 @@ class TestRAGServiceCache:
     """Test caching functionality."""
 
     @pytest.mark.asyncio
-    async def test_cache_hit(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_cache_hit(self, test_rag_config, request):
         """Test that repeated searches hit cache."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Index a document
         await service.index_document(
@@ -374,9 +400,11 @@ class TestRAGServiceCache:
             assert len(results1) == len(results2)
 
     @pytest.mark.asyncio
-    async def test_clear_cache(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_clear_cache(self, test_rag_config, request):
         """Test clearing the cache."""
         service = create_rag_service_from_config(config=test_rag_config)
+        request.addfinalizer(service.close)
 
         # Index and search to populate cache
         await service.index_document(doc_id="clear_cache_test", content="Test content")
@@ -396,9 +424,11 @@ class TestRAGServiceIntegration:
     """Integration tests for RAG service."""
 
     @pytest.mark.asyncio
-    async def test_full_workflow(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_full_workflow(self, memory_rag_config, request):
         """Test complete RAG workflow."""
         service = create_rag_service_from_config(config=memory_rag_config)
+        request.addfinalizer(service.close)
 
         # 1. Index multiple documents
         docs = [
@@ -474,9 +504,11 @@ class TestRAGServicePerformance:
     """Performance tests for RAG service."""
 
     @pytest.mark.asyncio
-    async def test_bulk_indexing(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_bulk_indexing(self, memory_rag_config, request):
         """Test indexing many documents."""
         service = create_rag_service_from_config(config=memory_rag_config)
+        request.addfinalizer(service.close)
 
         # Index 50 documents
         start_time = time.time()
@@ -499,9 +531,11 @@ class TestRAGServicePerformance:
         assert metrics["service_metrics"]["documents_indexed"] == 50
 
     @pytest.mark.asyncio
-    async def test_search_performance(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_search_performance(self, memory_rag_config, request):
         """Test search performance with many documents."""
         service = create_rag_service_from_config(config=memory_rag_config)
+        request.addfinalizer(service.close)
 
         # Index documents
         for i in range(100):
@@ -528,6 +562,7 @@ class TestRAGServicePerformance:
 class TestRAGProfiles:
     """Test RAG service profile functionality."""
 
+    @pytest.mark.bootstrap_profile
     def test_available_profiles(self):
         """Test that all expected profiles are available."""
         profiles = get_available_profiles()
@@ -544,7 +579,8 @@ class TestRAGProfiles:
         assert "high_accuracy" in profiles
         assert "technical_docs" in profiles
 
-    def test_profile_creation(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_profile_creation(self, memory_rag_config, request):
         """Test creating services with different profiles."""
         # Test each basic profile
         for profile in [
@@ -555,21 +591,26 @@ class TestRAGProfiles:
             "hybrid_full",
         ]:
             service = create_rag_service(profile_name=profile, config=memory_rag_config)
+            request.addfinalizer(service.close)
             assert isinstance(service, EnhancedRAGServiceV2)
             assert service is not None
 
-    def test_default_profile(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_default_profile(self, memory_rag_config, request):
         """Test default profile is hybrid_basic."""
         # Create service without specifying profile
         service = create_rag_service(config=memory_rag_config)
+        request.addfinalizer(service.close)
         assert isinstance(service, EnhancedRAGServiceV2)
         # Default should be hybrid_basic
         assert not service.enable_reranking  # hybrid_basic doesn't have reranking
 
-    def test_profile_features(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_profile_features(self, memory_rag_config, request):
         """Test that profiles enable correct features."""
         # Test bm25_only - should have minimal features
         bm25_service = create_rag_service("bm25_only", config=memory_rag_config)
+        request.addfinalizer(bm25_service.close)
         assert not bm25_service.enable_parent_retrieval
         assert not bm25_service.enable_reranking
         assert not bm25_service.enable_parallel_processing
@@ -578,22 +619,26 @@ class TestRAGProfiles:
         enhanced_service = create_rag_service(
             "hybrid_enhanced", config=memory_rag_config
         )
+        request.addfinalizer(enhanced_service.close)
         assert enhanced_service.enable_parent_retrieval
         assert not enhanced_service.enable_reranking
         assert not enhanced_service.enable_parallel_processing
 
         # Test hybrid_full - should have all features
         full_service = create_rag_service("hybrid_full", config=memory_rag_config)
+        request.addfinalizer(full_service.close)
         assert full_service.enable_parent_retrieval
         assert full_service.enable_reranking
         assert full_service.enable_parallel_processing
 
     @pytest.mark.asyncio
-    async def test_profile_search_behavior(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    async def test_profile_search_behavior(self, memory_rag_config, request):
         """Test that profiles affect search behavior correctly."""
         # Create services with different profiles
         # BM25 service with memory config
         bm25_service = create_rag_service("bm25_only", config=memory_rag_config)
+        request.addfinalizer(bm25_service.close)
 
         # Index a document
         await bm25_service.index_document(
@@ -618,16 +663,20 @@ class TestRAGProfiles:
             # If no documents were indexed (memory store might not support BM25), skip the assertion
             assert isinstance(results, list)  # At least verify we got a list back
 
-    def test_invalid_profile(self, memory_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_invalid_profile(self, memory_rag_config, request):
         """Test handling of invalid profile names."""
         # Should fall back to hybrid_basic
         service = create_rag_service("non_existent_profile", config=memory_rag_config)
+        request.addfinalizer(service.close)
         assert isinstance(service, EnhancedRAGServiceV2)
 
-    def test_profile_with_custom_config(self, test_rag_config):
+    @pytest.mark.bootstrap_profile
+    def test_profile_with_custom_config(self, test_rag_config, request):
         """Test creating service with profile and custom config."""
         # Create service with profile but override config
         service = create_rag_service("hybrid_enhanced", config=test_rag_config)
+        request.addfinalizer(service.close)
         assert isinstance(service, EnhancedRAGServiceV2)
         assert service.config == test_rag_config
         # Should still have enhanced features

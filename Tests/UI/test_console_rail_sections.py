@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import random
 from dataclasses import replace
 
 import pytest
@@ -52,8 +50,6 @@ from tldw_chatbook.Widgets.destination_rail import (
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_setup_modal import (
-    CONSOLE_SETUP_MODAL_BACKDROP_ID,
-    ConsoleSetupBackdrop,
     ConsoleSetupModal,
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscriptEmptyPanel
@@ -604,103 +600,6 @@ async def test_setup_panel_coerces_non_card_state_to_quiet_copy():
         )
         assert not list(app.query("#console-setup-step-1"))
         assert not list(app.query("#console-empty-action-row"))
-
-
-# ---------------------------------------------------------------------------
-# Setup-modal snow backdrop (ZSNES-style falling glyphs behind the card).
-# ---------------------------------------------------------------------------
-
-_SNOW_GLYPHS = ("·", "•", "*")
-
-
-def _snow_glyph_count(text: str) -> int:
-    return sum(text.count(glyph) for glyph in _SNOW_GLYPHS)
-
-
-class _SnowBackdropApp(ConsolidatedCSSApp):
-    def __init__(self, rng: random.Random) -> None:
-        super().__init__()
-        self._rng = rng
-
-    def compose(self):
-        yield ConsoleSetupBackdrop(id="backdrop-under-test", rng=self._rng)
-
-
-@pytest.mark.asyncio
-async def test_setup_backdrop_seeded_rng_renders_flake_glyphs():
-    # Seeded rng + fixed size => fully deterministic flake field: 40x10 cells
-    # at ~1 flake per 40 cells yields exactly 10 non-overlapping flakes.
-    app = _SnowBackdropApp(random.Random(42))
-    async with app.run_test(size=(40, 10)):
-        backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
-        assert backdrop.flake_count == 10
-        text = str(backdrop.renderable)
-        assert _snow_glyph_count(text) >= 5
-
-
-@pytest.mark.asyncio
-async def test_setup_backdrop_field_is_still_between_resizes():
-    """TASK-23021: the snow is a still frame -- positions and rendered text
-    must not change while the widget merely sits mounted."""
-    app = _SnowBackdropApp(random.Random(42))
-    async with app.run_test(size=(40, 10)):
-        backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
-        positions_before = [(flake.x, flake.y) for flake in backdrop._flakes]
-        text_before = str(backdrop.renderable)
-
-        # Longer than several of the retired animation's 0.4 s intervals.
-        await asyncio.sleep(1.0)
-
-        positions_after = [(flake.x, flake.y) for flake in backdrop._flakes]
-        text_after = str(backdrop.renderable)
-        assert positions_after == positions_before
-        assert text_after == text_before
-
-
-@pytest.mark.asyncio
-async def test_setup_backdrop_resize_safe_at_tiny_size():
-    app = _SnowBackdropApp(random.Random(42))
-    async with app.run_test(size=(40, 10)) as pilot:
-        backdrop = app.query_one("#backdrop-under-test", ConsoleSetupBackdrop)
-        await pilot.resize_terminal(1, 1)
-        await pilot.pause()
-        assert backdrop.flake_count >= 1
-        await pilot.resize_terminal(40, 10)
-        await pilot.pause()
-        assert backdrop.flake_count == 10
-
-
-@pytest.mark.asyncio
-async def test_setup_modal_backdrop_never_arms_a_timer_in_any_block_state():
-    """TASK-23021 retired the snow tick outright: blocking, unblocked, and
-    re-blocked states must all leave the backdrop with zero timers (the old
-    contract paused/resumed a real interval timer across these transitions)."""
-    app = _SetupModalApp(_card_state())
-    async with app.run_test(size=(100, 30)) as pilot:
-        backdrop = app.query_one(
-            f"#{CONSOLE_SETUP_MODAL_BACKDROP_ID}", ConsoleSetupBackdrop
-        )
-        # _SetupModalApp.on_mount() immediately syncs card-mode (blocking).
-        assert len(backdrop._timers) == 0
-
-        modal = app.query_one("#console-setup-modal", ConsoleSetupModal)
-        modal.sync_card_state(
-            ConsoleSetupCardState(
-                mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY
-            ),
-            action_label="Choose model",
-            action_tooltip="Pick a model.",
-        )
-        await pilot.pause()
-        assert len(backdrop._timers) == 0
-
-        modal.sync_card_state(
-            _card_state(),
-            action_label="Configure API",
-            action_tooltip="Open provider settings.",
-        )
-        await pilot.pause()
-        assert len(backdrop._timers) == 0
 
 
 # ---------------------------------------------------------------------------

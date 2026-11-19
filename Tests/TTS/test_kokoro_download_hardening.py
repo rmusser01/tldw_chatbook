@@ -192,6 +192,7 @@ def test_hasher_sees_every_byte(tmp_path, fake_requests):
     assert hasher.hexdigest() == hashlib.sha256(b"aabb").hexdigest()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_download_does_not_run_on_the_event_loop(
     tmp_path, fake_requests, monkeypatch

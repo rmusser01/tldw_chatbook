@@ -92,9 +92,7 @@ def repo(tmp_path: Path, checker: ModuleType, monkeypatch: pytest.MonkeyPatch):
 
         @staticmethod
         def write_census(*rows: str) -> None:
-            census.write_text(
-                "# a census\n" + "\n".join(rows) + "\n", encoding="utf-8"
-            )
+            census.write_text("# a census\n" + "\n".join(rows) + "\n", encoding="utf-8")
 
     return Repo
 
@@ -178,14 +176,11 @@ def test_comments_and_blank_lines_are_skipped_and_notes_are_optional(repo):
 def test_a_positive_plan_assertion_is_a_pin(repo):
     repo.write_test(
         "test_good.py",
-        PLAN_HEADER
-        + '\nNAME = "idx_zz_recent"\n'
+        PLAN_HEADER + '\nNAME = "idx_zz_recent"\n'
         "def test_plan(conn):\n"
         "    assert NAME in _plan(conn, 'SELECT 1')\n",
     )
-    assert repo.module.plan_pinning_files()["idx_zz_recent"] == {
-        "Tests/test_good.py"
-    }
+    assert repo.module.plan_pinning_files()["idx_zz_recent"] == {"Tests/test_good.py"}
 
 
 @pytest.mark.parametrize("operator, expected", [("in", True), ("not in", False)])
@@ -206,8 +201,7 @@ def test_literal_index_names_without_conventional_prefix_are_recognized(
 def test_a_positive_unique_plan_assertion_is_a_pin(repo):
     repo.write_test(
         "test_unique.py",
-        PLAN_HEADER
-        + '\nNAME = "uq_zz_identity"\n'
+        PLAN_HEADER + '\nNAME = "uq_zz_identity"\n'
         "def test_plan(conn):\n"
         "    assert NAME in _plan(conn, 'SELECT 1')\n",
     )
@@ -224,8 +218,7 @@ def test_a_negative_assertion_is_not_a_pin(repo):
     """
     repo.write_test(
         "test_negative.py",
-        PLAN_HEADER
-        + "\ndef test_plan(conn):\n"
+        PLAN_HEADER + "\ndef test_plan(conn):\n"
         "    plan = _plan(conn, 'SELECT 1')\n"
         "    assert 'idx_zz_absent' not in plan\n",
     )
@@ -235,8 +228,7 @@ def test_a_negative_assertion_is_not_a_pin(repo):
 def test_a_comment_only_mention_is_not_a_pin(repo):
     repo.write_test(
         "test_comment.py",
-        PLAN_HEADER
-        + "\ndef test_plan(conn):\n"
+        PLAN_HEADER + "\ndef test_plan(conn):\n"
         "    # The pre-fix plan was: SEARCH ... USING INDEX idx_zz_absent\n"
         "    assert _plan(conn, 'SELECT 1')\n",
     )
@@ -246,8 +238,7 @@ def test_a_comment_only_mention_is_not_a_pin(repo):
 def test_a_docstring_only_mention_is_not_a_pin(repo):
     repo.write_test(
         "test_docstring.py",
-        PLAN_HEADER
-        + "\ndef test_plan(conn):\n"
+        PLAN_HEADER + "\ndef test_plan(conn):\n"
         '    """Explains why idx_zz_absent was the old plan."""\n'
         "    assert _plan(conn, 'SELECT 1')\n",
     )
@@ -258,8 +249,7 @@ def test_a_file_that_asserts_both_ways_still_pins_the_positive_name(repo):
     """One negative mention must not disqualify a genuinely pinned index."""
     repo.write_test(
         "test_both.py",
-        PLAN_HEADER
-        + "\ndef test_plan(conn):\n"
+        PLAN_HEADER + "\ndef test_plan(conn):\n"
         "    plan = _plan(conn, 'SELECT 1')\n"
         "    assert 'idx_zz_recent' in plan\n"
         "    assert 'idx_zz_recent' not in 'something else'\n",
@@ -306,7 +296,8 @@ def test_a_declared_index_absent_from_the_census_fails(repo, capsys):
 def test_a_census_row_for_an_index_nothing_creates_fails(repo, capsys):
     _declare(repo, "idx_zz_a")
     repo.write_census(
-        "idx_zz_a\tpre-convention\tno plan captured", "idx_zz_gone\tpre-convention\tstale"
+        "idx_zz_a\tpre-convention\tno plan captured",
+        "idx_zz_gone\tpre-convention\tstale",
     )
     assert repo.module.main() == 1
     assert "idx_zz_gone" in capsys.readouterr().out
@@ -328,8 +319,7 @@ def test_a_plan_pinned_row_backed_only_by_a_negative_assertion_fails(repo, capsy
     _declare(repo, "idx_zz_absent")
     repo.write_test(
         "test_negative.py",
-        PLAN_HEADER
-        + "\ndef test_plan(conn):\n"
+        PLAN_HEADER + "\ndef test_plan(conn):\n"
         "    plan = _plan(conn, 'SELECT 1')\n"
         "    # pre-fix this was SEARCH ... USING INDEX idx_zz_absent\n"
         "    assert 'idx_zz_absent' not in plan\n",
@@ -343,8 +333,7 @@ def test_a_plan_pinned_row_backed_by_a_real_pin_passes(repo):
     _declare(repo, "idx_zz_recent")
     repo.write_test(
         "test_real.py",
-        PLAN_HEADER
-        + '\nNAME = "idx_zz_recent"\n'
+        PLAN_HEADER + '\nNAME = "idx_zz_recent"\n'
         "def test_plan(conn):\n"
         "    assert NAME in _plan(conn, 'SELECT 1')\n",
     )

@@ -49,11 +49,24 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
 CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
-#: The only value the v47->v48 step generates that two identical runs cannot
+#: The values migration-chain steps generate that two identical runs cannot
 #: agree on: `console_conversation_library_policy.updated_at` defaults to
-#: CURRENT_TIMESTAMP. Masked in the content hash, and separately asserted to be
-#: a real timestamp so masking cannot hide an empty column.
-_VOLATILE = {("console_conversation_library_policy", "updated_at")}
+#: CURRENT_TIMESTAMP (v47->v48), and every console-trace / character-search
+#: singleton state table stamps `updated_at` with CURRENT_TIMESTAMP during
+#: its own chain step. Masked in the content hash, and separately asserted
+#: to be a real timestamp so masking cannot hide an empty column.
+#: (ADR-224 note: the v79 step was the first change slow enough to push two
+#: consecutive opens across a second boundary reliably, exposing these
+#: singletons as a content-hash flap.)
+_VOLATILE = {
+    ("console_conversation_library_policy", "updated_at"),
+    ("console_trace_compaction_state", "updated_at"),
+    ("console_trace_migration_state", "updated_at"),
+    ("console_trace_maintenance_state", "updated_at"),
+    ("console_trace_graph_epoch", "updated_at"),
+    ("character_conversation_search_revision", "updated_at"),
+    ("character_conversation_search_state", "updated_at"),
+}
 
 
 def _raw_version(db_path: Path) -> int:
@@ -98,9 +111,7 @@ def _content_hash(db_path: Path) -> str:
             )
         )
         for table in tables:
-            columns = [
-                row[1] for row in probe.execute(f'PRAGMA table_info("{table}")')
-            ]
+            columns = [row[1] for row in probe.execute(f'PRAGMA table_info("{table}")')]
             rows = probe.execute(f'SELECT * FROM "{table}"').fetchall()
             masked = sorted(
                 repr(
@@ -143,8 +154,7 @@ def _seed_historical(db_path: Path, version: int, titles: list[str]) -> list[str
     """Build a genuine ``version``-shaped database with ``titles`` conversations."""
     with chachanotes_db_at_version(db_path, version, client_id="t21441-seed") as db:
         conversation_ids = [
-            db.add_conversation({"title": title, "character_id": 1})
-            for title in titles
+            db.add_conversation({"title": title, "character_id": 1}) for title in titles
         ]
         for index, conversation_id in enumerate(conversation_ids):
             db.add_message(
@@ -379,7 +389,9 @@ def test_a_sigkill_inside_the_v48_transaction_cannot_brick_the_database(
         # and already rolled back: no second writer can take the lock. Without
         # this witness the assertions below would also pass against a child
         # that never started the step.
-        with closing(sqlite3.connect(killed, timeout=0.2, isolation_level=None)) as other:
+        with closing(
+            sqlite3.connect(killed, timeout=0.2, isolation_level=None)
+        ) as other:
             with pytest.raises(sqlite3.OperationalError, match="locked"):
                 other.execute("BEGIN IMMEDIATE")
         # Uncommitted work must be invisible to every other reader.

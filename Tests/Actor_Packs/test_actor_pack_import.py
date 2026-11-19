@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -547,26 +548,24 @@ def test_construction_performs_no_staging_filesystem_io(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """task-22216: __init__ records paths only — no sweep, no directory."""
-    db = CharactersRAGDB(
-        str(tmp_path / "profile.db"), client_id="actor-pack-construct"
-    )
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
-        pytest.fail(
-            "construction must not touch the staging filesystem (task-22216)"
-        )
-
-    monkeypatch.setattr(importer_module, "secure_private_directory", forbidden)
-    monkeypatch.setattr(importer_module.os, "scandir", forbidden)
+        pytest.fail("construction must not touch the staging filesystem (task-22216)")
 
     staging_root = tmp_path / "staging"
-    ActorPackImportService(
-        ActorPackRepository(db),
-        staging_root=staging_root,
-        profile_root=tmp_path,
-    )
+    with closing(
+        CharactersRAGDB(str(tmp_path / "profile.db"), client_id="actor-pack-construct")
+    ) as db:
+        with monkeypatch.context() as patch:
+            patch.setattr(importer_module, "secure_private_directory", forbidden)
+            patch.setattr(importer_module.os, "scandir", forbidden)
+            ActorPackImportService(
+                ActorPackRepository(db),
+                staging_root=staging_root,
+                profile_root=tmp_path,
+            )
 
-    assert not staging_root.exists()
+        assert not staging_root.exists()
 
 
 def test_ensure_staging_swept_latches_only_on_success(
@@ -683,36 +682,40 @@ def test_startup_sweep_skips_usable_unverified_staging(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db = CharactersRAGDB(
-        str(tmp_path / "profile.db"), client_id="actor-pack-import-unverified"
-    )
-    repository = ActorPackRepository(db)
-    staging_root = tmp_path / "staging"
-    candidate = staging_root / f".import-{'0' * 32}"
-    candidate.mkdir(parents=True)
-    privacy = PrivatePathResult(
-        staging_root,
-        PrivatePathStatus.UNVERIFIED_PLATFORM,
-        reason="native_acl_not_verified",
-    )
-
-    monkeypatch.setattr(
-        importer_module,
-        "secure_private_directory",
-        lambda *_args, **_kwargs: privacy,
-    )
-
     def unexpected_access(*_args: object, **_kwargs: object) -> None:
         pytest.fail("unverified staging contents must not be examined")
 
-    monkeypatch.setattr(importer_module.os, "scandir", unexpected_access)
-    monkeypatch.setattr(importer_module, "_read_candidate_authority", unexpected_access)
+    with closing(
+        CharactersRAGDB(
+            str(tmp_path / "profile.db"), client_id="actor-pack-import-unverified"
+        )
+    ) as db:
+        repository = ActorPackRepository(db)
+        staging_root = tmp_path / "staging"
+        candidate = staging_root / f".import-{'0' * 32}"
+        candidate.mkdir(parents=True)
+        privacy = PrivatePathResult(
+            staging_root,
+            PrivatePathStatus.UNVERIFIED_PLATFORM,
+            reason="native_acl_not_verified",
+        )
 
-    service = ActorPackImportService(
-        repository,
-        staging_root=staging_root,
-        profile_root=tmp_path,
-    )
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                importer_module,
+                "secure_private_directory",
+                lambda *_args, **_kwargs: privacy,
+            )
+            patch.setattr(importer_module.os, "scandir", unexpected_access)
+            patch.setattr(
+                importer_module, "_read_candidate_authority", unexpected_access
+            )
 
-    assert service.sweep_staging() == 0
-    assert candidate.exists()
+            service = ActorPackImportService(
+                repository,
+                staging_root=staging_root,
+                profile_root=tmp_path,
+            )
+            assert service.sweep_staging() == 0
+
+        assert candidate.exists()

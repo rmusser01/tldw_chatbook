@@ -1,0 +1,113 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.6.0
+rootdir: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook
+configfile: pyproject.toml
+plugins: anyio-4.12.1, mock-3.15.1, asyncio-1.2.0, Faker-40.15.0, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, hypothesis-6.152.3
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+collected 156 items
+
+Tests/UI/test_console_runtime_ownership.py ............................. [ 18%]
+..............x..........--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..........--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.                     [ 51%]
+Tests/Chat/test_console_viewless_hooks.py ..................             [ 63%]
+Tests/Agents/test_install_skill_runtime_tool.py ......                   [ 67%]
+Tests/Chat/test_console_chat_create_integration.py ..................... [ 80%]
+..............................                                           [100%]
+
+=============================== warnings summary ===============================
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/Chat/test_console_chat_create_integration.py::test_new_chat_tool_and_controller_reject_before_authority_or_execution[arguments6-invalid_args]
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/conftest.py:609: UserWarning: open file descriptors grew by 523 over the test session (start=14, end=537, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-5-evidence/batch.xml -
+============================= slowest 25 durations =============================
+27.31s call     Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+14.75s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+14.61s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[caret_only]
+14.47s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[selection_only]
+13.86s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+13.74s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+13.67s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]
+12.81s call     Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+12.71s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+11.65s call     Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target
+11.45s call     Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime
+11.19s call     Tests/UI/test_console_runtime_ownership.py::test_post_unmount_raw_refusal_restores_on_second_console_visit
+10.17s call     Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+10.16s call     Tests/UI/test_console_runtime_ownership.py::test_public_startup_console_keeps_its_claim_across_navigation
+9.23s call     Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit
+8.17s call     Tests/UI/test_console_runtime_ownership.py::test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
+8.06s call     Tests/UI/test_console_runtime_ownership.py::test_manual_console_fixture_owns_startup_before_any_mount
+2.49s call     Tests/UI/test_console_runtime_ownership.py::test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle
+1.86s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_delivered_with_no_view_keeps_the_unseen_mark
+1.77s call     Tests/Chat/test_console_viewless_hooks.py::test_a_delivery_started_with_no_view_re_arms_at_the_next_attach
+1.75s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_delivered_to_the_attached_view_still_clears_the_mark
+1.63s call     Tests/Chat/test_console_viewless_hooks.py::test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone
+1.60s call     Tests/Chat/test_console_viewless_hooks.py::test_a_viewless_turn_calls_none_of_the_departed_views_hooks
+1.10s call     Tests/UI/test_console_runtime_ownership.py::test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements
+1.06s call     Tests/UI/test_console_runtime_ownership.py::test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements
+=========================== short test summary info ============================
+XFAIL Tests/UI/test_console_runtime_ownership.py::test_captured_attach_timer_overlap_rearms_real_sync_worker - TASK-32873: the real sync worker now reads whole-screen owner state (library projection, staged evidence, active settings, Textual message-pump context) that a bare __new__ ChatScreen mount cannot satisfy; needs the app_factory real-mount rewrite. Tracked in the task notes.
+============ 155 passed, 1 xfailed, 5 warnings in 343.84s (0:05:43) ============

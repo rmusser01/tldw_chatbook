@@ -56,6 +56,7 @@ async def _drag(pilot, widget, start: tuple[int, int], end: tuple[int, int]) -> 
     await pilot.pause()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_plain_drag_menu_add_to_chat_quotes_at_composer_caret():
     async with make_console_pilot() as pilot:
@@ -92,6 +93,7 @@ async def test_plain_drag_menu_add_to_chat_quotes_at_composer_caret():
         assert not screen.query(ConsoleSelectionMenu)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_markdown_drag_add_to_chat_quotes_whole_lines():
     async with make_console_pilot() as pilot:
@@ -128,6 +130,7 @@ async def test_markdown_drag_add_to_chat_quotes_whole_lines():
         assert composer.draft_text() == "> line one\n> line two\n> line three"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_plain_click_toggles_selection_without_menu():
     """Control: a genuine click is not a drag -- no menu, toggle still works."""

@@ -104,7 +104,9 @@ def _history_service_script():
         "    history_before = history_path.read_bytes()\n"
         "    from tldw_chatbook.Utils.platform_files import os as native_os\n"
         "    history_info = native_os.stat(history_path)\n"
-        "    history_inode_token = f'inode:{history_info.st_dev}:{history_info.st_ino}'",
+        # TASK-34200, rewritten on purpose: registrations record path + inode, not
+        # the device, which macOS can renumber across a reboot.
+        "    history_inode_token = f'inode:{history_info.st_ino}'",
     )
     script = script.replace(
         "    assert not plan.retire",

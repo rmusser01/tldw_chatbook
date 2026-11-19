@@ -8,7 +8,7 @@ from tldw_chatbook import config
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tools import web_tool_impls
-from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.Web_Scraping import WebSearch_APIs
 
 

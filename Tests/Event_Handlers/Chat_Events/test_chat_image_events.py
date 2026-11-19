@@ -85,6 +85,7 @@ class TestChatImageHandler:
     """Test suite for ChatImageHandler."""
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_process_valid_image(self, temp_image_file):
         """Test processing a valid image file."""
         image_data, mime_type = await ChatImageHandler.process_image_file(
@@ -104,6 +105,7 @@ class TestChatImageHandler:
         assert "Image file not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_process_unsupported_format(self):
         """Test processing a file with unsupported format."""
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=True) as f:
@@ -117,6 +119,7 @@ class TestChatImageHandler:
             assert ".txt" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_process_oversized_file(self, oversized_file):
         """Test processing a file that exceeds size limit."""
         with pytest.raises(ValueError) as exc_info:
@@ -125,6 +128,7 @@ class TestChatImageHandler:
         assert "Image file too large" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_process_large_image_resize(self, large_image_file):
         """Test that large images are resized."""
         image_data, mime_type = await ChatImageHandler.process_image_file(
@@ -143,27 +147,23 @@ class TestChatImageHandler:
         assert processed_img.width == processed_img.height  # Original was square
 
     @pytest.mark.asyncio
-    async def test_process_image_with_tilde_path(self, temp_image_file):
-        """Test processing image with tilde in path."""
-        # Create a path with tilde
-        home_path = Path.home()
+    @pytest.mark.bootstrap_profile
+    async def test_process_image_with_tilde_path(
+        self, temp_image_file, isolate_test_environment, monkeypatch
+    ):
+        """Test processing an actual image in the selected test home."""
+        home = isolate_test_environment / "home"
+        with tempfile.TemporaryDirectory(dir=home) as directory:
+            copied = Path(directory) / "attachment.png"
+            copied.write_bytes(temp_image_file.read_bytes())
+            with monkeypatch.context() as patch:
+                patch.setenv("USERPROFILE", str(home))
+                tilde_path = f"~/{copied.relative_to(home).as_posix()}"
+                image_data, mime_type = await ChatImageHandler.process_image_file(tilde_path)
 
-        # Only run this test if temp file is under home directory
-        try:
-            relative_path = temp_image_file.relative_to(home_path)
-            tilde_path = f"~/{relative_path}"
-
-            image_data, mime_type = await ChatImageHandler.process_image_file(
-                tilde_path
-            )
-
-            assert isinstance(image_data, bytes)
-            assert len(image_data) > 0
-        except ValueError:
-            # Skip test if temp file is not under home directory
-            pytest.skip(
-                "Temp file is not under home directory, skipping tilde path test"
-            )
+        assert isinstance(image_data, bytes)
+        assert len(image_data) > 0
+        assert mime_type == "image/png"
 
     def test_validate_image_data_valid(self):
         """Test validating valid image data."""
@@ -211,6 +211,7 @@ class TestChatImageHandler:
         assert "size_kb" in info
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_process_different_formats(self):
         """Test processing different image formats."""
         formats = {
@@ -250,6 +251,7 @@ class TestChatImageHandler:
                 assert mime_type.startswith("image/")
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_process_image_data_optimization(self):
         """Test that image processing optimizes file size."""
         # Create unoptimized JPEG
@@ -280,6 +282,7 @@ class TestChatImageHandlerEdgeCases:
     """Test edge cases for ChatImageHandler."""
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_process_corrupted_image_file(self):
         """Test processing a corrupted image file."""
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=True) as f:
@@ -300,6 +303,7 @@ class TestChatImageHandlerEdgeCases:
                 pass
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_process_zero_size_file(self):
         """Test processing an empty file."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as f:
@@ -322,6 +326,7 @@ class TestChatImageHandlerEdgeCases:
                 pass
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_process_animated_gif(self):
         """Test processing an animated GIF."""
         with tempfile.NamedTemporaryFile(suffix=".gif", delete=True) as f:
@@ -345,6 +350,7 @@ class TestChatImageHandlerEdgeCases:
             assert mime_type == "image/gif"
 
     @pytest.mark.asyncio
+    @pytest.mark.bootstrap_profile
     async def test_mime_type_detection(self):
         """Test MIME type detection for various scenarios."""
         # Test with extension that doesn't match content

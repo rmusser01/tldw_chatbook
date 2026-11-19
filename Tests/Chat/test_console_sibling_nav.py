@@ -16,6 +16,8 @@ Built via the same unmounted-``ChatScreen(app)`` pattern as
 mount is required.
 """
 
+import pytest
+
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -27,6 +29,7 @@ def _build_screen():
     return app, screen
 
 
+@pytest.mark.bootstrap_profile
 def test_sibling_nav_moves_active_leaf_between_two_siblings():
     """Given two assistant siblings a1, a2 (a2 active), variant-previous
     moves the active leaf back to a1; variant-next returns to a2."""
@@ -51,6 +54,7 @@ def test_sibling_nav_moves_active_leaf_between_two_siblings():
     assert store.active_leaf(session.id) == a2.id
 
 
+@pytest.mark.bootstrap_profile
 def test_sibling_nav_previous_restores_deepest_descendant_of_sibling_subtree():
     """Swiping to a sibling that has its OWN downstream conversation lands on
     its most-recent descendant, not on the fork point itself."""
@@ -87,6 +91,7 @@ def test_sibling_nav_previous_restores_deepest_descendant_of_sibling_subtree():
     assert store.active_leaf(session.id) == a2.id
 
 
+@pytest.mark.bootstrap_profile
 def test_sibling_nav_previous_is_a_noop_at_the_first_sibling():
     app, screen = _build_screen()
     store = screen._ensure_console_chat_store()
@@ -104,6 +109,7 @@ def test_sibling_nav_previous_is_a_noop_at_the_first_sibling():
     assert store.active_leaf(session.id) != a1.id
 
 
+@pytest.mark.bootstrap_profile
 def test_sibling_nav_next_is_a_noop_at_the_last_sibling():
     app, screen = _build_screen()
     store = screen._ensure_console_chat_store()
@@ -120,6 +126,7 @@ def test_sibling_nav_next_is_a_noop_at_the_last_sibling():
     assert store.active_leaf(session.id) == a2.id
 
 
+@pytest.mark.bootstrap_profile
 def test_sibling_nav_is_a_noop_for_a_linear_single_child_message():
     """A message with no siblings must not crash or move the active leaf --
     the UI never shows `<`/`>` for it, but the handler stays defensive."""

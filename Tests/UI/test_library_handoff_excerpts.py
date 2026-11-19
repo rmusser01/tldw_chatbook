@@ -36,6 +36,7 @@ def _screen_with_conversation(*texts: str) -> LibraryScreen:
     return screen
 
 
+@pytest.mark.bootstrap_profile
 def test_conversation_builder_starts_with_actual_speaker_labeled_transcript():
     screen = _screen_with_conversation("Keep [this] and café.", "Review on Friday.")
     payload = screen._selected_conversation_handoff_payload()
@@ -48,6 +49,7 @@ def test_conversation_builder_starts_with_actual_speaker_labeled_transcript():
     assert payload.body_truncated is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "changes",
     [
@@ -70,6 +72,7 @@ def test_conversation_builder_refuses_unsettled_or_other_reader_text(changes):
     assert screen._selected_conversation_handoff_payload() is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "length,truncated", [(2994, False), (2995, True), (50000, True)]
 )
@@ -85,6 +88,7 @@ def test_conversation_excerpt_is_bounded_and_reports_truncation(length, truncate
     assert payload.body_truncated is truncated
 
 
+@pytest.mark.bootstrap_profile
 def test_conversation_reports_omitted_later_messages_at_exact_boundary():
     screen = _screen_with_conversation("x" * 2994, "Later message.")
     payload = screen._selected_conversation_handoff_payload()
@@ -93,6 +97,7 @@ def test_conversation_reports_omitted_later_messages_at_exact_boundary():
     assert "Later message." not in payload.body
 
 
+@pytest.mark.bootstrap_profile
 def test_long_speaker_name_cannot_displace_the_actual_message_text():
     screen = _screen_with_conversation("Actual first message.", "Actual reply.")
     state = screen._conversations_state.reader_state
@@ -108,6 +113,7 @@ def test_long_speaker_name_cannot_displace_the_actual_message_text():
     assert payload.body_truncated is True
 
 
+@pytest.mark.bootstrap_profile
 def test_empty_conversation_does_not_invent_transcript_content():
     payload = _screen_with_conversation()._selected_conversation_handoff_payload()
     assert payload is not None
@@ -115,6 +121,7 @@ def test_empty_conversation_does_not_invent_transcript_content():
     assert payload.body_truncated is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("length,truncated", [(0, False), (500, False), (501, True)])
 def test_media_content_precedes_metadata_and_retains_existing_bound(length, truncated):
     screen = LibraryScreen(_build_test_app())

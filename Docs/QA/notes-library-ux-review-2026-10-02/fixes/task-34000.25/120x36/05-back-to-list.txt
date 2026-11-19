@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐  N    I       ‹ Back                                                                   │
+│ │ Navigation                │  a    t  A field guide to Markdown tables                                              │
+│ │     Import…               │  v    e  Seed                                                                          │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       m   Find  Note  Read later  Use in Console  More                                 │
+│ │ ▊ Search Library…   ▎▊x▎  │       s   Read (selected)  Analysis  Highlights  Info                                  │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │              Rendered    | Raw (selected)                                              │
+│ │                           │          ┌───────────────────────────────────────────────────────────────────────────┐ │
+│ │ ────────────────────────  │          │ # A field guide to Markdown tables                                        │ │
+│ │ Browse               ▾    │          │                                                                           │ │
+│ │  ▸ Media (23)             │          │ A long article so the Reader has something to scroll.                     │ │
+│ │    Conversations (0)      │<---      │                                                                           │ │
+│ │    Notes (123)            │          │ ## Section 1                                                              │ │
+│ │    Prompts (0) — reuse    │          │                                                                           │ │
+│ │    Skills (1)             │          │ Paragraph 2. Retrieval practice improved 7-day retention by 21            │ │
+│ │    Collections (0)        │     ---> │ percentage points in study 2; the effect held across three cohorts and    │ │
+│ │    Search / RAG           │          │ did not depend on the length of the initial exposure.                     │ │
+│ │ ────────────────────────  │          │                                                                           │ │
+│ │ Artifacts            ▾    │          │ Paragraph 3. Retrieval practice improved 7-day retention by 21            │ │
+│ │    All artifacts          │<---      │ percentage points in study 3; the effect held across three cohorts and    │ │
+│ │    Chatbooks              │          │ did not depend on the length of the initial exposure.                     │ │
+│ │    Reports              ▂ │          │                                                                           │ │
+│ │ ────────────────────────  │          │ Paragraph 4. Retrieval practice improved 7-day retention by 21            │ │
+│ │ Create               ▾    │          │ percentage points in study 4; the effect held across three cohorts and    │ │
+│ │    New note               │          │ did not depend on the length of the initial exposure.                     │ │
+│ │    New prompt             │          │                                                                           │ │
+│ │    New skill              │          │ Paragraph 5. Retrieval practice improved 7-day retention by 21            │ │
+│ │ ────────────────────────  │          │ percentage points in study 5; the effect held across three cohorts and    │ │
+│ │  ▾ scroll for more        │          └───────────────────────────────────────────────────────────────────────────┘ │
+│ └───────────────────────────┘                                                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | s select | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

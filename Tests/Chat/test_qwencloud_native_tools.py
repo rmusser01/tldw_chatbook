@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
+from time import monotonic
 from typing import Any, Callable, Iterator
 
 import pytest
@@ -254,6 +255,7 @@ class _StalledSSE:
 
     prefix: bytes
     client_close_started: threading.Event
+    peer_retirement: tuple[threading.Event, threading.Event] | None = None
 
 
 @dataclass(frozen=True)
@@ -332,6 +334,24 @@ class _JoinedQwenHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"\r\n")
             self.wfile.flush()
             server.stall_started.set()
+            if action.peer_retirement is not None:
+                peer_closed, session_closed = action.peer_retirement
+                # Keep the server's write side open until the client retires.
+                deadline = monotonic() + 2
+                self.connection.settimeout(2)
+                try:
+                    closed = self.connection.recv(1) == b""
+                except ConnectionResetError:
+                    closed = True
+                except TimeoutError:
+                    closed = False
+                if closed:
+                    peer_closed.set()
+                    closed = session_closed.wait(timeout=max(0, deadline - monotonic()))
+                if not closed:
+                    server.stall_timed_out.set()
+                self.close_connection = True
+                return
             if not action.client_close_started.wait(timeout=2):
                 server.stall_timed_out.set()
             try:
@@ -877,11 +897,23 @@ def test_partial_call_cancellation_fixture_rejects_text_only_mutation(
         _assert_partial_call_precedes_checkpoint(api_mode, text_only)
 
 
-@pytest.mark.parametrize("api_mode", ["responses", "chat_completions"])
-@pytest.mark.allow_network
+@pytest.mark.parametrize(
+    ("api_mode", "observe_retirement"),
+    [
+        pytest.param("responses", False, id="responses"),
+        pytest.param("chat_completions", False, id="chat_completions"),
+        pytest.param(
+            "chat_completions",
+            True,
+            id="chat_completions-peer-retirement",
+        ),
+    ],
+)
+@pytest.mark.loopback_network
 def test_qwencloud_partial_call_cancellation_never_executes(
     tmp_path: Any,
     api_mode: str,
+    observe_retirement: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tldw_chatbook.Tools.tool_executor import CalculatorTool
@@ -904,17 +936,21 @@ def test_qwencloud_partial_call_cancellation_never_executes(
     partial_event = _assert_partial_call_precedes_checkpoint(api_mode, body)
     close_calls: list[int] = []
     client_close_started = threading.Event()
+    response_closed = threading.Event()
+    session_closed = threading.Event()
+    peer_closed = threading.Event() if observe_retirement else None
+    waiting_for_more = threading.Event()
+    body_reader_exited = threading.Event()
     real_response_close = requests.Response.close
     real_append_stream_chunk = ConsoleChatStore.append_stream_chunk
 
     def recording_stream_chunk(
         store: ConsoleChatStore, message_id: str, chunk: str
-    ) -> Any:
-        message = real_append_stream_chunk(store, message_id, chunk)
+    ) -> None:
+        real_append_stream_chunk(store, message_id, chunk)
         if _CANCEL_CHECKPOINT in chunk:
             checkpoint_observed.set()
             cancelled.set()
-        return message
 
     monkeypatch.setattr(
         ConsoleChatStore,
@@ -923,8 +959,10 @@ def test_qwencloud_partial_call_cancellation_never_executes(
     )
     assert not cancelled.is_set()
 
+    prefix = body + _STREAM_HOLD_PADDING
+    peer_retirement = (peer_closed, session_closed) if peer_closed is not None else None
     with _joined_qwen_server(
-        [_StalledSSE(body + _STREAM_HOLD_PADDING, client_close_started)]
+        [_StalledSSE(prefix, client_close_started, peer_retirement)]
     ) as server:
         address = server.server_address
         assert isinstance(address, tuple)
@@ -934,18 +972,80 @@ def test_qwencloud_partial_call_cancellation_never_executes(
         request_prefix = f"http://{host}:{port}/compatible-mode/v1/"
 
         def recording_response_close(response: requests.Response) -> None:
-            if str(response.url).startswith(request_prefix):
+            matches = str(response.url).startswith(request_prefix)
+            if matches:
                 close_calls.append(id(response))
                 client_close_started.set()
             real_response_close(response)
+            if matches:
+                response_closed.set()
 
         monkeypatch.setattr(requests.Response, "close", recording_response_close)
+        if peer_closed is not None:
+            real_iter_content = requests.Response.iter_content
+            real_send = requests.Session.send
+            sessions: list[requests.Session] = []
+            session_close_calls: list[requests.Session] = []
+
+            def recording_body_read(
+                response: requests.Response, *args: Any, **kwargs: Any
+            ) -> Iterator[bytes]:
+                chunks = real_iter_content(response, *args, **kwargs)
+                if not str(response.url).startswith(request_prefix):
+                    yield from chunks
+                    return
+                consumed = 0
+                try:
+                    for chunk in chunks:
+                        consumed += len(chunk)
+                        yield chunk
+                        if consumed == len(prefix):
+                            waiting_for_more.set()
+                finally:
+                    body_reader_exited.set()
+
+            def recording_send(
+                session: requests.Session,
+                request: requests.PreparedRequest,
+                **kwargs: Any,
+            ) -> requests.Response:
+                if str(request.url).startswith(request_prefix):
+                    sessions.append(session)
+                    close_session = session.close
+
+                    def recording_session_close() -> None:
+                        session_close_calls.append(session)
+                        close_session()
+                        session_closed.set()
+
+                    monkeypatch.setattr(session, "close", recording_session_close)
+                return real_send(session, request, **kwargs)
+
+            monkeypatch.setattr(requests.Response, "iter_content", recording_body_read)
+            monkeypatch.setattr(requests.Session, "send", recording_send)
+
         outcome, _store = _run_joined_reply(
             tmp_path,
             server,
             api_mode,
-            should_cancel=cancelled.is_set,
+            should_cancel=(
+                cancelled.is_set
+                if peer_closed is None
+                else lambda: cancelled.is_set() and waiting_for_more.is_set()
+            ),
         )
+        if peer_closed is not None:
+            assert waiting_for_more.is_set()
+            deadline = monotonic() + 2
+            for observed, label in (
+                (body_reader_exited, "stream reader"),
+                (response_closed, "response close"),
+                (session_closed, "session close"),
+                (peer_closed, "peer EOF or reset"),
+            ):
+                assert observed.wait(timeout=max(0, deadline - monotonic())), label
+            assert len(sessions) == 1
+            assert session_close_calls == sessions
 
     assert outcome.status == "cancelled"
     assert checkpoint_observed.is_set()
@@ -957,6 +1057,15 @@ def test_qwencloud_partial_call_cancellation_never_executes(
     assert len(server.requests) == 1
     assert server.stall_started.is_set()
     assert not server.stall_timed_out.is_set()
+    # TASK-19642.7: the cancelled stream's response is closed OFF the turn's
+    # critical path (a shielded async close task on the bridge loop, landed
+    # with the duplex-voice integration b7dd8e53f2), so the close can land
+    # just after run_reply returns. Wait for it deterministically instead of
+    # asserting it happened synchronously; the exactly-once count below is
+    # unchanged.
+    assert client_close_started.wait(timeout=10), (
+        "cancelled stream response was never closed"
+    )
     assert len(close_calls) == 1
     assert executions == []
     assert not any(step.kind in {"tool_call", "tool_result"} for step in outcome.steps)
@@ -991,11 +1100,19 @@ def test_qwencloud_responses_usage_enforces_agent_budget(
         [("fc_budget", "call_budget", '{"expression":"2+2"}')],
         usage=usage,
     )
-    with _joined_qwen_server([body]) as server:
+    # TASK-19642.7: since 34d4ccb91b ("warn before budget exhaustion;
+    # summarize at it") the exhausted path makes ONE extra tools-stripped
+    # wrap-up summary call before the honest RUN_STUCK -- script its answer
+    # and expect two requests instead of one.
+    wrap_up = _responses_final_turn("SUMMARY-OF-PARTIAL-RUN")
+    with _joined_qwen_server([body, wrap_up]) as server:
         outcome, _store = _run_joined_reply(tmp_path, server, "responses")
 
     assert outcome.status == "stuck"
-    assert outcome.total_tokens == budget + 1
-    assert len(server.requests) == 1
+    # The +35 is the wrap-up summary call's own scripted usage
+    # (input 30 + output 5) -- the exhaustion accounting keeps counting the
+    # one bounded call it makes after the budget trips.
+    assert outcome.total_tokens == budget + 1 + 35
+    assert len(server.requests) == 2
     assert outcome.steps[-1].kind == "error"
     assert outcome.steps[-1].summary == "token budget exhausted"

@@ -160,6 +160,9 @@ def provision_continuation(core, lease, function):
         raise bootstrap.RecoveryRequired("model_provision_continuation_invalid")
     allowed = {
         ModelArtifactService._download_stage_for,
+        # TASK-34100.14: a user-cancelled provision removes its own stage
+        # while it still holds this session lease.
+        ModelArtifactService._discard_download_stage_for,
         ModelArtifactService._finalize_download_stage,
         ModelArtifactService.activate,
         ModelArtifactService.list_installed,

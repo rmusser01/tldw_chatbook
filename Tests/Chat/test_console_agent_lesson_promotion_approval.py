@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.Agents.agent_models import ToolCall, normalize_tool_review
 from tldw_chatbook.Agents.local_tool_provider import (
     PROMOTION_APPROVAL_REQUIRED,
@@ -267,6 +269,7 @@ def test_detailed_promotion_reports_consumed_stamp_after_post_stamp_failure(tmp_
     assert outcome.dispatch_started is False
 
 
+@pytest.mark.bootstrap_profile
 def test_promotion_accepts_alias_distinct_from_binding_id_with_multiple_roots(
     tmp_path,
 ):

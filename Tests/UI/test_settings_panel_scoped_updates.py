@@ -83,8 +83,7 @@ async def test_category_switch_rebuilds_only_the_two_category_panes(request):
         await _settle(pilot)
 
         assert _identities(screen, _STABLE) == before, (
-            "A Settings category switch rebuilt chrome that does not read the "
-            "category."
+            "A Settings category switch rebuilt chrome that does not read the category."
         )
         assert id(screen.query_one(MainNavigationBar)) == nav_before
         # ...and the panes it DOES own actually repainted.
@@ -209,9 +208,7 @@ def _sync_row_texts(screen) -> list[str]:
         "#settings-overview-manual-sync-rows",
         "#settings-overview-handoff-rows",
     ):
-        rows.extend(
-            _text(row) for row in screen.query_one(region_id).query(Static)
-        )
+        rows.extend(_text(row) for row in screen.query_one(region_id).query(Static))
     return rows
 
 

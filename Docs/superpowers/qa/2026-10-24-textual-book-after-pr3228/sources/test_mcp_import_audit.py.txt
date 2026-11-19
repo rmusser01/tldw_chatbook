@@ -1,0 +1,94 @@
+"""Read-only MCP file-load publication probes with real thread/read boundary."""
+import asyncio
+import json
+import threading
+from pathlib import Path
+import pytest
+from textual.widgets import Button, TextArea
+from Tests.private_profile import private_profile_test
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.test_mcp_workbench import ProfileFormHubService
+from tldw_chatbook.UI.MCP_Modules.mcp_profile_form import MCPImportPanel
+from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
+from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
+from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileOpen
+
+EVIDENCE = Path(__file__).parent
+
+class HubApp(ConsolidatedCSSApp):
+    def __init__(self):
+        super().__init__()
+        self.unified_mcp_service = ProfileFormHubService()
+    def compose(self):
+        yield ToolsHubPanel(self, id='settings-tools-hub')
+
+async def until(predicate):
+    async with asyncio.timeout(15):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('later', ['none', 'typing', 'replacement'])
+@private_profile_test
+async def test_import_file_respects_current_draft(request, monkeypatch, later):
+    app = HubApp()
+    source = Path.home() / 'mcp-audit-input.json'
+    file_text = json.dumps({'mcpServers': {'file-server': {'command': 'python'}}})
+    source.write_text(file_text, encoding='utf-8')
+    entered, release = threading.Event(), threading.Event()
+    real_read = Path.read_text
+    def held_read(path, *args, **kwargs):
+        if path == source:
+            entered.set()
+            assert release.wait(30), 'file read gate not released'
+        return real_read(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', held_read)
+    evidence = {'arm': later, 'fixture_path': str(source)}
+    async with app.run_test(size=(180, 60)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        workbench = app.query_one(MCPWorkbench)
+        app.query_one('#mcp-import-server', Button).press()
+        await until(lambda: bool(list(app.query(MCPImportPanel))))
+        await pilot.pause()
+        original = app.query_one(MCPImportPanel)
+        app.query_one('#mcp-import-file', Button).press()
+        await until(lambda: isinstance(app.screen, EnhancedFileOpen))
+        await pilot.pause()
+        # The picker returns a user-selected private fixture path through the
+        # shipped callback, which starts the production import-file worker.
+        app.screen.dismiss(source)
+        await until(entered.is_set)
+        try:
+            if later == 'replacement':
+                await pilot.press('escape')
+                await until(lambda: not list(app.query(MCPImportPanel)))
+                app.query_one('#mcp-import-server', Button).press()
+                await until(lambda: bool(list(app.query(MCPImportPanel))))
+                await until(lambda: bool(list(app.query('#mcp-import-text'))))
+                await pilot.pause()
+                assert app.query_one(MCPImportPanel) is not original
+            if later != 'none':
+                area = app.query_one('#mcp-import-text', TextArea)
+                area.focus()
+                await pilot.pause()
+                await pilot.press(*'later-draft')
+                assert area.text == 'later-draft', area.text
+                evidence['live_before_completion'] = area.text
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        evidence['text_after_completion'] = app.query_one('#mcp-import-text', TextArea).text
+        evidence['same_panel'] = app.query_one(MCPImportPanel) is original
+        evidence['original_attached'] = original.is_attached
+        evidence['expected_file_text'] = file_text
+        evidence['head'] = '96cae7eec00473bbfb5687ccfd0685eba2785add'
+        (EVIDENCE/f'import-file-{later}.json').write_text(json.dumps(evidence, indent=2)+'\n', encoding='utf-8')
+        if later == 'none':
+            assert evidence['text_after_completion'] == file_text
+        else:
+            assert evidence['text_after_completion'] == 'later-draft', evidence
+
+
+

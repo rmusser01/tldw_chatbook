@@ -1,0 +1,36 @@
+"""Exact independent fix-round probe; controller has not rerun it."""
+import asyncio, json, os, tempfile
+from pathlib import Path
+
+with tempfile.TemporaryDirectory(prefix='task2-review-fix1-recovery-') as scratch:
+    root = Path(scratch)
+    (root / 'data').mkdir(mode=0o700)
+    config = root / 'config.toml'
+    config.write_text('[paths]\ndata_dir = "' + str(root / 'data') + '"\n')
+    config.chmod(0o600)
+    os.environ.update(TLDW_CONFIG_PATH=str(config), XDG_CONFIG_HOME=str(root / 'config'),
+                      XDG_DATA_HOME=str(root / 'data'), TLDW_TEST_MODE='1')
+    from loguru import logger
+    logger.remove()
+    from Tests.Chat.test_console_chat_start import _native_start_rig
+    async def probe():
+        controller, store, runs, source, target, chain, request = await _native_start_rig(root)
+        try:
+            controller._agent_runtime_enabled = False
+            refused = await controller._chat_start.start(request)
+            controller._agent_runtime_enabled = True
+            result = await controller.submit_draft(target.draft, session_id=target.id)
+            tasks = tuple(controller._active_stream_tasks.values())
+            if tasks:
+                await asyncio.gather(*tasks)
+            activity = controller.activity_for(target.id)
+            print(json.dumps({'refusal':refused.launch_status, 'manual_result':str(result),
+                'run_status':controller.run_state_for(target.id).status.value,
+                'handoff_state':target.agent_handoff_state,
+                'handoff_status':activity.agent_handoff_status,
+                'accepted_live_turn':activity.accepted_live_turn, 'queued':activity.queued_count}))
+        finally:
+            await controller.shutdown()
+            runs.close()
+            store.persistence.db.close_connection()
+    asyncio.run(probe())

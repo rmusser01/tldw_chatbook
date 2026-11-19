@@ -8,6 +8,7 @@ HyDE actually passed.
 
 Pure helpers only: no index, no generator, no `RAG_EVAL` gate.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -23,7 +24,7 @@ _PROBE = (
 
 @pytest.fixture(scope="module")
 def probe():
-    if not _PROBE.exists():                       # pragma: no cover
+    if not _PROBE.exists():  # pragma: no cover
         pytest.skip(f"probe absent: {_PROBE}")
     spec = importlib.util.spec_from_file_location("hyde_probe", _PROBE)
     module = importlib.util.module_from_spec(spec)
@@ -92,8 +93,10 @@ class TestEndpointValidation:
             probe._validated_endpoint(bad)
 
     def test_accepts_http_and_https(self, probe):
-        for good in ("http://localhost:9099/v1/chat/completions",
-                     "https://example.test/v1/chat/completions"):
+        for good in (
+            "http://localhost:9099/v1/chat/completions",
+            "https://example.test/v1/chat/completions",
+        ):
             assert probe._validated_endpoint(good) == good
 
     def test_rejects_blank_model(self, probe):
@@ -123,7 +126,7 @@ _CENSUS = (
 
 @pytest.fixture(scope="module")
 def census():
-    if not _CENSUS.exists():                      # pragma: no cover
+    if not _CENSUS.exists():  # pragma: no cover
         pytest.skip(f"census absent: {_CENSUS}")
     spec = importlib.util.spec_from_file_location("hyde_census", _CENSUS)
     module = importlib.util.module_from_spec(spec)
@@ -138,37 +141,45 @@ class TestCensusClassify:
     have; if it under-counts, a real candidate is killed silently."""
 
     def test_a_hit_is_not_reachable(self, census):
-        assert census.classify(True, "keyword", hit_at_k=True, hit_at_deep=True) == "hitting"
+        assert (
+            census.classify(True, "keyword", hit_at_k=True, hit_at_deep=True)
+            == "hitting"
+        )
 
     def test_miss_now_found_deeper_is_HyDEs_case(self, census):
-        assert census.classify(
-            True, "negation", hit_at_k=False, hit_at_deep=True
-        ) == "reachable"
+        assert (
+            census.classify(True, "negation", hit_at_k=False, hit_at_deep=True)
+            == "reachable"
+        )
 
     def test_absent_even_at_depth_is_unfindable(self, census):
-        assert census.classify(
-            True, "keyword", hit_at_k=False, hit_at_deep=False
-        ) == "unfindable"
+        assert (
+            census.classify(True, "keyword", hit_at_k=False, hit_at_deep=False)
+            == "unfindable"
+        )
 
     def test_negative_excluded_before_reachability(self, census):
         """A `negative` has no target, so `hit` is False by construction and a
         miss is CORRECT — it must never enter the reachable population."""
-        assert census.classify(
-            False, "negative", hit_at_k=False, hit_at_deep=False
-        ) == "excluded_negative"
+        assert (
+            census.classify(False, "negative", hit_at_k=False, hit_at_deep=False)
+            == "excluded_negative"
+        )
 
     def test_prompt_excluded_even_when_found_deeper(self, census):
         """Prompt targets have no vector index, so no query-vector rewrite can
         reach them — the exclusion must win over `hit_at_deep`."""
-        assert census.classify(
-            True, "prompt", hit_at_k=False, hit_at_deep=True
-        ) == "excluded_prompt"
+        assert (
+            census.classify(True, "prompt", hit_at_k=False, hit_at_deep=True)
+            == "excluded_prompt"
+        )
 
     def test_a_hitting_negative_is_still_hitting(self, census):
         """Ordering guard: `hitting` is decided before the exclusions."""
-        assert census.classify(
-            False, "negative", hit_at_k=True, hit_at_deep=True
-        ) == "hitting"
+        assert (
+            census.classify(False, "negative", hit_at_k=True, hit_at_deep=True)
+            == "hitting"
+        )
 
     def test_bar_is_the_inherited_five(self, census):
         assert census.BAR == 5

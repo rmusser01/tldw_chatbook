@@ -287,8 +287,19 @@ class FeatureGlueMixin:
             worker = None  # direct calls in tests/harnesses run un-cancellable
         should_abort = (lambda: worker.is_cancelled) if worker is not None else None
 
+        from tldw_chatbook import config as config_module
+
         try:
-            db = get_chachanotes_db_lazy()
+            # TASK-38462: a profile with no database has no messages to index.
+            # Opening it here would CREATE it (every schema step plus seeding,
+            # seconds on Windows) in a run no cancel can stop, which outlived
+            # the app's exit and its 3 s worker join.
+            db = (
+                get_chachanotes_db_lazy()
+                if config_module.chachanotes_db is not None
+                or config_module.get_chachanotes_db_path().exists()
+                else None
+            )
             if db is None:
                 logger.debug(
                     "ChaChaNotes messages FTS backfill skipped: no database instance."
@@ -592,16 +603,14 @@ class FeatureGlueMixin:
             if refreshed:
                 self.post_message(ModelCatalogRefreshed(providers=refreshed))
             message = format_refresh_notification(report)
-            if message:
-                has_failure = report.disk_write_failed or any(
-                    outcome.status == "failed" or outcome.write_failed
-                    for outcome in report.outcomes
-                )
-                self.notify(
-                    message,
-                    title="Model catalog",
-                    severity="warning" if has_failure else "information",
-                )
+            has_failure = report.disk_write_failed or any(
+                outcome.status == "failed" or outcome.write_failed
+                for outcome in report.outcomes
+            )
+            # TASK-34100.5 AC#11: the pass setup released is news only if it failed.
+            if message and (has_failure or not getattr(self, "_model_catalog_notice_quiet", False)):
+                severity = "warning" if has_failure else "information"
+                self.notify(message, title="Model catalog", severity=severity)
         except Exception as exc:
             # No traceback: the log file sink runs with diagnose=True, which
             # would dump frame locals (potentially API keys) into the log file.
@@ -657,6 +666,7 @@ class FeatureGlueMixin:
             return True
 
         self._startup_model_catalog_refresh_scheduled = True
+        self._model_catalog_notice_quiet = after_setup_completion
         self.run_worker(
             self._refresh_model_catalogs,
             exclusive=True,
@@ -735,6 +745,7 @@ class FeatureGlueMixin:
         exclusive group, so the two paths can never run concurrently.
         """
         self._startup_model_catalog_refresh_scheduled = True
+        self._model_catalog_notice_quiet = True  # setup's own choice (AC#11)
         self.run_worker(
             self._refresh_model_catalogs,
             exclusive=True,

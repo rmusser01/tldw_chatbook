@@ -33,7 +33,7 @@ _ALLOWED_OWNER_IDS = frozenset(BUILT_IN_TTS_PROVIDER_IDS) | {
 
 
 class SpeechTTSConfigurationState(StrEnum):
-    """Locally derived configuration states accepted by ADR-039."""
+    """Locally derived configuration states accepted by ADR-304."""
 
     INHERITED = "Inherited"
     DEFAULT = "Default"
@@ -359,7 +359,7 @@ class SpeechTTSRuntimeStatus:
 
 
 class SpeechTTSOwnershipScope(StrEnum):
-    """The five non-overlapping destinations accepted by ADR-039."""
+    """The five non-overlapping destinations accepted by ADR-304."""
 
     GLOBAL_CONFIGURATION = "global-configuration"
     STUDIO_PREFERENCE = "studio-preference"
@@ -604,13 +604,13 @@ def _build_ownership_index(
 SPEECH_TTS_OWNERSHIP_BY_CONTROL_ID = _build_ownership_index(
     SPEECH_TTS_OWNERSHIP_INVENTORY
 )
-"""Read-only lookup for the accepted ADR-039 built-in ownership inventory."""
+"""Read-only lookup for the accepted ADR-304 built-in ownership inventory."""
 
 
 def validate_speech_tts_ownership_inventory(
     records: Iterable[SpeechTTSOwnershipRecord],
 ) -> Mapping[str, SpeechTTSOwnershipRecord]:
-    """Validate completeness and exact ADR-039 ownership for candidate records.
+    """Validate completeness and exact ADR-304 ownership for candidate records.
 
     Args:
         records: Candidate classification records for all current controls.
@@ -631,6 +631,6 @@ def validate_speech_tts_ownership_inventory(
     )
     if contradictory:
         raise ValueError(
-            f"Speech TTS ownership contradicts ADR-039 for controls: {contradictory}"
+            f"Speech TTS ownership contradicts ADR-304 for controls: {contradictory}"
         )
     return candidate

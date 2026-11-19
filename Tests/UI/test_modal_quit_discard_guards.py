@@ -202,6 +202,7 @@ def _prompts_modal(dirty: bool, mode: str = "edit", *, applying: bool = False):
     modal = ConsolePromptsModal.__new__(ConsolePromptsModal)
     modal.state = SimpleNamespace(mode=mode, dirty=dirty)
     modal._apply_in_progress = applying
+    modal._mixin_save_worker = None  # no mix-in Library save in flight
     return modal
 
 
@@ -303,6 +304,14 @@ async def test_console_prompts_modal_refuses_quit_while_an_apply_is_in_flight(
     assert await modal.confirm_quit() is False
     assert asked == [], "an apply in flight is not a discard prompt"
     assert len(notices) == 1 and "applying" in notices[0].lower()
+
+    # A stuck apply must not make the app unquittable (TASK-33622.15): the
+    # next Ctrl+Q asks whether to quit anyway; Wait (this fixture) stays.
+    assert await modal.confirm_quit() is False
+    [(screen, message, copy)] = asked
+    assert screen is modal and "applying" in message.lower()
+    assert copy["title"] == "Quit while still working?"
+    assert len(notices) == 1
 
 
 @pytest.mark.asyncio

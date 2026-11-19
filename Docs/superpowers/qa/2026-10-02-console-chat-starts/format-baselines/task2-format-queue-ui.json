@@ -1,0 +1,47 @@
+{
+  "base_ref": "529a9ea9d1c14ba4a2e085c0355c0a304ac562ab",
+  "base_sha": "529a9ea9d1c14ba4a2e085c0355c0a304ac562ab",
+  "baseline_red_paths": [
+    "Tests/UI/test_console_prompt_queue.py"
+  ],
+  "files": {
+    "Tests/UI/test_console_prompt_queue.py": {
+      "debt_units": 36,
+      "formatter_required": true,
+      "normalized_diff_sha256": "817d191574c3b3fa51a3093a173f30ab68e9700132ea0765b9eaf708ff447fcf",
+      "source_hunks": [
+        [
+          77,
+          99
+        ],
+        [
+          259,
+          270
+        ],
+        [
+          334,
+          340
+        ],
+        [
+          370,
+          376
+        ],
+        [
+          917,
+          923
+        ],
+        [
+          1146,
+          1154
+        ]
+      ],
+      "source_sha256": "52a88491d87628dd8f7ebc86c1e37c3719aa309f9e469f51a01d087f7265d014"
+    }
+  },
+  "generated_at_utc": "2026-10-03T03:09:18.714262+00:00",
+  "paths": [
+    "Tests/UI/test_console_prompt_queue.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

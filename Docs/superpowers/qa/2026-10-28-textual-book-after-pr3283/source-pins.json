@@ -1,0 +1,65 @@
+{
+  "baseline": "7884e11a496a677c8180cc5d67234a57b7d659b9",
+  "source_pins": {
+    "tldw_chatbook/UI/Evals/character_bench_editor.py": {
+      "raw_checkout_sha256": "601b4960ed0a4e06fe1a83ea63a788710bc08f270e2091de59140498dc68f845",
+      "git_blob": "84fb77a62b7677a4440d67567c19b6f4437fb952",
+      "lf_sha256": "46b3cb1e4273990aac0345197c68fc33cf577439482ebfd9351c3d04b14dd114"
+    },
+    "tldw_chatbook/UI/Evals/bench_editor.py": {
+      "raw_checkout_sha256": "c9241a4972a508d522f4aee7e1438233ffd962b1165bd495ffe4c6550c2364da",
+      "git_blob": "5761ddf8f1b23a6be8af1ed970ff9bb60350ae5e",
+      "lf_sha256": "7fed4599835e179b6502d5eaf654e52bd5e75a0a9959d186977a8eebd7093fdb"
+    },
+    "tldw_chatbook/UI/Screens/evals_screen.py": {
+      "raw_checkout_sha256": "71f910ebe96bbbeec8baa0b8ab57661afdde0400188d7f424b05083d168f4cb0",
+      "git_blob": "60878049545991c8136b5da593181a4a91e0abf2",
+      "lf_sha256": "35bd0bbcb07d6248a2423d6bce135fedb5e156ea6bd46f30d72bfb1c4365240e"
+    },
+    "tldw_chatbook/UI/Screens/library_screen.py": {
+      "raw_checkout_sha256": "abc900fa3a5fe315ed1b571037745b4368cf747e9a3d90369ea72f0b42eb9a86",
+      "git_blob": "8e099d9d41ab184b968ec2956a311c1ae386810b",
+      "lf_sha256": "cf7d715a6eccace79aab1aa42815a9de7339dbfc4fe056c3638744a3c4e56859"
+    },
+    "tldw_chatbook/UI/Library_Modules/library_file_export.py": {
+      "raw_checkout_sha256": "dfe6f86946ff717678cd3009c60cd4cb3b8ba1f433e2dbded485295eb65e4608",
+      "git_blob": "8c16f53afe81ec0d7d65ab22e611ad78540959d2",
+      "lf_sha256": "b2dbde0e33fa10f90b3cf2fe9ec86eaafa5b073ea8a55c5ec07e25acd70d0646"
+    },
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": {
+      "raw_checkout_sha256": "6f6e8e3dce457364a822a25a7f2ad52a6d9b0cd4a6e8ba2a0317f502329a5dff",
+      "git_blob": "9aa8b2ed650bfeaf2a2aed91080e34dd3ff67869",
+      "lf_sha256": "bf303c84ba16d064125a81d43921dea827d66bbddfc14e7730a4ab9060333f8d"
+    },
+    "tldw_chatbook/UI/Research_Window.py": {
+      "raw_checkout_sha256": "026a6af5fa30f11e659cacec8d8cca95a6ee5720e2d76ef0281d0074fe75c359",
+      "git_blob": "6b369965fe46e5d7479e725cd23a9ffdb988be91",
+      "lf_sha256": "7ace314a589149a6681d0a2e6e5f2beed53ff39a3d660c7dd07a23d978b57d75"
+    },
+    "tldw_chatbook/UI/Research_Modules/research_controller.py": {
+      "raw_checkout_sha256": "28bbae033175802b9b82035bd9435f83dd2738f8110c4bbd9d2f68771f598bdd",
+      "git_blob": "eced0db0812a1f64e2dcf51d40c1c4a710649f2b",
+      "lf_sha256": "e317a1b7d0b1fc023efbc48387c2d28a948926408ea11b9af42ffa89f8c6ccf4"
+    },
+    "tldw_chatbook/Research_Interop/research_scope_service.py": {
+      "raw_checkout_sha256": "4975029167aade5e8bbbf376d6545d8bc4aae770372432e8a291ddbf35deaddb",
+      "git_blob": "7fc37bbf79438bc6e8daef475fb66754138f2dcc",
+      "lf_sha256": "ac714801884118f4cf175ca997c9aecc73591b915677c61d77f3732e5c3a293a"
+    },
+    "Tests/UI/test_evals_bench_save_publication.py": {
+      "raw_checkout_sha256": "72255c96078c80ff5cee099ff80f5f31d2ae701e830672774cb1689ef1044bae",
+      "git_blob": "1ef13959c6a38e44936e7233c99252ef88065714",
+      "lf_sha256": "f18fa0b398f50346790ab9b481b7eb6289dc44f0eb62251da35f6b274c768569"
+    },
+    "Tests/UI/test_library_export_replace_confirm.py": {
+      "raw_checkout_sha256": "c2718b45dc5a7addef3d8508657790872cebcc4b9be2e6baa88af54d8f2c7e43",
+      "git_blob": "5bc25fc20031a71f824bbf27d92724796d14656b",
+      "lf_sha256": "45c9971bd2f8a2bfcb334d3cb689f364a6d6d2bd78d869f79ad014f9cce2e966"
+    },
+    "Tests/UI/test_library_shell.py": {
+      "raw_checkout_sha256": "24396eeb7956b84ce37c63944fc188d5919747fef64c208cc1fa2fc6256218a8",
+      "git_blob": "7e7ecd5bdb0d24c81a5b3c6a88235b91c79e6615",
+      "lf_sha256": "ed653e100e72d27fec6ebcdbbc79908608a389faea35ab5cedb9bc4162c028e8"
+    }
+  }
+}

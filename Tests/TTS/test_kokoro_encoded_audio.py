@@ -33,6 +33,7 @@ def generated_audio(tmp_path):
     return backend, samples, sample_rate
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("format_name", ["wav", "flac", "mp3"])
 async def test_encoded_response_decodes_every_generated_sample(
@@ -67,6 +68,7 @@ async def test_encoded_response_decodes_every_generated_sample(
         assert np.corrcoef(actual[sample_rate:], expected[sample_rate:])[0, 1] > 0.99
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pcm_response_remains_incremental_and_complete(generated_audio):
     backend, expected, _ = generated_audio
@@ -82,6 +84,7 @@ async def test_pcm_response_remains_incremental_and_complete(generated_audio):
     np.testing.assert_array_equal(actual, np.int16(expected * 32767))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_encoding_does_not_emit_a_partial_audio_file(generated_audio):
     backend, _, _ = generated_audio
@@ -98,6 +101,7 @@ async def test_failed_encoding_does_not_emit_a_partial_audio_file(generated_audi
     assert not any(chunks)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("format_name", ["wav", "flac", "mp3", "pcm"])
 async def test_pytorch_response_preserves_every_text_chunk(

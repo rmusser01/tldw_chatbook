@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 import math
 import threading
 import time
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ContextManager, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -62,12 +63,47 @@ LOCAL_COMMAND_RUN_LOG_DIR = "local-command-runs"
 
 _RAW_CLI_COMPACT_OUTPUT_BYTES = 4 * 1024
 
+#: The raw-CLI danger disclosure, shown on the Settings card. Moved here from
+#: ``settings_screen`` (TASK-33622.9) so the Console composer's in-place arm
+#: shows the same lines without importing the Settings screen.
+RAW_CLI_DISCLOSURE_LINES = (
+    "Commands run with the same OS permissions as Chatbook.",
+    "Commands can read, modify, or delete any accessible file, including Chatbook's "
+    "config and permission store.",
+    "Commands can access the network, invoke credentialed clients, launch background "
+    "processes, and exhaust machine resources.",
+    "The environment is scrubbed, but commands can still read credential files and "
+    "other user data.",
+    "Cancellation attempts to terminate the owned process group/job; deliberately "
+    "detached descendants may survive.",
+    "Command text and bounded output may persist in local run logs.",
+    "This is not a sandbox and is not limited to your workspace.",
+)
+#: Every arm confirmation (Settings > Privacy & Security and the Console
+#: composer's in-place Arm…) also says what ADR-093 registers while armed.
+RAW_CLI_ARM_DISCLOSURE_LINES = RAW_CLI_DISCLOSURE_LINES + (
+    "Arming also gives models the host-shell tool shell_exec while local tools "
+    "are on. A model must ask before it runs a command: you can run it once, "
+    "allow shell commands for that Console session, or deny. There is no "
+    "permanent Allow.",
+)
+
 RawCliArmReason: TypeAlias = Literal["armed", "locked", "shutdown"]
+#: What the Console composer shows for a trusted ``! `` draft (TASK-33622.9).
+RawCliAuthority: TypeAlias = Literal["armed", "unarmed", "locked"]
+
 # Forward-referenced so the alias does not resolve `RawCliStreamEvent` at
 # import time (it lives in the deferred `Tools.raw_cli_executor`).
 RawCliEventSink: TypeAlias = Callable[["RawCliStreamEvent"], None]
 RawCliRegisteredSink: TypeAlias = Callable[[], None]
 RawCliStartedSink: TypeAlias = Callable[[float], None]
+
+
+def raw_cli_authority(runtime: object) -> RawCliAuthority:
+    """Classify a raw-CLI runtime for presentation; anything unknown is locked."""
+    if getattr(runtime, "permitted", False) is not True:
+        return "locked"
+    return "armed" if getattr(runtime, "armed", False) is True else "unarmed"
 
 
 def _literal_terminal_text(value: str) -> str:
@@ -602,6 +638,15 @@ class RawCliRuntime:
             self._clear_model_session_grants_locked()
             return revoked
 
+    def review_check_boundary_factory(self):
+        """Return an executor's enforcing boundary factory, absent on stock Raw CLI.
+
+        The factory must enforce aggregate bytes and file counts before any
+        materialization or execution, and own deletion/settlement receipts.
+        Output clipping and per-file limits do not qualify.
+        """
+        return getattr(self._executor_or_default(), "reserve_review_boundary", None)
+
     def execute(
         self,
         request: RawCliRequest,
@@ -609,6 +654,7 @@ class RawCliRuntime:
         *,
         on_registered: RawCliRegisteredSink | None = None,
         on_started: RawCliStartedSink | None = None,
+        admission_scope: Callable[[], ContextManager[None]] | None = None,
     ) -> RawCliResult:
         """Synchronously execute one request through the guarded admission seam."""
         request = _raw_cli_executor().validate_raw_cli_request(request)
@@ -653,19 +699,24 @@ class RawCliRuntime:
                     if not authority_allows_launch_locked():
                         return False
                 tree.admit()
-                with self._lock:
-                    # The second check and commit are the atomic launch boundary.
-                    if not authority_allows_launch_locked():
+                # Optional native owner fence encloses only commit/acceptance.
+                # Ordinary calls retain the existing admission path unchanged.
+                with (
+                    admission_scope() if admission_scope is not None else nullcontext()
+                ):
+                    with self._lock:
+                        # The second check and commit are the atomic launch boundary.
+                        if not authority_allows_launch_locked():
+                            return False
+                        started_at = commit_launch()
+                    if started_at is None:
                         return False
-                    started_at = commit_launch()
-                if started_at is None:
-                    return False
-                if on_started is not None:
-                    try:
-                        on_started(started_at)
-                    except Exception:
-                        pass
-                return True
+                    if on_started is not None:
+                        try:
+                            on_started(started_at)
+                        except Exception:
+                            pass
+                    return True
 
         try:
             if on_registered is not None:

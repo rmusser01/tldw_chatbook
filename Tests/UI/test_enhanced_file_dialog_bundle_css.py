@@ -107,9 +107,9 @@ async def test_filtered_dialog_action_bar_stays_inside_dialog(tmp_path):
         dialog_right = dialog_region.x + dialog_region.width
         for label, region in buttons.items():
             assert region.width > 0, f"{label} has zero width"
-            assert (
-                region.x + region.width <= dialog_right + 1
-            ), f"{label} is clipped past the dialog's right edge (x={region.x})"
+            assert region.x + region.width <= dialog_right + 1, (
+                f"{label} is clipped past the dialog's right edge (x={region.x})"
+            )
         assert filename.width >= 20, (
             f"filename input crushed to {filename.width} columns; "
             "the filter Select is eating the row again"

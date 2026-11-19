@@ -13,6 +13,7 @@ import shutil
 import sys
 import time
 from collections.abc import Iterator
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -824,7 +825,9 @@ def _load(
         ) from exc
     if recorder is not None and recorder.startup_error is not None:
         raise AssertionError(recorder.startup_error)
-    return page.evaluate("window.__canvasHarness.status")
+    return page.evaluate(
+        "window.__canvasHarness.messages.find((item) => item.type === 'canvas:status')"
+    )
 
 
 def _assert_zero_generated_egress(
@@ -1316,6 +1319,89 @@ document.getElementById("mix-live").addEventListener("click", () => {
 
 @pytest.mark.loopback_network
 @pytest.mark.parametrize("runtime_profile", ["canvas-v1", "canvas-v2-mermaid-1"])
+def test_initial_load_retains_ready_before_timer_failure_when_observer_is_delayed(
+    chromium_browser: Any,
+    asset_server: _OwnedServer,
+    egress_server: _OwnedServer,
+    candidate_snapshot,
+    runtime_profile: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset_server.v2 = runtime_profile == "canvas-v2-mermaid-1"
+    context, page, recorder = _new_page(chromium_browser, asset_server, egress_server)
+    try:
+        source = _attack_source(
+            "for (let index = 0; index < 64; index += 1) setInterval(() => {}, 0);"
+        )
+        wait_for_function = page.wait_for_function
+
+        def delay_observer_until_failure(*args: Any, **kwargs: Any) -> Any:
+            result = wait_for_function(*args, **kwargs)
+            # Delay only the observer, leaving real execution and timers untouched.
+            wait_for_function(
+                "window.__canvasHarness.status?.state === 'failed' && "
+                "window.__canvasHarness.status.code === 'timer-rate-limit'",
+                timeout=10_000,
+            )
+            return result
+
+        with monkeypatch.context() as observer:
+            observer.setattr(page, "wait_for_function", delay_observer_until_failure)
+            status = _load(
+                page,
+                _wire_plan(
+                    source,
+                    runtime_profile=runtime_profile,
+                    snapshot=candidate_snapshot,
+                ),
+                recorder,
+                source=source,
+            )
+
+        messages = page.evaluate("window.__canvasHarness.messages")
+        assert [item["type"] for item in messages] == [
+            "canvas:execution-started",
+            "canvas:status",
+            "canvas:status",
+        ]
+        ready, failed = messages[1:]
+        assert ready["state"] == "ready"
+        assert ready["code"] is None
+        assert ready["scripts_disabled"] is False
+        assert ready["engine"] == "quickjs-wasm"
+        assert failed["state"] == "failed"
+        assert failed["code"] == "timer-rate-limit"
+        assert failed["scripts_disabled"] is True
+        assert page.evaluate("window.__canvasHarness.startupApproved") is True
+        nonce = page.evaluate("window.__canvasHarness.nonce")
+        assert all(item["nonce"] == nonce for item in messages)
+        assert ready["native_worker_sentinel"] == "native-worker-clean"
+        assert failed["native_worker_sentinel"] == "native-worker-clean"
+
+        frame = page.frame(name="canvas-renderer")
+        assert frame is not None
+        for realm, sentinel in (
+            (page, "native-shell-clean"),
+            (frame, "native-frame-clean"),
+        ):
+            assert realm.evaluate("window.__canvasNativeWindowSentinel") == sentinel
+            assert (
+                realm.evaluate("Object.prototype.__canvasNativePrototypeSentinel")
+                == sentinel
+            )
+            assert (
+                realm.evaluate("typeof window.__canvasGeneratedFunction") == "undefined"
+            )
+        assert page.url == f"{asset_server.origin}/shell.html"
+        _assert_zero_generated_egress(recorder, egress_server)
+        assert status == ready
+        assert page.evaluate("window.__canvasHarness.status") == failed
+    finally:
+        context.close()
+
+
+@pytest.mark.loopback_network
+@pytest.mark.parametrize("runtime_profile", ["canvas-v1", "canvas-v2-mermaid-1"])
 def test_adversarial_corpus_has_zero_egress_and_never_mutates_native_realms(
     chromium_browser: Any,
     asset_server: _OwnedServer,
@@ -1628,6 +1714,37 @@ def test_product_route_recorder_rejects_foreign_startup_worker() -> None:
             trusted_origin="https://127.0.0.1:9443",
             trusted_route_root="/canvas/cap/",
             forbidden_canary_path="/canvas-generated-same-origin-canary",
+        )
+
+
+@pytest.mark.parametrize(
+    ("owner_path", "terminal_id", "allowed"),
+    [
+        ("/", "a" * 32, True),
+        ("/canvas/cap/render", "a" * 32, False),
+        ("/", "b" * 32, False),
+    ],
+    ids=["current-shell", "renderer", "wrong-terminal"],
+)
+def test_served_route_recorder_requires_current_shell_poll(owner_path, terminal_id, allowed):
+    origin = "https://127.0.0.1:9443"
+    recorder = ProductRouteRecorder(served=True)
+    recorder.mark_generated()
+    recorder.add(
+        "request",
+        f"{origin}/canvas/api/session?terminal_id={terminal_id}",
+        json.dumps(
+            {"owner": origin + owner_path, "method": "GET", "resource_type": "fetch"}
+        ),
+    )
+    outcome = nullcontext() if allowed else pytest.raises(AssertionError, match="escaped")
+    with outcome:
+        recorder.assert_generated_confined(
+            trusted_origin=origin,
+            trusted_route_root="/canvas/cap/",
+            forbidden_canary_path="/canvas-generated-same-origin-canary",
+            trusted_shell_paths=(("/canvas/api/session", "GET", "fetch"),),
+            served_terminal_id="a" * 32,
         )
 
 

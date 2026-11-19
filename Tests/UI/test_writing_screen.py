@@ -534,6 +534,7 @@ async def test_missing_server_configuration_shows_unavailable_state_without_loca
     assert "Server writing backend is unavailable" in window.status_message
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_server_unavailable_state_updates_visible_status():
     scope = FakeWritingScopeService(server_available=False)
@@ -1025,6 +1026,7 @@ async def test_controller_reorder_move_and_search_are_source_specific():
     assert ("search_project", "server", "local-project", "Opening", 5) in scope.calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_project_list_renders_and_selects_project():
     scope = FakeWritingScopeService()
@@ -1044,6 +1046,7 @@ async def test_mounted_project_list_renders_and_selects_project():
     assert window.outline_tree.labels[0] == "Local Draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_outline_tree_renders_and_selects_nodes():
     async with _mounted_production_writing_window() as (app, window, _pilot):

@@ -775,7 +775,9 @@ async def test_push_404_records_conflict_and_removes_mutation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_use_local_on_server_deletion_clears_server_id_and_requeues_create(tmp_path):
+async def test_use_local_on_server_deletion_clears_server_id_and_requeues_create(
+    tmp_path,
+):
     db = ScheduledTasksDB(tmp_path / "db.db")
     local_id = db.create_reminder_task(
         owner_id="server:1",
@@ -785,7 +787,11 @@ async def test_use_local_on_server_deletion_clears_server_id_and_requeues_create
     )
     db.set_sync_mapping(local_id, "srv-1", "reminder_task", "server:1")
     conflict_id = db.record_conflict(
-        local_id, "reminder_task", "server:1", server_state={}, local_state={"record": db.get_reminder_task(local_id)}
+        local_id,
+        "reminder_task",
+        "server:1",
+        server_state={},
+        local_state={"record": db.get_reminder_task(local_id)},
     )
 
     engine = SyncEngine(db, None, owner_id="server:1")
@@ -1030,7 +1036,9 @@ async def test_sync_now_replays_review_mutation_and_clears_on_success(tmp_path):
     server_client.review_automation_result.assert_awaited_once_with(
         "srv-res-1", "dismissed", review_note=None
     )
-    assert db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    )
 
 
 @pytest.mark.asyncio
@@ -1055,7 +1063,9 @@ async def test_sync_now_review_mutation_not_found_clears_it(tmp_path):
     outcome = await engine.sync_now()
 
     assert outcome.status == "ok"
-    assert db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    )
     state = db.get_sync_state("server:1") or {}
     assert not (state.get("sync_errors") or []), "a retired result is not a sync error"
 
@@ -1074,7 +1084,9 @@ async def test_sync_now_review_mutation_other_error_retains_it(tmp_path):
     )
 
     server_client = _empty_reminders_client()
-    server_client.review_automation_result.side_effect = ServerUnavailableError("offline")
+    server_client.review_automation_result.side_effect = ServerUnavailableError(
+        "offline"
+    )
     engine = SyncEngine(db, server_client, owner_id="server:1")
 
     outcome = await engine.sync_now()
@@ -1120,7 +1132,10 @@ async def test_sync_now_skips_review_fields_for_just_pushed_result_this_cycle(tm
     # Review it locally with a pending mutation queued, mirroring what
     # SchedulingService.review_automation_result does.
     db.update_result_review(
-        local_id, "dismissed", "handled", "user:1",
+        local_id,
+        "dismissed",
+        "handled",
+        "user:1",
         pending_mutation={
             "local_id": local_id,
             "primitive": "automation_result_review",
@@ -1144,7 +1159,9 @@ async def test_sync_now_skips_review_fields_for_just_pushed_result_this_cycle(tm
     server_client.review_automation_result.assert_awaited_once_with(
         stale_item["id"], "dismissed", review_note="handled"
     )
-    assert db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    assert (
+        db.get_pending_mutations("server:1", primitive="automation_result_review") == []
+    )
     refreshed = db.get_automation_result(local_id)
     assert refreshed["review_state"] == "dismissed", (
         "the same-cycle stale echo must not revert the review just pushed"
@@ -1215,9 +1232,7 @@ async def test_sync_now_replays_definition_create_and_dedupes_same_cycle_pull(tm
     server_client.create_automation_definition.assert_awaited_once_with(
         "prev-1", initial_lifecycle="configured"
     )
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
     rows = db.list_automation_definitions(owner_id="server:1")
     assert len(rows) == 1, "create replay + same-cycle pull must yield exactly one row"
     assert rows[0]["id"] == local_id
@@ -1470,7 +1485,11 @@ async def test_sync_now_definition_create_invalid_preview_clears_and_records_err
         "id": None,
         "status": "invalid",
         "validation_errors": [
-            {"field": "schedule.kind", "code": "required", "message": "Schedule kind is required."}
+            {
+                "field": "schedule.kind",
+                "code": "required",
+                "message": "Schedule kind is required.",
+            }
         ],
     }
     engine = SyncEngine(db, server_client, owner_id="server:1")
@@ -1527,9 +1546,7 @@ async def test_sync_now_replays_definition_update(tmp_path):
     server_client.update_automation_definition.assert_awaited_once_with(
         "srv-def-2", "prev-2"
     )
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
     row = db.get_automation_definition(local_id)
     assert row["name"] == "New name"
 
@@ -1638,7 +1655,8 @@ async def test_sync_now_definition_update_without_server_id_converts_to_create(
         {
             "action": "update",
             "definition_payload": {
-                "family": "recurring_question", "name": "Offline draft"
+                "family": "recurring_question",
+                "name": "Offline draft",
             },
             "server_definition_id": None,
         },
@@ -1700,9 +1718,7 @@ async def test_sync_now_definition_update_not_found_converts_to_create(tmp_path)
     )
     row = db.get_automation_definition(local_id)
     assert row["server_id"] == "srv-def-new"
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
 
 
 @pytest.mark.asyncio
@@ -1795,8 +1811,8 @@ async def test_sync_now_definition_poisoned_mutation_does_not_block_the_rest(tmp
         "status": "valid",
         "validation_errors": [],
     }
-    server_client.update_automation_definition.side_effect = ServerClientValidationError(
-        "scheduled_task_definition_version_conflict"
+    server_client.update_automation_definition.side_effect = (
+        ServerClientValidationError("scheduled_task_definition_version_conflict")
     )
     server_client.create_automation_definition.return_value = {
         "id": "srv-def-new",
@@ -1815,7 +1831,6 @@ async def test_sync_now_definition_poisoned_mutation_does_not_block_the_rest(tmp
     assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
     errors = (db.get_sync_state("server:1") or {}).get("sync_errors") or []
     assert any("version_conflict" in error["message"] for error in errors)
-
 
 
 # ----------------------------------------------------------------------
@@ -1856,9 +1871,7 @@ async def test_sync_now_replays_definition_pause_and_mirrors_echo(tmp_path):
 
     assert outcome.status == "ok"
     server_client.pause_automation_definition.assert_awaited_once_with("srv-def-1")
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
     row = db.get_automation_definition(local_id)
     assert row["lifecycle"] == "paused"
 
@@ -1892,9 +1905,7 @@ async def test_sync_now_replays_definition_resume(tmp_path):
 
     assert outcome.status == "ok"
     server_client.resume_automation_definition.assert_awaited_once_with("srv-def-1")
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
     assert db.get_automation_definition(local_id)["lifecycle"] == "configured"
 
 
@@ -1924,9 +1935,7 @@ async def test_sync_now_replays_definition_archive(tmp_path):
 
     assert outcome.status == "ok"
     server_client.archive_automation_definition.assert_awaited_once_with("srv-def-1")
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
     row = db.get_automation_definition(local_id)
     assert row["lifecycle"] == "archived"
     assert row["archived_at"] is not None
@@ -1978,7 +1987,9 @@ async def test_sync_now_pull_skips_stale_lifecycle_echo_pushed_same_cycle(tmp_pa
     assert outcome.status == "ok"
     row = db.get_automation_definition(local_id)
     assert row["lifecycle"] == "paused"  # not reverted by the same-cycle stale echo
-    assert row["name"] == "Daily digest (renamed)"  # every other field still server-wins
+    assert (
+        row["name"] == "Daily digest (renamed)"
+    )  # every other field still server-wins
 
 
 @pytest.mark.asyncio
@@ -2010,7 +2021,8 @@ async def test_sync_now_definition_lifecycle_not_found_clears_without_sync_error
     state = db.get_sync_state("server:1") or {}
     assert not (state.get("sync_errors") or []), "a 404 here is not a user-facing error"
     assert any(
-        level == "INFO" and "srv-def-gone" in message for level, message in captured_logs
+        level == "INFO" and "srv-def-gone" in message
+        for level, message in captured_logs
     )
 
 
@@ -2120,9 +2132,7 @@ async def test_sync_now_definition_lifecycle_without_server_id_drops_mutation(tm
 
     assert outcome.status == "ok"
     server_client.pause_automation_definition.assert_not_awaited()
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_lifecycle") == []
 
 
 # ----------------------------------------------------------------------
@@ -2180,22 +2190,22 @@ async def test_sync_now_definition_transfer_disarms_before_send_then_converts(tm
 
     assert outcome.status == "ok"
     assert observed_state_at_send == ["to_server_sent"], (
-        "the row must be disarmed (to_server_sent) BEFORE the network "
-        "request fires"
+        "the row must be disarmed (to_server_sent) BEFORE the network request fires"
     )
     request = server_client.preview_automation_definition.await_args.args[0]
     assert request["mode"] == "create"
     assert request["schedule"] == {"kind": "interval", "seconds": 3600}
-    server_client.create_automation_definition.assert_awaited_once_with(
-        "prev-1", initial_lifecycle="paused"
-    ), "initial_lifecycle must match the source row's own lifecycle"
+    (
+        server_client.create_automation_definition.assert_awaited_once_with(
+            "prev-1", initial_lifecycle="paused"
+        ),
+        "initial_lifecycle must match the source row's own lifecycle",
+    )
     row = db.get_automation_definition(local_id)
     assert row["server_id"] == "srv-def-1"
     assert row["owner_id"] == "server:1"
     assert row["transfer_state"] is None
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
 
 
 @pytest.mark.asyncio
@@ -2329,9 +2339,7 @@ async def test_sync_now_definition_transfer_merges_with_existing_pulled_mirror(
     mirror = db.get_automation_definition(mirror_id)
     assert mirror is not None
     assert mirror["created_at"] == "2026-01-01T00:00:00+00:00"
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
 
 
 @pytest.mark.asyncio
@@ -2370,8 +2378,7 @@ async def test_sync_now_definition_transfer_definitive_failure_no_auto_retry(
     server_client.create_automation_definition.assert_not_awaited()
     row = db.get_automation_definition(local_id)
     assert row["transfer_state"] == "to_server_failed", (
-        "a definitive failure re-arms the row locally (Task 1: not a "
-        "dormant state)"
+        "a definitive failure re-arms the row locally (Task 1: not a dormant state)"
     )
     pending = db.get_pending_mutations("server:1", primitive="automation_definition")
     assert len(pending) == 1, "the mutation is RETAINED, not cleared"
@@ -2526,9 +2533,7 @@ async def test_sync_now_reminder_transfer_disarms_before_send_then_converts(tmp_
     server_client.list_reminders.return_value = {"items": []}
 
     async def _create_reminder(**kwargs):
-        observed_state_at_send.append(
-            db.get_reminder_task(local_id)["transfer_state"]
-        )
+        observed_state_at_send.append(db.get_reminder_task(local_id)["transfer_state"])
         return {"id": "srv-rem-1", "title": kwargs.get("title")}
 
     server_client.create_reminder.side_effect = _create_reminder
@@ -2573,9 +2578,7 @@ async def test_sync_now_reminder_transfer_cas_skip_when_not_pending(tmp_path):
 
     assert outcome.status == "ok"
     server_client.create_reminder.assert_not_awaited()
-    assert (
-        len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
-    )
+    assert len(db.get_pending_mutations("server:1", primitive="reminder_task")) == 1
 
 
 @pytest.mark.asyncio
@@ -2842,9 +2845,7 @@ async def test_sync_now_definition_release_archives_and_arms_local_copy(tmp_path
 
     assert outcome.status == "ok"
     server_client.archive_automation_definition.assert_awaited_once_with("srv-def-1")
-    assert (
-        db.get_pending_mutations("server:1", primitive="automation_definition") == []
-    )
+    assert db.get_pending_mutations("server:1", primitive="automation_definition") == []
     mirror_row = db.get_automation_definition(mirror_id)
     assert mirror_row["lifecycle"] == "archived", (
         "the archive echo mirrors onto the server-mirror row"
@@ -2883,7 +2884,9 @@ async def test_sync_now_definition_release_not_found_treated_as_ack(tmp_path):
         db.get_pending_mutations("server:1", primitive="automation_definition") == []
     ), "the server row is already gone -- settle rather than retry forever"
     copy_row = db.get_automation_definition(copy_id)
-    assert copy_row["transfer_state"] is None, "a 404 release is treated exactly as an ack"
+    assert copy_row["transfer_state"] is None, (
+        "a 404 release is treated exactly as an ack"
+    )
     state = db.get_sync_state("server:1") or {}
     assert not (state.get("sync_errors") or []), "a 404 here is not a user-facing error"
 
@@ -3003,7 +3006,9 @@ async def test_sync_now_reminder_release_not_found_treated_as_ack(tmp_path):
     assert outcome.status == "ok"
     assert db.get_pending_mutations("server:1", primitive="reminder_task") == []
     copy_row = db.get_reminder_task(copy_id)
-    assert copy_row["transfer_state"] is None, "a 404 release is treated exactly as an ack"
+    assert copy_row["transfer_state"] is None, (
+        "a 404 release is treated exactly as an ack"
+    )
     state = db.get_sync_state("server:1") or {}
     assert not (state.get("sync_errors") or [])
 
@@ -3069,8 +3074,10 @@ async def test_sync_now_pages_definitions_until_has_more_false(tmp_path):
     server_client = _empty_reminders_client()
     server_client.list_automation_definitions.side_effect = [
         _definition_page(
-            [{"id": f"srv-def-{i}", "family": "recurring_question", "name": f"D{i}"}
-             for i in range(50)],
+            [
+                {"id": f"srv-def-{i}", "family": "recurring_question", "name": f"D{i}"}
+                for i in range(50)
+            ],
             has_more=True,
         ),
         _definition_page(
@@ -3097,8 +3104,14 @@ async def test_sync_now_definitions_pull_caps_at_max_pages_and_logs(
     server_client = _empty_reminders_client()
     server_client.list_automation_definitions.side_effect = [
         _definition_page(
-            [{"id": f"srv-def-p{page}-{i}", "family": "recurring_question",
-              "name": f"D{page}-{i}"} for i in range(50)],
+            [
+                {
+                    "id": f"srv-def-p{page}-{i}",
+                    "family": "recurring_question",
+                    "name": f"D{page}-{i}",
+                }
+                for i in range(50)
+            ],
             has_more=True,
         )
         for page in range(10)
@@ -3118,9 +3131,7 @@ async def test_sync_now_definitions_pull_caps_at_max_pages_and_logs(
 async def test_sync_now_pulls_and_upserts_results(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")
     server_client = _empty_reminders_client()
-    server_client.list_automation_results.return_value = _result_page(
-        _result_items(2)
-    )
+    server_client.list_automation_results.return_value = _result_page(_result_items(2))
     engine = SyncEngine(db, server_client, owner_id="server:1")
 
     outcome = await engine.sync_now()
@@ -3135,7 +3146,8 @@ async def test_sync_now_results_pull_stops_early_on_short_page(tmp_path):
     db = ScheduledTasksDB(tmp_path / "db.db")
     server_client = _empty_reminders_client()
     server_client.list_automation_results.return_value = _result_page(
-        _result_items(3), has_more=True  # fewer than the 50-page size wins
+        _result_items(3),
+        has_more=True,  # fewer than the 50-page size wins
     )
     engine = SyncEngine(db, server_client, owner_id="server:1")
 
@@ -3145,7 +3157,9 @@ async def test_sync_now_results_pull_stops_early_on_short_page(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_sync_now_results_pull_caps_at_max_pages_and_logs(tmp_path, captured_logs):
+async def test_sync_now_results_pull_caps_at_max_pages_and_logs(
+    tmp_path, captured_logs
+):
     db = ScheduledTasksDB(tmp_path / "db.db")
     server_client = _empty_reminders_client()
     server_client.list_automation_results.side_effect = [
@@ -3164,10 +3178,14 @@ async def test_sync_now_results_pull_caps_at_max_pages_and_logs(tmp_path, captur
 
 
 @pytest.mark.asyncio
-async def test_sync_now_definitions_phase_failure_does_not_abort_results_phase(tmp_path):
+async def test_sync_now_definitions_phase_failure_does_not_abort_results_phase(
+    tmp_path,
+):
     db = ScheduledTasksDB(tmp_path / "db.db")
     server_client = _empty_reminders_client()
-    server_client.list_automation_definitions.side_effect = ServerUnavailableError("down")
+    server_client.list_automation_definitions.side_effect = ServerUnavailableError(
+        "down"
+    )
     server_client.list_automation_results.return_value = _result_page(_result_items(1))
     engine = SyncEngine(db, server_client, owner_id="server:1")
 
@@ -3241,9 +3259,10 @@ async def test_pull_gains_definitions_and_results_without_pushback(tmp_path):
     assert any(row["server_id"] == "res-0" for row in rows)
     server_client.review_automation_result.assert_not_awaited()
     # The pending review mutation is untouched -- pull() never pushes.
-    assert len(
-        db.get_pending_mutations("server:1", primitive="automation_result_review")
-    ) == 1
+    assert (
+        len(db.get_pending_mutations("server:1", primitive="automation_result_review"))
+        == 1
+    )
 
 
 # --- review round 1 #1: reminder-phase failures must not short-circuit the
@@ -3271,11 +3290,15 @@ async def test_pull_reminder_network_failure_still_pulls_automation_results(tmp_
 
     assert len(db.list_automation_results("server:1")) == 1
     state = db.get_sync_state("server:1") or {}
-    assert state.get("sync_errors"), "the reminder network failure must still be recorded"
+    assert state.get("sync_errors"), (
+        "the reminder network failure must still be recorded"
+    )
 
 
 @pytest.mark.asyncio
-async def test_pull_reminder_transaction_failure_still_pulls_automation_results(tmp_path):
+async def test_pull_reminder_transaction_failure_still_pulls_automation_results(
+    tmp_path,
+):
     db = ScheduledTasksDB(tmp_path / "db.db")
     _break_apply_pulled_reminders(db)
     server_client = AsyncMock()
@@ -3289,9 +3312,9 @@ async def test_pull_reminder_transaction_failure_still_pulls_automation_results(
 
     assert len(db.list_automation_results("server:1")) == 1
     state = db.get_sync_state("server:1") or {}
-    assert state.get(
-        "sync_errors"
-    ), "the reminder transaction failure must still be recorded"
+    assert state.get("sync_errors"), (
+        "the reminder transaction failure must still be recorded"
+    )
 
 
 @pytest.mark.asyncio
@@ -3775,9 +3798,7 @@ def test_orphaned_transfer_mutation_settles_when_no_server_is_configured(
         "no server configured means nothing this mutation could still be "
         "valid for -- it must settle, not hang forever"
     )
-    pending = db.get_pending_mutations(
-        "server:removed-host", primitive="reminder_task"
-    )
+    pending = db.get_pending_mutations("server:removed-host", primitive="reminder_task")
     assert len(pending) == 1
     assert pending[0]["payload"]["transfer_errors"]
 

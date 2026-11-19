@@ -242,6 +242,8 @@ class LibraryPromptsState:
     status: str = ""
     conflict_snapshot: PromptEditorState | None = None
     block_state: PromptBlockEditorState | None = None
+    mixin_draft: tuple[str, str, str] | None = field(default=None, repr=False)
+    mixin_source_identity: tuple | None = field(default=None, repr=False)
 
     # Placeholder default only -- see the module docstring's
     # forced-early-construction paragraph: the original

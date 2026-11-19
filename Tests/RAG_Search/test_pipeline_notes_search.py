@@ -65,6 +65,7 @@ async def test_search_notes_fts5_end_to_end_live_instance(db):
         assert r.metadata["last_modified"] is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_search_notes_fts5_end_to_end_db_config_path(db, tmp_path):
     """The db_config construction seam still works for notes."""

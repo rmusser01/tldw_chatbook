@@ -93,3 +93,16 @@ def test_personas_preview_names_providers_from_the_shared_catalog(key: str) -> N
     )
 
     assert PersonasPreviewController._provider_label(key) == provider_display_name(key)
+
+
+def test_engine_error_copy_names_each_provider_as_the_catalog_does() -> None:
+    """The engine prefixes every error with ``record.display_name``; it must be
+    the catalog name a user sees elsewhere (TASK-33002.14)."""
+    from tldw_chatbook.provider_registry import ALL_RECORDS
+
+    mismatched = {
+        record.key: (record.display_name, provider_display_name(record.key))
+        for record in ALL_RECORDS
+        if record.engine_driven and record.display_name != provider_display_name(record.key)
+    }
+    assert mismatched == {}

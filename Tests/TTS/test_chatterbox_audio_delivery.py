@@ -75,6 +75,7 @@ async def drain(backend, req=None):
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("audio_format", ["wav", "mp3", "flac", "opus", "aac", "pcm"])
 @pytest.mark.parametrize("mode", ["long", "stream", "single"])
@@ -104,6 +105,7 @@ async def test_complete_chatterbox_utterance_decodes_in_every_format(
                     assert wav.getnframes() == 24000 * expected_seconds
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stream_false_uses_single_inference(backend):
     backend.streaming_enabled = True
@@ -112,6 +114,7 @@ async def test_stream_false_uses_single_inference(backend):
     assert backend.model.calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_complete_audio_limit_is_not_retried(backend, monkeypatch):
     monkeypatch.setattr("tldw_chatbook.TTS.audio_limits.MAX_BUFFERED_AUDIO_BYTES", 1000)
@@ -121,6 +124,7 @@ async def test_complete_audio_limit_is_not_retried(backend, monkeypatch):
     assert backend.model.calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_crossfade_error_does_not_return_concatenated_containers(backend):
     good = backend._tensor_to_wav_bytes(tone(), 24000)
@@ -128,6 +132,7 @@ async def test_crossfade_error_does_not_return_concatenated_containers(backend):
         await backend._combine_audio_with_crossfade([good, b"corrupt WAV"])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_fallback_cancel_preserves_backend_and_request_settings(backend):
     entered = asyncio.Event()
@@ -185,6 +190,7 @@ class Process:
         return self.returncode
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["cancel", "timeout"])
 async def test_interrupted_ipc_is_reaped_before_another_request(backend, failure):
@@ -212,6 +218,7 @@ async def test_interrupted_ipc_is_reaped_before_another_request(backend, failure
     assert backend.model is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_subprocess_transfer_chunks_are_reassembled_once(backend):
     process = Process()
@@ -237,6 +244,7 @@ async def test_subprocess_transfer_chunks_are_reassembled_once(backend):
     assert await drain(backend) == audio
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_subprocess_transfer_is_bounded_before_reassembly(backend, monkeypatch):
     monkeypatch.setattr("tldw_chatbook.TTS.audio_limits.MAX_BUFFERED_AUDIO_BYTES", 1000)
@@ -249,6 +257,7 @@ async def test_subprocess_transfer_is_bounded_before_reassembly(backend, monkeyp
         await backend._read_chunked_audio()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pcm_failure_after_delivery_is_not_retried(backend):
     backend.streaming_enabled = True
@@ -267,6 +276,7 @@ async def test_pcm_failure_after_delivery_is_not_retried(backend):
     assert backend.model.stream_calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_empty_pcm_stream_uses_fallback_instead_of_succeeding_silently(backend):
     backend.streaming_enabled = True
@@ -276,6 +286,7 @@ async def test_empty_pcm_stream_uses_fallback_instead_of_succeeding_silently(bac
     assert backend.model.calls > 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stream_cancel_waits_for_inference_thread(backend):
     entered = threading.Event()

@@ -54,6 +54,7 @@ LOCAL_TOOL_NAMES = {
     "fs_read",
     "fs_write",
     "fs_edit",
+    "fs_mkdir",
     "fs_patch",
     "fs_glob",
     "fs_grep",
@@ -1346,11 +1347,18 @@ def test_mcp_extra_installs_and_runs_from_each_isolated_artifact(
         )
         python = _python_in(venv_root)
 
+        offline = os.environ.get("UV_OFFLINE") == "1"
+        install_env = env
+        if offline:
+            cache_dir = os.environ.get("UV_CACHE_DIR")
+            assert cache_dir, "Offline MCP installation needs an explicit UV_CACHE_DIR"
+            install_env = env | {"UV_CACHE_DIR": cache_dir}
         _run(
             [
                 str(UV_EXECUTABLE),
                 "pip",
                 "install",
+                *(["--offline"] if offline else []),
                 "--link-mode",
                 "copy",
                 "--python",
@@ -1358,7 +1366,7 @@ def test_mcp_extra_installs_and_runs_from_each_isolated_artifact(
                 f"{artifact}[mcp]",
             ],
             cwd=run_root,
-            env=env,
+            env=install_env,
             timeout=600,
         )
         probe = _run(

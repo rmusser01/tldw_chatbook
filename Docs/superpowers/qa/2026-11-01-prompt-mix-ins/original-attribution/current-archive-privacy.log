@@ -1,0 +1,399 @@
+FFFFF                                                                    [100%]
+=================================== FAILURES ===================================
+______ test_prompt_export_failure_is_atomic_bounded_and_private[missing] _______
+Tests/Chatbooks/test_chatbook_prompt_round_trip.py:402: in test_prompt_export_failure_is_atomic_bounded_and_private
+    assert sentinel not in rendered
+E   AssertionError: assert '1' not in 'ChatbookCre...ry=missing\n'
+E     
+E     '1' is contained here:
+E       /sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db'}
+E     ?           +
+E       
+E       ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+E       ...
+E     
+E     ...Full output truncated (39 lines hidden), use '-vv' to show
+---------------------------- Captured stderr setup -----------------------------
+2026-11-01 18:53:40.844 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-11-01 18:53:40.897 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-11-01 18:53:40.905 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-11-01 18:53:40.907 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 18:53:40.916 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db [Client ID: source-client]
+2026-11-01 18:53:41.002 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db [Client: source-client, Thread: MainThread]
+2026-11-01 18:53:41.003 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 18:53:41.003 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 18:53:41.004 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db...
+2026-11-01 18:53:41.009 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.010 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 18:53:41.012 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 18:53:41.012 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 18:53:41.012 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.013 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db.
+2026-11-01 18:53:41.013 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 18:53:41.014 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 18:53:41.015 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 18:53:41.016 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db...
+2026-11-01 18:53:41.021 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.023 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.023 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db.
+2026-11-01 18:53:41.024 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 18:53:41.024 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db...
+2026-11-01 18:53:41.030 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.031 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.031 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 18:53:41.032 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db...
+2026-11-01 18:53:41.037 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.037 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.038 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 18:53:41.038 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 18:53:41.043 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.044 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.045 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 18:53:41.051 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.053 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.054 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 18:53:41.054 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 18:53:41.054 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db
+2026-11-01 18:53:41.059 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.061 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.062 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.062 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:540 - Keywords updated prompt 1. Added: 2, Removed: 0.
+2026-11-01 18:53:41.063 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.068 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.070 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.070 | INFO     | tldw_chatbook.DB.Prompts_DB:soft_delete_prompt:2641 - Prompt mutation committed operation=delete count=1
+2026-11-01 18:53:41.106 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:194 - ChatbookCreator.__init__: Initializing with db_paths={'Prompts': '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db'}
+2026-11-01 18:53:41.110 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:199 - ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+2026-11-01 18:53:41.112 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:243 - ChatbookCreator.__init__: Initialization complete
+2026-11-01 18:53:41.113 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:316 - ChatbookCreator.create_chatbook: Starting creation of 'Prompt backup'
+2026-11-01 18:53:41.114 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:317 - ChatbookCreator.create_chatbook: Options - include_media=False, media_quality=thumbnail, include_embeddings=False, auto_include_dependencies=True
+2026-11-01 18:53:41.114 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:320 - ChatbookCreator.create_chatbook: Content selections - [('prompt', 1)]
+2026-11-01 18:53:41.115 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:335 - ChatbookCreator.create_chatbook: Tracking 0 explicitly selected characters
+2026-11-01 18:53:41.116 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:344 - ChatbookCreator.create_chatbook: Working directory created at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/creator/chatbook_20261101_185341_lmaqmzxk
+2026-11-01 18:53:41.116 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:349 - ChatbookCreator.create_chatbook: Initializing manifest
+2026-11-01 18:53:41.117 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:361 - ChatbookCreator.create_chatbook: Manifest created - version ChatbookVersion.V2, media=False, embeddings=False
+2026-11-01 18:53:41.117 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:369 - ChatbookCreator.create_chatbook: Processing content types
+2026-11-01 18:53:41.118 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:420 - ChatbookCreator.create_chatbook: Collecting 1 prompts
+2026-11-01 18:53:41.118 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db [Client ID: chatbook_creator]
+2026-11-01 18:53:41.160 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db [Client: chatbook_creator, Thread: MainThread]
+2026-11-01 18:53:41.161 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 6, Code supports: 6
+2026-11-01 18:53:41.162 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1140 - Database schema is up to date.
+2026-11-01 18:53:41.162 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1144 - Verified FTS tables exist.
+2026-11-01 18:53:41.163 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_0/source.db
+2026-11-01 18:53:41.164 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.164 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.165 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 18:53:41.166 | ERROR    | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:620 - ChatbookCreator.create_chatbook: Prompt export failed item=item-000001 category=missing
+2026-11-01 18:53:41.167 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+___ test_prompt_export_failure_is_atomic_bounded_and_private[database_init] ____
+Tests/Chatbooks/test_chatbook_prompt_round_trip.py:402: in test_prompt_export_failure_is_atomic_bounded_and_private
+    assert sentinel not in rendered
+E   AssertionError: assert '1' not in 'ChatbookCre...ory=source\n'
+E     
+E     '1' is contained here:
+E       /sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db'}
+E     ?           +
+E       
+E       ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+E       ...
+E     
+E     ...Full output truncated (21 lines hidden), use '-vv' to show
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 18:53:41.232 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db [Client ID: source-client]
+2026-11-01 18:53:41.272 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db [Client: source-client, Thread: MainThread]
+2026-11-01 18:53:41.273 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 18:53:41.273 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 18:53:41.274 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db...
+2026-11-01 18:53:41.275 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.275 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 18:53:41.277 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 18:53:41.277 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 18:53:41.278 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.279 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db.
+2026-11-01 18:53:41.279 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 18:53:41.280 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 18:53:41.281 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 18:53:41.282 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db...
+2026-11-01 18:53:41.283 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.284 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.285 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db.
+2026-11-01 18:53:41.285 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 18:53:41.285 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db...
+2026-11-01 18:53:41.286 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.287 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.288 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 18:53:41.288 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db...
+2026-11-01 18:53:41.289 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.290 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.291 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 18:53:41.291 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 18:53:41.292 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.293 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.293 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 18:53:41.294 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.296 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.296 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 18:53:41.296 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 18:53:41.297 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db
+2026-11-01 18:53:41.298 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.299 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.300 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.301 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:540 - Keywords updated prompt 1. Added: 2, Removed: 0.
+2026-11-01 18:53:41.302 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.308 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:194 - ChatbookCreator.__init__: Initializing with db_paths={'Prompts': '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/source.db'}
+2026-11-01 18:53:41.311 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:199 - ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+2026-11-01 18:53:41.312 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:243 - ChatbookCreator.__init__: Initialization complete
+2026-11-01 18:53:41.313 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:316 - ChatbookCreator.create_chatbook: Starting creation of 'Prompt backup'
+2026-11-01 18:53:41.314 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:317 - ChatbookCreator.create_chatbook: Options - include_media=False, media_quality=thumbnail, include_embeddings=False, auto_include_dependencies=True
+2026-11-01 18:53:41.314 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:320 - ChatbookCreator.create_chatbook: Content selections - [('prompt', 1)]
+2026-11-01 18:53:41.315 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:335 - ChatbookCreator.create_chatbook: Tracking 0 explicitly selected characters
+2026-11-01 18:53:41.315 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:344 - ChatbookCreator.create_chatbook: Working directory created at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_1/creator/chatbook_20261101_185341_rq_h5hza
+2026-11-01 18:53:41.316 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:349 - ChatbookCreator.create_chatbook: Initializing manifest
+2026-11-01 18:53:41.317 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:361 - ChatbookCreator.create_chatbook: Manifest created - version ChatbookVersion.V2, media=False, embeddings=False
+2026-11-01 18:53:41.317 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:369 - ChatbookCreator.create_chatbook: Processing content types
+2026-11-01 18:53:41.317 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:420 - ChatbookCreator.create_chatbook: Collecting 1 prompts
+2026-11-01 18:53:41.318 | ERROR    | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:620 - ChatbookCreator.create_chatbook: Prompt export failed item=item-000001 category=source
+2026-11-01 18:53:41.320 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+______ test_prompt_export_failure_is_atomic_bounded_and_private[database] ______
+Tests/Chatbooks/test_chatbook_prompt_round_trip.py:402: in test_prompt_export_failure_is_atomic_bounded_and_private
+    assert sentinel not in rendered
+E   AssertionError: assert '1' not in 'ChatbookCre...ory=source\n'
+E     
+E     '1' is contained here:
+E       /sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db'}
+E     ?           +
+E       
+E       ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+E       ...
+E     
+E     ...Full output truncated (35 lines hidden), use '-vv' to show
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 18:53:41.330 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db [Client ID: source-client]
+2026-11-01 18:53:41.375 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db [Client: source-client, Thread: MainThread]
+2026-11-01 18:53:41.376 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 18:53:41.376 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 18:53:41.377 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db...
+2026-11-01 18:53:41.378 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.378 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 18:53:41.380 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 18:53:41.381 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 18:53:41.381 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.382 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db.
+2026-11-01 18:53:41.383 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 18:53:41.384 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 18:53:41.384 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 18:53:41.385 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db...
+2026-11-01 18:53:41.386 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.387 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.388 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db.
+2026-11-01 18:53:41.388 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 18:53:41.389 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db...
+2026-11-01 18:53:41.389 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.391 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.392 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 18:53:41.392 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db...
+2026-11-01 18:53:41.393 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.394 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.394 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 18:53:41.395 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 18:53:41.396 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.396 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.397 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 18:53:41.398 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.399 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.400 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 18:53:41.400 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 18:53:41.401 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db
+2026-11-01 18:53:41.402 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.403 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.404 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.405 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:540 - Keywords updated prompt 1. Added: 2, Removed: 0.
+2026-11-01 18:53:41.406 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.412 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:194 - ChatbookCreator.__init__: Initializing with db_paths={'Prompts': '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db'}
+2026-11-01 18:53:41.458 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:199 - ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+2026-11-01 18:53:41.459 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:243 - ChatbookCreator.__init__: Initialization complete
+2026-11-01 18:53:41.461 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:316 - ChatbookCreator.create_chatbook: Starting creation of 'Prompt backup'
+2026-11-01 18:53:41.461 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:317 - ChatbookCreator.create_chatbook: Options - include_media=False, media_quality=thumbnail, include_embeddings=False, auto_include_dependencies=True
+2026-11-01 18:53:41.461 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:320 - ChatbookCreator.create_chatbook: Content selections - [('prompt', 1)]
+2026-11-01 18:53:41.462 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:335 - ChatbookCreator.create_chatbook: Tracking 0 explicitly selected characters
+2026-11-01 18:53:41.463 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:344 - ChatbookCreator.create_chatbook: Working directory created at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/creator/chatbook_20261101_185341_h5k4so8c
+2026-11-01 18:53:41.463 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:349 - ChatbookCreator.create_chatbook: Initializing manifest
+2026-11-01 18:53:41.464 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:361 - ChatbookCreator.create_chatbook: Manifest created - version ChatbookVersion.V2, media=False, embeddings=False
+2026-11-01 18:53:41.464 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:369 - ChatbookCreator.create_chatbook: Processing content types
+2026-11-01 18:53:41.465 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:420 - ChatbookCreator.create_chatbook: Collecting 1 prompts
+2026-11-01 18:53:41.465 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db [Client ID: chatbook_creator]
+2026-11-01 18:53:41.508 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db [Client: chatbook_creator, Thread: MainThread]
+2026-11-01 18:53:41.509 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 6, Code supports: 6
+2026-11-01 18:53:41.510 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1140 - Database schema is up to date.
+2026-11-01 18:53:41.510 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1144 - Verified FTS tables exist.
+2026-11-01 18:53:41.511 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_2/source.db
+2026-11-01 18:53:41.512 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 18:53:41.512 | ERROR    | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:620 - ChatbookCreator.create_chatbook: Prompt export failed item=item-000001 category=source
+2026-11-01 18:53:41.514 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+_______ test_prompt_export_failure_is_atomic_bounded_and_private[encode] _______
+Tests/Chatbooks/test_chatbook_prompt_round_trip.py:402: in test_prompt_export_failure_is_atomic_bounded_and_private
+    assert sentinel not in rendered
+E   AssertionError: assert '1' not in 'ChatbookCre...ory=record\n'
+E     
+E     '1' is contained here:
+E       /sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db'}
+E     ?           +
+E       
+E       ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+E       ...
+E     
+E     ...Full output truncated (39 lines hidden), use '-vv' to show
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 18:53:41.522 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db [Client ID: source-client]
+2026-11-01 18:53:41.569 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db [Client: source-client, Thread: MainThread]
+2026-11-01 18:53:41.570 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 18:53:41.570 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 18:53:41.571 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db...
+2026-11-01 18:53:41.571 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.572 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 18:53:41.574 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 18:53:41.574 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 18:53:41.575 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.576 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db.
+2026-11-01 18:53:41.576 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 18:53:41.577 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 18:53:41.577 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 18:53:41.578 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db...
+2026-11-01 18:53:41.579 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.580 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.581 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db.
+2026-11-01 18:53:41.581 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 18:53:41.582 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db...
+2026-11-01 18:53:41.582 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.583 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.584 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 18:53:41.584 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db...
+2026-11-01 18:53:41.585 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.586 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.586 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 18:53:41.587 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 18:53:41.588 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.588 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.589 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 18:53:41.590 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.592 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.592 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 18:53:41.593 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 18:53:41.593 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db
+2026-11-01 18:53:41.594 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.595 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.596 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.597 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:540 - Keywords updated prompt 1. Added: 2, Removed: 0.
+2026-11-01 18:53:41.598 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.604 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:194 - ChatbookCreator.__init__: Initializing with db_paths={'Prompts': '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db'}
+2026-11-01 18:53:41.607 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:199 - ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+2026-11-01 18:53:41.608 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:243 - ChatbookCreator.__init__: Initialization complete
+2026-11-01 18:53:41.609 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:316 - ChatbookCreator.create_chatbook: Starting creation of 'Prompt backup'
+2026-11-01 18:53:41.610 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:317 - ChatbookCreator.create_chatbook: Options - include_media=False, media_quality=thumbnail, include_embeddings=False, auto_include_dependencies=True
+2026-11-01 18:53:41.610 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:320 - ChatbookCreator.create_chatbook: Content selections - [('prompt', 1)]
+2026-11-01 18:53:41.611 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:335 - ChatbookCreator.create_chatbook: Tracking 0 explicitly selected characters
+2026-11-01 18:53:41.611 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:344 - ChatbookCreator.create_chatbook: Working directory created at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/creator/chatbook_20261101_185341_yszg2cz5
+2026-11-01 18:53:41.612 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:349 - ChatbookCreator.create_chatbook: Initializing manifest
+2026-11-01 18:53:41.613 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:361 - ChatbookCreator.create_chatbook: Manifest created - version ChatbookVersion.V2, media=False, embeddings=False
+2026-11-01 18:53:41.613 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:369 - ChatbookCreator.create_chatbook: Processing content types
+2026-11-01 18:53:41.614 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:420 - ChatbookCreator.create_chatbook: Collecting 1 prompts
+2026-11-01 18:53:41.615 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db [Client ID: chatbook_creator]
+2026-11-01 18:53:41.661 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db [Client: chatbook_creator, Thread: MainThread]
+2026-11-01 18:53:41.662 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 6, Code supports: 6
+2026-11-01 18:53:41.662 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1140 - Database schema is up to date.
+2026-11-01 18:53:41.662 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1144 - Verified FTS tables exist.
+2026-11-01 18:53:41.663 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_3/source.db
+2026-11-01 18:53:41.664 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.665 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.665 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 18:53:41.666 | ERROR    | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:620 - ChatbookCreator.create_chatbook: Prompt export failed item=item-000001 category=record
+2026-11-01 18:53:41.668 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+_______ test_prompt_export_failure_is_atomic_bounded_and_private[write] ________
+Tests/Chatbooks/test_chatbook_prompt_round_trip.py:402: in test_prompt_export_failure_is_atomic_bounded_and_private
+    assert sentinel not in rendered
+E   AssertionError: assert '1' not in 'ChatbookCre...gory=write\n'
+E     
+E     '1' is contained here:
+E       /sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db'}
+E     ?           +
+E       
+E       ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+E       ...
+E     
+E     ...Full output truncated (39 lines hidden), use '-vv' to show
+----------------------------- Captured stderr call -----------------------------
+2026-11-01 18:53:41.677 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db [Client ID: source-client]
+2026-11-01 18:53:41.723 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db [Client: source-client, Thread: MainThread]
+2026-11-01 18:53:41.724 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 0, Code supports: 6
+2026-11-01 18:53:41.724 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Initial prompts schema (v0 -> v1)
+2026-11-01 18:53:41.724 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:823 - Applying initial schema (Version 1) to DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db...
+2026-11-01 18:53:41.725 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.726 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:834 - [Schema V1] Applying Core Schema + Version Update...
+2026-11-01 18:53:41.728 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:836 - [Schema V1] Core Schema script (incl. version update) executed.
+2026-11-01 18:53:41.728 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:860 - [Schema V1] Prompts table structure validated.
+2026-11-01 18:53:41.729 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.730 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:869 - [Schema V1] Core Schema V1 applied and committed for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db.
+2026-11-01 18:53:41.730 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:873 - [Schema V1] Applying FTS Tables...
+2026-11-01 18:53:41.732 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_schema_v1:876 - [Schema V1] FTS Tables created successfully.
+2026-11-01 18:53:41.732 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add structured prompt metadata columns (v1 -> v2)
+2026-11-01 18:53:41.733 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:887 - Applying prompts migration from version 1 to 2 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db...
+2026-11-01 18:53:41.734 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.735 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.736 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v1_to_v2:923 - Prompts migration to version 2 applied successfully for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db.
+2026-11-01 18:53:41.737 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add prompt artifact type (v2 -> v3)
+2026-11-01 18:53:41.737 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v2_to_v3:934 - Applying prompts migration from version 2 to 3 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db...
+2026-11-01 18:53:41.738 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.740 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.740 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add retained Prompt history index (v3 -> v4)
+2026-11-01 18:53:41.741 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v3_to_v4:969 - Applying prompts migration from version 3 to 4 for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db...
+2026-11-01 18:53:41.742 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.742 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.743 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add local Console Prompt Draft Shelf (v4 -> v5)
+2026-11-01 18:53:41.743 | INFO     | tldw_chatbook.DB.Prompts_DB:_apply_migration_v4_to_v5:1033 - Applying prompts migration from version 4 to 5.
+2026-11-01 18:53:41.744 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.745 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.745 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1170 - Applying migration: Add literal mix-in artifact type (v5 -> v6)
+2026-11-01 18:53:41.746 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.748 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.749 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1184 - Verified FTS tables exist after migrations.
+2026-11-01 18:53:41.750 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1190 - Database schema initialized/migrated to version 6.
+2026-11-01 18:53:41.750 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db
+2026-11-01 18:53:41.752 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.753 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.754 | INFO     | tldw_chatbook.DB.keyword_store:add_keyword_full:203 - Adding new keyword.
+2026-11-01 18:53:41.755 | DEBUG    | tldw_chatbook.DB.keyword_store:update_keywords_for_entity:540 - Keywords updated prompt 1. Added: 2, Removed: 0.
+2026-11-01 18:53:41.756 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.762 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:194 - ChatbookCreator.__init__: Initializing with db_paths={'Prompts': '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db'}
+2026-11-01 18:53:41.765 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:199 - ChatbookCreator.__init__: Creating temp directory at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_xts25hms/home/.local/share/tldw_cli/default_user/temp/chatbooks
+2026-11-01 18:53:41.766 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:__init__:243 - ChatbookCreator.__init__: Initialization complete
+2026-11-01 18:53:41.767 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:316 - ChatbookCreator.create_chatbook: Starting creation of 'Prompt backup'
+2026-11-01 18:53:41.768 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:317 - ChatbookCreator.create_chatbook: Options - include_media=False, media_quality=thumbnail, include_embeddings=False, auto_include_dependencies=True
+2026-11-01 18:53:41.768 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:320 - ChatbookCreator.create_chatbook: Content selections - [('prompt', 1)]
+2026-11-01 18:53:41.769 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:335 - ChatbookCreator.create_chatbook: Tracking 0 explicitly selected characters
+2026-11-01 18:53:41.770 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:344 - ChatbookCreator.create_chatbook: Working directory created at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/creator/chatbook_20261101_185341_6xhzy5kx
+2026-11-01 18:53:41.770 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:349 - ChatbookCreator.create_chatbook: Initializing manifest
+2026-11-01 18:53:41.771 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:361 - ChatbookCreator.create_chatbook: Manifest created - version ChatbookVersion.V2, media=False, embeddings=False
+2026-11-01 18:53:41.771 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:369 - ChatbookCreator.create_chatbook: Processing content types
+2026-11-01 18:53:41.772 | INFO     | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:420 - ChatbookCreator.create_chatbook: Collecting 1 prompts
+2026-11-01 18:53:41.773 | INFO     | tldw_chatbook.DB.Prompts_DB:__init__:405 - Initializing PromptsDatabase object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db [Client ID: chatbook_creator]
+2026-11-01 18:53:41.817 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_get_thread_connection:557 - Opened/Reopened SQLite connection to /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db [Client: chatbook_creator, Thread: MainThread]
+2026-11-01 18:53:41.818 | INFO     | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1135 - Checking DB schema. Current: 6, Code supports: 6
+2026-11-01 18:53:41.819 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1140 - Database schema is up to date.
+2026-11-01 18:53:41.819 | DEBUG    | tldw_chatbook.DB.Prompts_DB:_initialize_schema:1144 - Verified FTS tables exist.
+2026-11-01 18:53:41.820 | DEBUG    | tldw_chatbook.DB.Prompts_DB:__init__:457 - PromptsDatabase initialization completed successfully for /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-original-attribution-uydjvxa4/current-archive-privacy-pytest/test_prompt_export_failure_is_4/source.db
+2026-11-01 18:53:41.822 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:744 - Started transaction.
+2026-11-01 18:53:41.823 | DEBUG    | tldw_chatbook.DB.Prompts_DB:transaction:748 - Committed transaction.
+2026-11-01 18:53:41.823 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+2026-11-01 18:53:41.824 | ERROR    | tldw_chatbook.Chatbooks.chatbook_creator:create_chatbook:620 - ChatbookCreator.create_chatbook: Prompt export failed item=item-000001 category=write
+2026-11-01 18:53:41.826 | DEBUG    | tldw_chatbook.DB.Prompts_DB:close_connection:583 - Closed connection for thread MainThread.
+============================= slowest 25 durations =============================
+
+(15 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[missing]
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[database_init]
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[database]
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[encode]
+FAILED Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private[write]
+5 failed in 1.28s

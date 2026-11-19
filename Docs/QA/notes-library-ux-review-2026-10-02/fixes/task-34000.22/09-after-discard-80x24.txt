@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N  Media (23)      Sets              I       ‹ Back
+  a  Media · 23 of 23 · all types ·…   t  Workshop handout
+  v   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter    e  Seed
+      ▊  Title/keyw  ▎                 m    ○ Find  Note  Read later
+      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                 s    Use in Console  More
+        type: All types    sort: New      No analysis to search yet.
+--->
+        Export…     Trash     Select        Read  Analysis (selected)  Highligh
+        Review these                      No analysis yet.
+     █▸ Workshop handout             <---    Add analysis      ○ Generate
+     █    pdf · updated 2m · loaded ▆     OpenAI is not ready (Missing API key).
+        Garden plan 2027
+--->      document · updated 2m
+        Interview with a librarian
+          audio · updated 2m
+        Changelog 2026-09
+         1-20 of 23 · Page 1 of 2
+        Already on the first page.
+           ○ Previous     Next
+  / focus search | F6 next pane | ] next item | F1 · Ctrl+P · Ctrl+Q

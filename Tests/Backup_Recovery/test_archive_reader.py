@@ -59,6 +59,21 @@ def manifest(data=b"hello"):
     )
 
 
+def sealed(tmp_path, *, partial=False, unknown=False, mutate=None, data=b"durable"):
+    doc = manifest(data)
+    doc["owners"][0]["owner_id"] = "unknown.newer" if unknown else "ui.state"
+    doc["files"][0]["owner_id"] = doc["owners"][0]["owner_id"]
+    doc["consistency"] = "partial" if partial else "coherent"
+    if mutate:
+        mutate(doc)
+    path = tmp_path / "fixture.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(doc))
+        for payload in doc["files"]:
+            archive.writestr(payload["payload"], data)
+    return acquire(path, tmp_path / "archive-work", ArchiveLimits(), None, Event())
+
+
 def archive(
     tmp_path, doc=None, data=b"hello", extra=None, compression=zipfile.ZIP_STORED
 ):
@@ -75,12 +90,13 @@ def test_sealed_copy_survives_original_replacement_and_rejects_staged_mutation(
     tmp_path,
 ):
     from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
+    from tldw_chatbook.Utils.platform_files import os as native_os
 
     source = archive(tmp_path)
     sealed = acquire(source, tmp_path / "work", ArchiveLimits(), None, Event())
     source.write_bytes(b"replaced")
     assert verify_sealed(sealed).format_version == 1
-    assert sealed.path.stat().st_mode & 0o077 == 0
+    assert native_os.stat(sealed.path, follow_symlinks=False).st_mode & 0o077 == 0
     sealed.path.write_bytes(b"changed")
     with pytest.raises(ValueError, match="sealed_changed"):
         verify_sealed(sealed)
@@ -463,6 +479,7 @@ def test_compression_review_retry_inside_handler_retains_sealed_bytes(tmp_path):
         b"hello",
         b"".join(hashlib.sha256(str(i).encode()).digest() for i in range(8192)),
     ],
+    ids=("empty", "small", "multiple-input-chunks"),
 )
 def test_complete_deflate_validation_accepts_empty_and_multiple_input_chunks(
     tmp_path, data

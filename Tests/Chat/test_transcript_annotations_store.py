@@ -6,7 +6,6 @@ transcript_annotations row (the spec's "Comment ... additionally persists an
 annotation"). This file covers the store half of that second write.
 """
 
-
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore

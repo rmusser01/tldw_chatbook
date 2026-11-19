@@ -1,0 +1,400 @@
+{
+  "task": "TASK-33648",
+  "base": "6feb84c1d2203bc3c6d0eecd2823f4e2409b4b4e",
+  "source_manifest_sha256": "ecabf47de0c0ffd7c4e34b026ae67a9e42be4c1ad9ae0c776354ce2044c78429",
+  "source_files": [
+    {
+      "file": "tldw_chatbook/Agents/hook_permissions.py",
+      "sha256": "4324d1e9ee43ab26265a74bd24a25947f3e2b21987cbfa51dcd9aab0e56c3c39"
+    },
+    {
+      "file": "tldw_chatbook/Agents/hooks_v2/engine.py",
+      "sha256": "ed93d1db254044b9132fad8454ff9fa10b797c73ba15d785233e5cefd1e4d3c9"
+    },
+    {
+      "file": "tldw_chatbook/Agents/hooks_v2/lifecycle.py",
+      "sha256": "9ab6bf838bf70ea001e0de6e8a368f64102095782a6d6e368ccecd1c7fdecf27"
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_runtime.py",
+      "sha256": "385f93e71b9bf5ea50750e2217338386ab768c2a7682b2927f918e43f87f03e4"
+    },
+    {
+      "file": "Tests/Chat/test_hooks_v2_lifecycle.py",
+      "sha256": "447b0e408a5b64404439cdeea41831f569e64b5ed5a64b38f4cbe89961237813"
+    },
+    {
+      "file": "Tests/Chat/test_hooks_v2_teardown.py",
+      "sha256": "a810afbd9cabb5e3249d73249e37b00659eb376186ca21203a2baec391e43f01"
+    },
+    {
+      "file": "backlog/decisions/163-expanded-console-hook-runtime.md",
+      "sha256": "84705b74c12ab4ee833c0907782e927d5f27bfd93d23c69a947374e6dd204d88"
+    },
+    {
+      "file": "backlog/decisions/197-console-hook-configuration-review.md",
+      "sha256": "fe111c2231e7d1378b855b94934deb7ac942557b4314c3f4b3f5ca4423c5382e"
+    }
+  ],
+  "review_sha256": "d128aceabfbd96444a7d4216eefd50ed2d9024ce7fe1e87b6566c858c8c5281a",
+  "review_status": "Ready",
+  "archive": "evidence.tar.gz",
+  "archive_sha256": "c4a64190345d49937bde7c98a4a84b5b00fb8e189dd53fe793373b5a7b5e9229",
+  "artifacts": [
+    {
+      "member": "frozen/baseline-comparison.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/baseline-comparison.json",
+      "sha256": "23cb151353fbe183aa63a4b1b8eeea26296878e4cb99cbaaf924007b296e2a61"
+    },
+    {
+      "member": "frozen/diff-check.log",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/diff-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "frozen/diff.patch",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/diff.patch",
+      "sha256": "70e218aec9b17beed4c1637737728934e97332702daa6672e766c55e9e3988ad"
+    },
+    {
+      "member": "frozen/manifest.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/manifest.json",
+      "sha256": "ecabf47de0c0ffd7c4e34b026ae67a9e42be4c1ad9ae0c776354ce2044c78429"
+    },
+    {
+      "member": "frozen/review-correction.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/review-correction.diff",
+      "sha256": "960c5fbff4a42b831f2a11a85e74d2d5677ec570243525d4793377f3580419fa"
+    },
+    {
+      "member": "review/corrected.json",
+      "original_path": "/private/tmp/hooks33648-projection-independent-review-ry1jbgl3/review.json",
+      "sha256": "d128aceabfbd96444a7d4216eefd50ed2d9024ce7fe1e87b6566c858c8c5281a"
+    },
+    {
+      "member": "review/parent-auth.json",
+      "original_path": "/private/tmp/hooks33648-parent-auth-bmu4kkjg/receipt.json",
+      "sha256": "8bdd58c04a9ddb6b233263f2eb42a6b2b82fd068b980372cbb2e83246ff11b1f"
+    },
+    {
+      "member": "review/prior-changes-required.json",
+      "original_path": "/private/tmp/hooks33648-independent-review-3jqa9eql/review.json",
+      "sha256": "0c50dce362150d38f3b8a0020366e7eb363f174871424680ee2f35f90d4efeaa"
+    },
+    {
+      "member": "runs/exact-base-mounted-control/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-mounted-base-cr962fwp/raw.log",
+      "sha256": "881ff7c311a414f54b867934535ec7ef6087a70d378f8173508770427c9266c4"
+    },
+    {
+      "member": "runs/exact-base-mounted-control/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-mounted-base-cr962fwp/receipt.json",
+      "sha256": "25595c0a6bda6d1274b07977dec000f5ee6277adb3248d7fb4993f5fa72594dd"
+    },
+    {
+      "member": "runs/exact-base-mounted-control/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-mounted-base-cr962fwp/results.xml",
+      "sha256": "ac7ddd35f6000ac1038bf4b8884b3cd77135c2ed973bf5a5daa6601ac9d2f6e0"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-controls-red-zwc39__2/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-controls-red-zwc39__2/raw.log",
+      "sha256": "5e7126aedef128d78c6778a1828c9b381c0800c639c3d87fa44e17412d4a3b48"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-controls-red-zwc39__2/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-controls-red-zwc39__2/receipt.json",
+      "sha256": "b9144395f4def0c31bcfa60cf24f6b22a09f4573e093ffc9bc4a1ad14d5f150c"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-controls-red-zwc39__2/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-controls-red-zwc39__2/results.xml",
+      "sha256": "4805952a1dadf136bd9345ddc69d2e792f47e3c75391e6101ed6da70ddf5e999"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-custody-red-qhkvfq8q/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-custody-red-qhkvfq8q/raw.log",
+      "sha256": "0c8aed0c0d1ebf0888ec861651828e208610fb3128833a1800e53bb119740aef"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-custody-red-qhkvfq8q/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-custody-red-qhkvfq8q/receipt.json",
+      "sha256": "8d61502be5c91787ce131b5ace3da9a602a5e505b4aa2f5c4ef0640acbd3163c"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-custody-red-qhkvfq8q/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-custody-red-qhkvfq8q/results.xml",
+      "sha256": "14dfbaa337401873418230f63acf1dcefc344e8298aabee318c2f51363be646f"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-final-affected-7jf897mj/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-final-affected-7jf897mj/raw.log",
+      "sha256": "2b4a85ffa581e8b931612f6bb2378e71c2cd4820dd89cfd6b6db5a844f2a7d77"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-final-affected-7jf897mj/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-final-affected-7jf897mj/receipt.json",
+      "sha256": "d67aa18b2dfe062df0268f72dfad752de297e403a315b8e18c8cbbee4e389fb5"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-final-affected-7jf897mj/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-final-affected-7jf897mj/results.xml",
+      "sha256": "067954f56775f1fa4801c2d887dfa54766b0b70afd6b1bbdc5342405e0acac8c"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-green-zwpx4qvp/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-green-zwpx4qvp/raw.log",
+      "sha256": "f880e18d14cbcf0310ca36b3f3f03e57d7452e07f5b146880486031ebb4fc936"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-green-zwpx4qvp/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-green-zwpx4qvp/receipt.json",
+      "sha256": "47733c849e2115dcaa4258dc73f95d02519fc3fec6324848a542bf329677f6a8"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-green-zwpx4qvp/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-green-zwpx4qvp/results.xml",
+      "sha256": "368ea20441ecec9a01a07c77d630a6f55fa4380365f6e1a290ce07b4a3fe146c"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-mixed-real-red-1lb6bsz5/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-mixed-real-red-1lb6bsz5/raw.log",
+      "sha256": "ef2be098c0db6b4ca568df080bfc50e197cafa1c6da39fe809ffb40336d901e4"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-mixed-real-red-1lb6bsz5/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-mixed-real-red-1lb6bsz5/receipt.json",
+      "sha256": "13440e6590ef58bfe535c38344448529c308d34122afec377cbaa007dccb91df"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-mixed-real-red-1lb6bsz5/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-mixed-real-red-1lb6bsz5/results.xml",
+      "sha256": "161ae9b29445242d54d3738854f04816700260d71aa102caf4fb9b8c381d08a6"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-mixed-red-7sc18xps/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-mixed-red-7sc18xps/raw.log",
+      "sha256": "094f3483ea0782bd4f8ee26090ca230cd9a80f57e3734b0ea7c931bf62277b16"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-mixed-red-7sc18xps/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-mixed-red-7sc18xps/receipt.json",
+      "sha256": "03aafdc82493c8697c6ecb6348d28ffb5c954fba52eb7b0d8aa6d6c1c13f9352"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-mixed-red-7sc18xps/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-mixed-red-7sc18xps/results.xml",
+      "sha256": "a6d39859011041a2983b8864a248b5f180709e390007daa77e7f27295d81f984"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-projection-green-rxxm0lw4/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-projection-green-rxxm0lw4/raw.log",
+      "sha256": "75ef28c4b50c88987cf33b9f355b06c8344c81a4b2e571cad0c9cea79d2d2d4c"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-projection-green-rxxm0lw4/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-projection-green-rxxm0lw4/receipt.json",
+      "sha256": "c56690bffe8735c915026aca50aa6d9597aa6b6f29ccdc0e6ea1f96b63898601"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-projection-green-rxxm0lw4/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-projection-green-rxxm0lw4/results.xml",
+      "sha256": "6b4937e76b97e37870c1daf0cff024800f2013d853351690400c866e441575fd"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-red-ijco4z36/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-red-ijco4z36/raw.log",
+      "sha256": "4272153a05d6c113e724a196d347a5a0f67ac44b216b566f8dddc5bc5c2a8d23"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-red-ijco4z36/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-red-ijco4z36/receipt.json",
+      "sha256": "6608c7790b37fc3d29654a3f838e55534b2b7d270b035748cff1e98543edc8e4"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-red-ijco4z36/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-red-ijco4z36/results.xml",
+      "sha256": "70c098a62db125076127c674b7ad0945c0499ac7d866433d206d369da47bc19f"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-related-collection-6gtacqxt/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-related-collection-6gtacqxt/raw.log",
+      "sha256": "bd4eaa69640c2ce6d3fb15115fef94dfa8c9402e18e5a328b1a7b010aeb0ea85"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-related-collection-6gtacqxt/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-related-collection-6gtacqxt/receipt.json",
+      "sha256": "fad4e3d556638a1c13b4abd824555dca32fef9b885ba5f64d500a596e004407d"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-related-collection-6gtacqxt/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-related-collection-6gtacqxt/results.xml",
+      "sha256": "65e0b8e9a4c4a0d7586383561391e650f6bb0956c45ea04dcc5e173a5fce2f38"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-related-xl3d_wit/raw.log",
+      "original_path": "/private/tmp/final-followups-hooks33648-related-xl3d_wit/raw.log",
+      "sha256": "7df6af8454666875505dbcc5ea034e6c4a87b5b52e3cb90aa5e3f90f84a83964"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-related-xl3d_wit/receipt.json",
+      "original_path": "/private/tmp/final-followups-hooks33648-related-xl3d_wit/receipt.json",
+      "sha256": "e06010b7c38f636ee3cc49fdea7fc7c8cc6b935902472bd99820b297a33fdb0c"
+    },
+    {
+      "member": "runs/final-followups-hooks33648-related-xl3d_wit/results.xml",
+      "original_path": "/private/tmp/final-followups-hooks33648-related-xl3d_wit/results.xml",
+      "sha256": "f4ba5c1d18f9b90b246be7640486ef3ce059faa9fc502dff8ce8614faa75edcd"
+    },
+    {
+      "member": "runs/hooks33648-final-static-66huwj_s/receipt.json",
+      "original_path": "/private/tmp/hooks33648-final-static-66huwj_s/receipt.json",
+      "sha256": "9ce8f139e8da2361020d004bbedd458464de8f8cfeea5030b67ced46e02784b1"
+    },
+    {
+      "member": "runs/hooks33648-projection-static-dzdr8mml/receipt.json",
+      "original_path": "/private/tmp/hooks33648-projection-static-dzdr8mml/receipt.json",
+      "sha256": "9877fc89b7f09ccf6a87e3ee6c2881840b930617853e2fdf7838e28d79b88ee3"
+    },
+    {
+      "member": "runs/hooks33648-static-o2y3zfat/receipt.json",
+      "original_path": "/private/tmp/hooks33648-static-o2y3zfat/receipt.json",
+      "sha256": "21fc579af05908b1d0bcb9377a546141f23a3e577916d93614ee0e4bbff0c5b9"
+    },
+    {
+      "member": "static/console_runtime.py.base.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/console_runtime.py.base.format.diff",
+      "sha256": "78501b8cb4f4a1bc812027eb7c0b0306a973b5e469fb0f1218764a9a988ecc99"
+    },
+    {
+      "member": "static/console_runtime.py.base.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/console_runtime.py.base.lint.json",
+      "sha256": "3ed18a35ba09596e9063ae24e570b789c37aa3f9d1dd711668f6476971cbc2d6"
+    },
+    {
+      "member": "static/console_runtime.py.current.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/console_runtime.py.current.format.diff",
+      "sha256": "24e7e129d73e3dbeb47ec83e0ca6cdf1b3995f74bc1c3eb2fd30372116d9aa78"
+    },
+    {
+      "member": "static/console_runtime.py.current.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/console_runtime.py.current.lint.json",
+      "sha256": "e6be1d697220f3cad1e28d0cc1caa7e7f99a0caa6af4c9fb444e5ee7361ef862"
+    },
+    {
+      "member": "static/engine.py.base.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/engine.py.base.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/engine.py.base.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/engine.py.base.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "static/engine.py.current.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/engine.py.current.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/engine.py.current.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/engine.py.current.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "static/hook_permissions.py.base.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/hook_permissions.py.base.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/hook_permissions.py.base.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/hook_permissions.py.base.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "static/hook_permissions.py.current.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/hook_permissions.py.current.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/hook_permissions.py.current.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/hook_permissions.py.current.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "static/lifecycle.py.base.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/lifecycle.py.base.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/lifecycle.py.base.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/lifecycle.py.base.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "static/lifecycle.py.current.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/lifecycle.py.current.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/lifecycle.py.current.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/lifecycle.py.current.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "static/receipt.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/receipt.json",
+      "sha256": "9877fc89b7f09ccf6a87e3ee6c2881840b930617853e2fdf7838e28d79b88ee3"
+    },
+    {
+      "member": "static/test_hooks_v2_lifecycle.py.base.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/test_hooks_v2_lifecycle.py.base.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/test_hooks_v2_lifecycle.py.base.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/test_hooks_v2_lifecycle.py.base.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "static/test_hooks_v2_lifecycle.py.current.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/test_hooks_v2_lifecycle.py.current.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/test_hooks_v2_lifecycle.py.current.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/test_hooks_v2_lifecycle.py.current.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "static/test_hooks_v2_teardown.py.base.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/test_hooks_v2_teardown.py.base.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/test_hooks_v2_teardown.py.base.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/test_hooks_v2_teardown.py.base.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "static/test_hooks_v2_teardown.py.current.format.diff",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/test_hooks_v2_teardown.py.current.format.diff",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "member": "static/test_hooks_v2_teardown.py.current.lint.json",
+      "original_path": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/static/test_hooks_v2_teardown.py.current.lint.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "member": "superseded-v1/diff.patch",
+      "original_path": "/private/tmp/hooks33648-frozen-tkdr76rp/diff.patch",
+      "sha256": "f9c2bdab09aaef9d32ed40f2b682c5cf0b7225d8dfa33ba6c245fc196ff49161"
+    },
+    {
+      "member": "superseded-v1/manifest.json",
+      "original_path": "/private/tmp/hooks33648-frozen-tkdr76rp/manifest.json",
+      "sha256": "5dca893400a21d410d7be176aed5e7f0fa01de33d56bb9019c8e86bbe79ee6fe"
+    }
+  ]
+}

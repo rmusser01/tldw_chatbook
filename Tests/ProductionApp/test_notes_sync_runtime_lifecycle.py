@@ -126,6 +126,15 @@ async def test_runtime_start_completion_refreshes_the_current_library_screen(
                 break
             await pilot.pause(0.01)
         assert isinstance(app.screen, LibraryScreen)
+        # TASK-34000.71: with no root, the Library screen's constructor now
+        # schedules the runtime's lazy non-forced start, whose own
+        # done-callback refreshes this screen. Let it settle before the
+        # substitute is installed, so this test counts only the observation
+        # it drives by hand.
+        lazy_start = app._notes_sync_runtime_start_task
+        if lazy_start is not None:
+            await lazy_start
+            await pilot.pause()
         monkeypatch.setattr(
             app.screen,
             "refresh_notes_sync_runtime",

@@ -30,7 +30,7 @@ CONSOLE_AGENT_TOOLS_DOCUMENT = (
     REPO_ROOT / "Docs" / "User_Guide" / "console" / "agent-runs-and-tools.md"
 )
 SKILLS_EXAMPLES_DOCUMENT = REPO_ROOT / "Docs" / "Examples" / "skills" / "README.md"
-CONFIG_TEMPLATE = REPO_ROOT / "tldw_chatbook" / "config.py"
+CONFIG_TEMPLATE = REPO_ROOT / "tldw_chatbook" / "Config_Files" / "default_config.toml"
 BUILTIN_TOOL_GATE = REPO_ROOT / "tldw_chatbook" / "Agents" / "builtin_tool_gate.py"
 MCP_TOOLS_MODE = (
     REPO_ROOT / "tldw_chatbook" / "UI" / "MCP_Modules" / "mcp_tools_mode.py"
@@ -476,8 +476,12 @@ def test_watchlists_documents_pin_external_receipts_and_console_content() -> Non
             "watchlists_get_briefing",
         ):
             assert name in normalized, (path, name)
-        assert "never article snippets, article bodies, briefing Markdown" in normalized or (
-            "Console-only" in normalized and "never registers or resolves" in normalized
+        assert (
+            "never article snippets, article bodies, briefing Markdown" in normalized
+            or (
+                "Console-only" in normalized
+                and "never registers or resolves" in normalized
+            )
         ), path
 
 
@@ -523,8 +527,8 @@ def test_skill_author_inventory_links_watchlists_task_and_permission_decisions()
         "task-16222%20-%20Expose-local-Watchlists-search-tools-to-Console-and-MCP.md"
         in text
     )
-    assert "030-local-library-agent-tool-boundary.md" in text
-    assert "032-local-agent-tool-permission-boundary.md" in text
+    assert "298-local-library-agent-tool-boundary.md" in text
+    assert "300-local-agent-tool-permission-boundary.md" in text
 
 
 @pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
@@ -580,8 +584,14 @@ def test_user_guide_warning_names_private_watchlists_egress_and_trust_boundary()
     warning = _admonition_block(
         USER_GUIDE_DOCUMENT.read_text(encoding="utf-8"), "WARNING"
     )
-    assert "private Watchlists source, collection, briefing-receipt, and operation metadata" in warning
-    assert "does not expose Watchlists article snippets or bodies, or briefing Markdown/provenance" in warning
+    assert (
+        "private Watchlists source, collection, briefing-receipt, and operation metadata"
+        in warning
+    )
+    assert (
+        "does not expose Watchlists article snippets or bodies, or briefing Markdown/provenance"
+        in warning
+    )
     assert "external MCP client may send" in warning
     assert "off-device to a cloud model" in warning
     assert "trust both the client and the model provider" in warning

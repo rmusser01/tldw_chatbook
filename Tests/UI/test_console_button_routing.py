@@ -25,6 +25,7 @@ rows and already have coverage in their owning feature's test file.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 
 import pytest
@@ -38,12 +39,15 @@ from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
     ConversationActionChosen,
 )
 from textual.css.query import NoMatches
+from textual.errors import NoWidget
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_workspace_context_rail import (
     _base_grouped_workspace_state,
     _browser_row,
+    _wait_for_condition,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -70,7 +74,7 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 _ROUTING_SIZE = (160, 44)
 
 
-def _install_real_marks_service(app, tmp_path) -> ConversationLocalMarksService:
+def _install_real_marks_service(app, tmp_path, request) -> ConversationLocalMarksService:
     """Give the test app a marks service backed by a real sqlite file.
 
     `_build_test_app` leaves `chachanotes_db` unset, so the production
@@ -78,6 +82,12 @@ def _install_real_marks_service(app, tmp_path) -> ConversationLocalMarksService:
     assertion is only worth making against a real row, so build one.
     """
     db = CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="button-routing")
+
+    def retire():
+        with db.quiesce_connections(timeout_seconds=2.0):
+            pass
+
+    request.addfinalizer(retire)
     service = ConversationLocalMarksService(db)
     app.conversation_local_marks_service = service
     return service
@@ -93,17 +103,31 @@ async def _mounted_console(host, pilot, selector: str = "#console-workspace-cont
 async def _wait_for_confirmation(
     host, *, previous: ConfirmationDialog | None = None
 ) -> ConfirmationDialog:
-    """Wait for a close worker to mount its confirmation without fixed sleeps."""
+    """Wait for the Close modal's actions to be painted and hit-testable.
+
+    The screen stack and selectors can be ready before the first layout.
+    Preserve the polling budget, then let the callers perform real clicks
+    and their geometry assertions against the painted controls.
+    """
 
     for _ in range(200):
         candidate = host.screen_stack[-1]
         if isinstance(candidate, ConfirmationDialog) and candidate is not previous:
             try:
-                candidate.query_one("#confirm-button", Button)
-            except NoMatches:
+                buttons = (
+                    candidate.query_one("#confirm-button", Button),
+                    candidate.query_one("#cancel-button", Button),
+                )
+                painted = all(
+                    button.region.area
+                    and candidate.get_widget_at(*button.region.center)[0] is button
+                    for button in buttons
+                )
+            except (NoMatches, NoWidget):
                 pass
             else:
-                return candidate
+                if painted:
+                    return candidate
         await asyncio.sleep(0.01)
     raise AssertionError("Console close confirmation did not mount")
 
@@ -173,8 +197,11 @@ def _browser_config(app) -> dict:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_path):
+async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(
+    tmp_path, request, monkeypatch
+):
     """Pressing the star persists through `conversation_local_marks_service`.
 
     The mark is the whole point of the branch: the row repaints from the
@@ -182,7 +209,7 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
     repaint ran. Assert the service.
     """
     app = _build_test_app()
-    marks = _install_real_marks_service(app, tmp_path)
+    marks = _install_real_marks_service(app, tmp_path, request)
     rows = (
         _browser_row(
             "conv-star-1",
@@ -196,13 +223,29 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
 
     async with host.run_test(size=_ROUTING_SIZE) as pilot:
         console = await _mounted_console(host, pilot)
-        await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
+        state = _base_grouped_workspace_state(rows=rows)
+        monkeypatch.setattr(
+            console._workspace, "_build_console_workspace_context_state", lambda: state
+        )
+        console._sync_console_workspace_context()
 
         # TASK-23200: the per-row star button became an asterisk that opens
         # the row action menu. The durable write this test guards is now
         # reached through the menu's Favourite entry, which routes into the
         # same `_toggle_console_conversation_star` branch.
-        opener = console.query_one("#console-conversation-actions-0", Button)
+        def find_opener():
+            return next(
+                (
+                    button
+                    for button in console.query(".console-conversation-actions")
+                    if button.conversation_id == "conv-star-1"
+                ),
+                None,
+            )
+
+        await _wait_for_condition(pilot, lambda: find_opener() is not None, timeout=4.0)
+        opener = find_opener()
+        assert opener is not None
         assert opener.disabled is False
         assert opener.conversation_id == "conv-star-1"
 
@@ -222,7 +265,8 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
 
         # Choosing it again unstars: the branch reads current truth from the
         # service, not from whatever the row was painted with.
-        await _sync_tray(console, pilot, _base_grouped_workspace_state(rows=rows))
+        console._sync_console_workspace_context()
+        await pilot.pause()
         console.on_conversation_action_chosen(
             ConversationActionChosen(
                 ACTION_UNFAVORITE,
@@ -238,6 +282,7 @@ async def test_star_button_writes_a_durable_local_mark_and_toggles_it_back(tmp_p
         assert marks.is_starred("conv-star-1") is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_star_button_writes_nothing_when_the_marks_service_is_missing():
     """No service is a warning, not a crash and not a half-write."""
@@ -280,6 +325,7 @@ async def test_star_button_writes_nothing_when_the_marks_service_is_missing():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_browser_section_toggle_persists_its_collapse_preference():
     app = _build_test_app()
@@ -333,6 +379,7 @@ async def test_browser_section_toggle_persists_its_collapse_preference():
         assert _browser_config(app).get(group_id) is before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flat_browser_has_no_retired_workspace_group_toggles():
     app = _build_test_app()
@@ -352,6 +399,7 @@ async def test_flat_browser_has_no_retired_workspace_group_toggles():
         assert toggles == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_files_controls_carry_stable_workspace_ids() -> None:
     """The tree menu target addresses a workspace without parsing its label."""
@@ -378,6 +426,7 @@ async def test_workspace_files_controls_carry_stable_workspace_ids() -> None:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_no_widget_carries_the_workspace_conversations_toggle_id():
     """The 35-line `console-workspace-conversations-toggle` branch is DEAD.
@@ -423,6 +472,7 @@ async def test_no_widget_carries_the_workspace_conversations_toggle_id():
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_workspace_conversation_row_switches_to_its_already_open_session():
     """Pressing a row with an open native tab switches the store, not resumes.
@@ -468,6 +518,7 @@ async def test_workspace_conversation_row_switches_to_its_already_open_session()
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_close_tab_button_drops_an_empty_session_without_confirmation():
     app = _build_test_app()
@@ -499,6 +550,7 @@ async def test_close_tab_button_drops_an_empty_session_without_confirmation():
         assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_close_tab_button_drops_an_idle_saved_session_without_confirmation():
     app = _build_test_app()
@@ -531,6 +583,7 @@ async def test_close_tab_button_drops_an_idle_saved_session_without_confirmation
         assert not isinstance(host.screen_stack[-1], ConfirmationDialog)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_close_tab_button_confirms_for_unsaved_message_on_hidden_branch():
     app = _build_test_app()
@@ -583,7 +636,15 @@ async def test_close_tab_button_confirms_for_unsaved_message_on_hidden_branch():
 
 
 @pytest.mark.asyncio
-async def test_close_tab_button_confirms_before_dropping_a_session_with_messages():
+@private_profile_test
+async def test_close_tab_button_confirms_before_dropping_a_session_with_messages(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Confirm Close before removing a session with unsaved messages.
+
+    Args:
+        request: Supplies the node identity for private-profile execution.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -605,8 +666,8 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
 
         assert "Saved history stays in Library" in dialog.message
         assert "Temporary or unsaved messages: 1" in dialog.message
-        assert "Live agent turns: 0" in dialog.message
-        assert "Unsent queued prompts: 0" in dialog.message
+        assert "Live agent runs:" not in dialog.message
+        assert "Unsent queued prompts:" not in dialog.message
         # Still open: the confirmation is a gate, not a notification.
         assert doomed.id in {session.id for session in store.sessions()}
 
@@ -617,7 +678,15 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
 
 
 @pytest.mark.asyncio
-async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text():
+@private_profile_test
+async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text(
+    request: pytest.FixtureRequest,
+) -> None:
+    """Warn about queued work without exposing its prompt, then preserve it on Stay.
+
+    Args:
+        request: Supplies the node identity for private-profile execution.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -657,8 +726,8 @@ async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text
         (await _close_tab_button(console, pilot, doomed.id)).press()
         dialog = await _wait_for_confirmation(host)
 
-        assert "Temporary or unsaved messages: 0" in dialog.message
-        assert "Live agent turns: 0" in dialog.message
+        assert "Temporary or unsaved messages:" not in dialog.message
+        assert "Live agent runs:" not in dialog.message
         assert "Unsent queued prompts: 1" in dialog.message
         assert "secret queued close text" not in dialog.message
 
@@ -668,6 +737,7 @@ async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text
         assert registry.snapshot(doomed.id).total_count == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_close_revalidates_changed_impact_and_presents_updated_dialog():
     app = _build_test_app()
@@ -698,6 +768,7 @@ async def test_close_revalidates_changed_impact_and_presents_updated_dialog():
         assert doomed.id in {session.id for session in store.sessions()}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_session_tab_button_activates_an_inactive_session():
     app = _build_test_app()
@@ -742,6 +813,7 @@ class _ExitRecorder:
         self.exits += 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mic_button_opens_a_capture_when_idle(monkeypatch):
     """Idle press arms a capture: state and origin session both persist."""
@@ -770,6 +842,7 @@ async def test_mic_button_opens_a_capture_when_idle(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mic_button_exits_the_hands_free_loop_instead_of_toggling():
     """A running hands-free loop supersedes the one-shot toggle entirely."""
@@ -790,6 +863,7 @@ async def test_mic_button_exits_the_hands_free_loop_instead_of_toggling():
         console._console_hands_free = None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mic_button_exits_the_realtime_loop_instead_of_toggling():
     """Same rule for the V4 realtime engine (it would otherwise double-open
@@ -810,6 +884,7 @@ async def test_mic_button_exits_the_realtime_loop_instead_of_toggling():
         console._console_realtime = None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("state", "expected"),
@@ -841,7 +916,17 @@ async def test_mic_button_routes_a_live_capture_to_cancel_or_stop(
 
 
 @pytest.mark.asyncio
-async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history(tmp_path):
+@private_profile_test
+async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    """Warn about the draft and preserve saved history after Close.
+
+    Args:
+        request: Supplies the node identity for private-profile execution.
+        tmp_path: Holds the isolated saved-conversation database.
+    """
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
     from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -880,7 +965,7 @@ async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_save
         (await _close_tab_button(console, pilot, saved.id)).press()
         dialog = await _wait_for_confirmation(host)
         assert "Saved history stays in Library" in dialog.message
-        assert "Temporary or unsaved messages: 0" in dialog.message
+        assert "Temporary or unsaved messages:" not in dialog.message
         assert "Unsent draft: yes" in dialog.message
         assert "private draft" not in dialog.message
         dialog.query_one("#cancel-button", Button).press()
@@ -904,6 +989,7 @@ async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_save
 
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_close_draft_only_session_requires_confirmation():
     app = _build_test_app()

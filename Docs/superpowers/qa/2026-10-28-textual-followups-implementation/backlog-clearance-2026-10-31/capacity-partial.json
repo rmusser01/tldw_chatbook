@@ -1,0 +1,233 @@
+{
+  "head_before_repairs": "66090f00733618c51857af8b7fd5dd626df61f36",
+  "base": "dcdb2249294c60c5b660011e8d7b0f3c8babb28c",
+  "entries": 1242,
+  "shards": 32,
+  "max_parallel": 17,
+  "known_entries": 1189,
+  "known_work_lower_bound_seconds": 616.9895302422218,
+  "known_forecast_lower_bound_seconds": 1019.537959778555,
+  "target_seconds": 1020,
+  "meets_target": null,
+  "unmeasured_entries": [
+    {
+      "entry": "Tests/UI/test_console_roleplay_model_workspace.py::test_pristine_roleplay_handoff_keeps_its_named_workspace",
+      "shard": 6
+    },
+    {
+      "entry": "Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[apply-picker]",
+      "shard": 7
+    },
+    {
+      "entry": "Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[apply-character]",
+      "shard": 8
+    },
+    {
+      "entry": "Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[apply-persona]",
+      "shard": 9
+    },
+    {
+      "entry": "Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[cancel-picker]",
+      "shard": 10
+    },
+    {
+      "entry": "Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[cancel-character]",
+      "shard": 11
+    },
+    {
+      "entry": "Tests/UI/test_console_roleplay_model_workspace.py::test_roleplay_model_picker_preserves_originating_chat[cancel-persona]",
+      "shard": 12
+    },
+    {
+      "entry": "Tests/UI/test_console_modal_theme_frames.py::test_console_widget_css_uses_theme_colours_only",
+      "shard": 13
+    },
+    {
+      "entry": "Tests/UI/test_console_modal_theme_frames.py::test_console_modals_paint_theme_frames_and_readable_copy[textual-light-80x24]",
+      "shard": 14
+    },
+    {
+      "entry": "Tests/UI/test_console_speech_header_state.py::test_enter_on_hands_free_asks_consent_and_declining_starts_nothing",
+      "shard": 15
+    },
+    {
+      "entry": "Tests/UI/test_console_speech_header_state.py::test_exit_during_model_preparation_cancels_and_a_late_start_never_records[escape]",
+      "shard": 16
+    },
+    {
+      "entry": "Tests/UI/test_console_rail_filter_typing.py::test_typing_across_the_debounce_keeps_case_text_and_focus",
+      "shard": 17
+    },
+    {
+      "entry": "Tests/UI/test_console_rail_filter_typing.py::test_binding_letters_typed_around_rebuilds_stay_in_the_filter",
+      "shard": 18
+    },
+    {
+      "entry": "Tests/UI/test_console_rail_filter_typing.py::test_the_match_count_and_rows_follow_one_title_rule",
+      "shard": 19
+    },
+    {
+      "entry": "Tests/UI/test_console_rail_filter_typing.py::test_every_counted_row_is_painted_after_each_filter",
+      "shard": 20
+    },
+    {
+      "entry": "Tests/UI/test_console_rail_filter_typing.py::test_a_rebuild_never_writes_state_into_the_focused_input",
+      "shard": 21
+    },
+    {
+      "entry": "Tests/UI/test_console_library_outcome_line.py",
+      "shard": 22
+    },
+    {
+      "entry": "Tests/UI/test_console_library_outcome_lines.py",
+      "shard": 23
+    },
+    {
+      "entry": "Tests/UI/test_settings_default_model_picker.py::test_koboldcpp_root_and_prefix_root_list_where_switch_model_probes",
+      "shard": 24
+    },
+    {
+      "entry": "Tests/UI/test_modal_wide_tier.py::test_every_anchor_targets_real_code",
+      "shard": 25
+    },
+    {
+      "entry": "Tests/UI/test_modal_wide_tier.py::test_wide_tier_block_exists_in_source_module",
+      "shard": 26
+    },
+    {
+      "entry": "Tests/UI/test_evals_skill_eval_screen.py",
+      "shard": 27
+    },
+    {
+      "entry": "Tests/UI/test_non_obscuring_focus_contract.py",
+      "shard": 28
+    },
+    {
+      "entry": "Tests/UI/test_css_staleness_manifest.py",
+      "shard": 29
+    },
+    {
+      "entry": "Tests/UI/test_modal_wide_tier.py::test_every_wide_tier_rule_is_registered",
+      "shard": 30
+    },
+    {
+      "entry": "Tests/UI/test_modal_wide_tier.py::test_every_registered_anchor_has_a_wide_tier_rule",
+      "shard": 31
+    },
+    {
+      "entry": "Tests/UI/test_llamacpp_setup_refresh_gate.py",
+      "shard": 32
+    },
+    {
+      "entry": "Tests/UI/test_modal_wide_tier.py::test_every_modalscreen_class_is_tiered_or_explicitly_skipped",
+      "shard": 1
+    },
+    {
+      "entry": "Tests/UI/test_settings_console_os_notifications_journeys.py",
+      "shard": 2
+    },
+    {
+      "entry": "Tests/UI/test_console_archive_recovery_cards.py",
+      "shard": 3
+    },
+    {
+      "entry": "Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display",
+      "shard": 4
+    },
+    {
+      "entry": "Tests/UI/test_console_config_sync_cadence_inputs.py::test_late_tail_publication_is_a_new_input_and_refusal_remains_owed",
+      "shard": 5
+    },
+    {
+      "entry": "Tests/UI/test_console_resume_send_guard.py::test_enter_during_a_conversation_resume_is_refused_visibly",
+      "shard": 6
+    },
+    {
+      "entry": "Tests/UI/test_console_resume_send_guard.py::test_enter_right_after_a_resume_settles_sends_to_the_resumed_chat",
+      "shard": 7
+    },
+    {
+      "entry": "Tests/UI/test_console_resume_send_guard.py::test_resume_refusal_records_only_code_owned_send_diagnostics",
+      "shard": 8
+    },
+    {
+      "entry": "Tests/UI/test_console_resume_send_guard.py::test_pending_send_refusals_reach_the_metadata_sink",
+      "shard": 9
+    },
+    {
+      "entry": "Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[mount]",
+      "shard": 10
+    },
+    {
+      "entry": "Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[view-start]",
+      "shard": 11
+    },
+    {
+      "entry": "Tests/UI/test_console_response_rules.py::test_console_mount_refreshes_never_wait_for_a_config_rebuild[roleplay]",
+      "shard": 12
+    },
+    {
+      "entry": "Tests/UI/test_console_response_rules.py::test_a_deferred_refresh_runs_once_with_its_latest_call",
+      "shard": 13
+    },
+    {
+      "entry": "Tests/UI/test_console_skill_capture_config_rebuild.py::test_stock_skill_capture_keeps_rebuild_out_of_its_snapshot",
+      "shard": 14
+    },
+    {
+      "entry": "Tests/UI/test_console_skill_capture_config_rebuild.py::test_stock_skill_context_capture_keeps_rebuild_out_of_its_snapshot",
+      "shard": 15
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_tree_keys.py",
+      "shard": 16
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_folder_picker_lists_every_folder.py",
+      "shard": 17
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_move_never_false_conflicts.py",
+      "shard": 18
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_filter_fast_path_and_draft.py",
+      "shard": 19
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_filter_fast_path_and_draft_extended.py",
+      "shard": 20
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_folder_navigator.py::test_locating_a_folder_loads_its_placements_slice_too",
+      "shard": 21
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_folder_navigator.py::test_each_folder_conflict_names_what_changed_and_offers_refresh",
+      "shard": 22
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_folder_navigator.py::test_refresh_is_offered_only_beside_a_folder_conflict_sentence",
+      "shard": 23
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_folder_navigator.py::test_a_move_out_of_unfiled_reloads_the_unfiled_slice",
+      "shard": 24
+    },
+    {
+      "entry": "Tests/UI/test_library_notes_folder_navigator.py::test_the_next_successful_folder_operation_withdraws_the_conflict",
+      "shard": 25
+    },
+    {
+      "entry": "Tests/UI/test_response_rules_end_to_end.py::test_learn_repair_reopen_and_exclude_through_console",
+      "shard": 26
+    }
+  ],
+  "source_1189_order_retained": true,
+  "qualification": "Partial replay only: 53 additional current-dev selections lack measurements in the source model. No invented durations or full-capacity pass. Hosted CI gate waived by owner; matrix, concurrency, test/job deadlines and complete selector membership retained.",
+  "inputs": {
+    "Docs\\superpowers\\qa\\2026-10-28-textual-followups-implementation\\capacity-replay.json": "50dba50d5d56ea45d2cb446ba267e5733d032d5ee6881519dc16efa9f68bc9a2",
+    "Docs\\superpowers\\qa\\2026-10-28-textual-followups-implementation\\dev-sync\\capacity.json": "b35a520716ec2271d14061f426a7f3cf937dd1337ba0c353f9568dc618b50f70",
+    "scripts\\ui_pr_gate_census.txt": "6d844cc658e4cc10491fe270d631ad8bd8cb1206fdf5e7dfb191e354d2cf331b"
+  }
+}

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Note from A field guide to Markdown tables — Media keeps your place · Next: Keep   │
+│   a  │ Library notes · Ready                                        │  o  editing; changes save automatically.                                               │
+│   v  │ Notes (124)                                                  │  t    ‹ Notes   A field guide to Markdown tables                                       │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s                                                                                     │
+│      │ copy or keep a folder synced, choose Add from files.         │      In the Library database only — no file on disk                                    │
+│      │                                                              │     Note from A field guide to Markdown tables — Media keeps your place                │
+│      │ Filter                                                       │         Edit     Preview     Info                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │         Save     Use in Console        Discard new note                                │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     Title                                                                              │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │                                                              │     ▊ A field guide to Markdown tables                                               ▎ │
+│      │    New     Sort: Newest     Select                           │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │    Add from files…     Export                                │                                                                                        │
+│      │ Folders & placement                                          │     Keywords                                                                           │
+│      │    New folder     Add to folder     Move note                │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    ○ Remove placement                                        │     ▊ Comma-separated keywords                                                       ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │<---                                                                                    │
+│      │  ▸ Agent_Lessons                                             │     Body                                                                               │
+│      │  ▸ Journal                                                   │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Meetings                                                  │     ┃ [A field guide to Markdown                                                     ┃ │
+│      │  ▸ Projects                                                  │     ┃ tables](media://a2ff5d64-934d-46a8-8313-4843fab4ff56)                          ┃ │
+│ ---> │  ▸ Recipes                                                   │     ┃                                                                                ┃ │
+│      │  ▸ Research                                                  │     ┃                                                                                ┃ │
+│      │  ▸ Study                                                     │     ┃                                                                                ┃ │
+│      │  ▾ Unfiled                                                   │     ┃                                                                                ┃ │
+│      │    A field guide to Markdown tables · Unfiled · now          │     ┃                                                                                ┃ │
+│      │    A field guide to Markdown tables · Unfiled · 1h           │     ┃                                                                                ┃ │
+│      │    Quotes · 1h                                               │     ┃                                                                                ┃ │
+│      │    Scratch · 1h                                              │     ┃                                                                                ┃ │
+│      │    Untitled · 1h                                             │     ┃                                                                                ┃ │
+│      │    A very long note title that keeps going so we can test…   │     ┃                                                                                ┃ │
+│      │    📚 Reading queue 2026 ✨ · 1h                           ▄ │     ┃                                                                                ┃ │
+│      │    Gardening log · 1h                                        │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │    Meeting Notes 2026-09-30 · 1h                             │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                         6 words · 3:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

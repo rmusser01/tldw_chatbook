@@ -1,0 +1,170 @@
+--- Tests/Console/test_console_command_draft.py
++++ Tests/Console/test_console_command_draft.py
+@@ -267,8 +267,16 @@
+     [
+         ("Video generation failed (X).", "", "Video generation failed (X)."),
+         ("Image generation failed: boom", "", "Image generation failed: boom"),
+-        ("Video generation failed (X).", "Send: /c", "Video generation failed (X). Send: /c"),
+-        ("Image generation failed: boom", "Send: /c", "Image generation failed: boom. Send: /c"),
++        (
++            "Video generation failed (X).",
++            "Send: /c",
++            "Video generation failed (X). Send: /c",
++        ),
++        (
++            "Image generation failed: boom",
++            "Send: /c",
++            "Image generation failed: boom. Send: /c",
++        ),
+         ("Failed...", "Send: /c", "Failed. Send: /c"),
+     ],
+ )
+
+--- Tests/UI/test_console_command_origin_chat.py
++++ Tests/UI/test_console_command_origin_chat.py
+@@ -374,8 +374,7 @@
+         await asyncio.sleep(0.2)
+         assert dispatched == [], "a command ran in a chat it was not sent from"
+         assert any(
+-            "/help" in message and severity == "warning"
+-            for message, severity in toasts
++            "/help" in message and severity == "warning" for message, severity in toasts
+         ), f"the refusal was silent: {toasts}"
+ 
+         run_console_command(console, parse, other, "/help")
+
+--- tldw_chatbook/UI/Console_Modules/message.py
++++ tldw_chatbook/UI/Console_Modules/message.py
+@@ -611,7 +611,6 @@
+         ]
+         return image_messages[-IMAGE_CACHE_MAX_ENTRIES:]
+ 
+-
+     def _console_messages_from_conversation_tree(
+         self,
+         tree: dict[str, Any],
+@@ -2227,9 +2226,7 @@
+             if not confirmed:
+                 return
+             self.app_instance.post_message(
+-                NavigateToScreen(
+-                    TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTE_ID: note_id}
+-                )
++                NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTE_ID: note_id})
+             )
+ 
+         await self.push_screen(
+@@ -2834,9 +2831,7 @@
+                 exclusive=True,
+                 group="console-sync",
+             )
+-            self.app_instance.notify(
+-                "Edited thinking block.", severity="information"
+-            )
++            self.app_instance.notify("Edited thinking block.", severity="information")
+ 
+         await self.push_screen(
+             ConsoleEditThinkingModal(text=text),
+
+--- tldw_chatbook/UI/Console_Modules/skill.py
++++ tldw_chatbook/UI/Console_Modules/skill.py
+@@ -184,23 +184,17 @@
+         """Replace only the pending skill-install task state."""
+         current = self._task_resume_state()
+         return bool(
+-            self._set_task_resume_state(
+-                replace(current, pending_skill_install=payload)
+-            )
++            self._set_task_resume_state(replace(current, pending_skill_install=payload))
+         )
+ 
+     def _set_console_pending_skill_script(self, payload: dict[str, Any] | None) -> bool:
+         """Replace only the pending skill-script task state."""
+         current = self._task_resume_state()
+         return bool(
+-            self._set_task_resume_state(
+-                replace(current, pending_skill_script=payload)
+-            )
++            self._set_task_resume_state(replace(current, pending_skill_script=payload))
+         )
+ 
+-    def _set_console_pending_chat_create(
+-        self, payload: dict[str, Any] | None
+-    ) -> None:
++    def _set_console_pending_chat_create(self, payload: dict[str, Any] | None) -> None:
+         """Replace only the pending chat-create task state."""
+         current = self._task_resume_state()
+         self._set_task_resume_state(replace(current, pending_chat_create=payload))
+
+--- tldw_chatbook/UI/Console_Modules/video.py
++++ tldw_chatbook/UI/Console_Modules/video.py
+@@ -871,8 +871,7 @@
+                         GeneratedVideoConfirmation(
+                             title="Replace existing file?",
+                             message=(
+-                                "A file already exists at "
+-                                f"{str(target)}. Replace it?"
++                                f"A file already exists at {str(target)}. Replace it?"
+                             ),
+                             confirm_label="Replace",
+                             cancel_label="Choose another",
+@@ -1306,8 +1305,13 @@
+         if path is None:
+             await self._sync_native_console_chat_ui()
+             self.app_instance.notify(
+-                ("Deleted recovered media" if status == "recovered_deleted" else "Missing recovered media")
+-                if status.startswith("recovered_") else "The ephemeral video file is gone — regenerate to recreate it.",
++                (
++                    "Deleted recovered media"
++                    if status == "recovered_deleted"
++                    else "Missing recovered media"
++                )
++                if status.startswith("recovered_")
++                else "The ephemeral video file is gone — regenerate to recreate it.",
+                 severity="warning",
+             )
+             return
+@@ -1345,7 +1349,6 @@
+         ``_save_console_message_image``'s destination/collision pattern.
+         """
+         import shutil
+-
+ 
+         store = self._ensure_console_chat_store()
+         try:
+@@ -1367,8 +1370,13 @@
+         if path is None:
+             await self._sync_native_console_chat_ui()
+             self.app_instance.notify(
+-                ("Deleted recovered media" if status == "recovered_deleted" else "Missing recovered media")
+-                if status.startswith("recovered_") else "The ephemeral video file is gone — regenerate to recreate it.",
++                (
++                    "Deleted recovered media"
++                    if status == "recovered_deleted"
++                    else "Missing recovered media"
++                )
++                if status.startswith("recovered_")
++                else "The ephemeral video file is gone — regenerate to recreate it.",
+                 severity="warning",
+             )
+             return
+
+--- tldw_chatbook/UI/Screens/chat_screen.py
++++ tldw_chatbook/UI/Screens/chat_screen.py
+@@ -18944,6 +18944,7 @@
+         if parse.kind == KIND_COMMAND:  # Never on this pump (TASK-33622.16).
+             self._console_unknown_send_armed = None
+             from ..Console_Modules.command_handoff import run_console_command
++
+             run_console_command(self, parse, session_id, stash or draft)
+             return False
+ 
+@@ -19969,6 +19970,7 @@
+             text = format_permission_prompt_report(report)
+         # Into the chat it was sent from, not the one showing now (TASK-33622.16).
+         from ..Console_Modules.command_handoff import append_command_output
++
+         await append_command_output(self._append_native_console_system_message, text)
+ 
+     @on(Input.Changed, "#console-command-input")
+

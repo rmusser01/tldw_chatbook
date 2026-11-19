@@ -1,0 +1,19 @@
+== source profile p1a-t5-1: notes (first 6 with keywords)
+A very long note title that keeps going so we can test how the tree, the editor header and the Info pane cope with it at every width|test
+Advisor meeting 2026-09-10|meeting,thesis
+Advisor meeting 2026-09-24|meeting,thesis
+Daily log 2026-09-01|daily
+Daily log 2026-09-02|daily
+Daily log 2026-09-03|daily
+== notes with keywords (count)
+120
+== conversations
+Japanese study plan|japanese
+Release notes draft v1.0|launch
+== media (first 4)
+A field guide to Markdown tables|article,seed
+Voice memo 2026-09-29|seed,audio
+学習メモ — 日本語の文法|seed,document
+Server logs excerpt 2026-09-27|seed,plaintext
+== media with keywords (count)
+23

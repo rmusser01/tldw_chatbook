@@ -9,6 +9,11 @@ from collections.abc import Awaitable
 import pytest
 from textual.widgets import Button, RadioButton, RadioSet, Static
 
+from Tests.UI.background_signals import (
+    BACKGROUND_SIGNAL_TIMEOUT_SECONDS,
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleLibraryPolicyDisplayState,
@@ -76,7 +81,9 @@ def _saved(
 
 
 @pytest.mark.asyncio
-async def test_access_modal_separates_the_two_text_valued_axes_and_disclosures() -> None:
+async def test_access_modal_separates_the_two_text_valued_axes_and_disclosures() -> (
+    None
+):
     snapshot = _snapshot()
     modal = ConsoleLibraryAccessModal(
         snapshot=snapshot,
@@ -148,9 +155,7 @@ async def test_dirty_escape_requires_explicit_discard_and_preserves_the_edit() -
         await pilot.click("#library-auto-never")
         await pilot.pause()
         assert modal.query_one("#library-access-discard", Button).display is False
-        assert (
-            str(modal.query_one("#library-access-cancel", Button).label) == "Cancel"
-        )
+        assert str(modal.query_one("#library-access-cancel", Button).label) == "Cancel"
 
 
 @pytest.mark.asyncio
@@ -272,13 +277,16 @@ async def test_compare_retry_is_single_flight_while_reload_is_pending() -> None:
         await pilot.pause()
         await pilot.click("#library-agent-allowed")
         first = asyncio.create_task(modal._reload(preserve_candidate=True))
-        await entered.wait()
-
-        await modal._reload(preserve_candidate=True)
-        assert reload_calls == 1
-
-        release.set()
-        await first
+        try:
+            await wait_for_background_signal(
+                entered, first, what="first compare-and-retry reload"
+            )
+            async with asyncio.timeout(BACKGROUND_SIGNAL_TIMEOUT_SECONDS):
+                await modal._reload(preserve_candidate=True)
+            assert reload_calls == 1
+        finally:
+            release.set()
+            await await_background_task(first, what="first compare-and-retry reload")
         assert reload_calls == 1
 
 

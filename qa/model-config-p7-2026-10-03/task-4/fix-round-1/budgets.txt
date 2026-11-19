@@ -1,0 +1,39 @@
+# Budgets, measured 2026-10-04 (finding 3)
+
+Each side ran the three budget tests serially with -s under env -i (scratch HOME/XDG/TLDW_CONFIG_PATH, null keyring),
+PYTHONPATH=<that tree> so the venv's editable install (which points at the main checkout) is not measured.
+
+## head
+tree=769dff7edc dirty=0
+ui-ready-census: 1033/1033 modules (headroom 0); snapshot drift +5/-2
+PREIMPORT PAYLOAD CENSUS: 556 modules / 411148 LOC added by the registry walk
+preimport-payload: 556/556 modules (headroom 0); 411148/425347 LOC (headroom 14199); 125112/135111 LOC fattest-route (library) (headroom 9999)
+Tests/Performance/test_boot_css_byte_budget.py .
+======================== 3 passed, 2 warnings in 33.26s ========================
+rc=0
+
+## base
+tree=401fc2e1fe dirty=0
+ui-ready-census: 1033/1033 modules (headroom 0); snapshot drift +5/-2
+PREIMPORT PAYLOAD CENSUS: 556 modules / 411101 LOC added by the registry walk
+preimport-payload: 556/556 modules (headroom 0); 411101/425347 LOC (headroom 14246); 125112/135111 LOC fattest-route (library) (headroom 9999)
+Tests/Performance/test_boot_css_byte_budget.py .
+======================== 3 passed, 2 warnings in 29.25s ========================
+rc=0
+
+## Boot-parsed CSS total (the census function the boot CSS test asserts on)
+head 769dff7edc: 607951 B (limit 608090)
+base 401fc2e1fe: 607951 B (limit 608090)
+The commit's CSS lines are in features/_settings.tcss and its lazily parsed screen_agentic_settings.tcss only:
+ tldw_chatbook/css/features/_settings.tcss      | 30 ++++++++++++++++++++++++++
+ tldw_chatbook/css/screen_agentic_settings.tcss | 30 ++++++++++++++++++++++++++
+ 2 files changed, 60 insertions(+)
+
+## Line counts (git show <rev>:<path> | wc -l)
+401fc2e1fe: settings_screen.py 33208, console_settings_modal.py 7751, providers_models_card.py 1644
+769dff7edc: settings_screen.py 33255, console_settings_modal.py 7751, providers_models_card.py 1847
+console_settings_modal.py diff 401fc2e1fe..769dff7edc: 0 changed files (0 = untouched)
+Fix round 1 adds 3 comment lines to settings_screen.py (33,255 -> 33,258).
+
+The "2 warnings" on each side are the ratchet's own headroom report (`ratchet.emit_headroom` raises a UserWarning carrying the
+`ui-ready-census:` and `preimport-payload:` lines above), identical on both sides.

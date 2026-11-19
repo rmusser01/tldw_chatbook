@@ -40,7 +40,7 @@ timing inspector, search, and live tail-follow. Verified substrate facts:
    `TrajectorySnapshot`. No Textual dependency. Turn boundaries derived; the
    ledger renders the active path with variants surfaced in the inspector;
    soft-deleted messages excluded.
-5. **Trajectory screen launched from the Console** (ADR-031 keybindings):
+5. **Trajectory screen launched from the Console** (ADR-299 keybindings):
    DataTable ledger with turn collapse, inspector, search, live tail-follow.
    Brushable timeline widget is a deliberate follow-up, enabled by the
    sidecar's `seq` + timestamps.

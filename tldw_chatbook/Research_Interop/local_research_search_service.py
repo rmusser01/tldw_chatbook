@@ -129,7 +129,6 @@ class LocalResearchSearchService:
             api_key=resolve_semantic_scholar_api_key(),
         )
 
-
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return

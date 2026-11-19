@@ -2,7 +2,8 @@
 
 OPML import/export and delete confirmation, plus (task-895) the two prompts
 the watchlist tree's write verbs need: a name entry for create/rename, and a
-source picker for membership editing.
+source picker for membership editing. It also holds the text of the
+OPML import's summary toast.
 """
 
 from __future__ import annotations
@@ -18,6 +19,50 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static, TextArea
 
 from ...Utils.input_validation import sanitize_string, validate_text_input
+
+
+def _opml_import_summary_text(result: Mapping[str, Any]) -> str:
+    """The post-import toast, saying the WHOLE of what happened (TASK-3604).
+
+    The pre-round-trip toast counted only created sources, so importing a
+    structured document read identically whether it filed twelve feeds into
+    three watchlists or did nothing at all on a re-import. The summary now
+    names new vs already-present sources, the watchlists created or
+    reused, and the Unassigned remainder.
+
+    Args:
+        result: The scope service's import summary dict.
+
+    Returns:
+        One sentence for the toast.
+    """
+    created = int(result.get("created", 0) or 0)
+    existing = int(result.get("existing", 0) or 0)
+    created_wl = list(result.get("watchlists_created") or [])
+    reused_wl = list(result.get("watchlists_reused") or [])
+    assignments = int(result.get("assignments", 0) or 0)
+    explicit_unassigned = result.get("unassigned")
+    unassigned = (
+        max(created + existing - assignments, 0)
+        if explicit_unassigned is None
+        else int(explicit_unassigned or 0)
+    )
+
+    sources_bit = (
+        f"{created} new"
+        if existing == 0
+        else f"{created} new + {existing} already present"
+    )
+    text = f"Imported {sources_bit} source(s) from OPML"
+    if assignments:
+        total_wl = len(created_wl) + len(reused_wl)
+        wl_word = "watchlist" if total_wl == 1 else "watchlists"
+        new_bit = f", {len(created_wl)} new" if created_wl else ""
+        text += f": {assignments} into {total_wl} {wl_word}{new_bit}"
+        if unassigned:
+            text += f", {unassigned} unassigned"
+    text += "."
+    return text
 
 
 class OpmlImportDialog(ModalScreen[str | None]):
@@ -38,8 +83,7 @@ class OpmlImportDialog(ModalScreen[str | None]):
                 yield Button("Cancel", id="opml-import-cancel", variant="default")
 
     def action_cancel(self) -> None:
-        """Back out without applying anything.
-        """
+        """Back out without applying anything."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -73,8 +117,7 @@ class OpmlExportDialog(ModalScreen[None]):
                 yield Button("Close", id="opml-export-close", variant="primary")
 
     def action_cancel(self) -> None:
-        """Back out without applying anything.
-        """
+        """Back out without applying anything."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -192,8 +235,7 @@ class WatchlistNameDialog(ModalScreen[str | None]):
         self._submit()
 
     def action_cancel(self) -> None:
-        """Back out without applying anything.
-        """
+        """Back out without applying anything."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -222,9 +264,7 @@ class WatchlistNameDialog(ModalScreen[str | None]):
             self._show_error("A watchlist name cannot be empty. Type a name.")
             return
         if not validate_text_input(name, max_length=255):
-            self._show_error(
-                "That name contains invalid characters or is too long."
-            )
+            self._show_error("That name contains invalid characters or is too long.")
             return
         if name.lower() in self._taken:
             self._show_error(
@@ -308,8 +348,7 @@ class WatchlistSourcePickerDialog(ModalScreen[int | None]):
                 yield Button("Cancel", id="watchlist-add-source-cancel")
 
     def action_cancel(self) -> None:
-        """Back out without applying anything.
-        """
+        """Back out without applying anything."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -317,7 +356,7 @@ class WatchlistSourcePickerDialog(ModalScreen[int | None]):
         button_id = str(event.button.id)
         prefix = "wl-add-source-option-"
         if button_id.startswith(prefix):
-            self.dismiss(int(button_id[len(prefix):]))
+            self.dismiss(int(button_id[len(prefix) :]))
         elif button_id == "watchlist-add-source-cancel":
             self.dismiss(None)
 
@@ -413,6 +452,6 @@ class WatchlistPickerDialog(ModalScreen[int | None]):
         button_id = str(event.button.id)
         prefix = "wl-pick-option-"
         if button_id.startswith(prefix):
-            self.dismiss(int(button_id[len(prefix):]))
+            self.dismiss(int(button_id[len(prefix) :]))
         elif button_id == "watchlist-pick-cancel":
             self.dismiss(None)

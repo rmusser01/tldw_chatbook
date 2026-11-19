@@ -1,0 +1,62 @@
+{
+  "base": "b1108874cab28d23f660aa22c11c863466a84a8e",
+  "head": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+  "scope": "All production Python files differing between b110 and5a8; unchanged production Python and current CSS/resources remain on read-only repository. Exact test body unchanged; only fixture cleanup-hold release added since dev; b110 fixture already identical to current.",
+  "modules": {
+    "tldw_chatbook.DB.prompt_export": {
+      "relative_path": "tldw_chatbook/DB/prompt_export.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/DB/prompt_export.py",
+      "sha256": "baf3841e48ee38de3d4eeca56a6484c7117fa6622eecae4016415ffc45381fda"
+    },
+    "tldw_chatbook.UI.Console_Modules.command_handoff": {
+      "relative_path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Console_Modules/command_handoff.py",
+      "sha256": "ea2efc96013b3b217c8ff6a5a773aacb12fdf3ff9fb660fa5c3522364393a0fc"
+    },
+    "tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller": {
+      "relative_path": "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py",
+      "sha256": "28123851b4e6b91d76d58e95a0f1213de7bcf01d2691012c154e5a5155a5423d"
+    },
+    "tldw_chatbook.UI.Library_Modules.library_prompts_controller": {
+      "relative_path": "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+      "sha256": "59c75e7f9116538593f613c61d7710748385c2db2b349239e14866c106646db1"
+    },
+    "tldw_chatbook.UI.Library_Modules.prompt_save_ack": {
+      "relative_path": "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Library_Modules/prompt_save_ack.py",
+      "sha256": "5a0145975c8a984b1af5fff69a65af7e301b88649530b71ed8428b7628d306ed"
+    },
+    "tldw_chatbook.UI.Library_Modules.screen_helpers": {
+      "relative_path": "tldw_chatbook/UI/Library_Modules/screen_helpers.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Library_Modules/screen_helpers.py",
+      "sha256": "dbba381d92054806fbf9a1803d0281da5b11883148057fa5ad74ff22076d9db4"
+    },
+    "tldw_chatbook.UI.Screens.chat_screen": {
+      "relative_path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Screens/chat_screen.py",
+      "sha256": "e4edb075a5911a3ef35e2b1a3b68f7bb494bbbc52455fcdb8f93391e476f9986"
+    },
+    "tldw_chatbook.UI.Screens.library_screen": {
+      "relative_path": "tldw_chatbook/UI/Screens/library_screen.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/UI/Screens/library_screen.py",
+      "sha256": "1cb8f9303131434ab7d54c7261a2ca8a21f11ea04617bce32ddb9b3a45026c12"
+    },
+    "tldw_chatbook.Widgets.Console.console_conversation_inspector": {
+      "relative_path": "tldw_chatbook/Widgets/Console/console_conversation_inspector.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/Widgets/Console/console_conversation_inspector.py",
+      "sha256": "be99f066b93a9b0e5d0c9960eb45327f279bbaa538768c83650d3506ce01129c"
+    },
+    "tldw_chatbook.Widgets.Console.console_prompts_modal": {
+      "relative_path": "tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+      "sha256": "b6d0c0763df311024bb3bf975c203fcffeb344471c6a1c935342f074a5d7e832"
+    },
+    "tldw_chatbook.Widgets.Library.library_prompts_canvas": {
+      "relative_path": "tldw_chatbook/Widgets/Library/library_prompts_canvas.py",
+      "blob_path": "/private/tmp/mixins-5a8-ui26-diagnosis/b110-python-blobs/tldw_chatbook/Widgets/Library/library_prompts_canvas.py",
+      "sha256": "8711b49bcbf6c3a1980a4c9e5f3dd947e530b80fd0ee89467b0b8431eb1fdffc"
+    }
+  }
+}

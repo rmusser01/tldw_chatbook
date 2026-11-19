@@ -1,0 +1,46 @@
+{
+  "completed_at_utc": "2026-11-12T11:46:53.968995+00:00",
+  "evidence_sha256": {
+    "controller_result": "bcfa13da2224af19587f30c1847b93158b78deccfd478756f94ce598421d4e18",
+    "exact_frozen_comparison": "0e4d814a3873c0de7a0e943ef8dfdeb90c2e63b0ebe8fafec0b51ebbbbeb2ddc",
+    "exact_prior_comparison": "cf55312bea9c89cf43e1d5f0ba48d91198dea615a5b37dcc44c05a538c6989da",
+    "pr_readback": "f3daf77f58384b8cdb7650235d668d47763303e23914bb2480c2352754dedc22"
+  },
+  "failed_phases": {
+    "call": 4750,
+    "setup": 170,
+    "teardown": 146
+  },
+  "fd_warning_partitions": 46,
+  "frozen_dev": "a0ae30b7ed9c313fe19cb3a0da5d95ebde182385",
+  "frozen_exact_comparison": {
+    "adverse_without_frozen_failure_receipt": 172,
+    "frozen_adverse_not_observed_in_checkpoint": 14,
+    "frozen_adverse_now_passed": 10701,
+    "frozen_adverse_now_skip_or_xfail": 1,
+    "still_adverse_changed_failed_phases": 69,
+    "still_adverse_same_failed_phases": 4771
+  },
+  "fully_accounted": true,
+  "integrated_tests_qualified": false,
+  "natural_retirements": 390,
+  "new_adverse_exact_since_prior": 72,
+  "normalized_logical_outcomes": {
+    "error": 316,
+    "failed": 4696,
+    "passed": 130144,
+    "skipped": 461,
+    "xfailed": 8
+  },
+  "partitions": 390,
+  "prior_adverse_exact_now_passed": 3155,
+  "prior_candidate": "e2c8c4320398a06890f1c8b582d8d8a17ec2f06e",
+  "revision": "35cd5930c15ec023dc375ef0078286723610cb74",
+  "selected_files": 5669,
+  "tree": "ea1db148867fad0ccd8cff860e4d4302e0248dae",
+  "unexpected_outcomes": {
+    "error": 316,
+    "failed": 4696,
+    "skipped": 40
+  }
+}

@@ -213,6 +213,18 @@ _SQLITE_OWNER_POLICIES = {
         "ensure_site_configs_schema declares site_configs on a caller-supplied "
         "path without opening the whole SubscriptionsDB.",
     ),
+    "recovery.operations.dreams": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_dreams_guardian", _PRIVATE_AND_READ_ONLY,
+        "Installed Dreams history snapshot; restored behavior remains inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
+    "recovery.operations.guardian": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_dreams_guardian", _PRIVATE_AND_READ_ONLY,
+        "Installed local Guardian snapshot; restored behavior remains inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
     "recovery.operations.workspaces": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",
@@ -395,6 +407,11 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "Prompts owns private file and in-memory primary databases.",
     ),
+    "db.workspace_project_index": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Workspace_Project_Index_DB",
+        _PRIVATE_FILE,
+        "Rebuildable per-binding keyword cache; excluded from backup and sync.",
+    ),
     "db.rag_indexing": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/RAG_Indexing_DB",
         _PRIVATE_OR_MEMORY,
@@ -493,22 +510,6 @@ _SQLITE_OWNER_POLICIES = {
         "tldw_chatbook/runtime_policy/server_parity_state",
         _PRIVATE_FILE,
         "Server parity repositories use file-backed storage below this parent.",
-    ),
-    "settings.bulk_backup": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_AND_READ_ONLY,
-        "Settings bulk backup reads a checked source into a private target.",
-        centralized_backup_allowed=True,
-    ),
-    "settings.integrity": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _READ_ONLY_URI,
-        "Settings integrity checks require validated read-only access.",
-    ),
-    "settings.vacuum": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_FILE,
-        "Settings VACUUM requires a checked writable private database.",
     ),
     "sync.notes_mirror": SQLiteOwnerPolicy(
         "tldw_chatbook/Sync_Interop/notes_mirror",
@@ -1443,7 +1444,7 @@ class _SQLiteAdmissionOutcome:
 def _independent_sqlite_helpers() -> Iterator[None]:
     """Keep outer raw ownership live while independently admitted SQLite opens."""
     raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
-    discover = getattr(raw, "_runtime_operation", None)
+    discover = getattr(raw, "runtime_operation", None)
     previous = discover() if discover is not None else None
     if previous is None:
         yield
@@ -1456,7 +1457,7 @@ def _independent_sqlite_helpers() -> Iterator[None]:
     finally:
         primary = sys.exception()
         try:
-            raw._check(previous)
+            raw.check(previous)
         except BaseException as cleanup:
             if primary is not None and (
                 not isinstance(primary, Exception) or isinstance(cleanup, Exception)
@@ -1580,10 +1581,10 @@ def _with_storage_admission(function):
                             participant = getattr(lease, "resource_participant", None)
                             if participant is not None:
                                 from tldw_chatbook.Backup_Recovery.participants import (
-                                    _retired_core_connections,
+                                    retired_core_connections,
                                 )
 
-                                _retired_core_connections.add(self)
+                                retired_core_connections.add(self)
                                 participant.connections.pop(self, None)
                                 lease.resource_participant = None
                             storage._changed.notify_all()

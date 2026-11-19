@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Mapping
 import hashlib
 from inspect import isawaitable
-import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -20,7 +19,7 @@ from textual.widgets import Button
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_HOME, TAB_LIBRARY
-from ...Utils.input_validation import sanitize_string, validate_text_input
+from ...Utils.input_validation import escape_markup as escape_every_bracket
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import HandoffChannel
@@ -44,6 +43,8 @@ from .study_scope_models import (
     STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLES_LIMIT,
+    clean_material_text,
+    summarize_carried_titles,
     STUDY_ORIGIN_HOME,
     STUDY_ORIGIN_LIBRARY,
     STUDY_ORIGINS,
@@ -57,10 +58,6 @@ from .study_scope_models import (
 
 
 ScopeKey = tuple[str, Optional[str], str, bool, Optional[str]]
-_HTML_TAG_RE = re.compile(r"<[^>]*>")
-_DANGEROUS_TEXT_RE = re.compile(
-    r"javascript\s*:|\bon(?:click|error)\s*=", re.IGNORECASE
-)
 SOURCE_STUDY_PACK_STATUS_CHECKS = 8
 SOURCE_STUDY_PACK_STATUS_DELAY_SECONDS = 0.25
 SOURCE_STUDY_PACK_ERROR_LENGTH_LIMIT = 240
@@ -85,6 +82,20 @@ class StudyScreen(BaseAppScreen):
     # class-level state; the footer hint (``_study_footer_shortcuts``) and
     # the breadcrumb subtitle carry the origin-specific copy.
     BINDINGS = [("escape", "study_back", "Back")]
+
+    # TASK-34000.6 (S-05): the section bar is a plain Horizontal, so it
+    # inherits Textual's `height: 1fr`. While the dashboard's own 1fr columns
+    # swallowed the shell that never showed, but once the dashboard measures
+    # auto, the bar would take the freed 18 rows and float the dashboard
+    # mid-screen (measured at 160x45). Screen-owned, because no app-tier rule
+    # targets this shell and the bar is composed here; lifted into the
+    # generated screen sheets by build_css.py (TASK-21115: no new class-level
+    # DEFAULT_CSS sources).
+    BUNDLED_SCREEN_CSS = """
+    StudyScreen #study-section-bar {
+        height: auto;
+    }
+    """
 
     # Screen-specific state
     current_section: reactive[str] = reactive("dashboard")
@@ -309,14 +320,9 @@ class StudyScreen(BaseAppScreen):
 
     @staticmethod
     def _clean_material_text(value: Any, *, max_length: int) -> str:
-        text = sanitize_string(str(value or ""), max_length=max_length).strip()
-        if not text:
-            return ""
-        text = _HTML_TAG_RE.sub("", text)
-        text = _DANGEROUS_TEXT_RE.sub("", text).strip()
-        if not validate_text_input(text, max_length=max_length, allow_html=False):
-            return ""
-        return text
+        # The rule lives in study_scope_models so the Library hand-off's
+        # describer applies the identical cleaning (TASK-34000.6 fix round 1).
+        return clean_material_text(value, max_length=max_length)
 
     def _clean_material_titles(
         self, material_titles: tuple[str, ...]
@@ -464,14 +470,18 @@ class StudyScreen(BaseAppScreen):
             return [item for item in payload if isinstance(item, dict)]
         return []
 
-    def _scope_summary_text(self) -> str:
+    def _scope_summary_text(self, *, markup: bool = True) -> str:
+        """The scope line; ``markup=False`` for a plain-text sink (chat handoff)."""
         material_summary = self._material_context_summary_text()
         if self.scope_state.scope_type == StudyScopeType.WORKSPACE:
-            workspace_name = (
+            # The two scope Statics read markup: escape every "[", not only
+            # rich's tag shapes, so "[TODO] Q3 plan" prints as typed.
+            name = (
                 self.scope_state.workspace_name
                 or self.scope_state.workspace_id
                 or "Workspace"
             )
+            workspace_name = escape_every_bracket(name) if markup else name
             backend = self.scope_state.backend
             if self.scope_state.error_message:
                 return f"Workspace: {workspace_name} | {self.scope_state.error_message}"
@@ -491,19 +501,13 @@ class StudyScreen(BaseAppScreen):
             )
             or "Study material"
         )
-        sample_titles: list[str] = []
-        for raw_title in self.scope_state.material_titles:
-            clean_title = self._clean_material_text(
-                raw_title,
-                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
-            )
-            if clean_title:
-                sample_titles.append(escape_markup(clean_title))
-        if sample_titles:
-            sample_text = ", ".join(sample_titles[:3])
-            if len(sample_titles) > 3:
-                sample_text = f"{sample_text}, +{len(sample_titles) - 3} more"
-            return f"{title}: {sample_text}"
+        # The describer cleans and escapes the titles itself -- the same
+        # input the Library hand-off line was built from.
+        summary = summarize_carried_titles(self.scope_state.material_titles)
+        if summary.named:
+            # TASK-34000.6: the same names and count the Library hand-off
+            # canvas showed ("Carries forward: a, b, c and N more.").
+            return f"{title}: {summary.text}"
         summary = self._clean_material_text(
             self.scope_state.material_summary,
             max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
@@ -808,6 +812,7 @@ class StudyScreen(BaseAppScreen):
                     notify(
                         status,
                         severity="error" if last_status == "failed" else "warning",
+                        markup=False,
                     )
                 return True
             if attempt + 1 < SOURCE_STUDY_PACK_STATUS_CHECKS:
@@ -1009,7 +1014,7 @@ class StudyScreen(BaseAppScreen):
 
         body_lines = [
             f"Quiz: {quiz_name}",
-            f"Scope: {self._scope_summary_text()}",
+            f"Scope: {self._scope_summary_text(markup=False)}",
             f"Quiz status: {status}",
         ]
         if attempt_questions:
@@ -1044,7 +1049,7 @@ class StudyScreen(BaseAppScreen):
             scope_type=scope_type,
             workspace_id=workspace_id,
             backend_contracts=backend_contracts,
-            metadata={"scope_summary": self._scope_summary_text()},
+            metadata={"scope_summary": self._scope_summary_text(markup=False)},
         )
 
     def sync_shell_from_window(self) -> None:
@@ -1628,17 +1633,21 @@ class StudyScreen(BaseAppScreen):
         self.activate_section(section)
 
     @on(Button.Pressed, "#quiz-start")
-    async def handle_quiz_start(self) -> None:
+    def handle_quiz_start(self) -> None:
         study_window = self.study_window_widget
         if study_window is None:
             return
         self.activate_section("quizzes")
-        await study_window.quizzes_controller.start_attempt()
-        quiz_name = (
-            study_window.quizzes_controller.selected_quiz_label() or "Quiz session"
-        )
-        self._record_study_session(section="quizzes", topic=quiz_name)
-        self.sync_shell_from_window()
+
+        async def start_and_sync() -> None:
+            await study_window.quizzes_controller.start_attempt()
+            quiz_name = (
+                study_window.quizzes_controller.selected_quiz_label() or "Quiz session"
+            )
+            self._record_study_session(section="quizzes", topic=quiz_name)
+            self.sync_shell_from_window()
+
+        self.run_worker(start_and_sync(), group="study-shell-start-quiz")
 
     @on(Button.Pressed, "#quiz-open-in-chat")
     def handle_quiz_review_in_chat(self) -> None:

@@ -40,15 +40,15 @@ def _dns(monkeypatch):
         return ["93.184.216.34"]
 
     monkeypatch.setattr(egress, "_resolve_async", _fake_async)
-    monkeypatch.setattr(
-        egress, "get_cli_setting", lambda s, k=None, d=None: d
-    )
+    monkeypatch.setattr(egress, "get_cli_setting", lambda s, k=None, d=None: d)
 
 
 class _LyingAdapter(BaseAdapter):
     """Serves a body far larger than the declared (lying) Content-Length."""
 
-    def __init__(self, body: bytes, declared_length: str = "10", status_code: int = 200):
+    def __init__(
+        self, body: bytes, declared_length: str = "10", status_code: int = 200
+    ):
         super().__init__()
         self.body = body
         self.declared_length = declared_length
@@ -207,7 +207,9 @@ def test_audio_download_success_streams_within_cap(monkeypatch, tmp_path):
     processor = LocalAudioProcessor()
     processor.max_file_size = 1024 * 1024
 
-    saved = processor.download_audio_file("http://media.example/clip.mp3", str(tmp_path))
+    saved = processor.download_audio_file(
+        "http://media.example/clip.mp3", str(tmp_path)
+    )
 
     saved_path = Path(saved)
     assert saved_path.exists()
@@ -258,7 +260,9 @@ def test_media_downloader_cleans_up_temp_file_on_oversize(monkeypatch):
         )
 
     assert captured_paths, "expected the downloader to create a temp file"
-    assert not os.path.exists(captured_paths[-1]), "temp file leaked on oversize rejection"
+    assert not os.path.exists(captured_paths[-1]), (
+        "temp file leaked on oversize rejection"
+    )
 
 
 def test_media_downloader_cleans_up_temp_file_on_egress_blocked(monkeypatch):
@@ -341,7 +345,9 @@ def test_media_downloader_cleans_up_temp_file_on_http_error_status(monkeypatch):
         )
 
     assert captured_paths, "expected the downloader to create a temp file"
-    assert not os.path.exists(captured_paths[-1]), "temp file leaked on HTTP error status"
+    assert not os.path.exists(captured_paths[-1]), (
+        "temp file leaked on HTTP error status"
+    )
 
 
 def test_media_downloader_success_renames_off_part_suffix(monkeypatch):

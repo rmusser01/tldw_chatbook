@@ -15,6 +15,7 @@ from Tests.Audio.fakes.native_duplex_helpers import (
     driver_clock_offset,
 )
 from Tests.Chat.test_console_voice_process import fake_popen, cleanup
+from Tests.UI.hands_free_consent_support import accept_hands_free_consent
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_native_chat_flow import _ReadyResolutionGateway
 
@@ -165,6 +166,7 @@ async def mounted_native_process(monkeypatch, tmp_path, *, interruptions=3):
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
             assert await pilot.click("#console-hands-free-switch")
+            await accept_hands_free_consent(host, pilot)
             await eventually(
                 lambda: created and (created[-1].ready or created[-1]._failure)
             )
@@ -204,6 +206,7 @@ async def mounted_native_process(monkeypatch, tmp_path, *, interruptions=3):
             await cleanup(owner)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_native_child_progresses_during_parent_gil_holds(
     monkeypatch, tmp_path
@@ -398,6 +401,7 @@ async def test_mounted_native_child_progresses_during_parent_gil_holds(
         assert h.owner._failure is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["status", "overflow"])
 async def test_native_fault_switches_off_and_preserves_draft_once(

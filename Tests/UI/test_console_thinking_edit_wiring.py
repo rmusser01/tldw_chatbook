@@ -54,6 +54,7 @@ def _reasoning_envelope(text: str) -> ThinkingEnvelope:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_thinking_row_edit_opens_modal_and_saves_block_text():
     app = _build_test_app()
@@ -117,6 +118,7 @@ async def test_thinking_row_edit_opens_modal_and_saves_block_text():
         assert edited.thinking.blocks[0].block_id == "reasoning-1"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_thinking_only_edit_changes_transcript_fingerprint():
     app = _build_test_app()
@@ -148,6 +150,7 @@ async def test_thinking_only_edit_changes_transcript_fingerprint():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saved_thinking_edit_repaints_mounted_disclosure_row():
     """End-to-end repaint check (Qodo #3): after saving a block-text edit,

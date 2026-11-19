@@ -1,0 +1,6 @@
+# Exact failing private-script operation; earlier selected writes had completed.
+def replace(p,old,new,n=1):
+ f=wt/p;s=f.read_text();assert s.count(old)==n,(p,old,s.count(old));f.write_text(s.replace(old,new))
+for field in ['Any','Mapping']:
+ replace(h,f'        read_global_{field}: Callable[[], Any],\n','') if field=='Mapping' else replace(h,f'        read_global_{field}: Callable[[], Any],\n','',2)
+# Raised before its write: the separate build_tool_review_hook parameter has4spaces.

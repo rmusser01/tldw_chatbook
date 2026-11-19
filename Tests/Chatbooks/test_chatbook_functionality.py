@@ -42,6 +42,7 @@ class TestChatbookCreation:
         """Clean up test environment."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
+    @pytest.mark.bootstrap_profile
     def test_create_empty_chatbook(self):
         """Test creating an empty chatbook."""
         output_path = Path(self.temp_dir) / "test_chatbook.zip"
@@ -58,6 +59,7 @@ class TestChatbookCreation:
         assert output_path.exists()
         assert output_path.stat().st_size > 0
 
+    @pytest.mark.bootstrap_profile
     def test_create_chatbook_with_invalid_path(self):
         """Test creating chatbook with invalid output path."""
         invalid_path = Path("/invalid/path/chatbook.zip")
@@ -90,6 +92,7 @@ class TestChatbookImport:
         """Clean up test environment."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
+    @pytest.mark.bootstrap_profile
     def test_preview_invalid_file(self):
         """Test previewing an invalid chatbook file."""
         invalid_file = Path(self.temp_dir) / "invalid.txt"

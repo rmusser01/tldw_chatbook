@@ -151,9 +151,7 @@ async def geometry_matrix(summary: dict[str, object]) -> None:
         app, db, prompt_id, _uuid, _definition = _seed_real_prompt(
             f"geometry-{width}x{height}"
         )
-        async with _run_seeded_host(
-            app, db, size=(width, height)
-        ) as (host, pilot):
+        async with _run_seeded_host(app, db, size=(width, height)) as (host, pilot):
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
             await _open_prompt_editor(screen, pilot, prompt_id)
@@ -511,9 +509,7 @@ async def detail_failure_and_retry(summary: dict[str, object]) -> None:
             "selected_id": screen._selected_prompt_id,
             "loaded_id": screen._library_prompt_loaded_id,
             "loaded_name": screen.query_one("#library-prompt-name", Input).value,
-            "editor_locked": screen.query_one(
-                "#library-prompt-name", Input
-            ).disabled,
+            "editor_locked": screen.query_one("#library-prompt-name", Input).disabled,
             "notice": str(status.renderable),
         }
         assert failure["selected_id"] == second_id
@@ -538,9 +534,7 @@ async def detail_failure_and_retry(summary: dict[str, object]) -> None:
             "selected_id": screen._selected_prompt_id,
             "loaded_id": screen._library_prompt_loaded_id,
             "loaded_name": screen.query_one("#library-prompt-name", Input).value,
-            "editor_locked": screen.query_one(
-                "#library-prompt-name", Input
-            ).disabled,
+            "editor_locked": screen.query_one("#library-prompt-name", Input).disabled,
             "retry_visible": bool(screen.query("#library-prompt-detail-retry")),
         }
         assert recovered["selected_id"] == recovered["loaded_id"] == second_id
@@ -554,9 +548,7 @@ async def detail_failure_and_retry(summary: dict[str, object]) -> None:
         }
 
 
-async def run(
-    selected: set[str], *, config_path: Path, data_dir: Path
-) -> None:
+async def run(selected: set[str], *, config_path: Path, data_dir: Path) -> None:
     """Execute validated Prompt evidence journeys and write their ledger.
 
     Args:

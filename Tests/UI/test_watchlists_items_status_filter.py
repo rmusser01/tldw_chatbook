@@ -141,6 +141,7 @@ def test_the_filter_speaks_the_readers_vocabulary():
 # --- data layers -----------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_get_new_items_with_no_status_returns_every_status():
     """AC#1, at the layer that made it impossible."""
     app = _build_test_app()
@@ -152,6 +153,7 @@ def test_get_new_items_with_no_status_returns_every_status():
     assert {row["status"] for row in rows} == set(SEEDED)
 
 
+@pytest.mark.bootstrap_profile
 def test_get_new_items_still_defaults_to_new_only():
     """The default is load-bearing: `briefing_selection` and the smoke suite
     both call this with no status and mean "the unread bucket"."""
@@ -162,6 +164,7 @@ def test_get_new_items_still_defaults_to_new_only():
     assert {row["status"] for row in db.get_new_items(limit=50)} == {"new"}
 
 
+@pytest.mark.bootstrap_profile
 def test_get_new_items_scoped_to_one_subscription_still_filters_by_status():
     """Both predicates are independent; neither may swallow the other."""
     app = _build_test_app()
@@ -169,7 +172,9 @@ def test_get_new_items_scoped_to_one_subscription_still_filters_by_status():
     _seed_one_item_per_status(db)
     subscription_id = db.get_all_subscriptions(limit=5)[0]["id"]
 
-    scoped_all = db.get_new_items(subscription_id=subscription_id, status=None, limit=50)
+    scoped_all = db.get_new_items(
+        subscription_id=subscription_id, status=None, limit=50
+    )
     scoped_one = db.get_new_items(
         subscription_id=subscription_id, status="ingested", limit=50
     )
@@ -178,6 +183,7 @@ def test_get_new_items_scoped_to_one_subscription_still_filters_by_status():
     assert {row["status"] for row in scoped_one} == {"ingested"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_list_items_no_longer_collapses_none_to_new():
     """The service layer stopped rewriting the caller's intent."""
@@ -193,6 +199,7 @@ async def test_list_items_no_longer_collapses_none_to_new():
 # --- the pane --------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_every_reader_status_appears_in_the_list_and_is_distinguishable():
     """AC#1, reader vocabulary. The reader set is present under "All", each
@@ -215,9 +222,7 @@ async def test_every_reader_status_appears_in_the_list_and_is_distinguishable():
         assert set(texts) == {str(row["id"]) for row in displayed}, (
             "every displayed item must have exactly one rendered row"
         )
-        by_status = {
-            row["status"]: texts[str(row["id"])] for row in displayed
-        }
+        by_status = {row["status"]: texts[str(row["id"])] for row in displayed}
         assert by_status["new"].startswith("● "), (
             f"the unread row must lead with the unread dot; got {by_status['new']!r}"
         )
@@ -230,6 +235,7 @@ async def test_every_reader_status_appears_in_the_list_and_is_distinguishable():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_triaged_item_is_findable_under_the_readers_filters():
     """AC#4. The regression test the task asks for, stated as the user's
@@ -270,6 +276,7 @@ async def test_a_triaged_item_is_findable_under_the_readers_filters():
 # --- the user gesture ------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_repaints_the_live_row_instead_of_removing_it():
     """AC#2 and AC#3, pinned on the immediate push rather than the reload.
@@ -290,9 +297,7 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
         screen = host.screen_stack[-1]
         pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
-        target = next(
-            item for item in pane.items if item["title"] == SEEDED["new"]
-        )
+        target = next(item for item in pane.items if item["title"] == SEEDED["new"])
         rows_before = len(pane.displayed_items())
 
         async def _no_reload() -> None:
@@ -308,8 +313,7 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
 
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         assert len(pane.displayed_items()) == rows_before, (
-            "ingesting must not remove the row from a view whose filter "
-            "includes it"
+            "ingesting must not remove the row from a view whose filter includes it"
         )
         row_text = _row_texts_by_id(pane).get(str(target["id"]), "")
         assert "· ingested" in row_text, (
@@ -318,6 +322,7 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_feedback_toast_never_parses_markup():
     """AC#3's other half. The toast is app-authored today, but it is the
@@ -348,11 +353,14 @@ async def test_ingest_feedback_toast_never_parses_markup():
         for _ in range(10):
             await pilot.pause()
 
-        matching = [kwargs for message, kwargs in toasts if message == "Item marked ingested."]
+        matching = [
+            kwargs for message, kwargs in toasts if message == "Item marked ingested."
+        ]
         assert matching, f"Ingest must report what happened; saw {toasts!r}"
         assert all(kwargs.get("markup") is False for kwargs in matching)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_ingested_item_survives_the_reload_that_follows():
     """AC#2 end to end, with the real reload in place."""
@@ -437,6 +445,7 @@ def _seed_many(db, *, ingested: int, new: int) -> tuple[int, list[str]]:
     return source_id, unread_titles
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unread_items_past_the_newest_page_are_still_reachable():
     """Review wave, I2. The filter must narrow the QUERY, not just the page.
@@ -466,9 +475,9 @@ async def test_unread_items_past_the_newest_page_are_still_reachable():
         # The precondition that makes this a real test: under the reader's
         # "All" the page is entirely triaged, so an in-memory filter has
         # nothing unread to find.
-        assert not [
-            row for row in pane.items if row.get("status") == "new"
-        ], "precondition: no unread item is inside the newest-100 page"
+        assert not [row for row in pane.items if row.get("status") == "new"], (
+            "precondition: no unread item is inside the newest-100 page"
+        )
 
         pane.status_filter = "unread"
         for _ in range(80):
@@ -485,6 +494,7 @@ async def test_unread_items_past_the_newest_page_are_still_reachable():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_search_keystroke_does_not_re_page():
     """The reload is gated on the STATUS moving, not on any filter message.
@@ -525,11 +535,11 @@ async def test_a_search_keystroke_does_not_re_page():
             if calls:
                 break
         assert calls == ["new"], (
-            "switching to Unread must re-page with status='new' pushed into "
-            "the query"
+            "switching to Unread must re-page with status='new' pushed into the query"
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
     """Review wave, Minor 2. The affordance now matches the write.
@@ -556,7 +566,9 @@ async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
         pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         toasts: list[str] = []
-        screen.app_instance.notify = lambda message, **kwargs: toasts.append(str(message))
+        screen.app_instance.notify = lambda message, **kwargs: toasts.append(
+            str(message)
+        )
         dialogs: list[object] = []
         screen.app.push_screen = lambda *a, **k: dialogs.append(a)
 
@@ -573,6 +585,7 @@ async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
     """Round 2, O2. The pin's guarantee must survive query-side filtering.
@@ -635,6 +648,7 @@ async def test_the_open_item_survives_a_reload_under_a_narrow_filter():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_carried_open_item_keeps_the_pages_ordering():
     """Round 2, O2. Carried, not prepended.
@@ -687,15 +701,16 @@ def test_the_d_binding_names_both_verbs_it_performs():
     )
 
     binding = next(
-        entry
-        for entry in WatchlistsCollectionsScreen.BINDINGS
-        if entry[0] == "d"
+        entry for entry in WatchlistsCollectionsScreen.BINDINGS if entry[0] == "d"
     )
     assert binding[1] == "delete_selected"
     label = binding[2].lower()
     assert "delete" in label and "ignore" in label, (
         f"the key performs both verbs; its label says {binding[2]!r}"
     )
-    assert "after confirmation" not in (
-        WatchlistsCollectionsScreen.action_delete_selected.__doc__ or ""
-    ).split("\n")[0], "the summary line must not promise a dialog for every kind"
+    assert (
+        "after confirmation"
+        not in (WatchlistsCollectionsScreen.action_delete_selected.__doc__ or "").split(
+            "\n"
+        )[0]
+    ), "the summary line must not promise a dialog for every kind"

@@ -329,6 +329,7 @@ def _assert_live_clean(
             assert poison not in rendered, f"{owner_id} retained cancelled content"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelled_attempt_is_absent_from_every_default_durable_owner(
     tmp_path: Path,

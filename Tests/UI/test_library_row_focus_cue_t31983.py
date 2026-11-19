@@ -8,7 +8,7 @@ IDENTICAL treatment in `_agentic_terminal.tcss`::
 
 so the row the keyboard was ON looked exactly like the open/selected row --
 arrow-key navigation read as a dead key. The fix gives ``:focus`` a
-non-colour-only cue -- a ``border-left: thick $ds-action-focus`` left-edge bar
+non-colour-only cue -- a ``border-left: thick $ds-active-fg`` left-edge bar
 that ``-selected`` does NOT carry -- so the two states are distinguishable even
 when a row is BOTH focused and selected (the common case: arrow onto the open
 row). The left border replaces the row's 1-column left padding, so the label
@@ -34,7 +34,7 @@ from Tests.UI.consolidated_css import APP_STYLESHEETS, app_css_text
 
 _APP_CSS_PATHS = [str(path) for path in APP_STYLESHEETS]
 
-# `border-left: thick $ds-action-focus` paints a full-block left edge.
+# `border-left: thick $ds-active-fg` paints a full-block left edge.
 _THICK_LEFT_GLYPH = "█"  # '█'
 
 

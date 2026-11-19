@@ -49,9 +49,27 @@ from tldw_chatbook.Widgets.Console.console_rewind_modal import (
 from Tests.UI.app_factory import attach_chachanotes_db
 
 
+# Every Rewind case constructs the real App with its guarded config profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 CONSOLE_RUN_ALREADY_RUNNING_COPY = "A run is already running in this tab."
 KIND_SUMMARIZE_UP_TO = "summarize-up-to"
 KIND_SUMMARIZE_FROM = "summarize-from"
+
+
+def _watch_console_run_worker(console) -> MagicMock:
+    real_run_worker = console.run_worker
+    spy = MagicMock(side_effect=lambda coro, **_kwargs: coro.close())
+
+    def run_worker(work, **kwargs):
+        group = kwargs.get("group")
+        if isinstance(group, str) and group.startswith("console-run-"):
+            return spy(work, **kwargs)
+        return real_run_worker(work, **kwargs)
+
+    console.run_worker = run_worker
+    return spy
 
 
 def _press_enter_synchronously(console) -> None:
@@ -108,7 +126,9 @@ async def test_restore_mid_path_truncates_active_path_and_refills_composer():
 
         await console._apply_console_rewind_choice(
             session.id,
-            ConsoleRewindChoice(kind="restore", message_id=ids["u2"].id, prompt_text="U2"),
+            ConsoleRewindChoice(
+                kind="restore", message_id=ids["u2"].id, prompt_text="U2"
+            ),
         )
         await pilot.pause()
 
@@ -137,7 +157,9 @@ async def test_restore_to_first_prompt_clears_active_leaf_to_empty_path(monkeypa
 
         await console._apply_console_rewind_choice(
             session.id,
-            ConsoleRewindChoice(kind="restore", message_id=ids["u1"].id, prompt_text="U1"),
+            ConsoleRewindChoice(
+                kind="restore", message_id=ids["u1"].id, prompt_text="U1"
+            ),
         )
         await pilot.pause()
 
@@ -168,9 +190,7 @@ async def test_first_prompt_warns_if_restart_cursor_is_unsaved(monkeypatch):
             assert original(session_id, message_id) is True
             return False
 
-        monkeypatch.setattr(
-            store, "set_active_path_before", apply_but_report_unsaved
-        )
+        monkeypatch.setattr(store, "set_active_path_before", apply_but_report_unsaved)
         notices: list[tuple[str, str]] = []
         app.notify = lambda text, **kwargs: notices.append(
             (str(text), kwargs.get("severity", ""))
@@ -197,6 +217,7 @@ async def test_first_prompt_warns_if_restart_cursor_is_unsaved(monkeypatch):
 @pytest.mark.asyncio
 async def test_restore_blocked_while_a_run_is_streaming_makes_no_mutation():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -223,7 +244,9 @@ async def test_restore_blocked_while_a_run_is_streaming_makes_no_mutation():
 
         await console._apply_console_rewind_choice(
             session.id,
-            ConsoleRewindChoice(kind="restore", message_id=ids["u2"].id, prompt_text="U2"),
+            ConsoleRewindChoice(
+                kind="restore", message_id=ids["u2"].id, prompt_text="U2"
+            ),
         )
         await pilot.pause()
         assert console._is_descendant_or_self(host.focused, composer)
@@ -292,9 +315,7 @@ async def test_summary_choice_dispatches_symmetric_exclusive_worker_without_muta
 
         await console._apply_console_rewind_choice(
             session.id,
-            ConsoleRewindChoice(
-                kind=kind, message_id=ids["u2"].id, prompt_text="U2"
-            ),
+            ConsoleRewindChoice(kind=kind, message_id=ids["u2"].id, prompt_text="U2"),
         )
         await pilot.pause()
 
@@ -334,6 +355,7 @@ async def test_summary_choices_refuse_sending_streaming_and_compacting(
 ):
     """No summary worker may cancel an already-active Console operation."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -347,8 +369,7 @@ async def test_summary_choices_refuse_sending_streaming_and_compacting(
 
         controller = console._ensure_console_chat_controller()
         controller._set_run_state(ConsoleRunState(status, run_copy))
-        spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
-        console.run_worker = spy_worker
+        spy_worker = _watch_console_run_worker(console)
 
         notices: list[tuple[str, str]] = []
         app.notify = lambda message_text, **kwargs: notices.append(
@@ -357,9 +378,7 @@ async def test_summary_choices_refuse_sending_streaming_and_compacting(
 
         await console._apply_console_rewind_choice(
             session.id,
-            ConsoleRewindChoice(
-                kind=kind, message_id=ids["u2"].id, prompt_text="U2"
-            ),
+            ConsoleRewindChoice(kind=kind, message_id=ids["u2"].id, prompt_text="U2"),
         )
         await pilot.pause()
         assert console._is_descendant_or_self(host.focused, composer)
@@ -448,6 +467,7 @@ async def test_queued_summary_refuses_sibling_descendant_path_change(
 ):
     """Membership is insufficient when the selected prompt stays on a new branch."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -460,6 +480,7 @@ async def test_queued_summary_refuses_sibling_descendant_path_change(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep sibling draft")
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{ids['a1'].id}")
         transcript.select_message(ids["a1"].id)
         await pilot.pause()
         assert transcript.selected_message_id == ids["a1"].id
@@ -470,11 +491,15 @@ async def test_queued_summary_refuses_sibling_descendant_path_change(
         )
         monkeypatch.setattr(controller, "summarize_from", summarize)
         queued: list = []
-        monkeypatch.setattr(
-            console,
-            "run_worker",
-            lambda coroutine, **_kwargs: queued.append(coroutine),
-        )
+        real_run_worker = console.run_worker
+
+        def capture_summary(coroutine, **kwargs):
+            if kwargs.get("group") == f"console-run-{session.id}":
+                queued.append(coroutine)
+                return None
+            return real_run_worker(coroutine, **kwargs)
+
+        monkeypatch.setattr(console, "run_worker", capture_summary)
         notices: list[tuple[str, str]] = []
         app.notify = lambda text, **kwargs: notices.append(
             (str(text), kwargs.get("severity", ""))
@@ -504,10 +529,13 @@ async def test_queued_summary_refuses_sibling_descendant_path_change(
 
         summarize.assert_not_awaited()
         assert tuple(store.active_path_message_ids(session.id)) == changed_path
-        assert tuple(
-            (message.id, message.role, message.content)
-            for message in store.messages_for_session(session.id)
-        ) == changed_messages
+        assert (
+            tuple(
+                (message.id, message.role, message.content)
+                for message in store.messages_for_session(session.id)
+            )
+            == changed_messages
+        )
         assert composer.draft_text() == "keep sibling draft"
         assert transcript.selected_message_id == ids["a1"].id
         assert console._is_descendant_or_self(host.focused, composer)
@@ -549,16 +577,17 @@ async def test_summary_worker_refuses_if_captured_selection_changes_before_start
             (message.id, message.role, message.content)
             for message in store.messages_for_session(session.id)
         )
-        await console._summarize_console_from(
-            controller, session.id, ids["u2"].id
-        )
+        await console._summarize_console_from(controller, session.id, ids["u2"].id)
         await pilot.pause()
 
         assert store.active_path_message_ids(session.id) == changed_path
-        assert tuple(
-            (message.id, message.role, message.content)
-            for message in store.messages_for_session(session.id)
-        ) == changed_messages
+        assert (
+            tuple(
+                (message.id, message.role, message.content)
+                for message in store.messages_for_session(session.id)
+            )
+            == changed_messages
+        )
         assert composer.draft_text() == "keep this draft"
         assert console._is_descendant_or_self(host.focused, composer)
         summarize.assert_not_awaited()
@@ -574,6 +603,7 @@ async def test_summary_worker_refuses_if_captured_session_changes_before_start(
 ):
     """A queued worker must never apply an old session's selection elsewhere."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -599,19 +629,23 @@ async def test_summary_worker_refuses_if_captured_session_changes_before_start(
         )
 
         other_session = store.create_session(title="other")
+        await console._sync_native_console_chat_ui()
+        await pilot.pause()
+        assert console._console_visible_draft_session_id == other_session.id
         composer.load_draft("keep this draft")
         other_path = store.active_path_message_ids(other_session.id)
-        await console._summarize_console_from(
-            controller, session.id, ids["u2"].id
-        )
+        await console._summarize_console_from(controller, session.id, ids["u2"].id)
         await pilot.pause()
 
         assert store.active_session_id == other_session.id
         assert store.active_path_message_ids(other_session.id) == other_path
-        assert tuple(
-            (message.id, message.role, message.content)
-            for message in store.messages_for_session(session.id)
-        ) == old_messages
+        assert (
+            tuple(
+                (message.id, message.role, message.content)
+                for message in store.messages_for_session(session.id)
+            )
+            == old_messages
+        )
         assert composer.draft_text() == "keep this draft"
         assert console._is_descendant_or_self(host.focused, composer)
         summarize.assert_not_awaited()
@@ -679,6 +713,7 @@ async def test_summary_worker_uses_bounded_terminal_copy_and_preserves_ui_state(
 ):
     """Terminal handling must never echo transcript content or edit the UI."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -695,6 +730,7 @@ async def test_summary_worker_uses_bounded_terminal_copy_and_preserves_ui_state(
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("private draft must stay")
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{ids['a1'].id}")
         transcript.select_message(ids["a1"].id)
         await pilot.pause()
         assert transcript.selected_message_id == ids["a1"].id
@@ -707,9 +743,7 @@ async def test_summary_worker_uses_bounded_terminal_copy_and_preserves_ui_state(
         )
         result = ConsoleSubmitResult(accepted, False, controller_copy)
         method_name = (
-            "summarize_from"
-            if kind == KIND_SUMMARIZE_FROM
-            else "summarize_up_to"
+            "summarize_from" if kind == KIND_SUMMARIZE_FROM else "summarize_up_to"
         )
         summarize = AsyncMock(return_value=result)
         monkeypatch.setattr(controller, method_name, summarize)
@@ -719,22 +753,21 @@ async def test_summary_worker_uses_bounded_terminal_copy_and_preserves_ui_state(
         )
 
         if kind == KIND_SUMMARIZE_FROM:
-            await console._summarize_console_from(
-                controller, session.id, ids["u2"].id
-            )
+            await console._summarize_console_from(controller, session.id, ids["u2"].id)
         else:
-            await console._summarize_console_up_to(
-                controller, session.id, ids["u2"].id
-            )
+            await console._summarize_console_up_to(controller, session.id, ids["u2"].id)
         await pilot.pause()
 
         assert notices[0] == ("Summarizing selected range...", "information")
         assert notices[-1] == (expected_copy, severity)
         assert store.active_path_message_ids(session.id) == original_path
-        assert tuple(
-            (message.id, message.role, message.content)
-            for message in store.messages_for_session(session.id)
-        ) == original_messages
+        assert (
+            tuple(
+                (message.id, message.role, message.content)
+                for message in store.messages_for_session(session.id)
+            )
+            == original_messages
+        )
         assert composer.draft_text() == "private draft must stay"
         assert transcript.selected_message_id == ids["a1"].id
         assert console._is_descendant_or_self(host.focused, composer)
@@ -746,6 +779,7 @@ async def test_summary_worker_refocuses_after_unexpected_error_without_leaking_i
 ):
     """An unexpected exception must not leak its content into recovery copy."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -756,6 +790,7 @@ async def test_summary_worker_refocuses_after_unexpected_error_without_leaking_i
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep")
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{ids['a1'].id}")
         transcript.select_message(ids["a1"].id)
         await pilot.pause()
         assert transcript.selected_message_id == ids["a1"].id
@@ -774,9 +809,7 @@ async def test_summary_worker_refocuses_after_unexpected_error_without_leaking_i
             (str(text), kwargs.get("severity", ""))
         )
 
-        await console._summarize_console_from(
-            controller, session.id, ids["u2"].id
-        )
+        await console._summarize_console_from(controller, session.id, ids["u2"].id)
         await pilot.pause()
 
         assert notices[-1] == (
@@ -893,8 +926,7 @@ async def test_restore_to_a_stale_message_id_makes_no_mutation_and_notifies():
     assert store.active_leaf(session.id) == original_leaf
     spy_insert.assert_not_called()
     assert any(
-        "no longer exists" in text and severity == "error"
-        for text, severity in notices
+        "no longer exists" in text and severity == "error" for text, severity in notices
     )
 
 
@@ -932,7 +964,9 @@ async def test_restore_choice_guards_against_changed_active_session():
 
         await console._apply_console_rewind_choice(
             session.id,
-            ConsoleRewindChoice(kind="restore", message_id=ids["u2"].id, prompt_text="U2"),
+            ConsoleRewindChoice(
+                kind="restore", message_id=ids["u2"].id, prompt_text="U2"
+            ),
         )
         await pilot.pause()
 
@@ -964,8 +998,7 @@ async def test_summarize_choice_guards_against_changed_active_session():
         other_session = store.create_session(title="other")
         store.switch_session(other_session.id)
 
-        spy_worker = MagicMock(side_effect=lambda coro, **kwargs: coro.close())
-        console.run_worker = spy_worker
+        spy_worker = _watch_console_run_worker(console)
 
         notices: list[tuple[str, str]] = []
         app.notify = lambda message_text, **kwargs: notices.append(
@@ -1012,9 +1045,7 @@ async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
         assert [row.index_label for row in modal._prompts] == ["#2", "#1"]
         await pilot.click("#console-rewind-row-0")
         await pilot.pause()
-        assert not modal.query_one(
-            "#console-rewind-action-summarize", Button
-        ).disabled
+        assert not modal.query_one("#console-rewind-action-summarize", Button).disabled
         assert not modal.query_one(
             "#console-rewind-action-summarize-from", Button
         ).disabled
@@ -1024,6 +1055,7 @@ async def test_console_command_rewind_pushes_modal_with_newest_first_rows():
 async def test_rewind_callback_refuses_sibling_descendant_path_change(monkeypatch):
     """A modal-open branch switch must fail even when its prompt stays on-path."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -1036,7 +1068,9 @@ async def test_rewind_callback_refuses_sibling_descendant_path_change(monkeypatc
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("keep callback draft")
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{ids['a1'].id}")
         transcript.select_message(ids["a1"].id)
+        assert transcript.selected_message_id == ids["a1"].id
         await pilot.pause()
 
         await console._console_command_rewind(CommandParse("command", "rewind", ""))
@@ -1070,10 +1104,13 @@ async def test_rewind_callback_refuses_sibling_descendant_path_change(monkeypatc
         assert host.screen_stack[-1] is console
         summarize.assert_not_awaited()
         assert tuple(store.active_path_message_ids(session.id)) == changed_path
-        assert tuple(
-            (message.id, message.role, message.content)
-            for message in store.messages_for_session(session.id)
-        ) == changed_messages
+        assert (
+            tuple(
+                (message.id, message.role, message.content)
+                for message in store.messages_for_session(session.id)
+            )
+            == changed_messages
+        )
         assert composer.draft_text() == "keep callback draft"
         assert transcript.selected_message_id == ids["a1"].id
         assert console._is_descendant_or_self(host.focused, composer)
@@ -1107,18 +1144,10 @@ async def test_console_rewind_disables_summaries_for_incomplete_tip_only():
         await pilot.click("#console-rewind-row-0")
         await pilot.pause()
 
-        assert not modal.query_one(
-            "#console-rewind-action-restore", Button
-        ).disabled
-        assert modal.query_one(
-            "#console-rewind-action-summarize", Button
-        ).disabled
-        assert modal.query_one(
-            "#console-rewind-action-summarize-from", Button
-        ).disabled
-        assert not modal.query_one(
-            "#console-rewind-action-cancel", Button
-        ).disabled
+        assert not modal.query_one("#console-rewind-action-restore", Button).disabled
+        assert modal.query_one("#console-rewind-action-summarize", Button).disabled
+        assert modal.query_one("#console-rewind-action-summarize-from", Button).disabled
+        assert not modal.query_one("#console-rewind-action-cancel", Button).disabled
         assert modal._summary_disabled_reason == (
             "Finish the current exchange before summarizing."
         )
@@ -1146,12 +1175,8 @@ async def test_console_rewind_disables_summaries_while_run_is_active():
         await pilot.click("#console-rewind-row-0")
         await pilot.pause()
 
-        assert modal.query_one(
-            "#console-rewind-action-summarize", Button
-        ).disabled
-        assert modal.query_one(
-            "#console-rewind-action-summarize-from", Button
-        ).disabled
+        assert modal.query_one("#console-rewind-action-summarize", Button).disabled
+        assert modal.query_one("#console-rewind-action-summarize-from", Button).disabled
         assert modal._summary_disabled_reason == CONSOLE_RUN_ALREADY_RUNNING_COPY
 
 
@@ -1215,9 +1240,7 @@ async def test_console_rewind_memory_lookup_error_warns_conservatively_without_l
             format="{message}",
         )
         try:
-            await console._console_command_rewind(
-                CommandParse("command", "rewind", "")
-            )
+            await console._console_command_rewind(CommandParse("command", "rewind", ""))
             await pilot.pause()
         finally:
             logger.remove(sink_id)
@@ -1235,8 +1258,7 @@ async def test_console_rewind_memory_lookup_error_warns_conservatively_without_l
             )
         ]
         assert all(
-            "Replaces current conversation memory" in copy
-            for copy in rendered_copy
+            "Replaces current conversation memory" in copy for copy in rendered_copy
         )
         assert any(
             "Console rewind effective-memory lookup failed" in message
@@ -1251,6 +1273,7 @@ async def test_console_rewind_memory_lookup_error_warns_conservatively_without_l
 @pytest.mark.asyncio
 async def test_keyboard_rewind_cancel_consumes_command_and_preserves_late_draft():
     app = _build_test_app()
+    _configure_native_ready_console(app)
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
 
@@ -1267,11 +1290,13 @@ async def test_keyboard_rewind_cancel_consumes_command_and_preserves_late_draft(
         assert console._dismiss_console_command_popup()
         _press_enter_synchronously(console)
         composer.insert_text("next draft")
-        assert composer.draft_text() == "next draft"
 
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleRewindModal)
+        # The captured command leaves the composer once the menu opens
+        # (TASK-33620.15); text typed after the capture stays.
+        assert composer.draft_text() == "next draft"
 
         await pilot.press("escape")
         await pilot.pause()
@@ -1443,10 +1468,14 @@ async def test_rewind_modal_launch_failure_preserves_draft(source, monkeypatch):
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("/rewind")
 
+        token = None
         if source == "keyboard":
-            stash = composer.stash_draft_for_send()
+            from tldw_chatbook.UI.Screens.chat_screen import _ConsolePendingSend
+
+            stash = composer.capture_draft_for_send()
             assert stash is not None and stash.text == "/rewind"
-            console._console_pending_send_stash = stash
+            token = object()
+            console._console_pending_send = _ConsolePendingSend(session.id, stash, token)
             composer.insert_text("late")
 
         real_push_screen = console.app.push_screen
@@ -1459,7 +1488,7 @@ async def test_rewind_modal_launch_failure_preserves_draft(source, monkeypatch):
         monkeypatch.setattr(console.app, "push_screen", fail_rewind_modal)
 
         with pytest.raises(RuntimeError, match="rewind modal launch failed"):
-            await console._send_console_message_from_visible_action()
+            await console._send_console_message_from_visible_action(pending_send_token=token)
 
         expected = "/rewindlate" if source == "keyboard" else "/rewind"
         assert composer.draft_text() == expected

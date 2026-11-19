@@ -134,6 +134,7 @@ class StaticLibraryRagSearchService:
         }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regions() -> (
     None
@@ -238,6 +239,7 @@ async def test_library_stage_c_search_rag_promotes_query_scope_and_evidence_regi
         assert "tldw_server" not in visible
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_contract() -> (
     None
@@ -320,6 +322,7 @@ async def test_library_stage_c_search_rag_selected_evidence_updates_inspector_co
         # `CSS_PATH` to the real bundle for exactly this reason.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_source_rail_marks_active_mode_without_mutating_action_labels() -> (
     None
@@ -345,6 +348,7 @@ async def test_library_source_rail_marks_active_mode_without_mutating_action_lab
         assert collections_row.tooltip == "Collections"
 
 
+@pytest.mark.bootstrap_profile
 def test_navigation_uses_extracted_prompt_state_before_and_after_admission():
     app = _build_test_app()
     screen = library_screen_module.LibraryScreen(app)
@@ -365,6 +369,7 @@ def test_navigation_uses_extracted_prompt_state_before_and_after_admission():
     assert not hasattr(screen, "_library_prompts_view")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_navigation_context_opens_requested_conversation() -> None:
     app = _build_test_app()
@@ -409,6 +414,7 @@ async def test_library_navigation_context_opens_requested_conversation() -> None
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_unavailable_inspection_opens_exact_detail_once_without_repair() -> (
     None
@@ -473,6 +479,7 @@ async def test_library_unavailable_inspection_opens_exact_detail_once_without_re
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_unavailable_browse_is_complete_explicit_projection(
     monkeypatch,
@@ -547,6 +554,7 @@ async def test_library_unavailable_browse_is_complete_explicit_projection(
         assert screen._pending_library_character_navigation is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_unavailable_browse_owns_page_filter_and_retry(
     monkeypatch,
@@ -682,6 +690,7 @@ async def test_library_unavailable_browse_owns_page_filter_and_retry(
         assert screen._library_unavailable_browse_scope is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("blocked_stage", ("service", "final_recompose"))
 async def test_library_unavailable_browse_rejects_profile_churn_before_commit(
@@ -769,6 +778,7 @@ async def test_library_unavailable_browse_rejects_profile_churn_before_commit(
         assert "Old unavailable" not in _visible_text(screen)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("blocked_stage", ("flush", "lookup"))
 async def test_library_character_route_rejects_profile_churn_across_await(
@@ -829,6 +839,7 @@ async def test_library_character_route_rejects_profile_churn_across_await(
             assert not any(call.get("locator") for call in service.calls)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_character_route_rejects_authority_mismatch() -> None:
     app = _build_test_app()
@@ -861,6 +872,7 @@ async def test_library_character_route_rejects_authority_mismatch() -> None:
         assert not any(call.get("locator") for call in service.calls)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "incoming",
@@ -1037,6 +1049,7 @@ async def test_rejected_navigation_preserves_committed_unavailable_browse(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_character_authority_read_yields_ui_and_cannot_admit_superseded_route():
     app = _build_test_app()
@@ -1083,6 +1096,7 @@ async def test_character_authority_read_yields_ui_and_cannot_admit_superseded_ro
         release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_navigation_context_opens_requested_valid_mode() -> None:
     app = _build_test_app()
@@ -1104,6 +1118,7 @@ async def test_library_navigation_context_opens_requested_valid_mode() -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversations_empty_state_is_honest_and_blocks_actions() -> None:
     """With no saved conversations, the canvas shows the honest empty copy
@@ -1129,6 +1144,7 @@ async def test_library_conversations_empty_state_is_honest_and_blocks_actions() 
         assert screen.query_one("#library-conversation-preview").display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_conversations_snapshot_requests_all_scopes() -> None:
     """The Library conversations snapshot must span workspace-scoped rows.

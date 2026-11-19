@@ -182,9 +182,7 @@ class FakeDictationService:
         self.on_speech_resumed()
 
     def emit_segment_no_final(self) -> None:
-        assert self.on_segment_no_final is not None, (
-            "start_dictation() has not run yet"
-        )
+        assert self.on_segment_no_final is not None, "start_dictation() has not run yet"
         self.on_segment_no_final()
 
     def emit_error(self, message: str) -> None:
@@ -290,6 +288,7 @@ def _install_streaming_session(monkeypatch, service: FakeDictationService) -> li
     return sessions
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_busy_parakeet_capture_stays_live_then_inserts_without_sending(
     monkeypatch,
@@ -306,13 +305,9 @@ async def test_busy_parakeet_capture_stays_live_then_inserts_without_sending(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             store = console._ensure_console_chat_store()
-            message_count = len(
-                store.messages_for_session(store.active_session_id)
-            )
+            message_count = len(store.messages_for_session(store.active_session_id))
 
             await pilot.click("#console-dictation")
             deadline = time.monotonic() + 4
@@ -346,6 +341,7 @@ async def test_busy_parakeet_capture_stays_live_then_inserts_without_sending(
         service.start_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
     monkeypatch,
@@ -420,6 +416,7 @@ async def test_busy_parakeet_mic_stays_reachable_and_cancels_at_80_columns(
         service.start_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_busy_parakeet_mic_stays_reachable_with_staged_attachments(
     monkeypatch,
@@ -500,6 +497,7 @@ async def test_busy_parakeet_mic_stays_reachable_with_staged_attachments(
         service.start_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_partials_stay_out_of_the_draft_and_finals_insert_once_at_the_caret(
     monkeypatch,
@@ -552,6 +550,7 @@ async def test_partials_stay_out_of_the_draft_and_finals_insert_once_at_the_care
         assert console._console_dictation_partial == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mid_capture_failure_is_visible_preserves_draft_and_recovers_idle(
     monkeypatch,
@@ -599,6 +598,7 @@ async def test_mid_capture_failure_is_visible_preserves_draft_and_recovers_idle(
         assert console._console_dictation_state == "idle"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unavailable_microphone_fails_once_with_an_actionable_remedy(monkeypatch):
     service = FakeDictationService()
@@ -637,6 +637,7 @@ async def test_unavailable_microphone_fails_once_with_an_actionable_remedy(monke
         assert matching[0].kwargs.get("severity") == "error"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_silent_capture_tells_the_user_and_leaves_the_draft_alone(monkeypatch):
     """Nothing recognized must not smuggle whitespace into the draft.
@@ -703,6 +704,7 @@ async def test_a_silent_capture_tells_the_user_and_leaves_the_draft_alone(monkey
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_one_failure_draining_before_the_stop_worker_shows_one_toast(monkeypatch):
     """Interleaving A: the event path wins, and the stop worker stays quiet."""
@@ -745,6 +747,7 @@ async def test_one_failure_draining_before_the_stop_worker_shows_one_toast(monke
         assert service.stop_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_one_failure_draining_during_the_stop_worker_shows_one_toast(monkeypatch):
     """Interleaving B: the stop worker is mid-flight when the failure lands."""
@@ -796,6 +799,7 @@ async def test_one_failure_draining_during_the_stop_worker_shows_one_toast(monke
 # --- Task 14: live partials and the elapsed counter in the chip ------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_live_partial_renders_in_the_chip_and_leaves_the_draft_empty(
     monkeypatch,
@@ -821,6 +825,7 @@ async def test_a_live_partial_renders_in_the_chip_and_leaves_the_draft_empty(
         assert composer.draft_text() == "hello world"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bracketed_whisper_tokens_render_literally_not_as_markup(monkeypatch):
     """`[silence]`/`[BLANK_AUDIO]` are routine Whisper output, not Rich markup.
@@ -852,6 +857,7 @@ async def test_bracketed_whisper_tokens_render_literally_not_as_markup(monkeypat
         assert composer.draft_text() == "hello world"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_partial_arriving_outside_recording_never_reaches_the_chip(
     monkeypatch,
@@ -889,6 +895,7 @@ async def test_a_partial_arriving_outside_recording_never_reaches_the_chip(
 # --- VoiceSegmentTranscribing: per-segment "still working" feedback --------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_segment_transcribing_alone_does_not_mark_recognizer_output_heard(
     monkeypatch,
@@ -933,9 +940,12 @@ async def test_segment_transcribing_alone_does_not_mark_recognizer_output_heard(
             for call in notify.call_args_list
             if "No audio was captured from the microphone." in str(call.args[0])
             and call.kwargs.get("severity") == "error"
-        ], "a segment-transcribing-only capture must read as silent, not heard-but-empty"
+        ], (
+            "a segment-transcribing-only capture must read as silent, not heard-but-empty"
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_segment_transcribing_does_not_disturb_a_real_final_that_follows(
     monkeypatch,
@@ -1113,6 +1123,7 @@ def test_streaming_retry_events_keep_the_generation_that_started_the_replay():
     assert session._segments == ["new capture words"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_retry_keeps_prefix_and_routes_retried_stop_command(
     monkeypatch,
@@ -1199,6 +1210,7 @@ async def test_mounted_retry_keeps_prefix_and_routes_retried_stop_command(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_chip_shows_a_transcribing_indication_while_a_segment_is_in_flight(
     monkeypatch,
@@ -1249,6 +1261,7 @@ async def test_the_chip_shows_a_transcribing_indication_while_a_segment_is_in_fl
         assert "Transcribing" not in _painted(chip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_transcribing_indication_reverts_on_a_command_ack_too(monkeypatch):
     """A capture-ending command landing (not a plain final) also supersedes it."""
@@ -1276,6 +1289,7 @@ async def test_the_transcribing_indication_reverts_on_a_command_ack_too(monkeypa
         assert "Transcribing" not in _painted(chip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_transcribing_indication_survives_a_redundant_resync(monkeypatch):
     """The 0.2s Console UI-sync tick calls `sync_dictation_state("recording")`
@@ -1305,6 +1319,7 @@ async def test_the_transcribing_indication_survives_a_redundant_resync(monkeypat
         assert "Transcribing" in _painted(chip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_transcribing_indication_reverts_on_a_mid_capture_stop(monkeypatch):
     """Stopping the mic directly (no final/command in between) is also a
@@ -1352,6 +1367,7 @@ async def test_the_transcribing_indication_reverts_on_a_mid_capture_stop(monkeyp
         assert "Transcribing" not in _painted(chip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_blank_segment_completion_reverts_the_indication_with_no_final(
     monkeypatch,
@@ -1393,6 +1409,7 @@ async def test_a_blank_segment_completion_reverts_the_indication_with_no_final(
         assert console._console_dictation_partial == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_tick_forwards_the_indication_while_it_is_still_live(monkeypatch):
     """Review M2: the elapsed-counter tick fires once a second; the
@@ -1422,14 +1439,14 @@ async def test_the_tick_forwards_the_indication_while_it_is_still_live(monkeypat
         await pilot.pause()
 
         assert "Transcribing" in _painted(chip), (
-            "the elapsed-counter tick blanked a live segment-transcribing "
-            "indication"
+            "the elapsed-counter tick blanked a live segment-transcribing indication"
         )
         # And the elapsed counter itself did advance -- this is a real tick,
         # not a no-op that happens to leave everything untouched.
         assert "0:01" in _painted(chip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_elapsed_counter_ticks_once_per_second_and_stops_on_normal_stop(
     monkeypatch,
@@ -1486,6 +1503,7 @@ async def test_elapsed_counter_ticks_once_per_second_and_stops_on_normal_stop(
         assert console._console_dictation_elapsed_timer is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_elapsed_timer_stops_on_a_mid_capture_failure(monkeypatch):
     service = FakeDictationService()
@@ -1518,6 +1536,7 @@ async def test_elapsed_timer_stops_on_a_mid_capture_failure(monkeypatch):
         assert console._console_dictation_elapsed_timer is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_redundant_recording_resync_does_not_reset_the_chip(monkeypatch):
     """`sync_dictation_state("recording")` also fires from the unrelated 0.2s
@@ -1553,6 +1572,7 @@ async def test_a_redundant_recording_resync_does_not_reset_the_chip(monkeypatch)
         assert "dictated wo" in str(chip.renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_elapsed_timer_stops_when_the_screen_unmounts_mid_capture(monkeypatch):
     """A timer that outlives the screen it was scheduled on is a defect."""
@@ -1644,6 +1664,7 @@ async def test_unavailable_mic_is_visually_distinguishable_not_just_the_tooltip(
         assert mic.styles.display != "none"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dictation_tooltip_names_the_missing_capture_extra_only(monkeypatch):
     """Missing capture must read distinctly from missing provider (Task 15)."""
@@ -1661,7 +1682,9 @@ async def test_dictation_tooltip_names_the_missing_capture_extra_only(monkeypatc
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        mic = await _wait_for_mic_tooltip_containing(composer, pilot, "speech_recording")
+        mic = await _wait_for_mic_tooltip_containing(
+            composer, pilot, "speech_recording"
+        )
 
         tooltip = str(mic.tooltip)
         assert "speech_recording" in tooltip
@@ -1671,6 +1694,7 @@ async def test_dictation_tooltip_names_the_missing_capture_extra_only(monkeypatc
         assert str(mic.label) == "Dictate"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dictation_tooltip_names_the_missing_provider_extra_only(monkeypatch):
     """Missing provider must read distinctly from missing capture (Task 15)."""
@@ -1698,6 +1722,7 @@ async def test_dictation_tooltip_names_the_missing_provider_extra_only(monkeypat
         assert mic.styles.display != "none"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pressing_unavailable_mic_surfaces_remedy_beyond_the_tooltip(monkeypatch):
     """The remedy must not live only in a hover (Task 15)."""
@@ -1744,6 +1769,7 @@ async def test_pressing_unavailable_mic_surfaces_remedy_beyond_the_tooltip(monke
         assert service.start_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dictation_reprobes_on_activation_and_recovers_without_a_remount(
     monkeypatch,
@@ -1766,7 +1792,9 @@ async def test_dictation_reprobes_on_activation_and_recovers_without_a_remount(
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        mic = await _wait_for_mic_tooltip_containing(composer, pilot, "speech_recording")
+        mic = await _wait_for_mic_tooltip_containing(
+            composer, pilot, "speech_recording"
+        )
         assert "speech_recording" in str(mic.tooltip)
 
         # The extra gets installed mid-run: the next probe succeeds.
@@ -1787,6 +1815,7 @@ async def test_dictation_reprobes_on_activation_and_recovers_without_a_remount(
         assert "speech_recording" not in str(mic.tooltip)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_voice_provider_overridden_notifies_once_per_app_run(monkeypatch):
     """`was_overridden` is once-per-run guidance, not once-per-capture noise (Task 15)."""
@@ -1812,7 +1841,8 @@ async def test_voice_provider_overridden_notifies_once_per_app_run(monkeypatch):
         return [
             call
             for call in notify.call_args_list
-            if "parakeet-mlx" in str(call.args[0]) and "faster-whisper" in str(call.args[0])
+            if "parakeet-mlx" in str(call.args[0])
+            and "faster-whisper" in str(call.args[0])
         ]
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1848,6 +1878,7 @@ async def test_voice_provider_overridden_notifies_once_per_app_run(monkeypatch):
         assert _override_calls() == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_model_default_notifies_once_per_app_run(monkeypatch):
     """Review finding L1, mirroring `test_voice_provider_overridden_notifies_once_per_app_run`.
@@ -1912,6 +1943,7 @@ async def test_model_default_notifies_once_per_app_run(monkeypatch):
         assert _default_calls() == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_probe_crash_at_mount_does_not_brick_the_button(monkeypatch):
     """A bug in the (find_spec-only) probe must fail open, not disable forever."""
@@ -1942,6 +1974,7 @@ async def test_a_probe_crash_at_mount_does_not_brick_the_button(monkeypatch):
 # --- Final wave: the start path's session-identity guard --------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failure_landing_while_start_is_in_flight_arms_nothing(monkeypatch):
     """The start path's mirror of the two stop-path interleaving tests above.
@@ -1966,9 +1999,7 @@ async def test_a_failure_landing_while_start_is_in_flight_arms_nothing(monkeypat
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             composer.load_draft("keep this draft")
             mic = composer.query_one("#console-dictation", Button)
 
@@ -2017,6 +2048,7 @@ async def test_a_failure_landing_while_start_is_in_flight_arms_nothing(monkeypat
 # --- Final wave: the recorder's PCM bound ----------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_console_capture_is_given_a_bounded_pcm_budget(monkeypatch):
     """Streaming did not make the PCM go away, it just stopped bounding it.
@@ -2045,6 +2077,7 @@ async def test_the_console_capture_is_given_a_bounded_pcm_budget(monkeypatch):
         assert service.factory_kwargs.get("on_buffer_limit") is not None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_buffer_limit_callback_stops_the_capture_from_its_own_thread(
     monkeypatch,
@@ -2111,6 +2144,7 @@ async def test_the_buffer_limit_callback_stops_the_capture_from_its_own_thread(
         await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_torn_down_captures_buffer_limit_cannot_stop_the_next_one(
     monkeypatch,
@@ -2166,6 +2200,7 @@ class _GatedDiscardSession:
         self.discard_gate.wait(timeout=2)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch):
     """Cancel used to call `discard()` inline: 1.51 s of frozen UI, measured.
@@ -2231,9 +2266,7 @@ async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch)
 
 def test_join_segments_concatenates_break_entries_without_padding():
     """A plain `" ".join` would sandwich a break in spaces: `"one. \n\n two"`."""
-    assert (
-        dictation_module._join_segments(["one.", "\n\n", "two"]) == "one.\n\ntwo"
-    )
+    assert dictation_module._join_segments(["one.", "\n\n", "two"]) == "one.\n\ntwo"
     assert (
         dictation_module._join_segments(["one", "\n", "two", "\n\n", "three"])
         == "one\ntwo\n\nthree"
@@ -2242,6 +2275,7 @@ def test_join_segments_concatenates_break_entries_without_padding():
     assert dictation_module._join_segments(["\n\n"]) == "\n\n"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inline_new_paragraph_command_appends_a_break_and_counts_as_consumed(
     monkeypatch,
@@ -2276,6 +2310,7 @@ async def test_inline_new_paragraph_command_appends_a_break_and_counts_as_consum
         assert composer.draft_text() == "one.\n\ntwo"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inline_only_capture_returns_empty_and_does_not_raise(monkeypatch):
     """A capture of nothing but "Console, new paragraph." must not error.
@@ -2320,6 +2355,7 @@ async def test_inline_only_capture_returns_empty_and_does_not_raise(monkeypatch)
         ] == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_capture_ending_command_is_kept_out_of_segments_but_forwarded(
     monkeypatch,
@@ -2377,6 +2413,7 @@ async def test_capture_ending_command_is_kept_out_of_segments_but_forwarded(
         assert composer.draft_text() == "dictated words"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_genuinely_empty_capture_with_no_commands_still_raises(monkeypatch):
     """`commands_consumed == 0` must keep the V1 silent-capture wording exact."""
@@ -2413,11 +2450,12 @@ async def test_genuinely_empty_capture_with_no_commands_still_raises(monkeypatch
 # --- Task 2 fix round 1: edge breaks must survive insertion ----------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_trailing_inline_break_survives_insertion_into_an_empty_draft(
     monkeypatch,
 ):
-    """"one." + "Console, new paragraph." must not silently drop the break.
+    """ "one." + "Console, new paragraph." must not silently drop the break.
 
     `_join_segments` keeps the trailing "\\n\\n", but the pre-existing
     `_dictation_insertion` used to `.strip()` it back off on the way into the
@@ -2446,6 +2484,7 @@ async def test_a_trailing_inline_break_survives_insertion_into_an_empty_draft(
         assert composer.draft_text() == "one.\n\n"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_leading_inline_break_lands_a_new_capture_on_a_fresh_paragraph(
     monkeypatch,
@@ -2480,6 +2519,7 @@ async def test_a_leading_inline_break_lands_a_new_capture_on_a_fresh_paragraph(
 # --- Task 2 fix round 1: commands_consumed resets across captures ----------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_commands_consumed_resets_so_a_later_silent_capture_still_raises(
     monkeypatch,
@@ -2537,6 +2577,7 @@ async def test_commands_consumed_resets_so_a_later_silent_capture_still_raises(
 # --- Task 3: screen routing for capture-ending commands ---------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_inline_commands_reach_the_screen_but_never_trigger_capture_ending_dispatch(
     monkeypatch,
@@ -2595,6 +2636,7 @@ async def test_inline_commands_reach_the_screen_but_never_trigger_capture_ending
         assert composer.draft_text() == "one.\n\ntwo"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_capture_ending_command_replaces_the_stale_partial_with_an_ack(
     monkeypatch,
@@ -2620,9 +2662,7 @@ async def test_a_capture_ending_command_replaces_the_stale_partial_with_an_ack(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -2651,6 +2691,7 @@ async def test_a_capture_ending_command_replaces_the_stale_partial_with_an_ack(
         service.stop_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_an_inline_command_acks_in_the_chip_and_keeps_the_capture_live(
     monkeypatch,
@@ -2695,6 +2736,7 @@ async def test_an_inline_command_acks_in_the_chip_and_keeps_the_capture_live(
         await _wait_for_mic_label(composer, pilot, "Dictate")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_stop_command_ends_the_capture_and_inserts_the_transcript(monkeypatch):
     """`VoiceCommand("stop")` must end the capture the same way the mic
@@ -2726,6 +2768,7 @@ async def test_stop_command_ends_the_capture_and_inserts_the_transcript(monkeypa
         assert console._console_pending_voice_action is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_discard_command_abandons_the_capture_without_inserting(monkeypatch):
     """`VoiceCommand("discard")` routes through the existing cancel flow --
@@ -2778,6 +2821,7 @@ async def test_discard_command_abandons_the_capture_without_inserting(monkeypatc
         ] == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_send_command_inserts_then_presses_send_after_the_stop_completes(
     monkeypatch,
@@ -2813,9 +2857,7 @@ async def test_send_command_inserts_then_presses_send_after_the_stop_completes(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -2845,6 +2887,7 @@ async def test_send_command_inserts_then_presses_send_after_the_stop_completes(
         service.stop_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_failure_during_the_stop_worker_clears_pending_send_without_sending(
     monkeypatch,
@@ -2924,6 +2967,7 @@ async def test_a_failure_during_the_stop_worker_clears_pending_send_without_send
         assert composer.draft_text() == "keep this draft unrelated words"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_new_session_command_opens_a_new_tab_after_the_stop_completes(
     monkeypatch,
@@ -2949,9 +2993,7 @@ async def test_new_session_command_opens_a_new_tab_after_the_stop_completes(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -2976,6 +3018,7 @@ async def test_new_session_command_opens_a_new_tab_after_the_stop_completes(
         service.stop_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_that_back_acks_instead_of_speaking_while_a_run_is_active(
     monkeypatch,
@@ -3018,6 +3061,7 @@ async def test_read_that_back_acks_instead_of_speaking_while_a_run_is_active(
         assert console._console_speaking_message_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_that_back_acks_when_there_is_no_completed_assistant_reply(
     monkeypatch,
@@ -3055,6 +3099,7 @@ async def test_read_that_back_acks_when_there_is_no_completed_assistant_reply(
         assert console._console_speaking_message_id is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypatch):
     """The happy path: the last completed assistant message is spoken, a
@@ -3071,9 +3116,7 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             store = console._ensure_console_chat_store()
             session_id = store.active_session_id
             store.append_message(
@@ -3144,6 +3187,7 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
 # state guard on top of the session-identity check above it.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_command_draining_after_its_capture_ended_is_not_queued_for_the_next(
     monkeypatch,
@@ -3212,11 +3256,12 @@ async def test_a_command_draining_after_its_capture_ended_is_not_queued_for_the_
         assert composer.draft_text() == "first words second words"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_discard_after_send_within_the_transcribe_window_ships_nothing(
     monkeypatch,
 ):
-    """"Console, send." then "Console, discard." inside the SAME capture's
+    """ "Console, send." then "Console, discard." inside the SAME capture's
     transcribe window must ship nothing -- the discard cannot itself abort
     an in-flight stop-and-transcribe (nothing is cancelable at that point),
     but it must still drop whatever "send" already queued.
@@ -3241,9 +3286,7 @@ async def test_discard_after_send_within_the_transcribe_window_ships_nothing(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -3278,6 +3321,7 @@ async def test_discard_after_send_within_the_transcribe_window_ships_nothing(
         service.stop_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_command_finalizing_during_its_own_transcribe_window_still_queues(
     monkeypatch,
@@ -3308,9 +3352,7 @@ async def test_a_command_finalizing_during_its_own_transcribe_window_still_queue
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -3328,9 +3370,7 @@ async def test_a_command_finalizing_during_its_own_transcribe_window_still_queue
             assert console._console_dictation_state == "transcribing"
 
             console._handle_console_dictation_event(
-                chat_screen_module.ConsoleDictationEvent(
-                    session, VoiceCommand("send")
-                )
+                chat_screen_module.ConsoleDictationEvent(session, VoiceCommand("send"))
             )
             assert console._console_pending_voice_action == "send"
 
@@ -3365,6 +3405,7 @@ async def test_a_command_finalizing_during_its_own_transcribe_window_still_queue
 # it once capture 2 is already live.
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_stale_discard_command_does_not_cancel_the_live_next_capture(
     monkeypatch,
@@ -3420,6 +3461,7 @@ async def test_a_stale_discard_command_does_not_cancel_the_live_next_capture(
         assert composer.draft_text() == "first words live words"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_stale_final_does_not_join_the_live_next_captures_transcript(
     monkeypatch,
@@ -3466,6 +3508,7 @@ async def test_a_stale_final_does_not_join_the_live_next_captures_transcript(
         assert composer.draft_text() == "first words live words"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_stale_failure_does_not_tear_down_the_live_next_capture(
     monkeypatch,
@@ -3549,6 +3592,7 @@ async def test_a_stale_failure_does_not_tear_down_the_live_next_capture(
         assert service.stop_calls == 2  # capture 2's own real stop now ran
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_stale_partial_never_reaches_the_live_next_captures_chip(
     monkeypatch,
@@ -3652,6 +3696,7 @@ def _spoken_texts(post_message_mock: Mock) -> list[str]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_spoken_feedback_off_posts_no_status_tts_while_toasts_still_fire(
     monkeypatch,
@@ -3714,6 +3759,7 @@ async def test_spoken_feedback_off_posts_no_status_tts_while_toasts_still_fire(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_spoken_feedback_on_speaks_capture_ended_for_a_plain_stop(monkeypatch):
     """A plain stop -- no capture-ending command -- speaks a generic ack."""
@@ -3740,6 +3786,7 @@ async def test_spoken_feedback_on_speaks_capture_ended_for_a_plain_stop(monkeypa
         assert _spoken_texts(app.post_message) == ["Capture ended."]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_spoken_feedback_on_speaks_discarded_for_the_discard_command(
     monkeypatch,
@@ -3766,6 +3813,7 @@ async def test_spoken_feedback_on_speaks_discarded_for_the_discard_command(
         assert _spoken_texts(app.post_message) == ["Discarded."]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_spoken_feedback_on_speaks_sent_for_the_send_command(monkeypatch):
     service = FakeDictationService()
@@ -3804,6 +3852,7 @@ async def test_spoken_feedback_on_speaks_sent_for_the_send_command(monkeypatch):
         assert spoken == ["Sent."]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_spoken_feedback_on_speaks_new_session_for_the_new_session_command(
     monkeypatch,
@@ -3841,6 +3890,7 @@ async def test_spoken_feedback_on_speaks_new_session_for_the_new_session_command
         assert spoken == ["New session."]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_spoken_feedback_on_speaks_still_responding_for_read_that_back(
     monkeypatch,
@@ -3873,6 +3923,7 @@ async def test_spoken_feedback_on_speaks_still_responding_for_read_that_back(
         assert _spoken_texts(app.post_message) == ["Still responding."]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_spoken_feedback_on_speaks_nothing_to_read_yet_for_read_that_back(
     monkeypatch,
@@ -3899,11 +3950,12 @@ async def test_spoken_feedback_on_speaks_nothing_to_read_yet_for_read_that_back(
         assert _spoken_texts(app.post_message) == ["Nothing to read yet."]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_that_back_speech_is_unaffected_by_spoken_feedback_toggle_on(
     monkeypatch,
 ):
-    """"Read that back" is an explicit request, not ambient feedback -- its
+    """ "Read that back" is an explicit request, not ambient feedback -- its
     own reply speech must post exactly once, unchanged, whether or not
     `dictation.spoken_feedback` is on. (The toggle-off case is already
     pinned by `test_read_that_back_speaks_the_last_completed_assistant_reply`
@@ -3945,6 +3997,7 @@ async def test_read_that_back_speech_is_unaffected_by_spoken_feedback_toggle_on(
         assert console._console_speaking_message_id == message.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_spoken_feedback_on_speaks_the_same_reason_the_error_toast_shows(
     monkeypatch,
@@ -3974,6 +4027,7 @@ async def test_spoken_feedback_on_speaks_the_same_reason_the_error_toast_shows(
         assert _spoken_texts(app.post_message) == toast_texts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_speak_status_is_silent_while_a_capture_is_active(monkeypatch):
     """Mutual exclusion: never speak while the microphone might be open.
@@ -4001,6 +4055,7 @@ async def test_speak_status_is_silent_while_a_capture_is_active(monkeypatch):
         assert _spoken_texts(app.post_message) == ["Should be spoken."]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_starting_capture_stops_any_in_flight_playback_before_opening_mic(
     monkeypatch,
@@ -4051,9 +4106,10 @@ async def test_starting_capture_stops_any_in_flight_playback_before_opening_mic(
         assert service.start_calls == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_capture_started_is_never_spoken_even_with_feedback_on(monkeypatch):
-    """"Capture started" is deliberately never an ack (spec): the mic is
+    """ "Capture started" is deliberately never an ack (spec): the mic is
     already open by the time a capture starts, so speaking it would violate
     the mutual-exclusion rule and transcribe itself into the new draft. Only
     the unconditional playback-stop may fire on the way in.
@@ -4089,11 +4145,12 @@ async def test_capture_started_is_never_spoken_even_with_feedback_on(monkeypatch
 # rather than from "the action actually happened".
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_send_refuses_when_the_user_switched_sessions_mid_transcribe(
     monkeypatch,
 ):
-    """"Console, send." must never ship a DIFFERENT session's draft.
+    """ "Console, send." must never ship a DIFFERENT session's draft.
 
     The transcript is inserted into the session the capture BEGAN in
     (`_console_dictation_origin_session_id`), while Send acts on whatever
@@ -4123,9 +4180,7 @@ async def test_send_refuses_when_the_user_switched_sessions_mid_transcribe(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             store = console._ensure_console_chat_store()
             origin_id = store.active_session_id
 
@@ -4160,6 +4215,7 @@ async def test_send_refuses_when_the_user_switched_sessions_mid_transcribe(
         service.stop_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_send_still_ships_when_the_session_never_changed(monkeypatch):
     """The other half of the guard: an unchanged session still sends.
@@ -4208,6 +4264,7 @@ async def test_send_still_ships_when_the_session_never_changed(monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_refused_send_does_not_speak_sent(monkeypatch):
     """The run-in-progress refusal: the message did not go out, so do not
@@ -4264,6 +4321,7 @@ async def test_a_refused_send_does_not_speak_sent(monkeypatch):
         assert composer.draft_text() == "dictated words"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_late_discard_is_acknowledged_instead_of_silently_ignored(
     monkeypatch,
@@ -4288,9 +4346,7 @@ async def test_a_late_discard_is_acknowledged_instead_of_silently_ignored(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -4331,6 +4387,7 @@ async def test_a_late_discard_is_acknowledged_instead_of_silently_ignored(
         service.stop_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_discarded_is_spoken_only_after_the_microphone_is_released(
     monkeypatch,
@@ -4363,9 +4420,7 @@ async def test_discarded_is_spoken_only_after_the_microphone_is_released(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -4395,11 +4450,12 @@ async def test_discarded_is_spoken_only_after_the_microphone_is_released(
         release_gate.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_a_command_only_capture_acknowledges_that_nothing_was_inserted(
     monkeypatch,
 ):
-    """"Console, new paragraph." then "Console, stop." inserts nothing.
+    """ "Console, new paragraph." then "Console, stop." inserts nothing.
 
     `stop_and_transcribe` returns "" for a command-only capture by design
     (not a silent-microphone failure), and the screen correctly declines to
@@ -4437,17 +4493,16 @@ async def test_a_command_only_capture_acknowledges_that_nothing_was_inserted(
 
         assert spoken == ["Nothing to insert."]
         assert any(
-            "Nothing to insert." in str(call.args[0])
-            for call in notify.call_args_list
+            "Nothing to insert." in str(call.args[0]) for call in notify.call_args_list
         )
         # Not an error, and the draft is untouched -- no stray padding space.
         assert composer.draft_text() == "untouched"
         assert not any(
-            call.kwargs.get("severity") == "error"
-            for call in notify.call_args_list
+            call.kwargs.get("severity") == "error" for call in notify.call_args_list
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_read_back_refuses_while_a_capture_is_open(monkeypatch):
     """Own-guard for the microphone/speaker mutual-exclusion invariant.

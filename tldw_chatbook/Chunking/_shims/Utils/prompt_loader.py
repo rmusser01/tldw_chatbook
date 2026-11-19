@@ -26,6 +26,7 @@ This module lives under the capital-``U`` ``Utils`` package because that is
 the dotted path the vendored engine imports unguarded
 (engine/strategies/rolling_summarize.py:13).
 """
+
 from ....Internal_Prompts.resolver import get_internal_prompt
 
 _KNOWN = {

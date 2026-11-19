@@ -147,6 +147,7 @@ def _content_screens(app) -> list:
     return [s for s in app.screen_stack if isinstance(s, _ProbeContentScreen)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_under_a_pushed_screen_leaves_no_resident_screen(
     monkeypatch,
@@ -189,6 +190,7 @@ async def test_navigation_under_a_pushed_screen_leaves_no_resident_screen(
         assert not outgoing.is_running, "the outgoing screen's pump must stop"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_plain_navigation_still_replaces_the_content_screen(monkeypatch):
     """Control: with no overlay the behaviour is unchanged."""
@@ -206,6 +208,7 @@ async def test_plain_navigation_still_replaces_the_content_screen(monkeypatch):
         assert _content_screens(app) == [app.screen]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_navigation_hooks_are_asked_of_the_content_screen(monkeypatch):
     """AC#4: flush/confirm/save_state belong to the outgoing CONTENT screen.
@@ -239,6 +242,7 @@ async def test_navigation_hooks_are_asked_of_the_content_screen(monkeypatch):
         ) == {"probe": "chat"}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_content_screen_veto_keeps_the_overlay_and_the_screen(monkeypatch):
     """A vetoed navigation costs the user nothing: overlay and screen stay."""
@@ -264,6 +268,7 @@ async def test_content_screen_veto_keeps_the_overlay_and_the_screen(monkeypatch)
         assert app.screen is overlay
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_awaited_modal_resumes_its_caller_with_a_cancel_result(monkeypatch):
     """AC#3: an in-flight ``push_screen_wait`` awaiter is never stranded.
@@ -312,6 +317,7 @@ async def test_awaited_modal_resumes_its_caller_with_a_cancel_result(monkeypatch
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_is_not_left_resident_under_the_nav_overflow_menu(tmp_path):
     """The reported live shape, with the real Console screen and menu.
@@ -365,6 +371,7 @@ async def test_console_is_not_left_resident_under_the_nav_overflow_menu(tmp_path
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_undismissable_overlay_aborts_navigation_instead_of_leaking(
     monkeypatch,

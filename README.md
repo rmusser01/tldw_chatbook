@@ -18,7 +18,7 @@ machine by default.
 
 ## Alpha status
 
-tldw_chatbook is **Alpha** software. The current package version is `0.2.3`.
+tldw_chatbook is **Alpha** software. The current package version is `0.2.4`.
 The core application is usable, but the project is moving quickly: interfaces
 can change, advanced integrations vary in maturity, and older data may
 occasionally need migration or recovery.
@@ -231,9 +231,8 @@ require native libraries. Add only the groups you plan to use.
 | `transcription_faster_whisper` | CPU/CUDA-optimized Whisper |
 | `transcription_parakeet_onnx` | Cross-platform Parakeet ONNX runtime |
 | `transcription_transcribe_cpp` | Direct local GGUF transcription runtime |
-| `transcription_lightning_whisper` | Apple Silicon Lightning Whisper |
 | `transcription_parakeet` | Compatibility alias for Parakeet ONNX |
-| `mlx_whisper` | Legacy Apple Silicon transcription bundle |
+| `mlx_whisper` | Legacy Apple Silicon Parakeet transcription bundle |
 | `nemo` | NVIDIA NeMo speech models |
 | `diarization` | Speaker diarization dependencies |
 | `ocr_docext` | OCR and document-extraction integrations |
@@ -256,12 +255,14 @@ alongside them:
 # Cross-platform audio ingestion
 python -m pip install -e ".[audio]"
 
-# Add Apple Silicon-optimized Whisper
-python -m pip install -e ".[audio,transcription_lightning_whisper]"
-
 # Direct local GGUF transcription
 python -m pip install -e ".[audio,transcription_transcribe_cpp]"
 ```
+
+Lightning Whisper MLX is deferred for Chatbook 0.2.4, even when installed.
+Saved canonical and legacy selections remain unchanged and report unavailable;
+choose another supported transcription provider deliberately, such as
+faster-whisper. No automatic replacement or tokenizer downgrade is performed.
 
 Some speech engines have hardware, model-download, or system-library
 requirements. See the
@@ -584,9 +585,11 @@ server-backed workflows each introduce a separate trust boundary.
 
 ### Advanced profiles
 
-`TLDW_CONFIG_PATH` can select a different config file. A config override does
+`TLDW_CONFIG_PATH` can select a different config file; `tldw-cli --config PATH`
+does the same for one launch and wins when both are set. A config override does
 not automatically relocate every data path; set `[paths].data_dir` inside that
-profile when true isolation is required.
+profile when true isolation is required. For moving to another computer, see
+"Setting up another machine" in `Docs/User_Guide/First_Run_Setup.md`.
 
 ## Browser access
 
@@ -772,3 +775,5 @@ For project questions and feature requests, open a
 [GitHub issue](https://github.com/rmusser01/tldw_chatbook/issues). For security
 issues, do not publish sensitive details in a public issue; contact the
 maintainer privately at [contact@rmusser.net](mailto:contact@rmusser.net).
+
+Console: [learned response rules](backlog/docs/console-response-rules.md) with `/omfg` and `/rules`.

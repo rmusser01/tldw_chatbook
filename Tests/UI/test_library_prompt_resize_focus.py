@@ -22,6 +22,7 @@ from Tests.UI.test_library_shell import (
 from tldw_chatbook.Widgets.Library import LibraryAdaptiveReaderShell
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["basic", "advanced"])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -90,6 +91,7 @@ async def test_prompt_resize_keeps_live_field_painted_without_data_work(
         assert db.fetch_prompt_details(prompt_id)["version"] == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outside_editor", [False, True])
 @pytest.mark.parametrize("size", [(80, 24), (170, 24)])

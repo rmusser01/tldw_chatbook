@@ -388,6 +388,7 @@ async def _close_replaced_client(backend: OpenAITTSBackend) -> None:
         await original.aclose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_allowed_custom_path_reaches_httpx_as_validated_raw_path() -> None:
     requests: list[httpx.Request] = []
@@ -406,6 +407,7 @@ async def test_allowed_custom_path_reaches_httpx_as_validated_raw_path() -> None
     assert requests[0].url.raw_path == b"/custom/%7Evoice/%2Eprofile"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_custom_endpoint_passes_model_and_voice_through(
     monkeypatch: pytest.MonkeyPatch,
@@ -431,6 +433,7 @@ async def test_custom_endpoint_passes_model_and_voice_through(
     assert payload["voice"] == "marius"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_custom_endpoint_without_api_key_sends_no_authorization(
     monkeypatch: pytest.MonkeyPatch,
@@ -449,6 +452,7 @@ async def test_custom_endpoint_without_api_key_sends_no_authorization(
     assert "authorization" not in requests[0].headers
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_custom_endpoint_with_key_still_sends_bearer(
     monkeypatch: pytest.MonkeyPatch,
@@ -533,6 +537,7 @@ async def test_none_auth_does_not_read_or_send_any_credentials(monkeypatch) -> N
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_default_endpoint_still_coerces_model_and_voice(
     monkeypatch: pytest.MonkeyPatch,
@@ -552,6 +557,7 @@ async def test_default_endpoint_still_coerces_model_and_voice(
     assert payload["voice"] == "alloy"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_default_endpoint_still_requires_api_key(
     monkeypatch: pytest.MonkeyPatch,
@@ -569,6 +575,7 @@ async def test_default_endpoint_still_requires_api_key(
     assert requests == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "official_variant",
@@ -599,6 +606,7 @@ async def test_official_endpoint_variants_keep_guardrails(
     assert payload["voice"] == "alloy"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_custom_endpoint_does_not_forward_organization_header(
     monkeypatch: pytest.MonkeyPatch,
@@ -623,6 +631,7 @@ async def test_custom_endpoint_does_not_forward_organization_header(
     assert "openai-organization" not in requests[0].headers
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_official_endpoint_still_sends_organization_header(
     monkeypatch: pytest.MonkeyPatch,
@@ -641,6 +650,7 @@ async def test_official_endpoint_still_sends_organization_header(
     assert requests[0].headers["OpenAI-Organization"] == "org-test"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_keyless_openai_compatible_server_over_real_socket(
     monkeypatch: pytest.MonkeyPatch,

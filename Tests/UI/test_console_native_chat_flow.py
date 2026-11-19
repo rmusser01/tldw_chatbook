@@ -21,6 +21,7 @@ from textual.pilot import OutOfBounds
 from textual.widgets import Button, Checkbox, Input, Static, TextArea
 
 from Tests.fixtures.required_doubles import exploding_double
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
 from Tests.UI.console_controller_stubs import stub_image_controller
@@ -88,6 +89,7 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ConsoleProviderReturnIntent,
     ConsoleSettingsReturnTarget,
     ConversationSettingsReturnIntent,
     ConversationSettingsReturnOutcome,
@@ -114,10 +116,13 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 from tldw_chatbook.UI.Console_Modules.character import ConsoleCharacterController
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
-from tldw_chatbook.UI.Console_Modules.session import _persona_session_identity_from_handoff, _persona_session_prompt_seed
+from tldw_chatbook.UI.Console_Modules.session import (
+    _persona_session_identity_from_handoff,
+    _persona_session_prompt_seed,
+)
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console import (
     ConsoleComposerBar,
     ConsolePromptsModal,
@@ -144,8 +149,6 @@ _POLL_ATTEMPTS = 200
 _POLL_INTERVAL_SECONDS = 0.05
 
 
-
-
 def _conversation_settings_return_snapshot(
     *,
     provider: str = "llama_cpp",
@@ -164,16 +167,12 @@ def _conversation_settings_return_snapshot(
             custom_budget_tokens=2048,
         ),
         raw_values={
-            "console-settings-provider": provider,
-            "console-settings-model-picker": model,
             "console-settings-temperature": "0.7.2",
             "console-context-custom-budget": "2048",
         },
         provider_model_drafts={provider: model},
         provider_base_url_drafts=(
-            {provider: "http://127.0.0.1:9099"}
-            if provider == "llama_cpp"
-            else {}
+            {provider: "http://127.0.0.1:9099"} if provider == "llama_cpp" else {}
         ),
         active_view="context",
         scroll_anchor=11,
@@ -213,7 +212,7 @@ def test_checking_citations_is_an_active_console_run_status():
     assert ConsoleRunStatus.CHECKING_CITATIONS in CONSOLE_ACTIVE_RUN_STATUSES
 
 
-def _build_console_send_test_app(*args, **kwargs):
+def _build_console_send_test_app(*args, retire_chachanotes_db=False, **kwargs):
     """Build a factory app that can actually complete a Console send.
 
     TASK-21590. `_build_test_app` boots with ``chachanotes_db = None``, so the
@@ -233,7 +232,7 @@ def _build_console_send_test_app(*args, **kwargs):
     See `attach_chachanotes_db` for why the attached DB is `:memory:`.
     """
     app = _build_test_app(*args, **kwargs)
-    attach_chachanotes_db(app)
+    attach_chachanotes_db(app, retire_with_app=retire_chachanotes_db)
     return app
 
 
@@ -248,6 +247,7 @@ def _persist_console_provider_config(
     assert config_module.save_settings_to_cli_config(
         {
             "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
             "chat_defaults": {"provider": provider, "model": model},
             f"api_settings.{provider}": provider_settings,
         }
@@ -255,7 +255,7 @@ def _persist_console_provider_config(
     app.app_config = config_module.load_settings(force_reload=True)
 
 
-def _apply_mounted_console_provider_config(
+async def _apply_mounted_console_provider_config(
     console: ChatScreen,
     *,
     provider: str,
@@ -279,7 +279,7 @@ def _apply_mounted_console_provider_config(
             source="user",
         )
     )
-    console._sync_console_control_bar()
+    await _sync_console_control_bar_now(console)
 
 
 def _configure_openai_missing_api_key(app, model: str = "gpt-4o") -> None:
@@ -312,6 +312,7 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     app.chat_api_model_value = model
 
 
+@pytest.mark.bootstrap_profile
 def test_native_ready_console_config_survives_cache_invalidating_reload() -> None:
     app = _build_test_app()
     _configure_native_ready_console(app, model="prepared-model")
@@ -327,6 +328,7 @@ def test_native_ready_console_config_survives_cache_invalidating_reload() -> Non
     assert reloaded["api_settings"]["llama_cpp"]["model"] == "prepared-model"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("outcome", "expected_copy"),
@@ -416,23 +418,24 @@ async def test_conversation_settings_return_claims_exact_revision_and_restores_m
         app.pending_handoffs.release(replacement_claim)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("rejection", "expected_copy"),
     (
         (
             "stale_revision",
-            "Conversation settings changed while credentials were open. "
+            "Chat settings changed while credentials were open. "
             "The earlier draft was not restored.",
         ),
         (
             "deleted_session",
-            "The original conversation closed. Its Conversation settings draft "
+            "The original conversation closed. Its Chat settings draft "
             "was not restored.",
         ),
         (
             "temporary_session",
-            "The temporary conversation is no longer available. Its Conversation "
+            "The temporary conversation is no longer available. Its Chat "
             "settings draft was not restored.",
         ),
     ),
@@ -488,15 +491,15 @@ async def test_conversation_settings_return_terminal_rejection_consumes_once(
         assert host.screen_stack[-1] is console
         assert console._suspended_conversation_settings is None
         assert expected_copy in notices
-        assert app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        ) is None
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+            is None
+        )
         console.apply_navigation_context(target.to_context())
         await pilot.pause()
         assert host.screen_stack[-1] is console
         assert (
-            "Conversation settings return is no longer available. "
-            "Open Conversation settings again."
+            "Chat settings return is no longer available. Open Chat settings again."
         ) in notices
 
         replacement = ConversationSettingsReturnIntent(
@@ -516,6 +519,7 @@ async def test_conversation_settings_return_terminal_rejection_consumes_once(
         app.pending_handoffs.release(replacement_claim)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_superseded_route_preserves_latest_handoff(
     monkeypatch,
@@ -566,12 +570,12 @@ async def test_conversation_settings_return_superseded_route_preserves_latest_ha
 
         assert host.screen_stack[-1] is console
         assert (
-            "This return was superseded by a newer request. "
-            "Open Conversation settings again."
+            "This return was superseded by a newer request. Open Chat settings again."
         ) in notices
         assert console._suspended_conversation_settings is snapshot
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_consumed_route_clears_stale_snapshot_with_copy(
     monkeypatch,
@@ -615,11 +619,11 @@ async def test_conversation_settings_return_consumed_route_clears_stale_snapshot
         assert console._suspended_conversation_settings is None
         assert console._suspended_conversation_settings_token is None
         assert (
-            "Conversation settings return is no longer available. "
-            "Open Conversation settings again."
+            "Chat settings return is no longer available. Open Chat settings again."
         ) in notices
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_waits_for_exact_in_flight_claim(
     monkeypatch,
@@ -674,11 +678,13 @@ async def test_conversation_settings_return_waits_for_exact_in_flight_claim(
 
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert console._pending_conversation_settings_return_target is None
-        assert app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        ) is None
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+            is None
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_replacement_before_claim_consumes_replacement(
     monkeypatch,
@@ -714,9 +720,7 @@ async def test_conversation_settings_return_replacement_before_claim_consumes_re
                     session_id=session.id,
                     settings_revision=store.session_settings_revision(session.id),
                     snapshot=snapshot,
-                    outcome=(
-                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
-                    ),
+                    outcome=(ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED),
                 )
                 console.apply_navigation_context(replacement_target.to_context())
                 monkeypatch.setattr(
@@ -744,9 +748,10 @@ async def test_conversation_settings_return_replacement_before_claim_consumes_re
         assert replacement_target is not None
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert console._pending_conversation_settings_return_target is None
-        assert app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        ) is None
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+            is None
+        )
         return_copy = str(
             host.screen_stack[-1]
             .query_one("#console-settings-return-status", Static)
@@ -755,6 +760,7 @@ async def test_conversation_settings_return_replacement_before_claim_consumes_re
         assert "Provider settings saved — checking readiness" in return_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_replacement_during_terminal_restore_is_consumed(
     monkeypatch,
@@ -786,10 +792,7 @@ async def test_conversation_settings_return_replacement_during_terminal_restore_
         def reject_first_after_claim(target):
             nonlocal checks, replacement_target
             checks += 1
-            if (
-                target.return_revision == first_target.return_revision
-                and checks == 2
-            ):
+            if target.return_revision == first_target.return_revision and checks == 2:
                 current_settings = store.session_settings(session.id)
                 assert current_settings is not None
                 store.replace_session_settings(
@@ -801,9 +804,7 @@ async def test_conversation_settings_return_replacement_during_terminal_restore_
                     session_id=session.id,
                     settings_revision=store.session_settings_revision(session.id),
                     snapshot=snapshot,
-                    outcome=(
-                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
-                    ),
+                    outcome=(ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED),
                 )
                 console.apply_navigation_context(replacement_target.to_context())
             return real_rejection_copy(target)
@@ -826,11 +827,13 @@ async def test_conversation_settings_return_replacement_during_terminal_restore_
         assert replacement_target is not None
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert console._pending_conversation_settings_return_target is None
-        assert app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        ) is None
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+            is None
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_success_preserves_replacement_staged_during_restore(
     monkeypatch,
@@ -863,7 +866,7 @@ async def test_conversation_settings_return_success_preserves_replacement_staged
             nonlocal replacement_target, replacement_snapshot
             if target.return_revision == first_target.return_revision:
                 replacement_snapshot = _conversation_settings_return_snapshot(
-                    focus_control_id="console-settings-model-picker"
+                    focus_control_id="console-settings-model-change"
                 )
                 console._suspended_conversation_settings = replacement_snapshot
                 console._suspended_conversation_settings_token = 36
@@ -872,9 +875,7 @@ async def test_conversation_settings_return_success_preserves_replacement_staged
                     session_id=session.id,
                     settings_revision=store.session_settings_revision(session.id),
                     snapshot=replacement_snapshot,
-                    outcome=(
-                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
-                    ),
+                    outcome=(ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED),
                 )
                 console.apply_navigation_context(replacement_target.to_context())
             await real_mount_status(target, snapshot)
@@ -897,7 +898,9 @@ async def test_conversation_settings_return_success_preserves_replacement_staged
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert replacement_target is not None
         assert replacement_snapshot is not None
-        assert console._pending_conversation_settings_return_target == replacement_target
+        assert (
+            console._pending_conversation_settings_return_target == replacement_target
+        )
         assert console._suspended_conversation_settings is replacement_snapshot
         assert (
             app.pending_handoffs.exact_revision_status(
@@ -908,6 +911,7 @@ async def test_conversation_settings_return_success_preserves_replacement_staged
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_settles_at_transfer_before_status_and_keeps_replacement(
     monkeypatch,
@@ -962,7 +966,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
                 )
                 replacement_snapshot = _conversation_settings_return_snapshot(
                     model="replacement-model",
-                    focus_control_id="console-settings-model-picker",
+                    focus_control_id="console-settings-model-change",
                 )
                 console._suspended_conversation_settings = replacement_snapshot
                 console._suspended_conversation_settings_token = 136
@@ -971,9 +975,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
                     session_id=session.id,
                     settings_revision=store.session_settings_revision(session.id),
                     snapshot=replacement_snapshot,
-                    outcome=(
-                        ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
-                    ),
+                    outcome=(ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED),
                 )
                 console.apply_navigation_context(replacement_target.to_context())
                 if _on_transfer_committed is not None:
@@ -994,11 +996,9 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
         async def record_first_status_boundary(target, snapshot):
             nonlocal first_status_at_boundary, first_claim_at_boundary
             if target.return_revision == first_target.return_revision:
-                first_status_at_boundary = (
-                    app.pending_handoffs.exact_revision_status(
-                        HandoffChannel.CONVERSATION_SETTINGS_RETURN,
-                        first_target.return_revision,
-                    )
+                first_status_at_boundary = app.pending_handoffs.exact_revision_status(
+                    HandoffChannel.CONVERSATION_SETTINGS_RETURN,
+                    first_target.return_revision,
                 )
                 first_claim_at_boundary = (
                     console._pending_conversation_settings_return_claim
@@ -1034,7 +1034,9 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
         assert first_claim_at_boundary is None
         assert replacement_target is not None
         assert replacement_snapshot is not None
-        assert console._pending_conversation_settings_return_target == replacement_target
+        assert (
+            console._pending_conversation_settings_return_target == replacement_target
+        )
         assert console._suspended_conversation_settings is replacement_snapshot
         assert (
             app.pending_handoffs.exact_revision_status(
@@ -1057,10 +1059,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
             await pilot.pause(0.05)
 
         assert replacement_modal is not None
-        assert (
-            replacement_modal.query_one("#console-settings-model-picker").value
-            == "replacement-model"
-        )
+        assert replacement_modal._current_model_value() == "replacement-model"
         assert console._suspended_conversation_settings is None
         assert (
             app.pending_handoffs.exact_revision_status(
@@ -1071,7 +1070,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
         )
 
 
-
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_releases_transient_modal_mount_failure(
     monkeypatch,
@@ -1113,7 +1112,10 @@ async def test_conversation_settings_return_releases_transient_modal_mount_failu
         monkeypatch.setattr(console, "_open_console_settings", fail_once_then_open)
         console.apply_navigation_context(target.to_context())
         for _ in range(80):
-            if attempts == 1 and not console._conversation_settings_return_restore_in_progress:
+            if (
+                attempts == 1
+                and not console._conversation_settings_return_restore_in_progress
+            ):
                 break
             await pilot.pause(0.05)
 
@@ -1138,11 +1140,13 @@ async def test_conversation_settings_return_releases_transient_modal_mount_failu
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert store.active_session_id == session.id
         assert console._pending_conversation_settings_return_target is None
-        assert app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        ) is None
+        assert (
+            app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+            is None
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_pretransfer_cancellation_retains_retry(
     monkeypatch,
@@ -1186,12 +1190,12 @@ async def test_conversation_settings_return_pretransfer_cancellation_retains_ret
         console.apply_navigation_context(target.to_context())
         await wait_for_signal(
             open_started,
-            what="pre-transfer Conversation settings restore",
+            what="pre-transfer Chat settings restore",
         )
         console.workers.cancel_group(console, "conversation-settings-return")
         await wait_for_signal(
             open_cancelled,
-            what="pre-transfer Conversation settings cancellation",
+            what="pre-transfer Chat settings cancellation",
         )
         for _ in range(80):
             if not console._conversation_settings_return_restore_in_progress:
@@ -1211,6 +1215,7 @@ async def test_conversation_settings_return_pretransfer_cancellation_retains_ret
         assert console._suspended_conversation_settings_token == 146
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_transient_cleanup_preserves_new_session_selection(
     monkeypatch,
@@ -1257,7 +1262,7 @@ async def test_conversation_settings_return_transient_cleanup_preserves_new_sess
         console.apply_navigation_context(target.to_context())
         await wait_for_signal(
             restore_started,
-            what="Conversation settings restore session switch",
+            what="Chat settings restore session switch",
         )
         assert store.active_session_id == origin.id
         store.switch_session(later.id)
@@ -1280,6 +1285,7 @@ async def test_conversation_settings_return_transient_cleanup_preserves_new_sess
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_missing_environment_credential_stays_blocked(
     monkeypatch,
@@ -1307,7 +1313,7 @@ async def test_conversation_settings_return_missing_environment_credential_stays
         snapshot = _conversation_settings_return_snapshot(
             provider="openai",
             model="gpt-5",
-            focus_control_id="console-settings-model-picker",
+            focus_control_id="console-settings-model-change",
         )
         store.replace_session_settings(session.id, snapshot.settings)
         console._suspended_conversation_settings = snapshot
@@ -1338,8 +1344,11 @@ async def test_conversation_settings_return_missing_environment_credential_stays
         assert f"Export {missing_name}, then relaunch Chatbook" in return_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_conversation_settings_return_unavailable_focus_falls_back_to_connection():
+async def test_conversation_settings_return_unavailable_focus_falls_back_to_change():
+    """TASK-33006.4: an unavailable restored target falls back to the MODEL
+    row's Change (Connection's provider picker and model search are gone)."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1365,24 +1374,37 @@ async def test_conversation_settings_return_unavailable_focus_falls_back_to_conn
         for _ in range(80):
             if isinstance(host.screen_stack[-1], ConsoleSettingsModal):
                 focused = host.focused
-                if focused is not None and focused.id in {
-                    "console-settings-provider-picker-input",
-                    "model-search-picker-input",
-                }:
+                if (
+                    focused is not None
+                    and focused.id == "console-settings-model-change"
+                ):
                     break
             await pilot.pause(0.05)
 
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert host.focused is not None
-        assert host.focused.id in {
-            "console-settings-provider-picker-input",
-            "model-search-picker-input",
-        }
+        assert host.focused.id == "console-settings-model-change"
+
+
+async def _click_configure_credential(pilot, modal: ConsoleSettingsModal) -> None:
+    """Click Configure credential where it paints, and require the hit.
+
+    TASK-33006.2: at 100x30 the Model view body is eight rows, and the
+    Sampling line naming the hidden fields wraps, so the button opens below
+    the fold. A click at its unscrolled position used to land on whatever
+    painted there (the Esc hint, then Cancel); scroll it into view first.
+    """
+    button = modal.query_one("#console-settings-configure-credential")
+    button.scroll_visible(animate=False, immediate=True)
+    await pilot.pause()
+    assert await pilot.click(button)
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_conversation_settings_return_real_navigation_restores_fresh_console_modal(
     monkeypatch,
+    request,
 ):
     """Drive Configure → Settings → Return through the production app router."""
 
@@ -1428,8 +1450,8 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
             await pilot.pause(0.05)
         assert isinstance(app.screen, ConsoleSettingsModal)
         original_modal = app.screen
-        original_modal.query_one("#console-settings-model-picker").focus_input()
-        await pilot.click("#console-settings-configure-credential")
+        original_modal.query_one("#console-settings-model-change", Button).focus()
+        await _click_configure_credential(pilot, original_modal)
 
         fresh_settings = None
         for _ in range(200):
@@ -1445,9 +1467,9 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
             "#settings-provider-api-key",
             timeout=10.0,
         )
-        fresh_settings.query_one("#settings-provider-api-key", Input).value = (
-            "DUMMY-PRODUCTION-ROUND-TRIP-KEY"
-        )
+        fresh_settings.query_one(
+            "#settings-provider-api-key", Input
+        ).value = "DUMMY-PRODUCTION-ROUND-TRIP-KEY"
         await pilot.pause()
         fresh_settings.action_settings_save_category(allow_text_entry_focus=True)
         for _ in range(80):
@@ -1502,11 +1524,13 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
                 break
             await pilot.pause(0.05)
         assert isinstance(app.screen, SettingsScreen)
-        assert app.screen.query_one(
-            "#settings-provider-return-continuation"
-        ).display is False
+        assert (
+            app.screen.query_one("#settings-provider-return-continuation").display
+            is False
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_warm_console_resume_consumes_staged_chat_handoff():
     """A CHAT handoff staged while away is consumed on the WARM revisit.
@@ -1575,6 +1599,7 @@ async def test_warm_console_resume_consumes_staged_chat_handoff():
         assert launch.source == "library"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_real_router_suspend_after_transfer_does_not_replay_stale_handoff(
     monkeypatch,
@@ -1596,7 +1621,9 @@ async def test_conversation_settings_return_real_router_suspend_after_transfer_d
             status_cancelled.set()
             raise
 
-    monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notices.append(str(message)))
+    monkeypatch.setattr(
+        app, "notify", lambda message, **_kwargs: notices.append(str(message))
+    )
     monkeypatch.setattr(
         ChatScreen,
         "_mount_conversation_settings_return_status",
@@ -1637,7 +1664,7 @@ async def test_conversation_settings_return_real_router_suspend_after_transfer_d
         )
         await wait_for_signal(
             status_started,
-            what="blocked post-transfer Conversation settings status",
+            what="blocked post-transfer Chat settings status",
         )
 
         returned_console = app._navigation_outgoing_screen()
@@ -1692,11 +1719,10 @@ async def test_conversation_settings_return_real_router_suspend_after_transfer_d
         assert fresh_console._suspended_conversation_settings is None
         assert fresh_console._pending_conversation_settings_return_target is None
         assert not isinstance(app.screen, ConsoleSettingsModal)
-        assert not any(
-            "Conversation settings return was stale" in notice for notice in notices
-        )
+        assert not any("Chat settings return was stale" in notice for notice in notices)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure_mode",
@@ -1807,6 +1833,7 @@ async def test_conversation_settings_return_atomic_failure_retains_retry_without
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_status_fault_blocks_replacement_until_retry(
     monkeypatch,
@@ -1831,7 +1858,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         first_snapshot = _conversation_settings_return_snapshot(model="first-model")
         replacement_snapshot = _conversation_settings_return_snapshot(
             model="replacement-model",
-            focus_control_id="console-settings-model-picker",
+            focus_control_id="console-settings-model-change",
         )
         console._suspended_conversation_settings = first_snapshot
         console._suspended_conversation_settings_token = 161
@@ -1914,13 +1941,15 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
             await pilot.pause(0.05)
         else:
             raise AssertionError(
-                "Timed out waiting for the first Conversation settings return "
+                "Timed out waiting for the first Chat settings return "
                 "to finish restoring."
             )
 
         assert reopened_tokens == [161]
         assert replacement_target is not None
-        assert console._pending_conversation_settings_return_target == replacement_target
+        assert (
+            console._pending_conversation_settings_return_target == replacement_target
+        )
         assert console._suspended_conversation_settings is replacement_snapshot
         assert (
             real_status(
@@ -1941,7 +1970,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
             await pilot.pause(0.05)
         else:
             raise AssertionError(
-                "Timed out waiting for the replacement Conversation settings "
+                "Timed out waiting for the replacement Chat settings "
                 "return to finish restoring."
             )
 
@@ -1957,6 +1986,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("settlement_failure", (False, True))
 async def test_conversation_settings_return_covered_mount_cancellation_settles_before_unmount(
@@ -2022,7 +2052,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         real_push_screen = app.push_screen
         newer_overlay = ConfirmationDialog(
             title="Newer overlay",
-            message="Cover the restoring Conversation settings modal.",
+            message="Cover the restoring Chat settings modal.",
         )
 
         def hold_covered_modal_push(screen, *args, **kwargs):
@@ -2046,7 +2076,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         console.apply_navigation_context(target.to_context())
         await wait_for_signal(
             modal_covered,
-            what="covered Conversation settings modal mount",
+            what="covered Chat settings modal mount",
         )
 
         assert app.screen is newer_overlay
@@ -2058,7 +2088,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         console.workers.cancel_group(console, "conversation-settings-return")
         await wait_for_signal(
             push_cancelled,
-            what="covered Conversation settings push cancellation",
+            what="covered Chat settings push cancellation",
         )
         for _ in range(80):
             if not console._conversation_settings_return_restore_in_progress:
@@ -2102,16 +2132,16 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
             await pilot.pause(0.05)
 
         assert status_after_cancel == "settled"
-        assert saved_native_console_state[
-            "pending_conversation_settings_return_target"
-        ] is None
+        assert (
+            saved_native_console_state["pending_conversation_settings_return_target"]
+            is None
+        )
         assert fresh_console._pending_conversation_settings_return_target is None
         assert not isinstance(app.screen, ConsoleSettingsModal)
-        assert not any(
-            "Conversation settings return was stale" in notice for notice in notices
-        )
+        assert not any("Chat settings return was stale" in notice for notice in notices)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_posttransfer_cancellation_keeps_target_session(
     monkeypatch,
@@ -2170,7 +2200,7 @@ async def test_conversation_settings_return_posttransfer_cancellation_keeps_targ
         console.apply_navigation_context(target.to_context())
         await wait_for_signal(
             transfer_cancelled,
-            what="post-transfer Conversation settings cancellation",
+            what="post-transfer Chat settings cancellation",
         )
         for _ in range(80):
             if not console._conversation_settings_return_restore_in_progress:
@@ -2189,6 +2219,7 @@ async def test_conversation_settings_return_posttransfer_cancellation_keeps_targ
         assert console._suspended_conversation_settings is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dirty_return_confirmation_survives_real_router_navigation_away_and_back(
     monkeypatch,
@@ -2231,7 +2262,7 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
                 break
             await pilot.pause(0.05)
         assert isinstance(app.screen, ConsoleSettingsModal)
-        await pilot.click("#console-settings-configure-credential")
+        await _click_configure_credential(pilot, app.screen)
 
         original_settings = None
         for _ in range(200):
@@ -2247,7 +2278,9 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
             timeout=10.0,
         )
         dirty_key = "DUMMY-FORCED-DISMISS-RETURN-KEY"
-        original_settings.query_one("#settings-provider-api-key", Input).value = dirty_key
+        original_settings.query_one(
+            "#settings-provider-api-key", Input
+        ).value = dirty_key
         for _ in range(80):
             return_without_save = original_settings.query_one(
                 "#settings-provider-return-without-save", Button
@@ -2337,6 +2370,7 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_router_failure_before_mount_keeps_handoff_pending(
     monkeypatch,
@@ -2399,14 +2433,13 @@ async def test_conversation_settings_return_router_failure_before_mount_keeps_ha
             )
             == "pending"
         )
-        claim = app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        )
+        claim = app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
         assert claim is not None
         assert claim.revision == target.return_revision
         assert app.pending_handoffs.release(claim)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_handoff_pending(
     monkeypatch,
@@ -2467,6 +2500,7 @@ async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_conversation_settings_return_suspend_releases_acquired_exact_claim(
     monkeypatch,
@@ -2488,7 +2522,9 @@ async def test_conversation_settings_return_suspend_releases_acquired_exact_clai
                 break
             await pilot.pause(0.05)
         assert console is not None
-        await _wait_for_selector(console, pilot, "#console-native-composer", timeout=10.0)
+        await _wait_for_selector(
+            console, pilot, "#console-native-composer", timeout=10.0
+        )
         store = console._ensure_console_chat_store()
         session = store.ensure_session()
         snapshot = _conversation_settings_return_snapshot()
@@ -2514,7 +2550,7 @@ async def test_conversation_settings_return_suspend_releases_acquired_exact_clai
         console.apply_navigation_context(target.to_context())
         console._consume_pending_conversation_settings_return()
         try:
-            await wait_for_signal(restore_started, what="Conversation settings restore claim")
+            await wait_for_signal(restore_started, what="Chat settings restore claim")
             assert (
                 app.pending_handoffs.exact_revision_status(
                     HandoffChannel.CONVERSATION_SETTINGS_RETURN,
@@ -2551,6 +2587,7 @@ async def test_conversation_settings_return_suspend_releases_acquired_exact_clai
             allow_restore_exit.set()
 
 
+@pytest.mark.bootstrap_profile
 def test_console_store_uses_app_citation_repository_for_matching_database():
     app = _build_test_app()
     db = Mock(name="chachanotes-db")
@@ -2576,6 +2613,7 @@ def test_native_paste_entry_point_advances_edit_serial_for_stale_apply_guard():
     assert composer.capture_draft_snapshot().segments[0].origin == "paste"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_store_rejects_mismatched_citation_repository():
     app = _build_test_app()
     db = Mock(name="chachanotes-db")
@@ -2591,6 +2629,7 @@ def test_console_store_rejects_mismatched_citation_repository():
     assert store.persistence.citation_repository is None
 
 
+@pytest.mark.bootstrap_profile
 def test_console_store_uses_app_citation_repository_only_with_database():
     app = _build_test_app()
     app.chachanotes_db = None
@@ -2654,6 +2693,7 @@ def test_console_flat_conversation_search_worker_uses_dedicated_group():
     assert "_schedule_console_browser_timer(" in transition
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_search_clear_button_stops_pending_timer():
     app = _build_test_app()
@@ -2746,7 +2786,7 @@ class _ReadyResolutionGateway:
         return resolution
 
 
-class _PromptImprovementGateway:
+class _PromptImprovementGateway(_ReadyResolutionGateway):
     """Return one strict rewrite using the request's protected projection."""
 
     def __init__(self) -> None:
@@ -2767,7 +2807,8 @@ class _PromptImprovementGateway:
             )
         )
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
+        assert route is None
         self.auxiliary_calls += 1
         payload = json.loads(str(request.messages[-1]["content"]))
         rewritten = str(payload["source_prompt"]).replace("Draft", "Improved", 1)
@@ -2788,10 +2829,11 @@ class _HoldingPromptImprovementGateway(_PromptImprovementGateway):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
+        assert route is None
         self.started.set()
         await self.release.wait()
-        return await super().complete_auxiliary(request)
+        return await super().complete_auxiliary(request, route=route)
 
 
 class _MutableResolutionPromptGateway(_PromptImprovementGateway):
@@ -2968,6 +3010,7 @@ class _CollidingRecipeSourceService:
         return payload
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact_draft():
     app = _build_test_app()
@@ -3052,6 +3095,7 @@ async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact
         assert composer._pending_attachment_label == attachment.label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompt_improvement_review_compares_and_can_keep_or_restore() -> None:
     app = _build_test_app()
@@ -3118,6 +3162,7 @@ async def test_prompt_improvement_review_compares_and_can_keep_or_restore() -> N
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompt_library_projection_collision_keeps_manual_recipe_available() -> (
     None
@@ -3169,6 +3214,7 @@ async def test_prompt_library_projection_collision_keeps_manual_recipe_available
         assert gateway.auxiliary_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_direct_recipe_defers_resolution_and_preserves_system_opt_out() -> None:
     app = _build_test_app()
@@ -3206,6 +3252,7 @@ async def test_direct_recipe_defers_resolution_and_preserves_system_opt_out() ->
         assert gateway.resolve_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("drift", ["selection", "config_endpoint"])
 async def test_improvement_disclosure_is_pinned_and_drift_before_click_is_blocked(
@@ -3267,6 +3314,7 @@ async def test_improvement_disclosure_is_pinned_and_drift_before_click_is_blocke
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
 async def test_manual_apply_compares_captured_and_fresh_effective_resolution(
@@ -3325,6 +3373,7 @@ async def test_manual_apply_compares_captured_and_fresh_effective_resolution(
         assert service.usage_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("drift", ["session", "draft", "system", "provider"])
 async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_applies(
@@ -3399,6 +3448,7 @@ async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_app
         assert gateway.stream_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("drift", ["id", "version", "fingerprint"])
 async def test_saved_recipe_identity_drift_never_applies_or_records_usage(drift: str):
@@ -3466,6 +3516,7 @@ async def test_saved_recipe_identity_drift_never_applies_or_records_usage(drift:
         assert gateway.stream_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saved_recipe_apply_creates_unsaved_prompt_copy_with_zero_recipe_usage():
     app = _build_test_app()
@@ -3519,6 +3570,7 @@ async def test_saved_recipe_apply_creates_unsaved_prompt_copy_with_zero_recipe_u
         assert gateway.stream_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("usage_fails", [False, True])
 async def test_saved_prompt_apply_records_usage_without_rolling_back_on_usage_failure(
@@ -3566,6 +3618,7 @@ async def test_saved_prompt_apply_records_usage_without_rolling_back_on_usage_fa
         assert gateway.stream_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
 async def test_normalized_saved_artifact_validation_and_usage_use_source_id(
@@ -3624,6 +3677,7 @@ async def test_normalized_saved_artifact_validation_and_usage_use_source_id(
         assert gateway.stream_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_saved_recipe_source_is_not_redirected_by_late_colliding_detail() -> None:
     app = _build_test_app()
@@ -3679,6 +3733,7 @@ async def test_saved_recipe_source_is_not_redirected_by_late_colliding_detail() 
         assert gateway.stream_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_edited_saved_prompt_applies_as_unsaved_copy_with_zero_usage():
     app = _build_test_app()
@@ -3716,6 +3771,7 @@ async def test_edited_saved_prompt_applies_as_unsaved_copy_with_zero_usage():
         assert gateway.stream_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(140, 40), (100, 30), (80, 24)])
 async def test_prompt_improvement_settled_native_layout_keeps_shell_and_footer_visible(
@@ -3776,6 +3832,7 @@ async def test_prompt_improvement_settled_native_layout_keeps_shell_and_footer_v
         assert not console.query("#console-control-prompts")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_recipe_system_persistence_failure_keeps_modal_and_retry_only_saves():
     app = _build_test_app()
@@ -3930,7 +3987,7 @@ class RestoredConsoleHarness(ConsolidatedCSSApp):
         await self.push_screen(screen)
 
 
-class BlockedGateway:
+class BlockedGateway(_ReadyResolutionGateway):
     async def resolve_for_send(self, selection):
         return provider_resolution(
             provider="llama_cpp",
@@ -4271,6 +4328,25 @@ async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 80) ->
         await pilot.pause(0.05)
     raise AssertionError(
         f"Text not found: {expected!r}. Visible text: {_visible_text(screen)!r}"
+    )
+
+
+async def _wait_for_reply(screen, pilot, reply: str = "accepted") -> None:
+    """Wait for the streamed reply text, not the Sending acknowledgement.
+
+    TASK-33620.15: a Send button press now shows Enter's acknowledgement,
+    whose strip reads "Queue opens once this turn is accepted" before the
+    provider is called, so a bare ``"accepted"`` match no longer means the
+    reply arrived.
+    """
+    from tldw_chatbook.Chat.console_display_state import QUEUE_REASON_PREPARING
+
+    for _ in range(80):
+        if reply in _visible_text(screen).replace(QUEUE_REASON_PREPARING, ""):
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"Reply not found: {reply!r}. Visible text: {_visible_text(screen)!r}"
     )
 
 
@@ -4823,7 +4899,121 @@ async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     raise AssertionError("Console workspace switcher modal did not open")
 
 
-def _select_llamacpp_console(console: ChatScreen) -> None:
+#: How long _sync_console_control_bar_now keeps retrying a sync that defers.
+_CONTROL_BAR_RENDER_TIMEOUT_S = 15.0
+
+
+def _sync_under_config_locks(
+    console: ChatScreen, deadline: float, rail_state: tuple[object, ...]
+) -> bool | None:
+    """Run one control-bar sync holding both config locks, waiting for them
+    no later than ``deadline``.
+
+    The locks are taken on the event-loop thread, in the order
+    ``run_console_config_sync`` takes them, so a thread that keeps them must
+    not stall the loop past the helper's bound.
+
+    Returns:
+        Whether the sync rendered, or None if the locks were not free in time.
+    """
+    taken = []
+    try:
+        for lock in (
+            config_module._settings_rebuild_lock(),
+            config_module._config_file_lock(),
+        ):
+            if not lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+                return None
+            taken.append(lock)
+        return bool(console._sync_console_control_bar(*rail_state))
+    finally:
+        for lock in reversed(taken):
+            lock.release()
+
+
+async def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object) -> None:
+    """Await the checked display owner, then render before the caller acts.
+
+    Warming runs before either config lock so its real worker can acquire them.
+    Holding both locks during the final sync retains the existing immediate
+    render guarantee without racing a config rebuild (TASK-34415/34789).
+
+    The sync renders from the proof the warm-up read, which is good for one
+    second. A loop that resumes this helper later than that, after another
+    display has started the next refresh, makes the sync defer instead
+    (TASK-35660), and a late resume can leave the warm-up itself not current.
+    So warm and sync again until the sync renders, and fail naming Send's
+    state if it has not within the timeout. The timeout also bounds a warm-up
+    that never settles and the wait for the config locks. A closing screen or
+    a disposed runtime can never render, so that fails at once. A sync that
+    defers on every attempt costs each caller the whole timeout before it
+    fails.
+
+    Args:
+        console: The mounted ChatScreen to render.
+        *rail_state: The optional pre-computed rail state the sync accepts.
+
+    Raises:
+        AssertionError: The owner is closing or disposed, or no sync rendered
+            within ``_CONTROL_BAR_RENDER_TIMEOUT_S`` (the config locks
+            included).
+    """
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        ConsoleReadinessConfigProjection,
+        _readiness_runtime,
+    )
+
+    deadline = time.monotonic() + _CONTROL_BAR_RENDER_TIMEOUT_S
+    attempts = 0
+    while True:
+        attempts += 1
+        # Resolved each attempt, so the warm-up is on the projection the sync reads.
+        projection = ConsoleReadinessConfigProjection.for_screen(console)
+        # asyncio.timeout, not wait_for: the warm-up stays in this task.
+        warm_bound = asyncio.timeout(max(0.0, deadline - time.monotonic()))
+        try:
+            async with warm_bound:
+                # A mount read may still belong to the pre-selection settings revision.
+                current = await projection.warm()
+        except TimeoutError:
+            if not warm_bound.expired():
+                raise
+            last = "the readiness warm-up did not settle"
+            break
+        if not current:
+            # The same two refusals warm() makes before it reads anything.
+            assert not getattr(console, "_closing", False), "the Console is closing"
+            assert not getattr(
+                _readiness_runtime(console), "_disposed", False
+            ), "the Console runtime is disposed"
+            last = "the readiness warm-up was not current"
+        else:
+            rendered = _sync_under_config_locks(console, deadline, rail_state)
+            if rendered is None:
+                last = "another thread held the config locks"
+                break
+            if rendered:
+                return
+            last = "the control-bar sync deferred"
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(0.05)
+        # Checked again: a warm-up started with no time left would time out at
+        # once and be named instead of the refusal that used the bound up.
+        if time.monotonic() >= deadline:
+            break
+    try:
+        send = console.query_one("#console-send-message", Button)
+        state = f"Send disabled={send.disabled} tooltip={send.tooltip!r}"
+    except (AttributeError, NoMatches):
+        state = "Send is not mounted"
+    raise AssertionError(
+        f"The Console control bar did not render within {_CONTROL_BAR_RENDER_TIMEOUT_S} s "
+        f"({attempts} attempts; last: {last}). {state}"
+    )
+
+
+async def _select_llamacpp_console(console: ChatScreen) -> None:
     """Select the native llama.cpp path after mounted controls initialize.
 
     ``_console_control_provider``/``_console_control_model`` mirror the
@@ -4833,7 +5023,7 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
     when the screen mounted its first session (before this helper ever
     runs). Without also pushing the selection through
     ``_replace_active_console_session_settings`` (the same call the real
-    Console Settings modal apply path and ``_apply_detected_local_server``
+    Console Settings modal apply path and ``adopt_detected_local_server``
     use), the already-existing session stays on its mount-time default
     provider and every send this helper is meant to unblock stays gated
     behind the first-run setup modal.
@@ -4860,9 +5050,12 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
             source="user",
         )
     )
-    console._sync_console_control_bar()
+    # Callers load a draft and press Send next: a deferred sync would leave
+    # Send in its mount-time disabled state and make that press a no-op.
+    await _sync_console_control_bar_now(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_generic_provider_send_renders_completed_message(
     monkeypatch,
@@ -4885,7 +5078,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         gateway = console._ensure_console_provider_gateway()
-        _apply_mounted_console_provider_config(
+        await _apply_mounted_console_provider_config(
             console,
             provider="openai",
             model="gpt-4.1",
@@ -4919,6 +5112,7 @@ async def test_console_native_generic_provider_send_renders_completed_message(
         assert assistant_messages[-1].status == "complete"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_send_button_click_dispatches_message(monkeypatch):
     app = _build_console_send_test_app()
@@ -4938,7 +5132,7 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _apply_mounted_console_provider_config(
+        await _apply_mounted_console_provider_config(
             console,
             provider="openai",
             model="gpt-4.1",
@@ -4963,9 +5157,15 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
         assert composer.draft_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_successful_send_does_not_leave_empty_send_tooltip(monkeypatch):
     app = _build_console_send_test_app()
+    # This composer harness has no world-books schema for exchange capture.
+    # Exercise the supported ordinary-send policy used by snapshot tests.
+    assert config_module.save_setting_to_cli_config(
+        "console", "exchange_capture", False
+    )
     _persist_console_provider_config(
         app,
         provider="openai",
@@ -4996,6 +5196,7 @@ async def test_console_successful_send_does_not_leave_empty_send_tooltip(monkeyp
         assert send_button.tooltip != "Type a message before sending."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_missing_key_blocks_before_clearing_generic_draft():
     app = _build_test_app()
@@ -5029,6 +5230,7 @@ async def test_console_native_missing_key_blocks_before_clearing_generic_draft()
         assert composer.draft_text() == "preserve this"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_enter_while_setup_blocked_is_inert_behind_modal():
     # Formerly asserted an Enter-triggered recovery notification; with the
@@ -5064,6 +5266,7 @@ async def test_console_native_enter_while_setup_blocked_is_inert_behind_modal():
         assert notifications == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_setup_blocked_send_is_unreachable_behind_modal():
     """The blocking setup modal makes the Enter send path unreachable.
@@ -5104,9 +5307,11 @@ async def test_console_setup_blocked_send_is_unreachable_behind_modal():
     assert notifications == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_blocked_send_preserves_composer_text_and_shows_recovery():
     app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -5115,16 +5320,25 @@ async def test_console_native_blocked_send_preserves_composer_text_and_shows_rec
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("blocked draft")
 
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, "Provider blocked")
 
+        # Custody owns the refused original until the user restores recovery.
+        assert composer.draft_text() == ""
+        runtime = console._console_runtime()
+        session_id = console._ensure_console_chat_store().active_session_id
+        recovery = runtime.recoveries_for_session(session_id)
+        assert len(recovery) == 1 and recovery[0].draft == "blocked draft"
+        runtime.restore_turn_recovery(recovery[0].turn_id)
+        console._prompt_queue._load_recovered_turn(session_id)
         assert composer.draft_text() == "blocked draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("raw_url", "expected"),
     (
@@ -5146,6 +5360,7 @@ def test_console_llamacpp_base_url_normalizes_openai_compatible_endpoints(
     assert screen._normalize_llamacpp_base_url(raw_url) == expected
 
 
+@pytest.mark.bootstrap_profile
 def test_console_transcript_sync_timer_polls_at_coarse_interval(monkeypatch):
     screen = ChatScreen(_build_test_app())
     captured = {}
@@ -5162,6 +5377,7 @@ def test_console_transcript_sync_timer_polls_at_coarse_interval(monkeypatch):
     assert captured["interval"] >= 0.15
 
 
+@pytest.mark.bootstrap_profile
 def test_console_transcript_fingerprint_tolerates_empty_variant_container():
     screen = ChatScreen(_build_test_app())
     message = SimpleNamespace(
@@ -5180,6 +5396,7 @@ def test_console_transcript_fingerprint_tolerates_empty_variant_container():
     assert fingerprint[1][0][-1] is None
 
 
+@pytest.mark.bootstrap_profile
 def test_console_provider_selection_reads_local_llamacpp_configured_model():
     app = _build_test_app()
     # Provider/model resolution reads `app_config["chat_defaults"]` (see
@@ -5210,6 +5427,7 @@ def test_console_provider_selection_reads_local_llamacpp_configured_model():
     assert selection.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
+@pytest.mark.bootstrap_profile
 def test_console_provider_selection_carries_active_session_system_prompt():
     """The selection built for the controller carries the session's system prompt."""
     app = _build_test_app()
@@ -5228,6 +5446,7 @@ def test_console_provider_selection_carries_active_session_system_prompt():
     assert controller.system_prompt == "Answer only in French."
 
 
+@pytest.mark.bootstrap_profile
 def test_console_provider_selection_floors_missing_active_workspace_read_only():
     """No active workspace: the context floors to Default WITHOUT writing.
 
@@ -5261,6 +5480,7 @@ def test_console_provider_selection_floors_missing_active_workspace_read_only():
     assert selection_after.workspace_context.active_workspace_id == DEFAULT_WORKSPACE_ID
 
 
+@pytest.mark.bootstrap_profile
 def test_console_configured_llamacpp_override_wins_over_provider_api_url():
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -5288,6 +5508,7 @@ def test_console_configured_llamacpp_override_wins_over_provider_api_url():
     assert selection.base_url == "http://127.0.0.1:9099"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_llamacpp_api_base_url_wins_over_merged_provider_api_url(monkeypatch):
     monkeypatch.delenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", raising=False)
     app = _build_test_app()
@@ -5314,6 +5535,7 @@ def test_console_llamacpp_api_base_url_wins_over_merged_provider_api_url(monkeyp
     assert selection.base_url == "http://127.0.0.1:9099"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_llamacpp_env_url_wins_over_provider_api_url(monkeypatch):
     monkeypatch.setenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", "http://127.0.0.1:9099/v1")
     app = _build_test_app()
@@ -5339,6 +5561,7 @@ def test_console_llamacpp_env_url_wins_over_provider_api_url(monkeypatch):
     assert selection.base_url == "http://127.0.0.1:9099"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_session_settings_blank_base_url_keeps_llamacpp_fallback(monkeypatch):
     monkeypatch.setenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", "http://127.0.0.1:9099/v1")
     app = _build_test_app()
@@ -5368,6 +5591,7 @@ def test_console_session_settings_blank_base_url_keeps_llamacpp_fallback(monkeyp
     assert selection.explicit_model == "settings-model"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_session_settings_base_url_wins_over_llamacpp_fallback(monkeypatch):
     monkeypatch.setenv("TLDW_CONSOLE_LLAMA_CPP_BASE_URL", "http://127.0.0.1:9099/v1")
     app = _build_test_app()
@@ -5397,6 +5621,7 @@ def test_console_session_settings_base_url_wins_over_llamacpp_fallback(monkeypat
     assert selection.explicit_model == "settings-model"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_generation_test_selection_uses_validated_draft_without_session_mutation():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -5412,9 +5637,7 @@ def test_console_generation_test_selection_uses_validated_draft_without_session_
         streaming=True,
     )
 
-    selection = screen._build_console_provider_selection_for_settings(
-        session.id, draft
-    )
+    selection = screen._build_console_provider_selection_for_settings(session.id, draft)
 
     assert selection.provider == "ollama"
     assert selection.explicit_model == "qwen-test"
@@ -5424,6 +5647,7 @@ def test_console_generation_test_selection_uses_validated_draft_without_session_
     assert store.session_settings(session.id) == original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_one_token_generation_test_has_fixed_isolated_policy(monkeypatch):
     resolution = ConsoleProviderResolution(
@@ -5500,7 +5724,9 @@ async def test_console_one_token_generation_test_has_fixed_isolated_policy(monke
         draft_generation=2,
     )
     screen._build_console_provider_selection_for_settings = (
-        lambda session_id, settings: SimpleNamespace(session_id=session_id, settings=settings)
+        lambda session_id, settings: SimpleNamespace(
+            session_id=session_id, settings=settings
+        )
     )
 
     result = await screen._test_console_generation(
@@ -5632,6 +5858,7 @@ async def test_console_generation_test_preserves_bounded_transport_category(
     assert secret not in repr(result)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible():
     gateway = WaitingGateway()
@@ -5644,7 +5871,7 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -5664,6 +5891,7 @@ async def test_console_stop_interrupts_stream_and_keeps_partial_message_visible(
         assert messages[-2].status == "stopped"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
     gateway = WaitingGateway()
@@ -5675,7 +5903,7 @@ async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -5706,6 +5934,7 @@ async def test_console_collapsed_stop_interrupts_real_run_without_expanding():
         assert expanded_stop.display is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_stop_stale_action_warns_without_expanding():
     gateway = WaitingGateway()
@@ -5719,7 +5948,7 @@ async def test_console_collapsed_stop_stale_action_warns_without_expanding():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -5741,6 +5970,7 @@ async def test_console_collapsed_stop_stale_action_warns_without_expanding():
         assert composer.collapsed is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_stop_is_subdued_when_idle():
     gateway = WaitingGateway()
@@ -5753,7 +5983,7 @@ async def test_console_composer_stop_is_subdued_when_idle():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         assert console._console_setup_blocked_reason() == ""
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -5797,6 +6027,7 @@ async def test_console_composer_stop_is_subdued_when_idle():
         await _wait_for_text(console, pilot, "stopped")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_duplicate_send_during_stream_does_not_break_stop_control():
     gateway = WaitingGateway()
@@ -5809,7 +6040,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         assert console._console_setup_blocked_reason() == ""
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
@@ -5861,6 +6092,7 @@ async def test_console_duplicate_send_during_stream_does_not_break_stop_control(
         await _wait_for_text(console, pilot, "stopped")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_streaming_chunks_render_after_slow_provider_validation():
     gateway = DelayedWaitingGateway()
@@ -5873,7 +6105,7 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -5885,7 +6117,7 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
             console._ensure_console_chat_controller().run_state.status
             is ConsoleRunStatus.VALIDATING
         )
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         send_button = console.query_one("#console-send-message", Button)
         stop_button = console.query_one("#console-stop-generation", Button)
 
@@ -5921,6 +6153,7 @@ class _HoldingStreamGateway(_ReadyResolutionGateway):
             yield ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_send_echoes_user_message_before_transcript_poll(monkeypatch):
     """A sent message must appear the instant the submit is accepted, not only on
@@ -5940,7 +6173,7 @@ async def test_console_send_echoes_user_message_before_transcript_poll(monkeypat
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         # Neutralise the 0.2s transcript poll: with no timer to eventually
         # surface the message, only an acceptance-time echo can.
         monkeypatch.setattr(
@@ -5964,6 +6197,7 @@ async def test_console_send_echoes_user_message_before_transcript_poll(monkeypat
             gateway.release.set()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
     long_text = "x" * 80
@@ -5977,21 +6211,22 @@ async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_pasted_text(long_text)
 
-        assert "Pasted text | 80 characters | Expand" in _visible_text(console)
+        assert "Pasted text | 80 characters | Ctrl+E expand" in _visible_text(console)
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
     assert gateway.sent_messages[-1][-1]["content"] == long_text
     assert (
-        "Pasted text | 80 characters | Expand"
+        "Pasted text | 80 characters | Ctrl+E expand"
         not in gateway.sent_messages[-1][-1]["content"]
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_send_preserves_expanded_payload_whitespace():
     gateway = CapturingGateway()
@@ -6004,16 +6239,17 @@ async def test_console_native_send_preserves_expanded_payload_whitespace():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("  padded payload  ")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
     assert gateway.sent_messages[-1][-1]["content"] == "  padded payload  "
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_configured_model_reaches_gateway_when_ui_model_is_unset():
     gateway = SelectionCapturingGateway()
@@ -6047,12 +6283,13 @@ async def test_console_configured_model_reaches_gateway_when_ui_model_is_unset()
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
     assert gateway.selections[-1].explicit_model is None
     assert gateway.selections[-1].configured_model == "configured-model"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_send_clears_composer_after_acceptance_and_updates_store():
     """Verify accepted sends clear the composer and render compact transcript text."""
@@ -6067,7 +6304,7 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -6091,6 +6328,7 @@ async def test_console_native_send_clears_composer_after_acceptance_and_updates_
         assert messages[-1].content == "hello"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
     """Verify Console chat tabs, transcript, and draft restore after recreation."""
@@ -6107,7 +6345,7 @@ async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.insert_text("typed text")
         composer.insert_pasted_text(" and pasted text")
@@ -6155,6 +6393,7 @@ async def test_console_chat_lifecycle_state_survives_screen_recreation_return():
         await _wait_for_text(console, pilot, "assistant return")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_send_refreshes_workspace_conversation_rail_after_persistence():
     app = _build_console_send_test_app()
@@ -6177,12 +6416,12 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         # real `ChatPersistenceService` the store already built links workspace
         # membership through this same registry, so the double is both stale and
         # redundant -- assert against production's own linking instead.
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
         await _wait_for_selector(console, pilot, "#console-workspace-conversation-0")
 
         row = console.query_one("#console-workspace-conversation-0")
@@ -6218,6 +6457,7 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         assert len(console.query("#console-workspace-empty-conversations")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_send_after_workspace_switch_persists_to_selected_workspace():
     app = _build_console_send_test_app()
@@ -6242,7 +6482,7 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         # real `ChatPersistenceService` the store already built links workspace
         # membership through this same registry, so the double is both stale and
         # redundant -- assert against production's own linking instead.
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         first_session = store.ensure_session()
         store.replace_session_settings(
             first_session.id,
@@ -6268,7 +6508,7 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello from b")
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
         workspace_a_conversations = service.list_workspace_conversations("ws-a")
         workspace_b_conversations = service.list_workspace_conversations("ws-b")
@@ -6278,6 +6518,7 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tree_workspace_selection_switches_session_and_visible_transcript():
     app = _build_test_app()
@@ -6320,6 +6561,7 @@ async def test_tree_workspace_selection_switches_session_and_visible_transcript(
         assert "Workspace A transcript" not in _visible_text(transcript)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_switch_refreshes_visible_session_tabs():
     app = _build_test_app()
@@ -6355,6 +6597,7 @@ async def test_console_workspace_switch_refreshes_visible_session_tabs():
         assert "Workspace B Chat" in _visible_text(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_switch_refresh_is_not_dropped_during_inflight_sync():
     app = _build_test_app()
@@ -6377,17 +6620,32 @@ async def test_console_workspace_switch_refresh_is_not_dropped_during_inflight_s
         original_sync_tabs = console._sync_console_native_session_tabs
         blocked_once = False
 
+        first_sync_task = None
+
         async def blocking_sync_tabs():
             nonlocal blocked_once
             await original_sync_tabs()
-            if blocked_once:
+            # TASK-33620.15.1: only the test's own sync is held. A sync the
+            # screen started itself (its timer, a coalesced replay) passes.
+            if blocked_once or asyncio.current_task() is not first_sync_task:
                 return
             blocked_once = True
             first_sync_blocked.set()
             await release_first_sync.wait()
 
         console._sync_console_native_session_tabs = blocking_sync_tabs
-        first_sync_task = asyncio.create_task(console._sync_native_console_chat_ui())
+        # A sync that finds one in flight, or a whole-sync replay pending after
+        # busy config locks (TASK-34415), returns before the tabs by design;
+        # start the test's own sync again once the screen's has finished.
+        for _attempt in range(20):
+            first_sync_task = asyncio.create_task(console._sync_native_console_chat_ui())
+            for _ in range(250):
+                if first_sync_blocked.is_set() or first_sync_task.done():
+                    break
+                await pilot.pause(0.02)
+            if first_sync_blocked.is_set():
+                break
+            await pilot.pause(0.25)
         await wait_for_background_signal(
             first_sync_blocked,
             first_sync_task,
@@ -6415,6 +6673,7 @@ async def test_console_workspace_switch_refresh_is_not_dropped_during_inflight_s
         assert "Workspace B Chat" in _visible_text(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_mount_uses_active_workspace_title_for_initial_session():
     app = _build_test_app()
@@ -6430,6 +6689,7 @@ async def test_console_mount_uses_active_workspace_title_for_initial_session():
         assert "Workspace A" in _visible_text(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_tab_switch_aligns_active_workspace_context():
     app = _build_test_app()
@@ -6459,6 +6719,7 @@ async def test_console_tab_switch_aligns_active_workspace_context():
         await _wait_for_text(console, pilot, "Workspace A")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_unsupported_provider_block_renders_one_normalized_system_message():
     app = _build_console_send_test_app()
@@ -6498,6 +6759,7 @@ async def test_console_unsupported_provider_block_renders_one_normalized_system_
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_unsupported_provider_dispatch_refuses_before_custody():
     app = _build_console_send_test_app()
@@ -6522,8 +6784,27 @@ async def test_console_unsupported_provider_dispatch_refuses_before_custody():
         ]
 
 
+def _assert_recovery_stages_a_return_to(app, message, session_id: str) -> None:
+    """TASK-33008.1: the recovery's route to Settings carries the way back."""
+    assert message.screen_name == "settings"
+    assert message.screen_context == {
+        "category": SettingsCategoryId.PROVIDERS_MODELS.value,
+        "provider": "huggingface",
+        "model": "meta-llama/test-model",
+        "field": "api_key",
+        "return_revision": 1,
+        "session_id": session_id,
+    }
+    claim = app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert claim is not None and claim.revision == 1
+    # The handoff names the chat and nothing else: no key, endpoint or prompt.
+    assert claim.value == ConsoleProviderReturnIntent(session_id)
+
+
 @pytest.mark.asyncio
-async def test_console_add_api_key_recovery_targets_provider_settings_category():
+@private_profile_test
+async def test_console_add_api_key_recovery_targets_provider_settings_category(request):
+    """Rewritten on purpose (TASK-33008.1 AC#8): the route bears a return."""
     app = _build_test_app()
     app.app_config["api_settings"] = {"huggingface": {}}
     host = ConsoleNavigationHarness(app)
@@ -6548,18 +6829,15 @@ async def test_console_add_api_key_recovery_targets_provider_settings_category()
         await pilot.click("#console-setup-modal-action")
 
         assert len(host.navigation_messages) == 1
-        message = host.navigation_messages[0]
-        assert message.screen_name == "settings"
-        assert message.screen_context == {
-            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
-            "provider": "huggingface",
-            "model": "meta-llama/test-model",
-            "field": "api_key",
-        }
+        _assert_recovery_stages_a_return_to(
+            app, host.navigation_messages[0], session.id
+        )
 
 
 @pytest.mark.asyncio
-async def test_console_add_api_key_recovery_tolerates_missing_session_settings():
+@private_profile_test
+async def test_console_add_api_key_recovery_tolerates_missing_session_settings(request):
+    """Rewritten on purpose (TASK-33008.1 AC#8): the route bears a return."""
     app = _build_test_app()
     host = ConsoleNavigationHarness(app)
 
@@ -6588,15 +6866,12 @@ async def test_console_add_api_key_recovery_tolerates_missing_session_settings()
         await pilot.click("#console-setup-modal-action")
 
         assert len(host.navigation_messages) == 1
-        message = host.navigation_messages[0]
-        assert message.screen_context == {
-            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
-            "provider": "huggingface",
-            "model": "meta-llama/test-model",
-            "field": "api_key",
-        }
+        _assert_recovery_stages_a_return_to(
+            app, host.navigation_messages[0], session.id
+        )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_assistant_message_click_exposes_selected_actions():
     app = _build_test_app()
@@ -6624,6 +6899,7 @@ async def test_console_assistant_message_click_exposes_selected_actions():
         assert transcript.selected_message_id == message.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_transcript_wraps_long_message_content_without_horizontal_overflow():
     app = _build_test_app()
@@ -6652,6 +6928,7 @@ async def test_console_transcript_wraps_long_message_content_without_horizontal_
         assert row.region.height > 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_copy_action_uses_app_clipboard():
     app = _build_test_app()
@@ -6671,6 +6948,7 @@ async def test_console_selected_message_copy_action_uses_app_clipboard():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -6690,6 +6968,7 @@ def test_console_original_attempt_action_parser_prefers_full_prefix():
     ) == ("view-original-attempt", "message-1")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_original_attempt_preview_toggles_without_changing_selected_content():
     app = _build_test_app()
@@ -6812,6 +7091,7 @@ async def test_console_original_attempt_preview_toggles_without_changing_selecte
         assert store.get_message(message.id).content == repaired
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_role_label_renders_dim_body_full_contrast():
     app = _build_test_app()
@@ -6865,6 +7145,7 @@ async def test_transcript_role_label_renders_dim_body_full_contrast():
         assert not any("dim" in style for style in body_styles), body_styles
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_clicking_rendered_message_shows_action_row():
     app = _build_test_app()
@@ -6889,6 +7170,7 @@ async def test_console_clicking_rendered_message_shows_action_row():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_copy_action_works_from_keyboard():
     app = _build_test_app()
@@ -6910,6 +7192,7 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.focus()
         await _wait_for_focus(console.app, pilot, transcript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         await pilot.press("down")
         await _wait_for_selector(
             console, pilot, f"#console-message-action-copy-{message.id}"
@@ -6933,6 +7216,7 @@ async def test_console_selected_message_copy_action_works_from_keyboard():
     assert console._last_console_action.action_id == "copy"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_c_key_copies_selected_message():
     app = _build_test_app()
@@ -6963,6 +7247,7 @@ async def test_transcript_c_key_copies_selected_message():
     assert console._last_console_action.action_id == "copy"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_rapid_select_then_action_retries_after_deferred_mount():
     # The action row mounts via call_later(refresh_messages) after
@@ -6996,6 +7281,7 @@ async def test_transcript_rapid_select_then_action_retries_after_deferred_mount(
     assert console._last_console_action.action_id == "copy"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     app = _build_test_app()
@@ -7069,6 +7355,7 @@ async def test_console_message_action_keyboard_focus_stays_inside_action_row():
     assert console._last_console_action.action_id == "save-as"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_inspector_hides_selected_message_group_without_selection():
     app = _build_test_app()
@@ -7083,6 +7370,7 @@ async def test_console_inspector_hides_selected_message_group_without_selection(
         assert len(console.query("#console-inspector-selected-message-heading")) == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_setup_required_state_groups_recovery_and_action_copy():
     app = _build_test_app()
@@ -7107,6 +7395,7 @@ async def test_console_setup_required_state_groups_recovery_and_action_copy():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_empty_transcript_teaches_setup_and_start_paths():
     app = _build_test_app()
@@ -7135,6 +7424,7 @@ def _assert_selector_hidden_or_absent(console, selector: str) -> None:
         assert not widget.display, f"{selector} unexpectedly displayed"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_blocked_empty_transcript_shows_setup_card_steps():
     app = _build_test_app()
@@ -7152,6 +7442,7 @@ async def test_console_blocked_empty_transcript_shows_setup_card_steps():
         _assert_selector_hidden_or_absent(console, "#console-provider-recovery-strip")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_first_send_flag_switches_empty_state_to_quiet():
     app = _build_test_app()
@@ -7168,6 +7459,7 @@ async def test_console_first_send_flag_switches_empty_state_to_quiet():
         assert "Connect a provider" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_accepted_send_records_first_send_flag():
     # Reuse the ready-provider send harness from
@@ -7190,17 +7482,18 @@ async def test_console_accepted_send_records_first_send_flag():
         # real `ChatPersistenceService` the store already built links workspace
         # membership through this same registry, so the double is both stale and
         # redundant -- assert against production's own linking instead.
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
         onboarding = app.app_config.get("console", {}).get("onboarding", {})
         assert onboarding.get("first_send_completed") is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_failed_send_does_not_record_first_send_flag():
     """A FAILED first send must not set the one-time onboarding flag (task-182d)."""
@@ -7213,7 +7506,7 @@ async def test_console_failed_send_does_not_record_first_send_flag():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -7240,6 +7533,7 @@ async def test_console_failed_send_does_not_record_first_send_flag():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_accepted_send_clears_composer_before_run_end():
     """Runtime admission clears the composer while the run is still live."""
@@ -7253,7 +7547,7 @@ async def test_console_accepted_send_clears_composer_before_run_end():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         assert controller.on_submission_accepted is None
 
@@ -7269,6 +7563,7 @@ async def test_console_accepted_send_clears_composer_before_run_end():
         await _wait_for_text(console, pilot, "partial done")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_record_first_send_repairs_corrupt_config_value():
     # Regression: a corrupt (non-dict) "console" value used to crash
@@ -7292,6 +7587,7 @@ async def test_console_record_first_send_repairs_corrupt_config_value():
         assert onboarding_cfg.get("first_send_completed") is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_authority_rows_are_structured_for_scanning():
     app = _build_test_app()
@@ -7527,7 +7823,9 @@ def _persona_handoff_runtime(
     profile=_DEFAULT_HANDOFF_VALUE,
 ) -> SimpleNamespace:
     """Persona mirror of `_character_handoff_runtime` with sentinel seams."""
-    scoped_profile = _persona_profile() if profile is _DEFAULT_HANDOFF_VALUE else profile
+    scoped_profile = (
+        _persona_profile() if profile is _DEFAULT_HANDOFF_VALUE else profile
+    )
     scope_service = SimpleNamespace(
         get_persona_profile=AsyncMock(return_value=scoped_profile),
         # The persona flow must never touch the character fetch seam.
@@ -7732,8 +8030,11 @@ def test_persona_handoff_preserves_opaque_string_id():
 
 def test_persona_seed_expands_user_and_persona_macros():
     seed = _persona_session_prompt_seed(
-        {"id": "local-persona-abc", "name": "Archivist",
-         "system_prompt": "Guide {{user}} as {{persona}} ({{char}})."},
+        {
+            "id": "local-persona-abc",
+            "name": "Archivist",
+            "system_prompt": "Guide {{user}} as {{persona}} ({{char}}).",
+        },
         user_name="Rowan",
     )
     assert seed.name == "Archivist"
@@ -8396,6 +8697,7 @@ async def test_persona_payload_rejected_by_character_starter_accepted_by_persona
     assert await screen._session._start_persona_console_session(payload) is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_inspector_setup_state_explains_blocked_send_without_selection():
     app = _build_test_app()
@@ -8415,6 +8717,7 @@ async def test_console_inspector_setup_state_explains_blocked_send_without_selec
         assert "Selected Message" not in inspector_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_composer_setup_blocker_keeps_recovery_outside_input():
     app = _build_test_app()
@@ -8438,6 +8741,7 @@ async def test_console_composer_setup_blocker_keeps_recovery_outside_input():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_updates_inspector_action_guidance():
     app = _build_test_app()
@@ -8477,6 +8781,7 @@ async def test_console_selected_message_updates_inspector_action_guidance():
         assert "Excerpt: second assistant variant" in inspector_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_display_only_activity_selection_updates_and_clears_inspector():
     """Inspector resolves only the selected activity in the active projection."""
@@ -8558,6 +8863,7 @@ async def test_console_display_only_activity_selection_updates_and_clears_inspec
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_thinking_selection_inspector_uses_current_owner_and_full_body():
     """Collapsed thinking resolves fully, but only while its owner is active."""
@@ -8627,6 +8933,7 @@ async def test_console_thinking_selection_inspector_uses_current_owner_and_full_
         assert console._selected_console_message_inspector_rows() == ()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_feedback_action_records_rating():
     app = _build_test_app()
@@ -8660,6 +8967,7 @@ async def test_console_selected_message_feedback_action_records_rating():
     assert console._last_console_action.visible_copy == "Marked message feedback: up."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_more_menu_click_away_closes_without_action():
     app = _build_test_app()
@@ -8677,6 +8985,7 @@ async def test_console_more_menu_click_away_closes_without_action():
         )
         await console._sync_native_console_chat_ui()
         transcript = console.query_one(ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         opener = f"#console-message-action-more-{message.id}"
@@ -8755,6 +9064,7 @@ async def test_console_selected_message_delete_action_removes_message_from_trans
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -8819,6 +9129,7 @@ async def test_console_original_attempt_delete_clears_parent_and_descendant_prev
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{parent.id}")
         transcript.select_message(parent.id)
         await console._sync_native_console_chat_ui()
         await _choose_message_more_action(console, pilot, parent.id, "delete")
@@ -8869,6 +9180,7 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{first_message.id}")
         transcript.select_message(first_message.id)
         await console._sync_native_console_chat_ui()
         await _choose_message_more_action(console, pilot, first_message.id, "delete")
@@ -8894,6 +9206,7 @@ async def test_console_delete_confirmation_resets_when_selection_changes():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_edit_action_opens_modal_and_saves_content():
     app = _build_test_app()
@@ -8923,6 +9236,7 @@ async def test_console_selected_message_edit_action_opens_modal_and_saves_conten
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -8951,6 +9265,7 @@ async def test_console_selected_message_edit_action_opens_modal_and_saves_conten
     assert console._last_console_action.visible_copy == "Edited message."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_edit_resend_clears_replaced_descendant_original_attempt():
     app = _build_console_send_test_app()
@@ -8964,7 +9279,7 @@ async def test_console_edit_resend_clears_replaced_descendant_original_attempt()
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         store = controller.store
         session = store.ensure_session()
@@ -8999,6 +9314,7 @@ async def test_console_edit_resend_clears_replaced_descendant_original_attempt()
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{user_message.id}")
         transcript.select_message(user_message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9024,6 +9340,7 @@ async def test_console_edit_resend_clears_replaced_descendant_original_attempt()
         assert replaced_assistant.id not in store.active_path_message_ids(session.id)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_edit_action_cancel_preserves_content():
     app = _build_test_app()
@@ -9042,6 +9359,7 @@ async def test_console_selected_message_edit_action_cancel_preserves_content():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9061,6 +9379,7 @@ async def test_console_selected_message_edit_action_cancel_preserves_content():
     assert store.get_message(message.id).content == "answer"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_edit_action_blank_save_stays_open_with_error():
     app = _build_test_app()
@@ -9079,6 +9398,7 @@ async def test_console_selected_message_edit_action_blank_save_stays_open_with_e
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9104,6 +9424,7 @@ async def test_console_selected_message_edit_action_blank_save_stays_open_with_e
         assert store.get_message(message.id).content == "answer"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(
     monkeypatch,
@@ -9146,6 +9467,7 @@ async def test_console_sync_skips_transcript_refresh_when_messages_unchanged(
         assert refresh_calls == baseline_refresh_calls + 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_sync_reconciles_hydrated_fork_eligibility(monkeypatch):
     app = _build_test_app()
@@ -9183,6 +9505,7 @@ async def test_console_sync_reconciles_hydrated_fork_eligibility(monkeypatch):
         assert not console.query_one(selector, Button).disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_action_opens_modal():
     app = _build_test_app()
@@ -9201,6 +9524,7 @@ async def test_console_selected_message_save_as_action_opens_modal():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9213,6 +9537,7 @@ async def test_console_selected_message_save_as_action_opens_modal():
     assert console._last_console_action.action_id == "save-as"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_capture_note_action_saves_the_answer_and_its_receipt_opens_it():
     """task-32146: More… ▸ Capture as note writes the note with its
@@ -9242,6 +9567,7 @@ async def test_capture_note_action_saves_the_answer_and_its_receipt_opens_it():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9301,6 +9627,7 @@ async def _open_save_as_modal_for_message(host, pilot, console, role, content):
     await console._sync_native_console_chat_ui()
 
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
     transcript.select_message(message.id)
     await console._sync_native_console_chat_ui()
     await _wait_for_selector(
@@ -9312,6 +9639,7 @@ async def _open_save_as_modal_for_message(host, pilot, console, role, content):
     return message, host.screen_stack[-1]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_save_as_modal_offers_all_wired_destinations():
     app = _build_test_app()
@@ -9339,6 +9667,7 @@ async def test_console_save_as_modal_offers_all_wired_destinations():
         assert "No Save as destinations are wired" not in modal_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_save_as_modal_gates_chatbook_for_user_messages_with_honest_reason():
     app = _build_test_app()
@@ -9365,6 +9694,7 @@ async def test_console_save_as_modal_gates_chatbook_for_user_messages_with_hones
         assert "No Save as destinations are wired" not in _visible_text(save_as_modal)
 
 
+@pytest.mark.bootstrap_profile
 def test_console_save_as_destinations_gate_on_runtime_services_and_role():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -9402,6 +9732,7 @@ def test_console_save_as_destinations_gate_on_runtime_services_and_role():
     assert all("WIP" not in reason for reason in reasons.values())
 
 
+@pytest.mark.bootstrap_profile
 def test_console_save_as_destinations_are_blocked_in_a_temporary_chat():
     """A temporary chat blocks every Save as... destination, regardless of
     service readiness -- the write itself is the problem, not the wiring.
@@ -9431,6 +9762,7 @@ def test_console_save_as_destinations_are_blocked_in_a_temporary_chat():
     assert all(d.available for d in wired)
 
 
+@pytest.mark.bootstrap_profile
 def test_console_save_as_destinations_never_show_a_literal_none_reason():
     """F4 (task-9 review): `blocked_reason` returns `str | None`, but the
     reasons dict is typed `dict[str, str]` -- a future registry-key drift
@@ -9452,6 +9784,7 @@ def test_console_save_as_destinations_never_show_a_literal_none_reason():
     assert all("None" not in reason for reason in reasons.values())
 
 
+@pytest.mark.bootstrap_profile
 def test_console_save_as_labels_are_all_registered_in_the_ephemeral_gate():
     """F3 (final-review): a genuinely enumerative check on the registry.
 
@@ -9511,6 +9844,7 @@ def test_console_save_as_labels_are_all_registered_in_the_ephemeral_gate():
     assert "Not available in a temporary chat." not in reasons.values()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_note_creates_note_from_message():
     app = _build_test_app()
@@ -9555,6 +9889,7 @@ async def test_console_selected_message_save_as_note_creates_note_from_message()
     assert console._last_console_action.visible_copy == "Saved message as Note."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_media_adds_plaintext_media():
     app = _build_test_app()
@@ -9585,6 +9920,7 @@ async def test_console_selected_message_save_as_media_adds_plaintext_media():
     assert console._last_console_action.visible_copy == "Saved message as Media."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_prompt_persists_prompt():
     app = _build_test_app()
@@ -9616,6 +9952,7 @@ async def test_console_selected_message_save_as_prompt_persists_prompt():
     assert console._last_console_action.visible_copy == "Saved message as Prompt."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_save_as_prompt_retries_with_suffix_on_name_conflict():
     from tldw_chatbook.DB.Prompts_DB import ConflictError as PromptsConflictError
@@ -9650,6 +9987,7 @@ async def test_console_save_as_prompt_retries_with_suffix_on_name_conflict():
     assert console._last_console_action.action_id == "save-as-prompt"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_selected_message_save_as_chatbook_registers_console_artifact():
     app = _build_test_app()
@@ -9697,6 +10035,7 @@ async def test_console_selected_message_save_as_chatbook_registers_console_artif
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_save_as_media_failure_notifies_without_crashing():
     app = _build_test_app()
@@ -9737,6 +10076,7 @@ async def test_console_save_as_media_failure_notifies_without_crashing():
     assert console._last_console_action.action_id == "save-as"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_failed_stream_renders_retry_without_continue_and_recovers():
     gateway = FailThenRecoverGateway()
@@ -9749,7 +10089,7 @@ async def test_console_failed_stream_renders_retry_without_continue_and_recovers
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
 
@@ -9784,6 +10124,7 @@ async def test_console_failed_stream_renders_retry_without_continue_and_recovers
     assert store.get_message(failed.id).status == "complete"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_continue_action_streams_new_message_from_selected_turn():
     app = _build_console_send_test_app()
@@ -9797,22 +10138,26 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
-        store.append_message(
+        user = store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content="prompt",
+            persist=True,
         )
         source = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="seed",
+            persist=True,
         )
+        assert user.persisted_message_id and source.persisted_message_id
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{source.id}")
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9830,6 +10175,7 @@ async def test_console_continue_action_streams_new_message_from_selected_turn():
         assert not list(console.query(f"#console-message-actions-{source.id}"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_regenerate_action_streams_selected_variant():
     app = _build_console_send_test_app()
@@ -9843,19 +10189,22 @@ async def test_console_regenerate_action_streams_selected_variant():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store = console._ensure_console_chat_store()
         session = store.ensure_session(title="Chat 1")
-        store.append_message(
+        user = store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
             content="prompt",
+            persist=True,
         )
         source = store.append_message(
             session.id,
             role=ConsoleMessageRole.ASSISTANT,
             content="seed",
+            persist=True,
         )
+        assert user.persisted_message_id and source.persisted_message_id
         controller = console._ensure_console_chat_controller()
         store.set_citation_presentation(
             source.id,
@@ -9870,6 +10219,7 @@ async def test_console_regenerate_action_streams_selected_variant():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{source.id}")
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9898,9 +10248,11 @@ async def test_console_regenerate_action_streams_selected_variant():
         assert source.id not in console._console_original_attempt_previews
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rejected_regenerate_preserves_original_attempt_preview():
     app = _build_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -9909,7 +10261,7 @@ async def test_console_rejected_regenerate_preserves_original_attempt_preview():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         store = controller.store
         session = store.ensure_session(title="Chat 1")
@@ -9939,6 +10291,7 @@ async def test_console_rejected_regenerate_preserves_original_attempt_preview():
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{source.id}")
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -9964,6 +10317,7 @@ async def test_console_rejected_regenerate_preserves_original_attempt_preview():
         ] == [source.id]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblings():
     """TASK-7: `<`/`>` navigate persisted SIBLING nodes (Task 6's regenerate
@@ -9989,6 +10343,7 @@ async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblin
         await console._sync_native_console_chat_ui()
 
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_for_selector(console, pilot, f"#console-message-{a2.id}")
         transcript.select_message(a2.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(
@@ -10071,6 +10426,7 @@ async def test_console_sibling_swipe_buttons_navigate_between_regenerated_siblin
         assert transcript.selected_message_id == a2.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_tab_strip_creates_and_switches_sessions():
     app = _build_test_app()
@@ -10096,6 +10452,7 @@ async def test_console_native_tab_strip_creates_and_switches_sessions():
         assert "Chat 1" in _visible_text(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_tab_switch_restores_transcript_messages():
     """Verify native tab switching restores the prior session transcript."""
@@ -10125,7 +10482,9 @@ async def test_console_native_tab_switch_restores_transcript_messages():
         await pilot.click("#console-new-chat-tab")
         second = await _wait_for_active_session_change(store, pilot, previous)
         await _wait_for_selector(console, pilot, f"#console-session-tab-{second}")
-        await _wait_for_text(console, pilot, "Ready — type a message to begin.")
+        await _wait_for_text(
+            console, pilot, "Ready · not tested — type a message to begin."
+        )
         assert "first tab assistant reply" not in _visible_text(console)
 
         await pilot.click(f"#console-session-tab-{first.id}")
@@ -10135,6 +10494,7 @@ async def test_console_native_tab_switch_restores_transcript_messages():
         await _wait_for_text(console, pilot, "first tab assistant reply")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_switch_restores_transcript_messages():
     """Verify workspace conversation switching restores the prior transcript."""
@@ -10173,7 +10533,9 @@ async def test_console_workspace_conversation_switch_restores_transcript_message
         )
         # Ready console: the fresh empty tab shows the ready line, not the
         # blocking setup modal (which only appears when setup is incomplete).
-        await _wait_for_text(console, pilot, "Ready — type a message to begin.")
+        await _wait_for_text(
+            console, pilot, "Ready · not tested — type a message to begin."
+        )
         assert "workspace row assistant reply" not in _visible_text(console)
 
         await _click_console_workspace_conversation_for_session(
@@ -10255,6 +10617,7 @@ async def _set_console_conversation_browser_search(console, pilot, query: str) -
     await pilot.pause(0.3)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_browser_selecting_non_default_workspace_native_session_switches_active_workspace():
     app = _build_test_app()
@@ -10297,6 +10660,7 @@ async def test_console_browser_selecting_non_default_workspace_native_session_sw
         assert store.workspace_context.active_workspace_id == "ws-b"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_browser_selecting_non_default_workspace_persisted_row_switches_active_workspace_before_resume():
     app = _build_test_app()
@@ -10369,6 +10733,7 @@ async def test_console_browser_selecting_non_default_workspace_persisted_row_swi
         assert console.app.focused is not search
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_browser_selecting_default_native_session_uses_private_scratch():
     app = _build_test_app()
@@ -10420,6 +10785,7 @@ async def test_console_browser_selecting_default_native_session_uses_private_scr
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_browser_selecting_default_persisted_row_uses_private_scratch():
     app = _build_test_app()
@@ -10490,6 +10856,7 @@ async def test_console_browser_selecting_default_persisted_row_uses_private_scra
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_browser_selecting_global_persisted_row_switches_context_to_global():
     """task-15120 (owner ruling): the workspace context FOLLOWS the conversation.
@@ -10565,6 +10932,7 @@ async def test_console_browser_selecting_global_persisted_row_switches_context_t
         assert session.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flat_conversations_default_loads_global_and_default_history():
     app = _build_test_app()
@@ -10611,6 +10979,7 @@ async def test_flat_conversations_default_loads_global_and_default_history():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flat_conversations_prefers_sync_local_service():
     app = _build_test_app()
@@ -10665,6 +11034,7 @@ async def test_flat_conversations_prefers_sync_local_service():
         assert app.chat_conversation_scope_service.list_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flat_conversations_omits_mode_for_local_service():
     app = _build_test_app()
@@ -10710,6 +11080,7 @@ async def test_flat_conversations_omits_mode_for_local_service():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_flat_conversations_search_omits_mode_for_local_service():
     app = _build_test_app()
@@ -10759,6 +11130,7 @@ async def test_flat_conversations_search_omits_mode_for_local_service():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_conversation_browser_long_list_keeps_readiness_rows_reachable():
     app = _build_test_app()
@@ -10798,6 +11170,7 @@ async def test_console_conversation_browser_long_list_keeps_readiness_rows_reach
         assert "Server features" in visible_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
     app = _build_test_app()
@@ -10837,6 +11210,7 @@ async def test_console_new_chat_tab_appears_in_workspace_conversation_rail():
         assert any("Chat 1" in text for text in row_texts)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_search_selection_keeps_query_active():
     app = _build_test_app()
@@ -10888,6 +11262,7 @@ async def test_console_workspace_conversation_search_selection_keeps_query_activ
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_search_selection_invalidates_pending_worker():
     app = _build_test_app()
@@ -10950,6 +11325,7 @@ async def test_console_workspace_conversation_search_selection_invalidates_pendi
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_flat_conversation_search_blank_query_clears_error_cache():
     app = _build_test_app()
@@ -10981,6 +11357,7 @@ async def test_console_flat_conversation_search_blank_query_clears_error_cache()
         await pilot.pause(0.3)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_search_uses_current_workspace_context():
     app = _build_test_app()
@@ -11006,6 +11383,7 @@ async def test_console_workspace_conversation_search_uses_current_workspace_cont
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_tree_restores_and_persists_disclosure_preferences():
     app = _build_test_app()
@@ -11035,6 +11413,7 @@ async def test_console_workspace_tree_restores_and_persists_disclosure_preferenc
         assert browser_config["expanded_workspace_ids"] == ["ws-disclosure"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_rail():
     app = _build_test_app()
@@ -11074,6 +11453,7 @@ async def test_console_new_chat_tab_promotes_active_native_session_in_workspace_
         assert _row_is_selected(first_row)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_new_conversation_button_is_not_under_composer():
     app = _build_test_app()
@@ -11098,6 +11478,7 @@ async def test_console_workspace_new_conversation_button_is_not_under_composer()
         assert hit_widget is button
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_new_conversation_button_is_hit_target_in_named_workspace():
     app = _build_test_app()
@@ -11123,6 +11504,7 @@ async def test_console_workspace_new_conversation_button_is_hit_target_in_named_
         assert hit_widget is button
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_rail_new_conversation_creates_default_workspace_session():
     app = _build_test_app()
@@ -11184,6 +11566,7 @@ async def test_console_workspace_rail_new_conversation_creates_default_workspace
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_rail_new_conversation_stays_scoped_to_active_workspace():
     app = _build_test_app()
@@ -11239,6 +11622,7 @@ async def test_console_workspace_rail_new_conversation_stays_scoped_to_active_wo
         assert not active_node.data.selected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_row_switches_native_session():
     app = _build_test_app()
@@ -11277,6 +11661,7 @@ async def test_console_workspace_conversation_row_switches_native_session():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_row_resumes_persisted_conversation():
     """Resume a saved workspace conversation directly from the Console rail."""
@@ -11402,6 +11787,7 @@ async def test_console_workspace_conversation_row_resumes_persisted_conversation
         ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_resume_restores_server_character_identity_without_local_lookup():
     """Server opaque identity comes only from the selected persisted row."""
@@ -11536,6 +11922,7 @@ async def test_console_resume_restores_server_character_identity_without_local_l
         assert noncanonical.character_ref() is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("include_runtime_backend", "runtime_backend"),
@@ -11592,6 +11979,7 @@ async def test_console_resume_rejects_character_identity_without_valid_source(
         assert session.character_ref() is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_resume_rehydrates_local_character_name_from_saved_snapshot():
     """Saved roleplay metadata, not a current card, owns resumed identity."""
@@ -11642,6 +12030,7 @@ async def test_console_resume_rehydrates_local_character_name_from_saved_snapsho
         assert session.settings.character_label == "Alraune"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_resume_restores_system_prompt():
     """Resuming a saved conversation restores its persisted system prompt.
@@ -11710,6 +12099,7 @@ async def test_console_workspace_conversation_resume_restores_system_prompt():
         assert active_session.settings.system_prompt == "Answer only in French."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_resume_uses_persisted_workspace():
     """Resume into the persisted conversation workspace when it differs from active."""
@@ -11795,6 +12185,7 @@ async def test_console_workspace_conversation_resume_uses_persisted_workspace():
         assert selected_node.data.selected
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_resume_uses_real_local_services(tmp_path):
     """Resume a workspace conversation through real local DB-backed services."""
@@ -11895,7 +12286,7 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         inspector_text = _visible_text(console.query_one("#console-right-rail"))
         assert "Provider:" not in left_rail_text
         assert "Model:" not in left_rail_text
-        assert "Conversation settings" in inspector_text
+        assert "Chat settings" in inspector_text
         assert "Provider:" in inspector_text
         assert "Where: Real Workspace › Real saved chat" in inspector_text
         conversation_source = console.query_one(
@@ -11932,6 +12323,7 @@ def _resume_generation_variant_meta(seed: int) -> GenerationVariantMeta:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_resume_hydrates_generation_metadata(
     tmp_path,
@@ -12023,6 +12415,7 @@ async def test_console_workspace_conversation_resume_hydrates_generation_metadat
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_rail_keeps_active_native_session_visible_when_scope_is_global():
     app = _build_test_app()
@@ -12056,6 +12449,7 @@ async def test_console_workspace_rail_keeps_active_native_session_visible_when_s
         assert any("Chat 1" in text for text in row_texts), row_texts
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_conversation_search_keeps_selected_global_native_session():
     app = _build_test_app()
@@ -12092,6 +12486,7 @@ async def test_console_workspace_conversation_search_keeps_selected_global_nativ
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_new_chat_focuses_composer_for_immediate_typing():
     app = _build_test_app()
@@ -12118,6 +12513,7 @@ async def test_console_new_chat_focuses_composer_for_immediate_typing():
         assert composer.draft_text() == "n"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_tab_switch_focuses_composer_for_immediate_typing():
     app = _build_test_app()
@@ -12146,6 +12542,7 @@ async def test_console_tab_switch_focuses_composer_for_immediate_typing():
         assert composer.draft_text() == "s"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_tab_strip_isolates_composer_drafts():
     app = _build_test_app()
@@ -12178,6 +12575,7 @@ async def test_console_native_tab_strip_isolates_composer_drafts():
         assert composer.draft_text() == "second tab draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_collapsed_layout_follows_cross_workspace_tab_state():
     app = _build_test_app()
@@ -12230,6 +12628,7 @@ async def test_console_collapsed_layout_follows_cross_workspace_tab_state():
         assert service.get_active_workspace().workspace_id == "ws-a"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_tab_strip_keeps_compact_close_x():
     app = _build_test_app()
@@ -12263,6 +12662,7 @@ async def test_console_native_tab_strip_keeps_compact_close_x():
         assert second not in {session.id for session in store.sessions()}
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_tab_title_has_stable_visible_label_region():
     app = _build_test_app()
@@ -12332,6 +12732,7 @@ def test_console_tab_label_end_truncates_with_visible_ellipsis():
     assert collides_with_a == a == "Long conversation…"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_active_tab_title_opens_rename_modal():
     app = _build_test_app()
@@ -12364,6 +12765,7 @@ async def test_console_native_active_tab_title_opens_rename_modal():
         assert not list(console.query(f"#console-session-rename-input-{session.id}"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_rename_modal_buttons_are_not_clipped():
     app = _build_test_app()
@@ -12391,6 +12793,7 @@ async def test_console_native_rename_modal_buttons_are_not_clipped():
         assert str(save_button.label) == "Save"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_tab_rename_escape_restores_existing_title():
     app = _build_test_app()
@@ -12419,6 +12822,7 @@ async def test_console_native_tab_rename_escape_restores_existing_title():
         assert not list(console.query(f"#console-session-rename-input-{session.id}"))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_close_tab_with_messages_shows_confirmation():
     app = _build_test_app()
@@ -12678,6 +13082,10 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
         ensure_console_chat_controller=lambda: screen._ensure_console_chat_controller(),
         current_chat_controller_accessor=lambda: getattr(
             screen, "_console_chat_controller", None
+        ),
+        generation_refusal_copy=lambda controller, session_id: (
+            controller.send_refusal_copy(session_id)
+            or screen._console_provider_blocker_copy()
         ),
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         active_session_is_ephemeral=(
@@ -12961,10 +13369,7 @@ def test_native_console_state_round_trip_preserves_persona_identity():
     assert restored_session.assistant_kind == "persona"
     assert restored_session.assistant_id == "local-persona-abc"
     assert restored_session.assistant_name == "Archivist"
-    assert (
-        restored_session.persona_system_template
-        == "Guide {{user}} as {{persona}}."
-    )
+    assert restored_session.persona_system_template == "Guide {{user}} as {{persona}}."
     assert restored_session.character_name is None
     assert restored_session.character_ref() is None
 
@@ -13239,6 +13644,7 @@ def test_native_console_state_restore_tolerates_legacy_payload_without_updated_a
     assert before <= restored_dt <= after
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_k_opens_session_switcher_and_activates_native_session():
     app = _build_test_app()
@@ -13269,6 +13675,7 @@ async def test_ctrl_k_opens_session_switcher_and_activates_native_session():
         assert store.active_session_id == first_session.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_k_blank_enter_activates_most_recent_other_native_session():
     app = _build_test_app()
@@ -13298,6 +13705,7 @@ async def test_ctrl_k_blank_enter_activates_most_recent_other_native_session():
         assert store.active_session_id == expected_session_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ctrl_k_is_inert_while_setup_modal_blocks():
     app = _build_test_app()  # blocked: no provider ready
@@ -13310,6 +13718,7 @@ async def test_ctrl_k_is_inert_while_setup_modal_blocks():
         assert host.screen_stack[-1] is console
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_setup_modal_blocks_programmatic_composer_toggles():
     app = _build_test_app()
@@ -13333,6 +13742,7 @@ async def test_console_setup_modal_blocks_programmatic_composer_toggles():
         assert console.check_action("expand_collapsed_console_composer", ()) is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_setup_modal_retains_collapsed_layout_and_restores_expand_focus():
     app = _build_test_app()
@@ -13385,6 +13795,7 @@ async def test_console_setup_modal_retains_collapsed_layout_and_restores_expand_
         assert composer.can_focus is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_navigation_resume_retains_collapsed_composer():
     app = _build_test_app()
@@ -13411,6 +13822,7 @@ async def test_console_navigation_resume_retains_collapsed_composer():
         assert composer.collapsed is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_switcher_rename_choice_chains_to_rename_modal():
     app = _build_test_app()
@@ -13433,7 +13845,8 @@ def test_insert_file_segment_collapses_with_custom_label():
     composer.insert_file_segment("file body text", "📄 notes.md · 4 KB")
 
     assert composer.draft_text() == "file body text"
-    assert composer._display_draft_text() == "📄 notes.md · 4 KB"
+    # TASK-33622.1: a labelled chip names its affordance like a paste chip.
+    assert composer._display_draft_text() == "📄 notes.md · 4 KB | Ctrl+E expand"
 
 
 def test_insert_file_segment_appends_after_typed_draft():
@@ -13442,16 +13855,17 @@ def test_insert_file_segment_appends_after_typed_draft():
     composer.insert_file_segment("file body", "📄 a.md · 9 B")
 
     assert composer.draft_text() == "see attached: file body"
-    assert composer._display_draft_text() == "see attached: 📄 a.md · 9 B"
+    assert composer._display_draft_text() == "see attached: 📄 a.md · 9 B | Ctrl+E expand"
 
 
 def test_paste_collapse_label_still_defaults_to_character_count():
     composer = ConsoleComposerBar(paste_collapse_threshold=5)
     composer.insert_pasted_text("0123456789")
 
-    assert composer._display_draft_text() == "Pasted text | 10 characters | Expand"
+    assert composer._display_draft_text() == "Pasted text | 10 characters | Ctrl+E expand"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_attachment_indicator_visibility_follows_label():
     app = _build_test_app()
@@ -13476,6 +13890,7 @@ async def test_attachment_indicator_visibility_follows_label():
         assert clear_button.styles.display == "none"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_staged_attachment_count_stays_visible_after_attach_moved_to_the_menu():
     """TASK-380's guarantee, re-homed: the staged count stays legible.
@@ -13510,6 +13925,7 @@ async def test_staged_attachment_count_stays_visible_after_attach_moved_to_the_m
         assert str(clear_button.tooltip) == "Remove the pending attachment."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_attachment_worker_stages_image_and_inlines_text(tmp_path):
     from PIL import Image as PILImage
@@ -13567,6 +13983,7 @@ def _staged_image_attachment():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_image_on_non_vision_model_blocks_send(monkeypatch):
     import tldw_chatbook.Chat.attachment_core as attachment_core
@@ -13586,6 +14003,7 @@ async def test_pending_image_on_non_vision_model_blocks_send(monkeypatch):
         assert "can't accept images" in reason
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
     import tldw_chatbook.Chat.attachment_core as attachment_core
@@ -13604,6 +14022,7 @@ async def test_pending_image_on_vision_model_does_not_block(monkeypatch):
         assert console._console_attachment_blocked_reason() == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_console_readiness_copy_uses_typed_blocker_and_recovery_across_surfaces(
     monkeypatch,
 ) -> None:
@@ -13662,6 +14081,7 @@ def test_console_readiness_copy_uses_typed_blocker_and_recovery_across_surfaces(
     assert "PRIVATE" not in surface_copy
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_attach_at_cap_blocks_picker_before_selection(monkeypatch):
     """TASK-377: at the attachment cap, pressing Attach must report the limit
@@ -13702,6 +14122,7 @@ async def test_attach_at_cap_blocks_picker_before_selection(monkeypatch):
         assert any("limit reached" in str(a[0]).lower() for a in notes), notes
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_attach_below_cap_still_opens_picker(monkeypatch):
     """TASK-377 guard: below the cap the Attach button still opens the picker."""
@@ -13731,6 +14152,7 @@ async def test_attach_below_cap_still_opens_picker(monkeypatch):
         assert pushed, "picker did not open while below the attachment cap"
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_hydrates_image_messages_including_image_only_rows():
     """Verify resuming a saved conversation keeps image-only rows and their bytes."""
     screen = ChatScreen(_build_test_app())
@@ -13764,6 +14186,7 @@ def test_resume_hydrates_image_messages_including_image_only_rows():
     assert messages[1].content == "a red square"
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_wiring_injects_agent_markers_from_agent_runs_db(tmp_path):
     """Plan-B final-review Medium-1: the ChatScreen-level wiring
     (`_inject_resume_agent_markers`) must re-derive TOOL markers from the
@@ -13875,6 +14298,7 @@ def test_console_message_serialization_carries_image_metadata_not_bytes():
     assert restored.image_data is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
     """Verify the save-image worker writes the message's image bytes to disk."""
@@ -13909,6 +14333,7 @@ async def test_save_console_message_image_writes_file(tmp_path, monkeypatch):
         assert saved[0].read_bytes() == b"\x89PNG-bytes"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_console_message_image_disambiguates_filename_collision(
     tmp_path, monkeypatch
@@ -13959,6 +14384,7 @@ async def test_save_console_message_image_disambiguates_filename_collision(
         assert all(path.read_bytes() == b"\x89PNG-bytes" for path in saved)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_image_button_reflects_the_real_screen_ephemeral_accessor():
     """F6 (task-9 review): pins the *name* ``ConsoleTranscript.
@@ -14038,6 +14464,7 @@ async def test_save_image_button_reflects_the_real_screen_ephemeral_accessor():
     assert normal_disabled is False
 
 
+@pytest.mark.bootstrap_profile
 def test_rehydrate_console_message_image_refetches_bytes_from_db():
     """Verify restore rehydration refetches bytes screen-state serialization drops.
 
@@ -14075,6 +14502,7 @@ def test_rehydrate_console_message_image_refetches_bytes_from_db():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_rehydrate_console_message_image_degrades_gracefully_on_db_failure():
     """Verify a DB failure during restore rehydration leaves the message metadata-only."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
@@ -14100,6 +14528,7 @@ def test_rehydrate_console_message_image_degrades_gracefully_on_db_failure():
     assert message.image_mime_type == "image/png"
 
 
+@pytest.mark.bootstrap_profile
 def test_restore_native_console_state_rehydrates_image_bytes_end_to_end():
     """Verify the full restore path rehydrates bytes for a persisted image message."""
     screen = ChatScreen(_build_test_app())
@@ -14149,6 +14578,7 @@ def test_restore_native_console_state_rehydrates_image_bytes_end_to_end():
     assert restored[0].image_mime_type == "image/png"
 
 
+@pytest.mark.bootstrap_profile
 def test_restore_native_console_state_rehydrates_generation_metadata_end_to_end():
     """task-558: the in-memory (tab-switch) restore path must also hydrate
     ``generation_metadata``, the same way it already hydrates attachments --
@@ -14221,6 +14651,7 @@ def test_restore_native_console_state_rehydrates_generation_metadata_end_to_end(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_restore_generation_metadata_survives_stale_session_key_in_payload():
     """A ``messages_by_session`` key with no matching ``sessions`` entry must
     not abort the restore. Pinned as evidence against a review claim that the
@@ -14297,6 +14728,7 @@ def test_restore_generation_metadata_survives_stale_session_key_in_payload():
     assert len(restored[0].generation_metadata) == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatch):
     """Verify clicking Clear on a staged image resyncs the composer's blocked visuals.
@@ -14323,7 +14755,7 @@ async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatc
         # Mirror the sync `_process_console_attachment` performs right after
         # staging, so the composer starts in the same blocked state a real
         # attach would leave behind.
-        console._sync_console_control_bar()
+        await _sync_console_control_bar_now(console)
         await pilot.pause()
 
         send_button = console.query_one("#console-send-message", Button)
@@ -14340,6 +14772,7 @@ async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatc
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_image_message_gets_inline_row_after_prep_and_toggle_cycles():
     app = _build_test_app()
@@ -14408,6 +14841,7 @@ async def test_image_message_gets_inline_row_after_prep_and_toggle_cycles():
         assert console.query(f"#console-image-{message.id}")
 
 
+@pytest.mark.bootstrap_profile
 def test_image_view_modes_ride_screen_state_allowlist_and_prune_stale():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -14434,6 +14868,7 @@ def test_image_view_modes_ride_screen_state_allowlist_and_prune_stale():
     assert fresh_state.serialize() == {message.id: "hidden"}
 
 
+@pytest.mark.bootstrap_profile
 def test_console_image_prep_bounded_to_cache_capacity_avoids_churn():
     """Regression: prep must never chase more images than the cache can hold.
 
@@ -14500,6 +14935,7 @@ def test_console_image_prep_bounded_to_cache_capacity_avoids_churn():
     assert cache.pending_ids(screen._recent_console_image_messages(messages)) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_console_image_prep_kick_skips_ids_already_preparing():
     """Regression: the 0.2s sync tick must not re-kick prep for ids a
     worker is already chewing on.
@@ -14552,6 +14988,7 @@ def test_console_image_prep_kick_skips_ids_already_preparing():
     assert pending_images == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_path_paste_routes_to_attach_instead_of_draft(tmp_path, monkeypatch):
     from PIL import Image as PILImage
@@ -14608,6 +15045,7 @@ async def test_path_paste_routes_to_attach_instead_of_draft(tmp_path, monkeypatc
         assert composer.draft_text() == ""  # path did NOT land as draft text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prose_paste_still_lands_in_draft():
     from textual.events import Paste
@@ -14627,6 +15065,7 @@ async def test_prose_paste_still_lands_in_draft():
         assert composer.draft_text() == "what does /etc/hosts do?"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_v_grabs_clipboard_image_into_pending(monkeypatch):
     from io import BytesIO
@@ -14671,6 +15110,7 @@ async def test_alt_v_grabs_clipboard_image_into_pending(monkeypatch):
         assert pending.display_name.startswith("clipboard-")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_v_unavailable_platform_toasts(monkeypatch):
     import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
@@ -14706,6 +15146,7 @@ async def test_alt_v_unavailable_platform_toasts(monkeypatch):
         assert sid is None or store.pending_attachment(sid) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_alt_v_action_is_inert_while_setup_modal_blocks(monkeypatch):
     import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
@@ -14734,6 +15175,7 @@ async def test_alt_v_action_is_inert_while_setup_modal_blocks(monkeypatch):
         assert sid is None or store.pending_attachment(sid) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_staging_appends_and_caps_at_five(tmp_path, monkeypatch):
     from PIL import Image as PILImage
@@ -14789,6 +15231,7 @@ async def test_staging_appends_and_caps_at_five(tmp_path, monkeypatch):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_save_image_saves_all_attachments(tmp_path, monkeypatch):
     from tldw_chatbook.Chat.console_chat_models import MessageAttachment
@@ -15009,19 +15452,22 @@ def test_temporary_tab_marker_is_presentation_only():
     assert GLYPH_TEMPORARY not in plain
 
     tooltip = _session_tab_tooltip(session, active=False)
-    assert "not saved" in tooltip.lower()
     # CN-02 (TASK-2154.13): the tab tooltip's ◌ decode is byte-for-byte the
     # status chip's TEMPORARY_LABEL -- one short name for the concept, no
-    # third wording.
+    # third wording. TASK-33621.17 renamed it "Temporary · traces off";
+    # TASK-37840 made it "Temporary · not saved · traces off".
     from tldw_chatbook.Chat.console_ephemeral import TEMPORARY_LABEL
 
     assert tooltip.endswith(f"{TEMPORARY_LABEL}.")
-    assert (
-        "not saved"
-        not in _session_tab_tooltip(
-            ConsoleChatSession(title="Normal"), active=False
-        ).lower()
+    assert "temporary" in tooltip.lower()
+    assert "not saved" in tooltip.lower()
+    assert TEMPORARY_LABEL not in _session_tab_tooltip(
+        ConsoleChatSession(title="Normal"), active=False
     )
+
+    assert "not saved" not in _session_tab_tooltip(
+        ConsoleChatSession(title="Normal"), active=False
+    ).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -15038,6 +15484,7 @@ def _capture_notify_severities(app) -> list[tuple[str, str]]:
     return notifications
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_save_as_savers_confirm_at_success_severity():
     """All four Save-as destinations toast severity="success" (FB-07)."""
@@ -15078,6 +15525,7 @@ async def test_console_save_as_savers_confirm_at_success_severity():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_retry_accepted_fires_success_toast():
     """Retrying a failed response confirms at success severity (FB-07)."""
@@ -15092,7 +15540,7 @@ async def test_console_retry_accepted_fires_success_toast():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()
@@ -15120,6 +15568,7 @@ async def test_console_retry_accepted_fires_success_toast():
     assert "Retrying failed response." in success_after
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_save_fires_success_toast():
     """Using the Console settings draft confirms at success severity (FB-07)."""
@@ -15150,7 +15599,7 @@ async def test_console_settings_save_fires_success_toast():
         await _wait_for_selector(
             modal,
             pilot,
-            "#console-settings-model-select",
+            "#console-settings-model-change",
         )
         modal.query_one("#console-settings-save", Button).press()
         for _ in range(40):
@@ -15161,6 +15610,7 @@ async def test_console_settings_save_fires_success_toast():
     assert ("This chat updated", "success") in notifications
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_save_chatbook_handoff_fires_success_toast():
     """The composer Save Chatbook button confirms the handoff (FB-07)."""
@@ -15186,6 +15636,7 @@ async def test_console_save_chatbook_handoff_fires_success_toast():
     assert ("Saved — opening the artifact in Artifacts.", "success") in notifications
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_routine_send_fires_no_success_toast():
     """AC guard: a plain successful send must NOT gain a success toast."""
@@ -15201,7 +15652,7 @@ async def test_console_routine_send_fires_no_success_toast():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()
@@ -15211,6 +15662,7 @@ async def test_console_routine_send_fires_no_success_toast():
     assert success_toasts == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_resume_rehydrates_persona_name_from_profile():
     """A resumed persona session re-resolves its display name, both backends."""
@@ -15259,6 +15711,7 @@ async def test_console_resume_rehydrates_persona_name_from_profile():
         name_lookup.assert_awaited_once_with("local-persona-abc", "local")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_resume_persona_name_lookup_failure_stays_unlabeled():
     """A failed profile lookup resumes the session without a persona name."""
@@ -15298,6 +15751,7 @@ async def test_console_resume_persona_name_lookup_failure_stays_unlabeled():
         assert session.assistant_name is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_resume_restores_persona_system_template_from_metadata():
     """The trusted persona template rides the roleplay metadata envelope."""

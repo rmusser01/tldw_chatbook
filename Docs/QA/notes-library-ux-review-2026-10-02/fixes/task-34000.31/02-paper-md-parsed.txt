@@ -1,0 +1,17 @@
+# $ head -9 $HARNESS/runs/p1p1-t1-1/home/paper.md
+---
+title: 'Paper notes: Retrieval practice'
+date: '2026-10-24 07:25:56'
+tags:
+- meeting
+- thesis
+note_id: 27e32e98-0350-45da-87c7-0669f6669a38
+---
+
+
+# $ python -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]).read().split("---
+",2)[1]))' paper.md
+{'title': 'Paper notes: Retrieval practice', 'date': '2026-10-24 07:25:56', 'tags': ['meeting', 'thesis'], 'note_id': '27e32e98-0350-45da-87c7-0669f6669a38'}
+
+# body carries no fence past the block:
+grep -c '^---' paper.md = 2

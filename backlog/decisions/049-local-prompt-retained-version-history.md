@@ -71,7 +71,7 @@ service re-resolves that exact retained create/update row by Prompt UUID,
 removed or replaced the selected row, restore returns `snapshot_unavailable`
 without writes. A deleted current Prompt is not restorable and is never
 implicitly undeleted. The service rejects a stale expected current version and
-validates the retained snapshot under current source capabilities and ADR-040.
+validates the retained snapshot under current source capabilities and ADR-305.
 Only valid legacy text and valid structured-v2 Prompt/Recipe snapshots are
 restorable. Malformed JSON,
 definition/compiled-text mismatch, artifact-type/definition-kind mismatch,
@@ -101,7 +101,7 @@ users requires a bounded query, honest pruning semantics, normalized
 compatibility states, atomic keyword capture, and optimistic concurrency on
 restore.
 
-ADR-040 already defines Prompt/Recipe identity, schema-v2 validation, compiled
+ADR-305 already defines Prompt/Recipe identity, schema-v2 validation, compiled
 compatibility text, foreign-v1 handling, conditional update, and byte-identical
 `no_change` behavior. This decision extends those rules to retained snapshots;
 it does not introduce another artifact schema or a separate history store.
@@ -141,7 +141,7 @@ it does not introduce another artifact schema or a separate history store.
 | Let restore revive a deleted Prompt | History excludes deletion state, so resurrection would be an implicit, unaudited side effect rather than a retained-version restore. |
 | Treat missing historical keywords as an empty list | Older snapshots did not capture keyword state; clearing current keywords would invent history that was never recorded. |
 | Compare keyword lists by caller order | Keyword links have no ordinal; canonical set ordering prevents equivalent membership from creating false changes. |
-| Convert foreign structured-v1 snapshots during restore | Violates ADR-040 and can lose roles, variables, assembly rules, or future v1 meaning. |
+| Convert foreign structured-v1 snapshots during restore | Violates ADR-305 and can lose roles, variables, assembly rules, or future v1 meaning. |
 
 ## Consequences
 
@@ -173,4 +173,4 @@ it does not introduce another artifact schema or a separate history store.
 - [TASK-196 implementation plan](../../Docs/superpowers/plans/2026-08-02-task-196-retained-prompt-history.md)
 - [Library Prompt Enhancement Series design](../../Docs/superpowers/specs/2026-08-02-library-prompt-enhancement-series-design.md)
 - [ADR-011: Chatbook Workbench UI System](011-chatbook-workbench-ui-system.md)
-- [ADR-040: Versioned Prompt Artifacts and Safe Improvement Transactions](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md)
+- [ADR-305: Versioned Prompt Artifacts and Safe Improvement Transactions](305-versioned-prompt-artifacts-and-safe-improvement-transactions.md)

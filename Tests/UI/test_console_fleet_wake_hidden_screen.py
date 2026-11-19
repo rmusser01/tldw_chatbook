@@ -143,6 +143,7 @@ def _build_app(tmp_path):
     return app
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_probe_sees_a_draft_typed_with_real_keys(tmp_path):
     """task-15970 AC#2 groundwork: real key input through the production
@@ -163,6 +164,7 @@ async def test_probe_sees_a_draft_typed_with_real_keys(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hidden_screens_probe_sees_the_displayed_screens_typed_draft(
     tmp_path,
@@ -197,6 +199,7 @@ async def test_hidden_screens_probe_sees_the_displayed_screens_typed_draft(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_typed_draft_defers_the_hidden_coordinators_due_wake(tmp_path):
     """task-15970 AC#1, outcome level: a due wake on a hidden Console
@@ -226,6 +229,7 @@ async def test_typed_draft_defers_the_hidden_coordinators_due_wake(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_hidden_screen_sync_never_view_clears_the_unseen_mark(tmp_path):
     """task-15971 AC#2: 'viewing IS the clear' requires VIEWING. A
@@ -252,6 +256,7 @@ async def test_hidden_screen_sync_never_view_clears_the_unseen_mark(tmp_path):
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_displayed_screen_sync_still_view_clears_the_mark(tmp_path):
     """task-15971 AC#3, the preserved side: on the DISPLAYED Console the
@@ -274,6 +279,7 @@ async def test_displayed_screen_sync_still_view_clears_the_mark(tmp_path):
         ), "viewing the conversation on the displayed screen IS the clear"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_screen_wires_the_conversation_in_view_probe(tmp_path):
     """task-15971 AC#1 wiring: the coordinator's delivery commit consults

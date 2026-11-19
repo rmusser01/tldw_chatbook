@@ -214,6 +214,7 @@ def test_exact_result_cap_keeps_first_report_on_refusal():
     _, inbox, sender, reader = setup_queue()
     sender.send("first\t\n" + "🦉" * 50)
     envelope = dataclasses.asdict(inbox.snapshot()[0])
+    envelope.pop("created_at")  # Durable timestamp is not provider context.
     source = envelope.pop("identity")
     expected = json.dumps(
         {"status": "collected", "messages": [{**envelope, **source}], "remaining": 0},
@@ -223,7 +224,10 @@ def test_exact_result_cap_keeps_first_report_on_refusal():
     )
     assert_refusal("result_limit_too_small", lambda: reader.collect(len(expected) - 1))
     assert reader.pending_count() == 1
-    assert len(reader.collect(len(expected)).content) == len(expected)
+    result = reader.collect(len(expected)).content
+    assert len(result) == len(expected)
+    assert json.loads(result) == json.loads(expected)
+    assert "created_at" not in json.loads(result)["messages"][0]
 
 
 def test_result_cap_reserves_accurate_remaining_and_never_truncates():
@@ -408,3 +412,107 @@ def test_closed_sender_is_not_retained_by_admitted_reports():
     gc.collect()
     assert ref() is None
     assert inbox.snapshot()[0].body == "independent of lifetime accounting"
+
+
+def test_two_phase_close_revokes_immediately_and_cannot_remove_replacement():
+    store, inbox, sender, reader = setup_queue()
+    sender.send("retained until physical close")
+    with store._lock:
+        exact = store.begin_close_inbox("conversation-a")
+        assert exact is inbox
+        assert store.get_inbox("conversation-a") is None
+        assert store.pending_counts() == {}
+    for operation in (lambda: sender.send("late"), reader.collect, inbox.snapshot):
+        with pytest.raises(MessageError, match="unavailable"):
+            operation()
+    with pytest.raises(MessageError, match="unavailable"):
+        store.open_inbox("conversation-a")
+    store.finish_close_inbox("conversation-a", exact)
+    replacement = store.open_inbox("conversation-a")
+    replacement.sender(MessageIdentity("new", "new-run", "parent", None, "new")).send(
+        "new"
+    )
+    store.finish_close_inbox("conversation-a", exact)
+    store.finish_close_inbox("conversation-a", None)
+    assert store.get_inbox("conversation-a") is replacement
+    assert replacement.snapshot()[0].body == "new"
+
+
+def test_begin_store_close_revokes_all_capabilities_without_waiting_for_writer():
+    store, inbox, sender, reader = setup_queue()
+    sender.send("retained")
+    with store._lock:
+        store.begin_close()
+        assert store.pending_counts() == {}
+        assert store.get_inbox("conversation-a") is None
+    for operation in (
+        lambda: sender.send("late"),
+        reader.collect,
+        inbox.snapshot,
+        lambda: store.open_inbox("new-owner"),
+    ):
+        with pytest.raises(MessageError, match="unavailable"):
+            operation()
+    store.close()
+    assert store._pending_count == store._pending_chars == 0
+
+
+def test_begin_store_close_uses_published_membership_during_physical_removal(
+    monkeypatch,
+):
+    store, inbox, sender, reader = setup_queue()
+    remaining = store.open_inbox("conversation-b")
+    remaining_sender = remaining.sender(identity(1))
+    sender.send("closing report")
+    remaining_sender.send("remaining report")
+    exact = store.begin_close_inbox("conversation-a")
+    cleanup_requested = threading.Event()
+    cleanup_finished = threading.Event()
+    closing_thread = threading.current_thread()
+
+    def allow_physical_cleanup():
+        cleanup_requested.set()
+        assert cleanup_finished.wait(5), "physical cleanup did not settle"
+
+    class YieldingInboxes(dict):
+        def values(self):
+            # Force removal during mutable snapshot construction. CPython's
+            # GIL may otherwise hide this interleaving inside tuple(values).
+            values = iter(super().values())
+            yield next(values)
+            allow_physical_cleanup()
+            yield from values
+
+    with store._lock:
+        store._inboxes = YieldingInboxes(store._inboxes)
+    original_revoke = inbox._revoked.set
+
+    def revoke_and_allow_cleanup():
+        original_revoke()
+        if threading.current_thread() is closing_thread:
+            allow_physical_cleanup()
+
+    monkeypatch.setattr(inbox._revoked, "set", revoke_and_allow_cleanup)
+
+    def finish_cleanup():
+        assert cleanup_requested.wait(5), "close did not permit cleanup"
+        store.finish_close_inbox("conversation-a", exact)
+        cleanup_finished.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        cleanup = executor.submit(finish_cleanup)
+        store.begin_close()
+        cleanup.result(timeout=5)
+    assert store._inboxes.get("conversation-a") is None
+    assert remaining._revoked.is_set()
+    assert store.pending_counts() == {}
+    assert store.get_inbox("conversation-b") is None
+    for operation in (
+        lambda: sender.send("late"),
+        lambda: remaining_sender.send("late"),
+        reader.collect,
+        remaining.snapshot,
+    ):
+        assert_refusal("unavailable", operation)
+    store.close()
+    assert store._pending_count == store._pending_chars == 0

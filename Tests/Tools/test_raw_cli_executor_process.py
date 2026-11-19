@@ -503,17 +503,38 @@ def test_cancel_during_wait_refuses_delayed_launch_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from multiprocessing.synchronize import Event as ProcessEvent
+
     callback_waiting = threading.Event()
     allow_callback = threading.Event()
     callback_finished = threading.Event()
     cancel_event = threading.Event()
     process_events: list[Any] = []
+    signaled_events: list[Any] = []
+    late_abort_signals: list[Any] = []
+    cleanup_finished = threading.Event()
+    real_cleanup = raw_cli._cleanup_tree
+    real_set = ProcessEvent.set
     real_event = multiprocessing.context.BaseContext.Event
 
     def recording_event(context: Any) -> Any:
         event = real_event(context)
         process_events.append(event)
         return event
+
+    def recording_set(event: Any) -> None:
+        if cleanup_finished.is_set() and event is process_events[2]:
+            # Fault injection: a dead worker may have stranded this lock.
+            late_abort_signals.append(event)
+            return
+        signaled_events.append(event)
+        real_set(event)
+
+    def recording_cleanup(tree: ExecutorProcessTree, *, terminate: bool) -> bool:
+        proven = real_cleanup(tree, terminate=terminate)
+        if terminate and proven:
+            cleanup_finished.set()
+        return proven
 
     def admit(tree: ExecutorProcessTree, commit_launch: Any) -> None:
         callback_waiting.set()
@@ -525,6 +546,8 @@ def test_cancel_during_wait_refuses_delayed_launch_commit(
             callback_finished.set()
 
     monkeypatch.setattr(multiprocessing.context.BaseContext, "Event", recording_event)
+    monkeypatch.setattr(ProcessEvent, "set", recording_set)
+    monkeypatch.setattr(raw_cli, "_cleanup_tree", recording_cleanup)
     results: list[Any] = []
     thread = threading.Thread(
         target=lambda: results.append(
@@ -548,7 +571,12 @@ def test_cancel_during_wait_refuses_delayed_launch_commit(
     assert thread.is_alive() is False
     assert callback_finished.wait(5.0)
     assert results[0].terminal_state == "cancelled"
-    assert process_events[1].is_set() is False
+    assert cleanup_finished.is_set()
+    assert late_abort_signals == []
+    # A killed worker can leave its Event lock held; observe parent signaling
+    # without acquiring that dead process's semaphore after cleanup.
+    assert process_events[2] in signaled_events  # the real abort gate was signaled
+    assert process_events[1] not in signaled_events  # the launch gate was not
 
 
 def test_commit_between_failed_wait_and_parent_settlement_is_honored(
@@ -791,6 +819,25 @@ def test_streams_stay_distinct_invalid_utf8_is_replaced_and_nonzero_is_exited(
     assert "[stdout] out:\ufffd" in result.record_output
     assert "[stderr] err:\ufffd" in result.record_output
     assert {event.stream for event in events} == {"stdout", "stderr"}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native cmd command text")
+def test_cmd_preserves_quoted_spaces_and_shell_metacharacters(tmp_path):
+    command = _python_command(
+        "import os;os.write(1,b'quoted spaces & literal | characters');"
+        "os.write(2,b'error details');raise SystemExit(4)"
+    )
+    result = _executor().execute(
+        _request(tmp_path, command),
+        cancel_event=threading.Event(),
+        on_event=lambda _: None,
+        admit_worker=_admit,
+    )
+    assert result.terminal_state == "exited"
+    assert result.exit_code == 4
+    assert result.stdout_preview == "quoted spaces & literal | characters"
+    assert result.stderr_preview == "error details"
+    assert result.cleanup_proven
 
 
 def test_timeout_and_cancellation_share_idempotent_tree_cleanup(

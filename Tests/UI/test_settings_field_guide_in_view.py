@@ -19,7 +19,7 @@ body's visible region.
 import pytest
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
-from textual.widgets import Input, Static
+from textual.widgets import Collapsible, Input, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _active_destination_screen, _build_test_app
@@ -161,6 +161,11 @@ async def test_console_behavior_fallback_guide_stays_in_the_inspector_view(
         await _settle(pilot)
         screen = _active_destination_screen(host)
         route = f"console {size[0]}x{size[1]}"
+        # TASK-33007.7, rewritten on purpose: the six samplers sit in a closed
+        # Sampling disclosure (opened here so every fallback is clickable),
+        # and the rows now start at Temperature, not Streaming.
+        screen.query_one("#settings-console-sampling", Collapsible).collapsed = False
+        await _settle(pilot)
 
         assert await _click_each(
             pilot, screen, "console-behavior", CONSOLE_FALLBACKS, route
@@ -171,7 +176,7 @@ async def test_console_behavior_fallback_guide_stays_in_the_inspector_view(
             "console-behavior",
             CONSOLE_FALLBACKS,
             route,
-            "settings-console-default-streaming",
+            "settings-console-default-temperature",
         )
         assert seen == set(CONSOLE_FALLBACKS), set(CONSOLE_FALLBACKS) - seen
         # Every generation label is also a Providers & Models field, and that
@@ -305,13 +310,126 @@ async def test_other_guided_categories_keep_the_guide_in_view_on_resize(
             route = f"{category} resized to {step[0]}x{step[1]}"
             _assert_rows_in_view(screen, category, route)
             # These guides stay in view without the re-pin; this shows the
-            # shared hook reaches them: the guide heads the view again, as
-            # focus left it, unless the pane cannot scroll that far.
-            view_top = body.scrollable_content_region.y
-            assert first.region.y == view_top or body.scroll_y == body.max_scroll_y, (
+            # shared hook reaches them. Rewritten on purpose (#3057 capture
+            # round 2, findings 1 and 2): the guide's first row no longer
+            # heads the view; the view starts at its top, or at a heading
+            # (the guide's own or one above it), and moves no further.
+            assert _view_starts_at_a_heading(screen), (
                 route,
                 first.region.y,
-                view_top,
                 body.scroll_y,
                 body.max_scroll_y,
             )
+
+
+def _heading(screen, text: str):
+    body = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+    return next(
+        child
+        for child in body.children
+        if child.has_class("destination-section") and str(child.renderable) == text
+    )
+
+
+def _in_view(screen, widget) -> bool:
+    view = screen.query_one(
+        "#settings-impact-pane-body", VerticalScroll
+    ).scrollable_content_region
+    return view.y <= widget.region.y and widget.region.bottom <= view.bottom
+
+
+def _view_starts_at_a_heading(screen) -> bool:
+    """The inspector shows its top, or a section heading on its first row."""
+    body = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+    if body.scroll_y == 0:
+        return True
+    top = body.scrollable_content_region.y
+    first = next(
+        child for child in body.children if child.display and child.region.bottom > top
+    )
+    return first.region.y == top and first.has_class("destination-section")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_focused_field_keeps_applies_to_and_next_new_chat_in_view(request):
+    """#3057 capture round 2, finding 2 (03, 04, 03b, 09b): at 211x44 a
+    focused field pinned its guide's first row to the inspector's top, so
+    "Applies to" and "Next new chat will use" scrolled away (only a wheel
+    brought them back) although all three fit. The inspector moves no
+    further than the guide needs, so they stay above it, headings included,
+    before and after an edit adds the "Edits apply only after save" note."""
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=SIZES[0]) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _settle(pilot)
+        screen = _active_destination_screen(host)
+        field = screen.query_one("#settings-model-profile-temperature", Input)
+        field.focus()
+        await _settle(pilot, 4)
+        for step in ("focus", "edit"):
+            route = f"Temperature {step}"
+            # Capture fix 2, finding 8: the edit pass must hold the note it
+            # is about, or it only repeats the focus pass.
+            note = screen.query_one("#settings-provider-next-chat-note")
+            assert note.display is (step == "edit"), route
+            _assert_rows_in_view(screen, "provider", route)
+            for title in (
+                "Applies to",
+                "Next new chat will use",
+                "Focused field guide",
+            ):
+                assert _in_view(screen, _heading(screen, title)), (route, title)
+            if step == "focus":
+                await pilot.press("0", ".", "4")
+                await _settle(pilot, 4)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_inspector_starts_at_a_heading_and_says_when_more_is_above(request):
+    """#3057 capture round 2, finding 1 (05a, 04, 08c, 09c): the inspector
+    kept its scroll offset while the rows above changed (a revert dropped a
+    row) or re-wrapped (a resize), so its top showed a section's tail, such
+    as "Focused setting: None" without "Focused field guide", and only "▼
+    more" was ever said. After a revert or a resize the view starts at its
+    top or at a heading, and the fold row says when there is more above."""
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+
+    app = _build_test_app()
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=SIZES[0]) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        await _settle(pilot)
+        screen = _active_destination_screen(host)
+        body = screen.query_one("#settings-impact-pane-body", VerticalScroll)
+        hint = screen.query_one("#settings-impact-overflow-hint", Static)
+
+        screen.query_one("#settings-model-profile-temperature", Input).focus()
+        await _settle(pilot, 4)
+        await pilot.press("0", ".", "4")
+        await _settle(pilot, 4)
+        screen.set_focus(None)
+        body.scroll_to(y=body.max_scroll_y // 2 + 1, animate=False)
+        await _settle(pilot, 4)
+        screen._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
+        await _settle(pilot, 6)
+        assert _view_starts_at_a_heading(screen), ("revert", body.scroll_y)
+
+        body.scroll_to(y=body.max_scroll_y // 2 + 1, animate=False)
+        await _settle(pilot, 4)
+        await pilot.resize_terminal(*SIZES[1])
+        await _settle(pilot, 6)
+        assert _view_starts_at_a_heading(screen), ("resize", body.scroll_y)
+
+        body.scroll_end(animate=False)
+        await _settle(pilot, 4)
+        assert body.scroll_y > 0
+        assert hint.display and str(hint.renderable).startswith("▲ more above")
+        body.scroll_home(animate=False)
+        await _settle(pilot, 4)
+        assert body.max_scroll_y > 0
+        assert hint.display and str(hint.renderable) == "▼ more — scroll the inspector"

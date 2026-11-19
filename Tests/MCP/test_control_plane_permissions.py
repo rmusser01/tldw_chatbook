@@ -242,9 +242,7 @@ def test_revoking_an_unheld_session_approval_reports_false(tmp_path):
     # "nothing to revoke here", not a silent success.
     assert service.revoke_session_approval("local:docs", "fetch") is False
     assert service.revoke_session_approval("local:docs", "search") is False
-    assert service.is_session_approved(
-        "local:docs", "search", profile_id="research"
-    )
+    assert service.is_session_approved("local:docs", "search", profile_id="research")
 
 
 def test_session_approval_revalidates_profile_digest_under_fence(tmp_path):

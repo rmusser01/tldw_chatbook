@@ -64,6 +64,7 @@ def _collect_one_item(content_type: ContentType):
 class TestChatbookCreator:
     """Test ChatbookCreator functionality."""
 
+    @pytest.mark.bootstrap_profile
     def test_init(self, mock_db_paths):
         """Test creator initialization."""
         creator = ChatbookCreator(mock_db_paths)
@@ -73,6 +74,7 @@ class TestChatbookCreator:
         assert len(creator.missing_dependencies) == 0
         assert len(creator.auto_included_characters) == 0
 
+    @pytest.mark.bootstrap_profile
     def test_create_empty_chatbook(self, chatbook_creator, temp_dir):
         """Test creating an empty chatbook."""
         output_path = temp_dir / "empty.zip"
@@ -97,6 +99,7 @@ class TestChatbookCreator:
             assert "manifest.json" in files
             assert "README.md" in files
 
+    @pytest.mark.bootstrap_profile
     def test_create_chatbook_with_conversations(
         self, chatbook_creator, temp_dir, mock_db_paths
     ):
@@ -120,6 +123,7 @@ class TestChatbookCreator:
             assert mock_collect.called
             assert mock_collect.call_args[0][0] == ["conv1", "conv2"]
 
+    @pytest.mark.bootstrap_profile
     def test_create_chatbook_with_all_content_types(self, chatbook_creator, temp_dir):
         """Test creating chatbook with all content types."""
         with (
@@ -168,6 +172,7 @@ class TestChatbookCreator:
 
             assert success is True
 
+    @pytest.mark.bootstrap_profile
     def test_create_chatbook_with_tags_and_categories(self, chatbook_creator, temp_dir):
         """Test creating chatbook with metadata."""
         output_path = temp_dir / "tagged.zip"
@@ -189,6 +194,7 @@ class TestChatbookCreator:
             assert manifest_data["tags"] == ["test", "unit", "chatbook"]
             assert manifest_data["categories"] == ["testing", "development"]
 
+    @pytest.mark.bootstrap_profile
     def test_create_chatbook_invalid_path(self, chatbook_creator):
         """Test creating chatbook with invalid output path."""
         invalid_path = Path("/invalid/path/that/does/not/exist/chatbook.zip")
@@ -203,6 +209,7 @@ class TestChatbookCreator:
         assert success is False
         assert "error" in message.lower()
 
+    @pytest.mark.bootstrap_profile
     def test_collect_conversations_with_character_dependency(
         self, chatbook_creator, temp_dir
     ):
@@ -245,6 +252,7 @@ class TestChatbookCreator:
                 or 123 in chatbook_creator.auto_included_characters
             )
 
+    @pytest.mark.bootstrap_profile
     def test_generate_unique_name_methods(self, chatbook_importer):
         """Test unique name generation for conflicts."""
         # These methods are now implemented to use actual DB checks
@@ -267,6 +275,7 @@ class TestChatbookCreator:
 class TestChatbookImporter:
     """Test ChatbookImporter functionality."""
 
+    @pytest.mark.bootstrap_profile
     def test_init(self, mock_db_paths):
         """Test importer initialization."""
         importer = ChatbookImporter(mock_db_paths)
@@ -275,6 +284,7 @@ class TestChatbookImporter:
         assert importer.temp_dir.exists()
         assert isinstance(importer.conflict_resolver, ConflictResolver)
 
+    @pytest.mark.bootstrap_profile
     def test_preview_valid_chatbook(self, chatbook_importer, sample_chatbook_zip):
         """Test previewing a valid chatbook."""
         manifest, error = chatbook_importer.preview_chatbook(sample_chatbook_zip)
@@ -284,6 +294,7 @@ class TestChatbookImporter:
         assert manifest.name == "Test Chatbook"
         assert manifest.version == ChatbookVersion.V1
 
+    @pytest.mark.bootstrap_profile
     def test_preview_invalid_file(self, chatbook_importer, temp_dir):
         """Test previewing an invalid file."""
         invalid_file = temp_dir / "not_a_zip.txt"
@@ -295,6 +306,7 @@ class TestChatbookImporter:
         assert error is not None
         assert "unsupported" in error.lower()
 
+    @pytest.mark.bootstrap_profile
     def test_preview_missing_manifest(self, chatbook_importer, temp_dir):
         """Test previewing ZIP without manifest."""
         bad_zip = temp_dir / "no_manifest.zip"
@@ -307,6 +319,7 @@ class TestChatbookImporter:
         assert error is not None
         assert "manifest" in error.lower()
 
+    @pytest.mark.bootstrap_profile
     def test_import_chatbook_all_content(self, chatbook_importer, sample_chatbook_zip):
         """Test importing all content from a chatbook."""
         with (
@@ -323,6 +336,7 @@ class TestChatbookImporter:
             assert mock_notes.called
             assert mock_chars.called
 
+    @pytest.mark.bootstrap_profile
     def test_import_with_conflict_resolution(
         self, chatbook_importer, sample_chatbook_zip
     ):
@@ -334,6 +348,7 @@ class TestChatbookImporter:
                     chatbook_path=sample_chatbook_zip, conflict_resolution=strategy
                 )
 
+    @pytest.mark.bootstrap_profile
     def test_import_selective_content(self, chatbook_importer, sample_chatbook_zip):
         """Test importing only selected content types."""
         with (
@@ -621,6 +636,7 @@ class TestErrorHandling:
 class TestCharacterDependencyTracking:
     """Test character dependency tracking."""
 
+    @pytest.mark.bootstrap_profile
     def test_track_missing_dependencies(self, chatbook_creator):
         """Test tracking missing character dependencies."""
         chatbook_creator._selected_characters = set()
@@ -638,6 +654,7 @@ class TestCharacterDependencyTracking:
         assert 123 in chatbook_creator.missing_dependencies
         assert 123 not in chatbook_creator.auto_included_characters
 
+    @pytest.mark.bootstrap_profile
     def test_auto_include_dependencies(self, chatbook_creator, temp_dir):
         """Test auto-including character dependencies."""
         mock_db = Mock()

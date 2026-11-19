@@ -1,0 +1,193 @@
+{
+  "new_tasks": [
+    {
+      "id": 36728,
+      "path": "backlog/tasks/task-36728 - Keep-inline-reminder-edits-independent-across-reminder-identities.md",
+      "priority": "medium"
+    },
+    {
+      "id": 36729,
+      "path": "backlog/tasks/task-36729 - Keep-Study-navigation-responsive-while-shell-Start-quiz-awaits-the-server.md",
+      "priority": "medium"
+    }
+  ],
+  "existing_owner": {
+    "id": "32802.1",
+    "path": "backlog/tasks/task-32802.1 - Replace-rich.markup.escape-with-the-repos-own-bracket-escaper-across-all-Textual-8-surfaces.md",
+    "status": "In Progress",
+    "priority": "high",
+    "action": "Added measured preview sink and audit link; no duplicate task."
+  },
+  "allocation": {
+    "utc": "2026-10-25T03:44:17.337252+00:00",
+    "unique_ref_oids": 312,
+    "tree_task_paths": 1383854,
+    "max_id": 36698,
+    "errors": []
+  },
+  "worktrees_swept": 52,
+  "frontmatter_claims": 5741,
+  "open_pr_screen": {
+    "open_prs": 29,
+    "changed_since_first_inventory": [
+      3244
+    ],
+    "candidate_owner_file_overlaps": []
+  },
+  "related_full_criteria": {
+    "1320": {
+      "path": "backlog/tasks/task-1320 - Move-screen-mount-IO-off-the-App-message-pump.md",
+      "sha256": "ac83184cb7bd9ebd6896cdd2c13cbc3e5b1a1a52dba184c0128f562c76061124",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Opening a destination whose backing service is unreachable leaves the app responsive to clicks, keys and further navigation throughout\n- [x] #2 `MCPWorkbench` mounts immediately and shows a loading state while its readiness data is fetched\n- [x] #3 A regression test proves the App pump keeps handling messages while a screen's mount work is in flight\n- [x] #4 Mount-path fetch failures surface in the destination as a recoverable error, not a silent empty view\n- [x] #5 An inventory records every `on_mount` that still awaits I/O, with each either converted or explicitly justified\n<!-- AC:END -->"
+    },
+    "1482": {
+      "path": "backlog/tasks/task-1482 - Bench-authoring-targets-probes-and-top-K-editable-with-Duplicate-and-Delete.md",
+      "sha256": "691eb8565229e9da946802b4e9a02c771cb0a544eea9af73ff3d5500386bdcc4",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A bench's targets can be added and removed from the bench editor (target picker over configured models)\n- [x] #2 Probes and top-K are editable on a bench\n- [x] #3 A bench can be created against any existing dataset (closing the imported-dataset dead end)\n- [x] #4 Duplicate and Delete exist for benches per the spec's inspector actions\n- [x] #5 The Probe and Δ baseline lenses are reachable with real data through UI-authored benches\n<!-- AC:END -->"
+    },
+    "1483": {
+      "path": "backlog/tasks/task-1483 - Cancel-affordance-for-in-flight-Evals-bench-runs.md",
+      "sha256": "6d9e364e1ea8d60de1cecfb6e42891de934a7b9c5c6fa18132b6197c87038758",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A visible Cancel affordance exists while a run is in flight\n- [x] #2 Cancelling preserves already-captured cells and the grid renders the partial run\n- [x] #3 The cancelled run group is labeled as cancelled in the rail and grid\n<!-- AC:END -->"
+    },
+    "15471": {
+      "path": "backlog/tasks/task-15471 - Event-loop-I-O-sundries---per-click-writes-and-lookups-off-the-loop.md",
+      "sha256": "4aa134434f5f3375bf3b4d852bf3a8ee9cc078a1e502b443fd33f804815d582a",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Each listed site is threaded, debounced, or deduped — or explicitly justified in the notes\n- [x] #2 Behavior unchanged across the touched surfaces (targeted tests where they exist)\n- [x] #3 Spot latency evidence recorded for the star toggle and file-picker typing\n<!-- AC:END -->"
+    },
+    "1870": {
+      "path": "backlog/tasks/task-1870 - Kept-briefings-sync-chatbook-export-coverage.md",
+      "sha256": "4e69d1baef1972cef094a6ade7ce0ed31da78c2fb318fa65767cee5b8c652c57",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A user's kept briefings and their kept scripts are included when the user exports a chatbook, OR a recorded decision explains why they are deliberately excluded — **arm taken: included.** New `ContentType.KEPT_BRIEFING`; `ChatbookCreator._collect_kept_briefings` walks selected kept briefings, nests each briefing's kept scripts inside its own JSON payload (scripts are not independently selectable), and also writes a companion human-readable Markdown file per briefing.\n- [x] #2 A user's kept briefings and their kept scripts participate in ChaChaNotes sync between devices, OR a recorded decision explains why they are deliberately excluded — **arm taken: excluded, deliberately.** Extends task-1780's original \"no sync columns\" v1 ruling; recorded in the follow-up decision block appended to the design spec (see AC #3).\n- [x] #3 Whatever is decided for #1 and #2 is written down (spec, ADR, or equivalent) so the next reader does not have to reverse-engineer it from the absence of code — dated \"Follow-up decision (2026-08-02, task-1870)\" block appended to `Docs/superpowers/specs/2026-08-01-kept-briefings-design.md` (history not rewritten); `Chatbooks/CHATBOOKS_GUIDE.md` updated with a \"Kept Briefings\" section (it already enumerated content types).\n<!-- AC:END -->"
+    },
+    "19559": {
+      "path": "backlog/tasks/task-19559 - exclusive=True without group= makes every worker on a node cancel its siblings.md",
+      "sha256": "e453b86a8f758d5afaee057a478da8606d3acc77256f2203f7c1da117553e506",
+      "acceptance_criteria": "- [x] A lint or test fails on `exclusive=True` scheduled without an explicit\n      `group=`, covering both `@work(...)` decorators and `run_worker(...)`\n      calls, including multi-line forms\n- [x] The guard has an explicit, documented allowlist mechanism for any site\n      that genuinely wants default-group mutual exclusion, so suppressing it is\n      a deliberate recorded choice rather than a silent one\n- [x] The four named user-visible instances are fixed: Study rating submission,\n      Media analysis generation, the four unfixed Watchlists section loaders,\n      and the Settings advanced-config backup load\n- [x] Fast consecutive flashcard ratings all persist — pinned by a test that\n      drives consecutive submissions, not by inspection\n- [x] The Settings advanced-config editor is never overwritten by a background\n      load while the user has unsaved typing in it\n- [x] Handlers in this family no longer rely on `except Exception:` to observe\n      cancellation, given `CancelledError` is a `BaseException`\n- [x] The remaining sites are triaged with the user-visible ones fixed and the\n      rest either grouped or allowlisted — the count is driven to a number the\n      guard can hold"
+    },
+    "197": {
+      "path": "backlog/tasks/task-197 - Bulk-export-of-prompts-via-the-chatbook-format.md",
+      "sha256": "414f9b21911c45f9d57ef0ded71657129f2690f13a93726574f0ff10404f41e5",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Chatbook prompt records preserve the portable content of every active current Prompt and Recipe: name, author, details, separate System and User lanes, canonical keywords, artifact type, prompt format, schema version, and stored definition.\n- [x] #2 Prompt records exclude local database identity and lifecycle state: row IDs, UUIDs, client IDs, optimistic/sync versions, source timestamp values, soft-deleted rows, source retained history, and collection memberships are not exported or restored; required v1 manifest timestamp slots remain null and import creates only ordinary destination-owned lifecycle state.\n- [x] #3 The Chatbook importer accepts both the new versioned lossless prompt record and the legacy single-`content` prompt payload; unknown record versions and invalid records fail closed without partially mutating that Prompt.\n- [x] #4 Library Export exposes a local-only Prompts scope from the Prompt list and includes Prompts in Everything; counts and selections come from fresh uncapped active-ID database queries rather than the rendered Prompt page.\n- [x] #5 A Prompt-scoped export uses the existing Library export canvas, destination, progress, cancellation, Retry, and overwrite behavior; a selected Prompt that disappears or cannot be represented aborts the archive rather than producing a silent partial success.\n- [x] #6 A Chatbook exported from a real source database imports into a fresh real database with portable Prompt and Recipe content unchanged, including multiline and Unicode lanes, literal markup-looking text, keywords, structured-v2 definitions, and compatibility-only stored definitions.\n- [x] #7 Automated database, codec, Chatbook, Library scope, service, and mounted Textual tests cover legacy compatibility, invalid versions, more than one browse page, deleted exclusion, Everything scope, server-mode refusal, stale/error paths, and narrow-toolbar geometry; user documentation explains the final bulk workflow and exclusions.\n<!-- AC:END -->"
+    },
+    "19734": {
+      "path": "backlog/tasks/task-19734 - Chatbook import wizard reports success and per-type ticks it did not earn.md",
+      "sha256": "24d7f2d9cff500dc6fdb9d9d9496d1efc8de66e735146686c98ee048e5643eaa",
+      "acceptance_criteria": "- [x] An import in which every item was skipped does not present itself as a\n      successful import — neither the banner, nor the per-type rows, nor the\n      caller-visible return value asserts that items were imported\n- [x] Each per-type completion row reflects that type's own **result count**,\n      not its manifest count: a type with zero successful items never shows an\n      \"✓ Imported …\" row, and a partially-failed type is distinguishable from a\n      fully-successful one\n- [x] The wizard's headline and its Imported / Skipped / Failed summary can\n      never contradict each other for any combination of imported, skipped and\n      failed counts (covered by tests over those combinations, including\n      all-skipped and mixed partial-failure)\n- [x] `preserve_timestamps` and `import_tags` are either implemented end-to-end\n      or their controls are removed — no control remains that the user can\n      toggle with no effect. Per the owner's standing ruling\n      (durable/pragmatic over clever), removing an inert control is preferred\n      over shipping a hurried implementation behind it; a disabled or\n      greyed-out control does not satisfy this, since it still reads as\n      \"handled\"\n- [x] The \"Merge with existing tags\" control either performs tag merging or is\n      relabelled/removed to match what it actually does; the item-renaming\n      behaviour currently hidden behind it is exposed under a label that names\n      it, or dropped\n- [x] Tests pin each of the above and are mutation-checked (restoring the old\n      wiring makes them red)"
+    },
+    "19861": {
+      "path": "backlog/tasks/task-19861 - Chatbook import conflict step tells every user there are no conflicts.md",
+      "sha256": "f0359320697f0e909df10b6b2765112b52687b0c13a77e9250cccda99ef8c555",
+      "acceptance_criteria": "- [x] The conflict step never claims that no conflicts were detected unless a\n      check actually ran and actually found none\n- [x] When the destination already contains items the chatbook would import,\n      the step either names them or says nothing — it does not assert that all\n      content is new\n- [x] No element in the step is rendered permanently-hidden with no code path\n      that can reveal it (either `#conflict-container` becomes reachable, or it\n      is removed)\n- [x] A test drives the step against a destination pre-loaded with every item\n      in the chatbook and asserts the \"no conflicts\" copy is absent, and is\n      mutation-checked (restoring the unconditional `Static` makes it red)\n- [x] A test drives the step against a genuinely empty destination and asserts\n      whatever the step now says is true of that case\n- [x] The user-facing documentation page for chatbook import matches whatever\n      the step now claims"
+    },
+    "19870": {
+      "path": "backlog/tasks/task-19870 - Mutation-workers-refresh-inline-instead-of-dispatching-into-the-loader-group.md",
+      "sha256": "b99cfee560d84ac357053b0062d1ffffb073781aa472ea9846198a87a46d3616",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A refresh triggered by a mutation worker is subject to the same worker\n      group as a refresh triggered directly by the user\n- [x] #2 Two refreshes that overlap — one from a mutation, one from a user action —\n      cannot interleave their writes to the same list\n- [x] #3 A test drives a mutation and a concurrent user refresh and asserts the\n      resulting list contents, and is mutation-checked (restoring the inline\n      `await` makes it red)\n- [x] #4 The schedules workbench, watchlists notification handlers, and watchlists\n      briefing generation/cast/audio handlers are covered\n- [x] #5 TASK-19559's worker-group guard is extended to notice an inline loader\n      call inside a worker body, or the reason it cannot is recorded\n<!-- AC:END -->"
+    },
+    "2834": {
+      "path": "backlog/tasks/task-2834 - Guard-against-blocking-IO-reachable-from-a-Textual-message-handler.md",
+      "sha256": "10ef193dd3f59d84216ef5178af4caddadf12c10950059a8f951445807a18161",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Opening the export folder from the Chatbook wizard cannot block the app, on any platform\n- [x] #2 A repo-wide test fails when a new blocking call becomes reachable from a message handler\n- [x] #3 The guard is proven to catch a known instance, not just to report a clean result\n- [x] #4 Pre-existing accepted paths are baselined individually with a stated reason, not silenced wholesale\n- [x] #5 The guard cannot be fooled by the same call name appearing in a comment or string\n<!-- AC:END -->"
+    },
+    "299": {
+      "path": "backlog/tasks/task-299 - Scheduling-module-screen-implementation.md",
+      "sha256": "25b657788a2a1989f177b893276816d8ed5d1d0729db068cb900aa6ab7a3132c",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 Existing schedules destination regressions and screenshot QA still pass after replacement\n- [ ] Reminders can be created/edited/deleted/triggered locally without a server connection\n- [ ] Server-connected reminders sync bidirectionally with tldw_server /api/v1/tasks\n- [ ] Automation definitions can be created/previewed/paused/resumed/archived locally\n- [x] #5 Watchlist jobs are visible in the workbench as read-only projections\n- [x] #6 Watchlist checks execute under the unified scheduler (Phase 5)\n<!-- AC:END -->"
+    },
+    "299.1": {
+      "path": "backlog/tasks/task-299.1 - Local-reminder-CRUD-and-triggering-without-server-connection.md",
+      "sha256": "62d0ef21df31275a2b335b25bd9dfa1d02939c5a9103de8e790ea9859d198d5c",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Reminders can be created from the workbench and persisted locally without a server connection\n- [ ] #2 Reminders can be edited and deleted from the workbench\n- [ ] #3 The scheduler polls for due reminders and dispatches a notification/triggers the reminder handler\n- [ ] #4 Local-only operations work when server reachability is 'unreachable'\n- [ ] #5 Existing watchlist projections continue to render alongside local reminders\n<!-- AC:END -->"
+    },
+    "31711": {
+      "path": "backlog/tasks/task-31711 - Schedules-timestamp-timezone-display-pass.md",
+      "sha256": "22514ac80a1c01a674c1cd8f30f8c366c80bca5255a0bf99cc48dad2e3e02b00",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A definition row's absolute next-run timestamp (when shown) carries an explicit timezone label (UTC or the zone it is actually in), never a bare `YYYY-MM-DD HH:MM`\n- [x] #2 A one-time reminder captures and persists a real timezone (the machine's detected zone, matching the recurring form's own default) instead of storing `None` and later displaying `UTC`\n- [x] #3 `Last pull:` / `Last push:` and the Conflicts view render a human-readable local timestamp, not a raw microsecond ISO-8601 string\n- [x] #4 The hard-coded example/placeholder date used across the schedules forms and detail panes is a date that is never in the past relative to \"today\", at all 12 known sites\n<!-- AC:END -->"
+    },
+    "31712": {
+      "path": "backlog/tasks/task-31712 - Schedules-form-detail-pane-polish.md",
+      "sha256": "fb4df7c49211ee4c1a9f133f1da83d554afa643c629906a7b453da7546268d9d",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 The reminder/definition Notifications row's editability (or permanent read-only-ness) is either made consistent between the two primitives, or the difference is explained in the row itself (a tooltip/helper line) rather than silently inconsistent\n- [x] #2 The recurring-question (\"Create automation\") form defaults `Schedule Kind` to `Recurring`, not `One Time`\n- [x] #3 Either the spec §5 kebab (or an equivalent Duplicate/View-runs/View-results affordance) is available from a detail pane, or the deferral is formally re-scoped as its own follow-up rather than left implicit (re-scoped to TASK-31823, per controller ruling)\n- [x] #4 A `DetailGroup`'s body no longer wastes multiple blank rows of padding when expanded at ordinary terminal heights\n- [x] #5 \"Recent runs:\"/\"Run history\" labels do not wrap across two lines at the detail pane's normal column width, and any pseudo-link value text either becomes a real affordance or reads as plain text\n- [x] #6 The Inspector pane's empty state is visually distinguishable from \"no task selected\" vs. \"task selected, nothing to report\"\n<!-- AC:END -->"
+    },
+    "32802.1": {
+      "path": "backlog/tasks/task-32802.1 - Replace-rich.markup.escape-with-the-repos-own-bracket-escaper-across-all-Textual-8-surfaces.md",
+      "sha256": "7e819a00966f1d77be9ab345866c2aa113034be518ccd50b1367fec02ab085fe",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A row or label whose title contains `[TODO]`, `[WIP]` or `[IMPORTANT]` renders that text verbatim\n- [ ] #2 The correct escaper is used at every site that currently calls `rich.markup.escape` for a Textual surface\n- [ ] #3 Pinning tests cover an uppercase-initial bracket, not only the lowercase tag the broken escape happens to handle\n<!-- AC:END -->"
+    },
+    "32802.5": {
+      "path": "backlog/tasks/task-32802.5 - Close-the-remaining-markup-defects-in-themes-folder-names-and-file-pickers.md",
+      "sha256": "f3a391c47dbb8ec7fc90af6ce48810574361793914f4225376f8651071a720f0",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 A theme whose name contains a markup tag can be opened, or is rejected at save time with a message\n- [ ] #2 The folder button preserves bracketed runs and compares unmangled values\n- [ ] #3 The confirmation gate reads state rather than a rendered label\n<!-- AC:END -->"
+    },
+    "32898": {
+      "path": "backlog/tasks/task-32898 - Work-stream-give-the-scope-service-scaffold-one-home.md",
+      "sha256": "c4a0b24f272ae643d9acd96f11046ff1d6aeb0191d97d0a06524bdd0f5e2d053",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 An ADR settles base location, dispatch predicate and fail-direction, mode type and default, and the runtime-import question\n- [ ] #2 The mode default is explicit per service, never inherited from the base\n- [ ] #3 Only after the ADR, one PR moves the six helpers to the agreed home\n- [ ] #4 A census row and guard exist, or the task records why the cluster does not warrant one\n<!-- AC:END -->"
+    },
+    "32903": {
+      "path": "backlog/tasks/task-32903 - Scope-corrections-to-eight-existing-tier-1-tasks.md",
+      "sha256": "4d70df51a9a8e464e1979fedca857faa1b4c3721c371319f8ef5206c28141e7a",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Each of the listed task files carries the correction in its own body\n- [ ] #2 TASK-32808.5 and TASK-32803.5 are re-opened or explicitly superseded\n- [ ] #3 TASK-32808.8's recommend-against is recorded with its evidence\n- [ ] #4 No new task duplicates work already owned by the corrected tasks\n<!-- AC:END -->"
+    },
+    "33283": {
+      "path": "backlog/tasks/task-33283 - PERF-24-Watchlists-and-Schedules---incremental-panes-DB-off-the-event-loop.md",
+      "sha256": "433661bbd1627398201290f0ab942de109e65cc7d6fe96e493464ba2e0233cc9",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 No Schedules interaction performs synchronous sqlite on the event loop\n- [ ] #2 SchedulingService async methods do their DB work off the loop\n- [ ] #3 Mark-all-read runs as a batched write\n- [ ] #4 Watchlists tree and panes update in place on count refresh and selection changes\n<!-- AC:END -->"
+    },
+    "33284": {
+      "path": "backlog/tasks/task-33284 - PERF-25-Other-screens---Evals-Change-Review-Speech-video-player-splash.md",
+      "sha256": "9f21b779a224b1e5821f169f6fbbce7ec345926deebc47c620b62ec10d17efbf",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Each listed screen's P0/P1 items in the appendix are fixed or re-verified and closed with evidence\n- [ ] #2 No listed interaction blocks the event loop for more than 50 ms on its probe\n<!-- AC:END -->"
+    },
+    "33289": {
+      "path": "backlog/tasks/task-33289 - PERF-30-Cold-feature-and-hygiene-sweep-P2-P3-across-TTS-Audio-Evals-Chunking-interop.md",
+      "sha256": "e0dddf53756dce2118f8c415f03295db3b231d17f26129c3b13679d390d14b3b",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 All unverified items in this group are re-verified (confirmed or closed as refuted)\n- [ ] #2 Confirmed P1 items are fixed; P2/P3 items are fixed or deferred with a recorded reason\n<!-- AC:END -->"
+    },
+    "34000.19": {
+      "path": "backlog/tasks/task-34000.19 - Library-export-bundles-keep-media-note-and-conversation-keywords-and-import-restores-them.md",
+      "sha256": "3e2643d8cb0f89acaf3f2991773335871471f2539d46406aa1824aa3f802880b",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 An exported bundle lists each media item's, note's and conversation's keywords in both the manifest tags and that item's own metadata, matching the source database.\n- [x] #2 Importing that bundle into a fresh profile restores the same keywords on each imported media item, note and conversation.\n- [x] #3 Before Export, the Export canvas's consequence line says that keywords are included. If any item type cannot carry them, the line names that type. (Sharpened 2026-10-22, P1-A plan: after this change every exported type -- media, notes, conversations, prompts, characters -- carries its keywords, so the second sentence is satisfied vacuously and is pinned by the per-type round-trip tests in AC#5, not by copy. The line reads \"text + keywords only\" for media-bearing scopes and \"text + keywords\" for every other scope.)\n- [x] #4 Items with no keywords export with an empty list and import cleanly, and a bundle made before this change still imports without error.\n- [x] #5 A creator→importer round-trip regression test per item type (media, note, conversation) that fails on current dev.\n- [x] #6 Verified live in an isolated profile: export at least two keyworded items of each type, unzip and read manifest.json and the per-item metadata, then re-import into a fresh profile and check that the keywords came back.\n- [x] #7 (Added 2026-10-22, fix round 1, before implementing: found while redoing AC#6 at the user's surface.) The Library's import route -- Artifacts ▸ Chatbooks ▸ \"Manage Chatbook packs…\" ▸ `i` -- opens the import wizard, the app stays up, and \"Browse for Chatbook\" hands the chosen file to the wizard; on 4f1a790c68 the app exited with `NoActiveWorker` (`push_screen(wizard, wait_for_dismiss=True)` from a plain action), and the browse step's identical push left the chosen file unselected (\"Error selecting file\"). Without both, the AC#6 import cannot be done through the wizard at all.\n<!-- AC:END -->"
+    },
+    "34000.67": {
+      "path": "backlog/tasks/task-34000.67 - Chatbooks-screen-keys-and-import-wizard-crash-run-twice-or-never-close.md",
+      "sha256": "3a1ff9cd861b5cd61d582bb0ca3a9e3de64b937eb017bba696371d652bf04c4a",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Every Chatbooks screen key and button that opens a dialog (create, templates, manage exports, export delete) opens it and survives its dismissal or cancel — no unhandled exception, pinned per entry\n- [ ] #2 One import run per wizard pass: the result screen reports the run the user started\n- [ ] #3 Close on the result screen dismisses the wizard and the screen shows its success toast and refreshed list\n- [ ] #4 The Chatbooks screen paints its content and accepts its keys on arrival, without a click\n- [ ] #5 \"Browse for Chatbook\" is visible and clickable at 80x24 and 160x45\n- [ ] #6 The \"[Imported]\" title prefix is an explicit, visible choice with the default stated in the guide\n<!-- AC:END -->"
+    },
+    "34752": {
+      "path": "backlog/tasks/task-34752 - Study-quizzes-one-writer-for-the-question-list.md",
+      "sha256": "2722d171a0692f17439da89e99eb3296a4c29258d6a61a2fe8fc5c1d60b175a7",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 Two overlapping question-list rebuilds leave exactly one row per question, in order, and current_quiz_questions matches the rows\n- [ ] #2 A question-list rebuild still in flight when the Quizzes view is torn down (or the app shuts down) stops without writing, and no caller writes the attempt panel after it\n- [ ] #3 A regression test fails on origin/dev for the stated reason and passes with the fix\n<!-- AC:END -->"
+    },
+    "34755": {
+      "path": "backlog/tasks/task-34755 - Study-the-Deck-created.-status-is-always-replaced-by-No-cards-due-for-review..md",
+      "sha256": "278cbd12efd0fdf6fef3823bb405905a1863260d56020b9c2065eb0bb5223509",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [ ] #1 After creating a deck, the review status reads that the deck was created (with its name, literally) once the deck switch settles\n- [ ] #2 A later deck switch, refresh or view change does not resurrect a stale 'created' message\n- [ ] #3 A test asserts the settled status after Create Deck\n- [ ] #4 A card-list rebuild or create action that outlived its Flashcards panel writes no status, current_cards or lifecycle state to the panel composed in its place\n<!-- AC:END -->"
+    },
+    "35866": {
+      "path": "backlog/tasks/task-35866 - Keep-later-Results-actions-from-cancelling-an-admitted-review-batch.md",
+      "sha256": "bd480e841436eba8ecb13c565c3d061cc1e4240f0f931648c1cd0d3caffc9f26",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 With the first review read/write held, a later Read, Dismiss or Mark solved gesture cannot silently cancel an admitted Mark all read batch.\n- [x] #2 Overlapping gestures are explicitly refused while busy or safely serialized; accepted actions retain their intended result IDs and scope and publish truthful success/failure counts.\n- [x] #3 Per-row failures remain visible and retryable; ordinary single-row Read/Dismiss, Mark solved eligibility and global/per-definition bulk scopes keep their behavior.\n- [x] #4 Existing local/server owner checks and review-plus-outbox transaction semantics are preserved without a bulk schema primitive or new sync/conflict policy.\n- [x] #5 Deterministic actual-keyboard/private-profile SQLite tests cover a-then-d overlap, related action overlap, physical settlement and ordinary/failure controls.\n<!-- AC:END -->"
+    },
+    "36036": {
+      "path": "backlog/tasks/task-36036 - Keep-admitted-Schedules-reminder-bulk-actions-and-newer-marks-intact.md",
+      "sha256": "0ac093f89bb762e8ec31ca6c838acefe85a78660aff64daadbe598e48a00fbe7",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 While a server-owned reminder batch is held at its first request, later bulk enable/disable or confirmed deletion cannot silently cancel or replace the admitted batch; overlap has clear refusal or safe serialization behavior.\n- [x] #2 Every accepted batch retains its captured reminder IDs, owners and intended operation, and reports truthful per-row success/refusal/failure outcomes without claiming that an interrupted await cancelled a remote side effect.\n- [x] #3 Completion cannot erase selection changes made after admission; newer marks remain available, or selection-changing gestures are clearly refused while the batch is pending.\n- [x] #4 Deterministic mounted keyboard/confirmation tests with the existing private-profile and real SQLite services cover toggle/delete overlap, newer marks, ordinary completion and refusal/failure controls while preserving existing local/server and transfer guards.\n<!-- AC:END -->"
+    },
+    "36099": {
+      "path": "backlog/tasks/task-36099 - Keep-newer-Study-quiz-drafts-when-earlier-creates-complete.md",
+      "sha256": "0fff6daf7f24266d9159503cdcd3b45602bf6f2a7f6b79b01e75aef405b421f2",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A quiz create completing after newer name or description edits preserves those exact raw values without implicitly persisting them.\n- [x] #2 A question create completing after newer edits to the question text or correct answer preserves those values and their active editing context.\n- [x] #3 Successful unchanged submissions still persist once and clear their submitted form normally; failed creates preserve current drafts and permit retry.\n- [x] #4 Bounded mounted regressions drive both existing create handlers through controlled awaits and verify live fields separately from actual stored records. TASK-34752 question-list ownership remains independently scoped.\n<!-- AC:END -->"
+    },
+    "36132": {
+      "path": "backlog/tasks/task-36132 - Preserve-newer-Flashcards-drafts-when-earlier-creates-complete.md",
+      "sha256": "f1f73904b47b342f4e2b0f03fd05ea92fc86741cd86aa8f6e8327e8871f8a813",
+      "acceptance_criteria": "<!-- AC:BEGIN -->\n- [x] #1 A successful pending deck create persists only its submitted deck name and preserves any exact newer raw name still in the current authoring field, including a whitespace-only edit.\n- [x] #2 A successful pending flashcard create persists only its submitted front, back and parsed tags; independent or combined newer raw edits to any of those fields remain in the form. Completion preserves current editing context, including caret/selection and focus, without stealing focus deliberately moved elsewhere.\n- [x] #3 Unchanged fields clear after one successful creation; a definite failed create preserves current drafts and remains retryable under the existing service contract. Uncertain-write retry/idempotency policy is outside this task.\n- [x] #4 Bounded mounted regressions use the existing create events/workers, controlled service awaits and real StudyScopeService/LocalStudyService with SQLite; live drafts are asserted separately from stored records and unchanged-success/failure-retry controls pass.\n<!-- AC:END -->"
+    }
+  },
+  "final_remote_id_check": {
+    "remote_oids_checked": 226,
+    "new_task_id_collisions": []
+  }
+}

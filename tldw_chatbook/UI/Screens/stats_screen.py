@@ -524,9 +524,7 @@ class StatsScreen(BaseAppScreen):
                     for char in top_chars[:3]
                 )
 
-            parent.mount(
-                Container(*children, classes="character-stats-container")
-            )
+            parent.mount(Container(*children, classes="character-stats-container"))
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""

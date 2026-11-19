@@ -1,0 +1,16 @@
+{
+  "88af9f937908b46e8c5f9f7fddd9e8748c917d46": [
+    "tldw_chatbook/Widgets/Console/console_goal_setup_modal.py:ConsoleGoalSetupModal.action_cancel",
+    "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py:ConsoleHooksReviewModal._perform_safe_cancel",
+    "tldw_chatbook/Widgets/Console/response_rules_modal.py:ResponseRulesModal._perform_safe_cancel",
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py:PortraitCompositionReview.action_close",
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py:PortraitRegionEditor.action_cancel"
+  ],
+  "b1108874cab28d23f660aa22c11c863466a84a8e": [
+    "tldw_chatbook/Widgets/Console/console_goal_setup_modal.py:ConsoleGoalSetupModal.action_cancel",
+    "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py:ConsoleHooksReviewModal._perform_safe_cancel",
+    "tldw_chatbook/Widgets/Console/response_rules_modal.py:ResponseRulesModal._perform_safe_cancel",
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py:PortraitCompositionReview.action_close",
+    "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py:PortraitRegionEditor.action_cancel"
+  ]
+}

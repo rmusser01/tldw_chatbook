@@ -373,6 +373,68 @@ out below.
 | Runner-minutes per day for the changed workflows (GGUF ×2, guards ×2, nightly) | ~1,100 | ≥ 80% lower |
 | Fast-lane failures carrying the `text-area--gutter` error | 16 of 37 failed jobs | 0 |
 
+### Results (measured 2026-10-11, TASK-33160)
+
+Window: 2026-09-28T02:00:55Z (#2866 merged) to 2026-10-11T00:00Z, 12.92 days, 5,807 workflow
+runs. Method and caveats are in TASK-33160's notes.
+
+**Attributable to this sub-project:**
+
+| Measure | Baseline | Target | Result | |
+|---|---|---|---|---|
+| Sync merges with any conflict | 50% (281 of 558, final meter) | ≤ 25% | **12%** (9 of 70) | met |
+| Runner-minutes per day, changed workflows | ~1,100 | ≥ 80% lower | **334** (70% lower) | missed on 10-11; accepted on 10-18 (below) |
+| Fast-lane failures carrying `text-area--gutter` | 16 of 37 failed jobs | 0 | **0** of 381 failed jobs | met |
+
+- **The runner-minutes miss is all GGUF evidence.** The nightly and the two guards are at zero.
+  The two GGUF workflows still used 4,310 minutes in 337 `pull_request` runs (GGUF source 3,903,
+  GGUF import 407), against about 450 a day before: 26% lower, not the cut the narrowing was
+  meant to give. They still trigger on `pyproject.toml`, `Tests/conftest.py` and
+  `Tests/UI/conftest.py` (source also on `Tests/UI/app_factory.py` and
+  `Tests/private_profile.py`), and each run starts three OS jobs.
+- **Sync merges are now rare.** The rule since 2026-09-28 is to rebase, which leaves no merge
+  commit, so the meter saw 70 sync merges where the baseline window had 558.
+
+**Runner-minutes re-measured 2026-10-18: 250 a day, 77% lower; accepted by the owner.** #3072
+dropped `Tests/UI/app_factory.py` and `Tests/private_profile.py` from GGUF source's triggers (merged
+2026-10-11T17:19:20Z). Over the 7 days after it, the changed workflows used 1,748 minutes: GGUF
+source 1,484 (83 runs), GGUF import 264 (61 runs), the nightly 0, and the two guards are deleted.
+Rounding each job up to a whole minute gives 282 a day (74% lower).
+
+| GGUF minutes fired only by | PRs | Minutes | Per day (rounded) |
+|---|---|---|---|
+| `Tests/conftest.py` | #3083 #3087 #3121 #3080 #2862 | 817 | 117 |
+| `pyproject.toml` | #3084 #3127 #3138 | 487 | 70 |
+| both of those | #3096 | 88 | 13 |
+| a GGUF path of its own, or a dispatch | #3023 #3099 #3148, 2 dispatches | 356 | 51 |
+
+`pyproject.toml` and both conftests were restored on #2860 at review, and the owner confirmed
+keeping them on 2026-10-11: the GGUF jobs give the only macOS and Windows evidence for those
+changes. Dropping the root conftest would have given about 88% lower, and dropping all three about 95%. The
+remaining gap to 80% is 30 minutes a day, less than the swing between weeks: the 10-11 replay
+predicted 202 a day, and this week two large PRs touched the root conftest.
+
+**Throughput (not attributable to this sub-project alone):**
+
+| Measure | Baseline (09-19..26) | After (09-28..10-10) |
+|---|---|---|
+| PRs merged into `dev` per day | 13.9 (111 in 8 days) | 13.8 (180 in 13 days) |
+| Ready to merged, median / p90 | 1.8 h / 38.3 h | 11.6 h / 70.9 h |
+| Required check, push to verdict, p50 / p90 | not measured | 36.1 / 123.2 min |
+| of which queue (no job of the run on a runner) | not measured | 14.3 / 102.1 min |
+| of which run (some job of the run on a runner) | not measured | 20.9 / 27.1 min |
+| Re-sync runs per merged PR, median (last 80 merged) | 2.0 (2026-10-03) | 2.0 |
+| Open PRs into `dev` that conflict | 4 of 34 (2026-09-27) | 15 of 25 (2026-10-11) |
+
+- **Throughput did not improve.** Merges per day are flat and ready-to-merged is about six times
+  longer. The baseline ran under `strict=false`; strict protection and required conversation
+  resolution came back on 2026-09-27, so the two periods are not like for like.
+- **Queue time fell after 2026-10-05.** From 10-06 the daily push-to-verdict p50 is 27 to 32
+  minutes and the p90 31 to 47, close to pure run time. `tldw_server`'s shard cap merged on
+  10-04 and both repos were quieter that week, so the cause is not separated.
+- **The merge queue is not in these numbers.** It was switched on on 2026-10-10.
+- **The DIRTY share is one sample.** Nobody sampled it daily, so there is no series.
+
 ## Risks
 
 - **A clean-but-wrong inventory merge lands on `dev`.** Strict protection prevents that: the

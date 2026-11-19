@@ -107,7 +107,9 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
         # button(s) off past the row's own bounds -- mirrors
         # ``_frame_console_region``'s own inline-Python-styles-over-CSS
         # discipline for exactly this reason.
-        label_widget.remove_class(*(name for name in label_widget.classes if name.startswith("w-")))
+        label_widget.remove_class(
+            *(name for name in label_widget.classes if name.startswith("w-"))
+        )
         label_widget.set_styles(width=None)
         label_widget.add_class("w-fill")
         label_widget.styles.min_width = 0
@@ -124,7 +126,9 @@ class ConsoleRetrievalScopeRow(RecomposeCaptureGuard, Horizontal):
         yield label_widget
         if self.state.is_scoped:
             yield self._action_button(
-                EDIT_LABEL, EDIT_BTN_ID, f"console-retrieval-scope-action {OPEN_BUTTON_CLASS}"
+                EDIT_LABEL,
+                EDIT_BTN_ID,
+                f"console-retrieval-scope-action {OPEN_BUTTON_CLASS}",
             )
             yield self._action_button(
                 CLEAR_LABEL,

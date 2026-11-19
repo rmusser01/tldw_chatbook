@@ -179,7 +179,15 @@ class _LibraryDatabaseNoteSessionPort:
         return reply
 
     async def _signal_lasting_sync(self, note_id: str) -> None:
-        """Hint the app-owned sync runtime without ever failing the save."""
+        """Hint the app-owned sync runtime without ever failing the save.
+
+        A save never waits for the pass a previous save hinted: wave 1a's
+        bounded wait (final review I1) was removed by TASK-34000.51, whose
+        runtime settles a pass fenced only because the note moved on and
+        re-plans it. That wait joined every folder's in-flight work, so a
+        save, a note switch, Back and a rail switch could stall on another
+        folder's pass; nothing on the save path joins the runtime now.
+        """
         accessor = self._notes_sync_runtime
         if not callable(accessor):
             return

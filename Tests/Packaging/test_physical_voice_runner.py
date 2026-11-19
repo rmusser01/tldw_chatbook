@@ -43,6 +43,7 @@ from tldw_chatbook.Audio.duplex_contracts import (
     AcousticSafetyPath,
     AcousticSafetySnapshot,
     AecHealth,
+    AudioFrame,
     DuplexMode,
     NearEndDisposition,
 )
@@ -285,18 +286,29 @@ def test_reference_loader_rejects_path_swap_after_descriptor_open(
     original_open = os.open
     swapped = False
 
-    def swap_after_open(path: object, flags: int, *args: object) -> int:
+    def swap_after_open(
+        path: str | os.PathLike[str],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
         nonlocal swapped
-        descriptor = original_open(path, flags, *args)  # type: ignore[arg-type]
-        if Path(path) == copied_asset and not swapped:  # type: ignore[arg-type]
-            os.replace(replacement, copied_asset)
+        descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
+        if Path(path) == copied_asset and not swapped:
+            try:
+                os.replace(replacement, copied_asset)
+            except OSError:
+                os.close(descriptor)
+                raise
             swapped = True
         return descriptor
 
-    monkeypatch.setattr(physical_voice_runner.os, "open", swap_after_open)
-
-    with pytest.raises(PhysicalVoiceRunnerError, match="reference"):
-        load_physical_reference(copied_asset, copied_manifest)
+    with monkeypatch.context() as scoped:
+        runner_os = SimpleNamespace(**(vars(os) | {"open": swap_after_open}))
+        scoped.setattr(physical_voice_runner, "os", runner_os)
+        with pytest.raises(PhysicalVoiceRunnerError, match="reference"):
+            load_physical_reference(copied_asset, copied_manifest)
     assert swapped is True
 
 
@@ -1081,10 +1093,12 @@ async def _noop_prompt(_message: str) -> None:
 
 
 class _LiveHarness:
-    def __init__(self, *, aec: object) -> None:
+    def __init__(self, *, aec: object, render_capacity: int = 3) -> None:
         self.clock = ManualClock(now_ns=5_000_000_000)
         self.backend = FakeDuplexBackend(scripted_capture=self.capture_from_render)
         self.aec = aec
+        # The default fake has a 20 ms ADC-to-DAC lag plus a 10 ms frame.
+        self.render_capacity = render_capacity
         self.route = _target_route()
         self.prompts: list[str] = []
         self.notices: list[str] = []
@@ -1099,7 +1113,7 @@ class _LiveHarness:
             backend=self.backend,
             clock=self.clock,
             capture_capacity=8,
-            render_capacity=2,
+            render_capacity=self.render_capacity,
         )
 
     def capture_from_render(self, delayed_render: bytes, index: int) -> bytes:
@@ -1224,7 +1238,16 @@ def test_runner_uses_backpressure_and_returns_content_free_measured_observations
     assert observations["reference_overflows"] == 0
     assert observations["control_overflows"] == 0
     assert observations["post_fence_callbacks"] == 0
-    assert observations["safety_path"] == "acoustic-isolation"
+    assert observations["isolation_warmup_duration_ms"] > 0
+    assert observations["demotion_reason_counts"]["inaudible-render"] > 0
+    assert observations["aec_processor_operational"] is True
+    assert observations["playback_speech_admission_closed"] is True
+    assert observations["safety_path"] == "half-duplex", (
+        observations["aec_health_path"],
+        observations["aec_processor_operational"],
+        observations["demotion_reason_counts"],
+        observations["operator_checklist"],
+    )
     assert observations["correlation_samples"]
     assert observations["leakage_db_samples"]
     assert observations["double_talk_trials"] == 1
@@ -1401,9 +1424,17 @@ def test_runner_measures_healthy_aec_path_from_processed_frames() -> None:
     harness = _LiveHarness(aec=_HealthyAec())
     harness.force_echo = True
 
-    observations = asyncio.run(_runner(harness).run())
+    # Keep the final route calibration within the reference's audible lead-in.
+    config = replace(_short_config(), route_round_trips=1)
+    observations = asyncio.run(_runner(harness, config=config).run())
 
-    assert observations["safety_path"] == "aec"
+    assert observations["safety_path"] == "aec", (
+        observations["aec_health_path"],
+        observations["aec_processor_operational"],
+        observations["demotion_reason_counts"],
+        observations["operator_checklist"],
+        observations["stop_latency_samples_ms"],
+    )
     assert observations["aec_health_path"] == "healthy"
     assert observations["aec_processor_operational"] is True
     assert observations["erle_samples_db"]
@@ -1412,6 +1443,34 @@ def test_runner_measures_healthy_aec_path_from_processed_frames() -> None:
     assert observations["stop_latency_samples_ms"] == [70.0]
     assert observations["manual_interruption_available"] is True
     assert observations["unsuppressed_interruption_observed"] is False
+
+
+def test_interruption_requires_capture_during_confirmed_playback() -> None:
+    runner = PhysicalVoiceTrialRunner(device_class="usb")
+    runner._enter_phase("interruption")
+    idle = AudioFrame(1, 0, FRAME_DURATION_NS, SILENCE, assistant_rendering=False)
+    unknown = AudioFrame(2, FRAME_DURATION_NS, 2 * FRAME_DURATION_NS, SILENCE)
+    overlap = AudioFrame(
+        4,
+        3 * FRAME_DURATION_NS,
+        4 * FRAME_DURATION_NS,
+        SILENCE,
+        assistant_rendering=True,
+    )
+    ambiguous = replace(
+        overlap,
+        sequence=3,
+        started_ns=2 * FRAME_DURATION_NS,
+        ended_ns=3 * FRAME_DURATION_NS,
+        discontinuity=True,
+    )
+
+    runner._on_admitted_frame(idle)
+    runner._on_admitted_frame(unknown)
+    runner._on_admitted_frame(ambiguous)
+    assert runner._first_admitted_ns is None
+    runner._on_admitted_frame(overlap)
+    assert runner._first_admitted_ns == overlap.started_ns
 
 
 def test_runner_aborts_before_repeated_trials_when_speech_calibration_is_silent() -> (
@@ -1522,7 +1581,7 @@ def test_runner_keeps_playback_continuous_across_double_talk_windows() -> None:
                 backend=harness.backend,
                 clock=harness.clock,
                 capture_capacity=8,
-                render_capacity=2,
+                render_capacity=harness.render_capacity,
             )
 
         async def abort_output(self) -> None:
@@ -1714,7 +1773,7 @@ def test_automated_interruption_flow_stops_after_first_failed_sample() -> None:
                 backend=harness.backend,
                 clock=harness.clock,
                 capture_capacity=8,
-                render_capacity=2,
+                render_capacity=harness.render_capacity,
             )
             self.abort_calls = 0
 
@@ -1764,22 +1823,50 @@ def test_automated_interruption_flow_stops_after_first_failed_sample() -> None:
     assert report["trials"]["interruption"]["trials"] == 1
 
 
+def _inject_calibration_prompt_fault(
+    runner: PhysicalVoiceTrialRunner,
+    harness: _LiveHarness,
+    aec: _PromptFailureThenHealthyAec | _PromptErleFailureThenHealthyAec,
+) -> None:
+    async def fail_prompt_metrics(message: str) -> None:
+        await harness.prompt(message)
+        if not message.startswith("Double-talk calibration"):
+            return
+        before = runner._last_processed_capture
+        for _ in range(16):
+            await asyncio.sleep(0)
+            capture = runner._last_processed_capture
+            if (
+                capture is not None
+                and capture is not before
+                and capture.assistant_rendering is False
+                and runner._capture_processing_ok
+            ):
+                break
+        else:
+            pytest.fail("The calibration prompt never processed a new idle capture")
+
+        expected_reads = aec.failure_reads + 2
+        aec.fail_metrics = True
+        try:
+            for _ in range(16):
+                await asyncio.sleep(0)
+                if aec.failure_reads == expected_reads:
+                    break
+            else:
+                pytest.fail("The calibration prompt did not read both metric faults")
+        finally:
+            aec.fail_metrics = False
+
+    runner.prompt = fail_prompt_metrics
+
+
 def test_prompt_time_native_failure_is_latched_after_healthy_recovery() -> None:
     aec = _PromptFailureThenHealthyAec()
     harness = _LiveHarness(aec=aec)
     harness.force_echo = True
     runner = _runner(harness)
-
-    async def fail_one_prompt_capture(message: str) -> None:
-        await harness.prompt(message)
-        if not message.startswith("Double-talk calibration"):
-            return
-        aec.fail_metrics = True
-        while aec.failure_reads < 2:
-            await asyncio.sleep(0)
-        aec.fail_metrics = False
-
-    runner.prompt = fail_one_prompt_capture
+    _inject_calibration_prompt_fault(runner, harness, aec)
 
     observations = asyncio.run(runner.run())
 
@@ -1858,17 +1945,7 @@ def test_prompt_time_out_of_range_erle_failure_is_latched_after_recovery() -> No
     harness = _LiveHarness(aec=aec)
     harness.force_echo = True
     runner = _runner(harness)
-
-    async def fail_one_prompt_capture(message: str) -> None:
-        await harness.prompt(message)
-        if not message.startswith("Double-talk calibration"):
-            return
-        aec.fail_metrics = True
-        while aec.failure_reads < 2:
-            await asyncio.sleep(0)
-        aec.fail_metrics = False
-
-    runner.prompt = fail_one_prompt_capture
+    _inject_calibration_prompt_fault(runner, harness, aec)
 
     observations = asyncio.run(runner.run())
 
@@ -2015,7 +2092,8 @@ def test_invalid_final_aec_metrics_return_valid_fail_observations(
 
 
 def test_safe_half_duplex_measures_manual_stop_without_acoustic_failure() -> None:
-    harness = _LiveHarness(aec=None)
+    # This fake's 220 ms ADC-to-DAC lag needs 23 ten-millisecond slots.
+    harness = _LiveHarness(aec=None, render_capacity=23)
     runner = _runner(harness)
 
     async def high_output_latency_wait(_seconds: float) -> None:
@@ -2080,7 +2158,7 @@ def test_manual_interruption_fallback_stays_latched_if_path_reopens() -> None:
 
 
 def test_interruption_prompt_retries_once_then_latches_manual_protocol() -> None:
-    harness = _LiveHarness(aec=_UnavailableAec())
+    harness = _LiveHarness(aec=_HealthyAec())
     runner = _runner(harness)
 
     async def flap_protocol_during_prompt(message: str) -> None:
@@ -2184,7 +2262,7 @@ def test_abort_failure_returns_valid_failing_manual_stop_evidence() -> None:
                 backend=harness.backend,
                 clock=harness.clock,
                 capture_capacity=8,
-                render_capacity=2,
+                render_capacity=harness.render_capacity,
             )
             self.abort_calls = 0
 
@@ -2205,10 +2283,12 @@ def test_abort_failure_returns_valid_failing_manual_stop_evidence() -> None:
     assert _safe_half_report_with_runner_interruption(observations)["passed"] is False
 
 
-def test_manual_stop_uses_first_callback_boundary_after_abort() -> None:
+def _measure_first_silence_boundary(
+    transport_type: type[DuplexAudioTransport],
+) -> float | None:
     clock = ManualClock()
     backend = FakeDuplexBackend()
-    transport = DuplexAudioTransport(backend=backend, clock=clock)
+    transport = transport_type(backend=backend, clock=clock)
     runner = PhysicalVoiceTrialRunner(device_class="usb", clock=clock)
 
     class PassivePreprocessor:
@@ -2243,7 +2323,71 @@ def test_manual_stop_uses_first_callback_boundary_after_abort() -> None:
         await transport.close()
         return result
 
-    assert asyncio.run(measure()) == 20.0
+    return asyncio.run(measure())
+
+
+def test_manual_stop_uses_first_callback_boundary_after_abort() -> None:
+    assert _measure_first_silence_boundary(DuplexAudioTransport) == 20.0
+
+
+def test_manual_stop_can_match_a_reference_materialized_by_capture_pop() -> None:
+    class ReferenceOnCaptureTransport(DuplexAudioTransport):
+        visible_references = 0
+
+        @property
+        def buffer_occupancy(self):
+            return replace(
+                super().buffer_occupancy,
+                render_reference_frames=self.visible_references,
+            )
+
+        def pop_capture(self):
+            frame = super().pop_capture()
+            if frame is not None:
+                self.visible_references += 1
+            return frame
+
+        def pop_render_reference(self):
+            if not self.visible_references:
+                return None
+            reference = super().pop_render_reference()
+            if reference is not None:
+                self.visible_references -= 1
+            return reference
+
+        def pop_paired_render_reference(self, capture):
+            if not self.visible_references:
+                return None
+            reference = super().pop_paired_render_reference(capture)
+            if reference is not None:
+                self.visible_references -= 1
+            return reference
+
+    assert _measure_first_silence_boundary(ReferenceOnCaptureTransport) == 20.0
+
+
+def test_stop_reference_lookup_leaves_a_future_pair_in_order() -> None:
+    clock = ManualClock()
+    backend = FakeDuplexBackend()
+    transport = DuplexAudioTransport(backend=backend, clock=clock)
+
+    async def check() -> None:
+        await transport.start()
+        try:
+            backend.stream.emit_capture(SILENCE)
+            clock.advance(FRAME_DURATION_NS)
+            backend.stream.emit_capture(SILENCE)
+            capture = transport.pop_capture()
+            assert capture is not None
+            first = transport.pop_render_reference()
+            assert first is not None and first.sequence == capture.render_reference_sequence
+            assert transport.pop_paired_render_reference(capture) is None
+            following = transport.pop_render_reference()
+            assert following is not None and following.sequence == first.sequence + 1
+        finally:
+            await transport.close()
+
+    asyncio.run(check())
 
 
 def test_manual_stop_advances_baseline_across_queued_preabort_callback() -> None:
@@ -2337,6 +2481,45 @@ def test_manual_stop_rejects_discontinuous_callback_timing() -> None:
 
     assert asyncio.run(measure()) is None
     assert runner._manual_interruption_available is False
+
+
+def test_manual_stop_rejects_zero_submitted_after_abort() -> None:
+    clock = ManualClock()
+    backend = FakeDuplexBackend()
+    transport = DuplexAudioTransport(backend=backend, clock=clock)
+    runner = PhysicalVoiceTrialRunner(device_class="usb", clock=clock)
+
+    class PassivePreprocessor:
+        safety = SimpleNamespace(path=AcousticSafetyPath.HALF_DUPLEX, demotion_reason=None)
+
+        async def process_capture(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    async def submitted_zero(_seconds: float) -> None:
+        clock.advance(FRAME_DURATION_NS)
+        assert transport.queue_render(SILENCE) is not None
+        backend.stream.emit_capture(SILENCE)
+
+    runner._transport = transport
+    runner._preprocessor = PassivePreprocessor()  # type: ignore[assignment]
+    runner.wait = submitted_zero
+
+    async def measure() -> float | None:
+        await transport.start()
+        try:
+            backend.stream.emit_capture(SILENCE)
+            await runner._process_available(rendering=True, measure=False)
+            assert runner._last_processed_capture is not None
+            return await runner._abort_and_measure_silence_boundary(
+                trigger_ns=clock(),
+                last_reference_sequence=runner._last_processed_capture.render_reference_sequence,
+            )
+        finally:
+            await transport.close()
+
+    assert asyncio.run(measure()) is None
+    assert runner._last_processed_capture.committed_render is not None
+    assert not runner._manual_interruption_available
 
 
 def test_route_fences_discard_prior_generation_acoustic_samples() -> None:

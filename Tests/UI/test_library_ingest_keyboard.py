@@ -61,9 +61,7 @@ def _plain_rows(widget) -> list[str]:
     test here.
     """
     width, height = widget.size.width, widget.size.height
-    return [
-        strip.text for strip in widget.render_lines(Region(0, 0, width, height))
-    ]
+    return [strip.text for strip in widget.render_lines(Region(0, 0, width, height))]
 
 
 async def _enter_ingest_mode(screen, pilot):
@@ -77,6 +75,7 @@ async def _enter_ingest_mode(screen, pilot):
 # --- AC#1: entry focus -------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_entering_ingest_mode_focuses_the_path_field_and_typing_edits_it():
     """MI-03: pressing ``i`` on the landing lands the caret in the path
@@ -92,9 +91,7 @@ async def test_entering_ingest_mode_focuses_the_path_field_and_typing_edits_it()
         await _wait_for_library_shell(screen, pilot)
 
         await pilot.press("i")
-        path_input = await _wait_for_selector(
-            screen, pilot, "#library-ingest-path"
-        )
+        path_input = await _wait_for_selector(screen, pilot, "#library-ingest-path")
         await _wait_for_condition(
             pilot,
             lambda: path_input.has_focus,
@@ -107,6 +104,7 @@ async def test_entering_ingest_mode_focuses_the_path_field_and_typing_edits_it()
         assert screen.query_one("#library-search-input", Input).value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_rail_row_entry_into_ingest_focuses_the_path_field_too():
     """MI-03: the rail-row/seam route (every in-app route into Ingest
@@ -128,6 +126,7 @@ async def test_rail_row_entry_into_ingest_focuses_the_path_field_too():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_narrow_ingest_collapses_rail_and_keeps_source_contract_visible():
     """TASK-15702: 80-column entry spends width on the form, not the rail."""
@@ -160,6 +159,7 @@ async def test_narrow_ingest_collapses_rail_and_keeps_source_contract_visible():
 # --- AC#2: Esc exits, `i` enters from any canvas -----------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_escape_in_ingest_returns_to_the_library_hub_landing():
     """MI-04: Esc from Ingest (including from inside the path field, which
@@ -192,6 +192,7 @@ async def test_escape_in_ingest_returns_to_the_library_hub_landing():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_i_enters_ingest_from_a_non_landing_library_canvas():
     """MI-04: ``i`` was landing-scoped, so there was no keyboard route into
@@ -211,9 +212,7 @@ async def test_i_enters_ingest_from_a_non_landing_library_canvas():
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS
 
         await pilot.press("i")
-        path_input = await _wait_for_selector(
-            screen, pilot, "#library-ingest-path"
-        )
+        path_input = await _wait_for_selector(screen, pilot, "#library-ingest-path")
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_MEDIA
         await _wait_for_condition(
             pilot,
@@ -222,6 +221,7 @@ async def test_i_enters_ingest_from_a_non_landing_library_canvas():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_i_still_types_literally_inside_text_fields_off_the_landing():
     """MI-04 guard: widening ``i`` beyond the landing must not let it steal
@@ -250,6 +250,7 @@ async def test_i_still_types_literally_inside_text_fields_off_the_landing():
 # --- AC#3: footer and F1 share the ingest shortcut set -----------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_footer_advertises_enter_start_and_esc_back():
     """MI-04: the Ingest footer taught only the generic `/`+F6 hints; it now
@@ -276,6 +277,7 @@ async def test_ingest_footer_advertises_enter_start_and_esc_back():
         assert "esc back" in footer.shortcut_text
 
 
+@pytest.mark.bootstrap_profile
 def test_f1_help_in_ingest_mode_shows_the_same_shared_ingest_set(monkeypatch):
     """MI-04: F1 in Ingest listed the screen's raw Skills BINDINGS (the
     BINDINGS-only-sourcing trap task-2858 closed for other modes). F1 now
@@ -327,6 +329,7 @@ def test_f1_help_in_ingest_mode_shows_the_same_shared_ingest_set(monkeypatch):
     assert "Back to skills list" not in descriptions
 
 
+@pytest.mark.bootstrap_profile
 def test_check_action_gates_ingest_back_to_the_ingest_canvas():
     """The new ``escape`` binding must be inert everywhere but Ingest --
     the same disjoint-gate contract every other escape binding on this
@@ -352,6 +355,7 @@ def test_check_action_gates_ingest_back_to_the_ingest_canvas():
 # --- AC#4/#5: glyph-level focus, dimensionally stable -------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ingest_field_focus_is_glyph_level_under_the_real_stylesheet():
     """MI-05: Tab onto the path field produced a byte-identical plain-text
@@ -387,14 +391,15 @@ async def test_ingest_field_focus_is_glyph_level_under_the_real_stylesheet():
             "focus produced a byte-identical plain-text pane -- the "
             "color-only regression MI-05 pinned"
         )
-        assert any(
-            glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS
-        ), f"focused field shows no structural (heavy-edge) cue: {focused_rows!r}"
+        assert any(glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS), (
+            f"focused field shows no structural (heavy-edge) cue: {focused_rows!r}"
+        )
         # AC#5: dimensional stability -- same region, same painted row count.
         assert path_input.region == region_before
         assert len(focused_rows) == len(unfocused_rows)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_canvas_action_button_focus_is_glyph_level_and_keeps_its_label():
     """MI-05: the compact action buttons showed zero glyph-level change on
@@ -428,9 +433,9 @@ async def test_canvas_action_button_focus_is_glyph_level_and_keeps_its_label():
             "focus produced a byte-identical plain-text button -- the "
             "color-only regression MI-05 pinned"
         )
-        assert any(
-            glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS
-        ), f"focused button shows no structural cue: {focused_rows!r}"
+        assert any(glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS), (
+            f"focused button shows no structural cue: {focused_rows!r}"
+        )
         # The structural cue must not eat the label (task-2041's trap:
         # a full `outline: heavy` overwrites a 1-row button's only row).
         assert any("Browse" in row for row in focused_rows), (
@@ -444,6 +449,7 @@ async def test_canvas_action_button_focus_is_glyph_level_and_keeps_its_label():
 # --- task-3312 (#1): F1 lists one escape row ---------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_f1_help_in_ingest_lists_exactly_one_escape_row(monkeypatch):
     """task-3312 (#1): the shared footer set spells the exit key "esc"
     while the BINDINGS entry spells it "escape", so the key-string dedupe
@@ -484,6 +490,7 @@ def test_f1_help_in_ingest_lists_exactly_one_escape_row(monkeypatch):
 # --- task-3312 (#4): collapsible panel-header focus is glyph-level -----------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_options_panel_header_focus_is_glyph_level_under_real_css():
     """task-3312 (#4): the collapsible options-panel header is a Tab stop
@@ -519,9 +526,9 @@ async def test_options_panel_header_focus_is_glyph_level_under_real_css():
             "focus produced a byte-identical plain-text header -- the "
             "color-only gap task-3312 (#4) pinned"
         )
-        assert any(
-            glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS
-        ), f"focused header shows no structural cue: {focused_rows!r}"
+        assert any(glyph in row for row in focused_rows for glyph in HEAVY_GLYPHS), (
+            f"focused header shows no structural cue: {focused_rows!r}"
+        )
         # The cue must not eat the header text (task-2041's trap).
         assert any("Import behavior" in row for row in focused_rows), (
             f"focus treatment ate the header title: {focused_rows!r}"

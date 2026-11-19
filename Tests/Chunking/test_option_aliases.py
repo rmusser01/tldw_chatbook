@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tldw_chatbook.Chunking.engine.chunker import Chunker
 from tldw_chatbook.Chunking.engine.base import ChunkMetadata, ChunkResult
 
@@ -13,12 +15,17 @@ class _CaptureStrategy:
         self.last = {"max_size": max_size, "overlap": overlap, "options": options}
         return ["ok"]
 
-    def chunk_with_metadata(self, text: str, max_size: int, overlap: int = 0, **options):
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ):
         self.last = {"max_size": max_size, "overlap": overlap, "options": options}
-        md = ChunkMetadata(index=0, start_char=0, end_char=min(1, len(text)), word_count=1)
+        md = ChunkMetadata(
+            index=0, start_char=0, end_char=min(1, len(text)), word_count=1
+        )
         return [ChunkResult(text=text[:1], metadata=md)]
 
 
+@pytest.mark.bootstrap_profile
 def test_chunker_maps_semantic_aliases_in_chunk_text():
     chunker = Chunker()
     capture = _CaptureStrategy()
@@ -37,6 +44,7 @@ def test_chunker_maps_semantic_aliases_in_chunk_text():
     assert capture.last["options"].get("similarity_threshold") == 0.9
 
 
+@pytest.mark.bootstrap_profile
 def test_chunker_maps_semantic_aliases_in_metadata_path():
     chunker = Chunker()
     capture = _CaptureStrategy()
@@ -53,6 +61,7 @@ def test_chunker_maps_semantic_aliases_in_metadata_path():
     assert capture.last["overlap"] == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_chunker_maps_json_chunkable_key_alias():
     chunker = Chunker()
     capture = _CaptureStrategy()
@@ -69,6 +78,7 @@ def test_chunker_maps_json_chunkable_key_alias():
     assert capture.last["options"].get("chunkable_key") == "items"
 
 
+@pytest.mark.bootstrap_profile
 def test_chunker_maps_proposition_min_length_alias():
     chunker = Chunker()
     capture = _CaptureStrategy()

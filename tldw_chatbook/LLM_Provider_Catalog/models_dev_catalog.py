@@ -236,3 +236,24 @@ def models_dev_entry(provider: str, model: str) -> ModelsDevEntry | None:
     if not _enabled():
         return None
     return _memory_cache().lookup(provider, model)
+
+
+_DISPLAY_CATALOG_SOURCE = tuple(
+    (
+        owner,
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+    )
+    for owner, name, function in (
+        (None, "_enabled", _enabled),
+        (None, "models_dev_entry", models_dev_entry),
+        (ModelsDevCache, "lookup", ModelsDevCache.lookup),
+        (None, "_memory_cache", _memory_cache),
+        (None, "default_cache_path", default_cache_path),
+        (None, "parse_models_dev", parse_models_dev),
+        (ModelsDevCache, "load", ModelsDevCache.load.__func__),
+    )
+)

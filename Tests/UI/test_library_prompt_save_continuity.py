@@ -20,6 +20,7 @@ from Tests.UI.test_library_shell import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("seeded", [False, True])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])

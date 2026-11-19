@@ -1,0 +1,230 @@
+{
+  "head": "cc9bad412444c7142e44f848d9404ffcf46868b2",
+  "runs": [
+    {
+      "id": 40221268357,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357",
+      "conclusion": "success",
+      "jobs": 25
+    },
+    {
+      "id": 40221268430,
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268430",
+      "conclusion": "success",
+      "jobs": 1
+    }
+  ],
+  "new_ui_cases_executed": 22,
+  "ui_shards": [
+    {
+      "name": "UI Fast Lane (4)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154174",
+      "seconds": 915.0,
+      "sha256": "0b4b0d2fbbfcb389ddd53e8cb6f2d48c7e45fecdb252a58d8638499a4b8fa8cf",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_pending_start_delivers_dashboard_and_presents_result[shell]": [
+          6.33
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (6)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154181",
+      "seconds": 942.0,
+      "sha256": "db75d39acaacc17a0d2988f1a452f2ada0a492895a31582ff3f92807f878eb37",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_repeated_start_preserves_one_admitted_request[shell-shell]": [
+          7.37
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (7)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154202",
+      "seconds": 886.0,
+      "sha256": "115a0b9f97cafcd4438c6e1fcffadbc88c526815c3b7dae55dee07f9131190cc",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_repeated_start_preserves_one_admitted_request[inner-inner]": [
+          7.01
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (9)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154216",
+      "seconds": 911.0,
+      "sha256": "ef7eb96fb1139f580c7286a588c112720ea09d375265ef53ab48dd4b6a72138c",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_repeated_start_preserves_one_admitted_request[inner-shell]": [
+          6.87
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (16)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154222",
+      "seconds": 820.0,
+      "sha256": "0a39a8f86e565f89cdbb20df8f960d74913215ff3bcb8636ad917756c0e8773c",
+      "cases": {
+        "Tests/UI/test_schedules_reminder_edit_identity.py::test_pending_feedback_cannot_replace_another_reminders_error[saved]": [
+          9.06
+        ],
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-before-shell]": [
+          6.63
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (13)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154266",
+      "seconds": 842.0,
+      "sha256": "da39c91351b84d16f4de1efe1b79737eed81dde9e6615d738f2bb8b121fb5545",
+      "cases": {
+        "Tests/UI/test_schedules_reminder_edit_identity.py::test_pending_edits_preserve_captured_reminder_values[serial]": [
+          11.09
+        ],
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[policy-inner]": [
+          6.3
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (5)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154269",
+      "seconds": 831.0,
+      "sha256": "1e0bb01c0df13b032c3d0654dd7a880623b9725f588d62cfe56bb760c5720dc2",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_pending_start_delivers_dashboard_and_presents_result[inner]": [
+          5.67
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (3)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154312",
+      "seconds": 779.0,
+      "sha256": "5213e03c06761bb0162c982d8f5493764aaa4bc2b15adaa8a4ac08f11e980e0f",
+      "cases": {
+        "Tests/UI/test_schedules_reminder_edit_identity.py::test_invalid_edit_keeps_its_row_retryable[server:1]": [
+          8.95
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (2)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154314",
+      "seconds": 943.0,
+      "sha256": "ae561433ba9280bbc6b135cec7c8cc8bdce14680f578a70492f57a47b610cad6",
+      "cases": {
+        "Tests/UI/test_schedules_reminder_edit_identity.py::test_invalid_edit_keeps_its_row_retryable[local]": [
+          9.9
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (17)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154374",
+      "seconds": 906.0,
+      "sha256": "6ac7b65ae9f207c9a7dee7204495238422e6496994465faea464fab8679d1526",
+      "cases": {
+        "Tests/UI/test_schedules_reminder_edit_identity.py::test_pending_feedback_cannot_replace_another_reminders_error[refused]": [
+          9.58
+        ],
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-before-inner]": [
+          7.36
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (10)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154391",
+      "seconds": 1022.0,
+      "sha256": "c79b78e296623f847309fdb59b9d5c046ec91f501bd636cb6df8dd0ffb05dad0",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[request-shell]": [
+          7.8
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (14)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154412",
+      "seconds": 705.0,
+      "sha256": "71121a5e7145a08251ad07f70d27357eaeed232b8220e5ec883eebe7e8da58bd",
+      "cases": {
+        "Tests/UI/test_schedules_reminder_edit_identity.py::test_pending_edits_preserve_captured_reminder_values[different]": [
+          7.55
+        ],
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-after-shell]": [
+          5.19
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (1)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154417",
+      "seconds": 740.0,
+      "sha256": "19b542a1c421edcb1b72819a4844cc3741fe4135a9f04b904fe3f59c1b73a1db",
+      "cases": {
+        "Tests/UI/test_schedules_reminder_edit_identity.py::test_pending_feedback_cannot_replace_another_reminders_error[exception]": [
+          7.91
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (12)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154447",
+      "seconds": 785.0,
+      "sha256": "9fc9cc9e92383c6e013b3996f3baf9ace7e5c4da6acccc1a3b6a4f2be9c251db",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[policy-shell]": [
+          5.32
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (15)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154498",
+      "seconds": 893.0,
+      "sha256": "c92ca73d0ad2e085f0a72b07609345953b444805db6b457c01af87b307a4d108",
+      "cases": {
+        "Tests/UI/test_schedules_reminder_edit_identity.py::test_pending_edits_preserve_captured_reminder_values[same]": [
+          10.29
+        ],
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_completion_respects_replaced_quiz_panel[return-after-inner]": [
+          7.4
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (8)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154517",
+      "seconds": 951.0,
+      "sha256": "e5d89061e372d5705d6eb7e4e32ee1b5dfb5d8b47c7037767b962641e9f80280",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_repeated_start_preserves_one_admitted_request[shell-inner]": [
+          6.74
+        ]
+      }
+    },
+    {
+      "name": "UI Fast Lane (11)",
+      "url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/40221268357/job/121253154580",
+      "seconds": 848.0,
+      "sha256": "8c43837272c69c8f49e8c4a72c9aa29ecebdc7f777e699f11e0f395f2fa2b049",
+      "cases": {
+        "Tests/UI/test_study_quiz_start_responsiveness.py::test_start_refusal_or_failure_allows_retry[request-inner]": [
+          5.68
+        ]
+      }
+    }
+  ],
+  "maximum_ui_seconds": 1022.0,
+  "canvas": [
+    {
+      "job": "Derived artifacts reproduce from their sources",
+      "step": "Canvas Mermaid assets reproduce from pinned public inputs",
+      "conclusion": "success"
+    }
+  ]
+}

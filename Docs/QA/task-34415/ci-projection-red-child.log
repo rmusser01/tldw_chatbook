@@ -1,0 +1,270 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PR3034 probe: real projection succeeded; 1 startup timer(s) naturally retired; 5 real projection(s)
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css _
+
+request = <FixtureRequest for <Coroutine test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css>>
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css(
+        request: pytest.FixtureRequest,
+    ) -> None:
+        """Without an explicit width, `_conversations.tcss`'s bare `Select {
+        width: 100%; }` rule (retired in TASK-33003.1) sized a row's decision
+        Select to the FULL row width (not just its own share), overlapping/
+        clipping it behind the header and args Statics laid out before it in the
+        row's Horizontal -- verified empirically before landing the fix. Asserts all three
+        per-row widgets render with real size AND stay within the row's own
+        bounds in left-to-right order, under the real bundled stylesheet.
+
+        T9 (MCP Hub Phase 5): also asserts HEIGHT bounds: each `.approval-row`
+        stays compact (height <= 6 -- three stacked lines since TASK-1846 split
+        header/args/controls, plus slack for a multi-arg collapsed row; a row
+        that lost `height: auto` balloons to ~15), the `#approval-batch-rows`
+        container doesn't balloon (height <= rows*3 + slack), and the
+        `#approval-batch-actions` bar sits close after the rows (region.y within
+        a few rows of the last row's bottom), matching the audit-mode geometry
+        tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
+        # Persist before building: Console readiness re-reads the admitted profile,
+        # so an in-memory splash override is lost after config cache invalidation.
+        from tldw_chatbook.config import save_settings_to_cli_config
+
+        assert save_settings_to_cli_config({"splash_screen": {"enabled": False}})
+        app = _build_ready_production_console_app()
+        async with app.run_test(size=(200, 40)) as pilot:
+>           card = await _show_production_approval_batch(app, pilot, _sample_calls())
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_approval_batch_geometry.py:42:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+Tests/UI/test_console_mcp_approval.py:1318: in _show_production_approval_batch
+    screen = await _wait_for_production_console_ready(app, pilot)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/pr3034-projection-timer-probe-DNpme6/pr3034_projection_timer_probe.py:57: in ready_after_retirement
+    return await original_ready(app, pilot)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+app = TldwCli(title='tldw chatbook', classes={'-wide-viewport', '-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})
+pilot = <Pilot app=TldwCli(title='tldw chatbook', classes={'-wide-viewport', '-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})>
+
+    async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
+        """Wait through startup projections until the Console is the active screen."""
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            screen = app.screen
+            if (
+                isinstance(screen, ChatScreen)
+                and screen.is_mounted
+                and screen.query("#console-task-surface")
+            ):
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError("Production Console did not mount")
+
+        # on_mount queues the production attach reconciliation before this callback.
+        # Waiting behind it observes completion even when its DB projection is slow.
+        reconciliation_drained = asyncio.Event()
+        screen.call_after_refresh(reconciliation_drained.set)
+        await asyncio.wait_for(reconciliation_drained.wait(), timeout=10.0)
+
+        projection_task = None
+        for timer in screen._timers:
+            callback = getattr(timer, "_callback", None)
+            scheduled = getattr(callback, "args", ())
+            target = scheduled[0] if scheduled else None
+            if (
+                getattr(target, "__self__", None) is screen
+                and getattr(target, "__func__", None) is ChatScreen.sync_task_resume_state
+            ):
+                projection_task = timer._task
+                break
+>       assert projection_task is not None
+E       assert None is not None
+
+Tests/UI/test_console_mcp_approval.py:1373: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-06 21:28:15.928 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-06 21:28:15.942 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-06 21:28:16.026 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-06 21:28:16.028 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-10-06 21:28:16.054 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8748 - Attempting to apply literal settings mutation: sets={"('splash_screen',)": ['enabled']}, deletes={}
+2026-10-06 21:28:16.070 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8803 - Successfully replaced settings file at /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-06 21:28:16.074 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook
+2026-10-06 21:28:16.074 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook
+2026-10-06 21:28:16.075 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-06 21:28:16.076 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-06 21:28:16.109 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3803 - Ensured chat dictionaries folder exists: /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-06 21:28:16.109 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3834 - load_settings: Configuration cached for future use
+2026-10-06 21:28:16.111 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8831 - Global configuration caches invalidated and reloaded.
+2026-10-06 21:28:16.325 | INFO     | tldw_chatbook.app:__init__:1256 - Loaded app_config - strip_thinking_tags: True
+2026-10-06 21:28:16.370 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'notes_service' completed in 0.000s
+2026-10-06 21:28:16.370 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'providers_models' completed in 0.000s
+2026-10-06 21:28:16.370 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'prompts_service' completed in 0.000s
+2026-10-06 21:28:16.370 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'media_db' completed in 0.000s
+2026-10-06 21:28:16.454 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-6m8f0x6e/library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-06 21:28:16.587 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-6m8f0x6e/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-06 21:28:16.774 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-6m8f0x6e/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-06 21:28:16.801 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-10-06 21:28:16.802 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-6m8f0x6e/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-06 21:28:16.802 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-6m8f0x6e/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-06 21:28:17.032 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+2026-10-06 21:28:17.100 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-10-06 21:28:17.184 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-10-06 21:28:17.263 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-10-06 21:28:17.331 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-10-06 21:28:17.394 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-10-06 21:28:17.394 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-6m8f0x6e/scheduled_tasks.sqlite [Client: default]
+2026-10-06 21:28:17.439 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-10-06 21:28:17.440 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-10-06 21:28:17.448 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+2026-10-06 21:28:17.527 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:595 - Created EvalsDB schema version 6
+2026-10-06 21:28:17.527 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+2026-10-06 21:28:17.527 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-10-06 21:28:17.569 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 1.392 seconds
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.185s (13.3%)
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.001s (0.1%)
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.3% of parallel_init)
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.3% of parallel_init)
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.2% of parallel_init)
+2026-10-06 21:28:17.569 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (0.1% of parallel_init)
+2026-10-06 21:28:17.570 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================
+2026-10-06 21:28:17.593 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8748 - Attempting to apply literal settings mutation: sets={"('first_run',)": ['setup_completed'], "('chat_defaults',)": ['provider', 'model'], "('api_settings', 'llama_cpp')": ['api_url', 'model']}, deletes={}
+2026-10-06 21:28:17.612 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8803 - Successfully replaced settings file at /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-06 21:28:17.616 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook
+2026-10-06 21:28:17.616 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook
+2026-10-06 21:28:17.617 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-06 21:28:17.618 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-06 21:28:17.661 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3803 - Ensured chat dictionaries folder exists: /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-06 21:28:17.661 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3834 - load_settings: Configuration cached for future use
+2026-10-06 21:28:17.663 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8831 - Global configuration caches invalidated and reloaded.
+2026-10-06 21:28:17.678 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook
+2026-10-06 21:28:17.678 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook
+2026-10-06 21:28:17.680 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6942 - Attempting to load CLI config from: /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-06 21:28:17.689 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6963 - Successfully loaded and merged CLI config from /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-06 21:28:17.690 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7047 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+2026-10-06 21:28:17.690 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7051 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-06 21:28:17.691 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-06 21:28:17.692 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-06 21:28:17.732 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3803 - Ensured chat dictionaries folder exists: /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-06 21:28:17.733 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3834 - load_settings: Configuration cached for future use
+--- Logging error ---
+Traceback (most recent call last):
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/logging/handlers.py", line 73, in emit
+    if self.shouldRollover(record):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/logging/handlers.py", line 191, in shouldRollover
+    self.stream = self._open()
+                  ^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Logging_Config.py", line 261, in _open
+    self._harden_existing_generations()
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Logging_Config.py", line 257, in _harden_existing_generations
+    with open_private_binary(generation):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Utils/private_paths.py", line 957, in admitted
+    with acquire_storage(lexical_path(path)):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 1161, in acquire_storage
+    return _acquire_storage(path, attempt, related_paths=related_paths)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 1192, in _acquire_storage
+    check()
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 1186, in check
+    attempt.check(selected)
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 213, in check
+    _check_operation(self.operation, path)
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 108, in _check_operation
+    _Operation.check(operation, path)
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Backup_Recovery/storage_admission.py", line 89, in check
+    raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: operation_path_outside_scope
+Call stack:
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 93, in _worker
+    work_item.run()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/worker.py", line 309, in run_callable
+    return work()
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/app_feature_glue.py", line 291, in _backfill_chachanotes_messages_fts
+    db = get_chachanotes_db_lazy()
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/config.py", line 11372, in get_chachanotes_db_lazy
+    chachanotes_db = CharactersRAGDB(
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 2894, in __init__
+    self._initialize_schema()
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 8311, in _initialize_schema
+    migration(conn)
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 5009, in _migrate_from_v20_to_v21
+    self._execute_migration_statements(
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 3928, in _execute_migration_statements
+    if self._skip_already_applied_add_column(cursor, head, label):
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/DB/ChaChaNotes_DB.py", line 3824, in _skip_already_applied_add_column
+    logger.info(
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/loguru/_logger.py", line 2078, in info
+    __self._log("INFO", False, __self._options, __message, args, kwargs)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/loguru/_logger.py", line 2066, in _log
+    handler.emit(log_record, level_id, from_decorator, raw, colored_message)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/loguru/_handler.py", line 206, in emit
+    self._sink.write(str_record)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/loguru/_simple_sinks.py", line 123, in write
+    self._function(message)
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Logging_Config.py", line 651, in _forward_loguru_to_standard
+    std_logger.log(std_level, record["message"], extra=extra)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/logging/__init__.py", line 1609, in log
+    self._log(level, msg, args, **kwargs)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/logging/__init__.py", line 1684, in _log
+    self.handle(record)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/logging/__init__.py", line 1700, in handle
+    self.callHandlers(record)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/logging/__init__.py", line 1762, in callHandlers
+    hdlr.handle(record)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/logging/__init__.py", line 1028, in handle
+    self.emit(record)
+  File "/Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/tldw_chatbook/Logging_Config.py", line 299, in emit
+    super().emit(record)
+Message: '[rag_char_chat_schema V20→V21] world_book_entries.priority already present; skipping the ADD COLUMN (idempotent replay).'
+Arguments: ()
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     root:app.py:2285 Splash screen enabled: False
+INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=base provider=faster-whisper status=ok
+INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+---------------------------- Captured log teardown -----------------------------
+INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=296b14b1cc9d...
+INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=296b14b1cc9d (examined 0, compacted 0, skipped 0 unreadable).
+INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 78.
+INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+INFO     tldw_chatbook.config:Logging_Config.py:651 ChaChaNotes_DB lazy-initialized successfully at /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db
+INFO     tldw_chatbook.DB.chachanotes_fts_backfill:Logging_Config.py:651 ChaChaNotes messages FTS backfill stopping on abort signal after 0 row(s); the next run resumes from the database's own frontier.
+- generated xml file: /private/tmp/pr3034-projection-timer-probe-DNpme6/red-pytest/test_batch_row_widgets_have_no0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+5.70s call     Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+1 failed in 8.78s

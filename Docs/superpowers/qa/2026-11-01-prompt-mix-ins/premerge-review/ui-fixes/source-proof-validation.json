@@ -1,0 +1,46 @@
+{
+  "phase": "after final-five isolation released; no further native tests or source edits",
+  "all_eight_owned_files_match_frozen": true,
+  "files": {
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": {
+      "sha256": "b0206056d9162e5f5282eb011d45068fa395f5a8bc43cc97ba6d42c9f2c9591c",
+      "lines": 5065,
+      "matches_frozen": true
+    },
+    "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": {
+      "sha256": "3708cb9b0b723bcefb29e6434aa5ff1304c49c70d3f8fff0585bbe11e6136a85",
+      "lines": 548,
+      "matches_frozen": true
+    },
+    "tldw_chatbook/Widgets/Console/console_prompts_modal.py": {
+      "sha256": "f8aaab28d51ee796ee206401607a878d926b3f05a32e97af5b6151dbcb5b1c04",
+      "lines": 2927,
+      "matches_frozen": true
+    },
+    "tldw_chatbook/Widgets/Console/console_conversation_inspector.py": {
+      "sha256": "b8009203644d94c0a14aa7f808285574232e3a5a7a9b13f87da0a56a9e791e6d",
+      "lines": 2116,
+      "matches_frozen": true
+    },
+    "tldw_chatbook/Widgets/Library/library_prompts_canvas.py": {
+      "sha256": "e03ea4457e4607ef787b49ba464566dffb4ba204b7f63a686f2db2bfaae31f9c",
+      "lines": 2008,
+      "matches_frozen": true
+    },
+    "Tests/UI/test_library_prompt_mixins.py": {
+      "sha256": "f4c8d144b3b1220a724d3042e00831c61e7fbf8255c4169c9c05f9a7c93aa802",
+      "lines": 1496,
+      "matches_frozen": true
+    },
+    "Tests/UI/test_console_prompt_mixins.py": {
+      "sha256": "ababb0c65788c36371393d34f245aaf821164543bda22210461f1350d270c895",
+      "lines": 1292,
+      "matches_frozen": true
+    },
+    "Tests/UI/test_console_conversation_inspector.py": {
+      "sha256": "f0ff4f20f8de8aa5677ce70dcb759e06a164e7de14f2e5e6f0eda39ec1eeed7f",
+      "lines": 1638,
+      "matches_frozen": true
+    }
+  }
+}

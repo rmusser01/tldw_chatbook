@@ -7,81 +7,100 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_send_start_window import _settle_custody
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from tldw_chatbook.Chat import conversation_archive_actions
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules import archive
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "owner_state", ["visible", "background", "closed", "closed-visible"]
 )
 async def test_cancelled_archive_preflight_restores_only_own_keyboard_draft(
-    monkeypatch, owner_state
+    monkeypatch, owner_state, tmp_path, request
 ):
     app = _build_test_app()
+    database = CharactersRAGDB(tmp_path / "archive-preflight.sqlite", "archive-ui")
+    request.addfinalizer(database.close_connection)
+    app.chachanotes_db = database
+    app.local_chat_conversation_service = ChatConversationService(database)
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     entered = asyncio.Event()
 
-    async def blocked_gate(*_args):
-        entered.set()
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.conversation_archive_actions.conversation_send_refusal",
-        blocked_gate,
-    )
     async with host.run_test(size=(120, 36)) as pilot:
         console = host.screen
         await _wait_for_selector(console, pilot, "#console-native-composer")
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         controller = console._ensure_console_chat_controller()
-        session = controller.store.ensure_session()
-        controller.store.switch_session(session.id)
+        store = controller.store
+        session = store.ensure_session()
+        conversation_id = store.persist_session_if_needed(session.id)
+        assert conversation_id is not None
+        other = store.create_session(title="Other", activate=False)
+        store.set_session_draft(other.id, "other tab draft")
         console._session._sync_console_session_draft()
         composer.load_draft("unsent draft")
-        stash = composer.stash_draft_for_send()
-        console._console_inflight_send_stashes[session.id] = stash
-        task = asyncio.create_task(
-            console._submit_console_native_draft_observed(stash.text, session.id)
+
+        async def blocked_gate(_app, checked_conversation_id):
+            assert checked_conversation_id == conversation_id
+            entered.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            conversation_archive_actions, "conversation_send_refusal", blocked_gate
         )
-        await asyncio.wait_for(entered.wait(), 5)
-        if owner_state in {"background", "closed"}:
-            other = controller.store.create_session(title="Other")
-            controller.store.switch_session(other.id)
-            console._console_visible_draft_session_id = other.id
-            controller.store.set_session_draft(session.id, " later")
-            composer.load_draft("other tab draft")
-            if owner_state == "closed":
-                controller.store.close_session(session.id)
-        else:
+        submit = AsyncMock(side_effect=AssertionError("archive gate was bypassed"))
+        monkeypatch.setattr(controller, "submit_draft", submit)
+        runtime = console._console_runtime()
+        try:
+            composer.focus()
+            await pilot.press("enter")
+            await asyncio.wait_for(entered.wait(), 5)
+            records = [
+                record
+                for record in runtime._turn_custody.values()
+                if record.session_id == session.id
+            ]
+            assert len(records) == 1
+            task = records[0].task
+            assert task is not None
+            assert composer.draft_text() == "unsent draft"
             composer.insert_text(" later")
-            if owner_state == "closed-visible":
-                controller.store.close_session(session.id)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        assert session.id not in console._console_inflight_send_stashes
-        assert not console._console_submit_session_by_task
-        if owner_state in {"background", "closed"}:
-            assert composer.draft_text() == "other tab draft"
-            if owner_state == "closed":
-                assert all(
-                    item.id != session.id for item in controller.store.sessions()
-                )
-            else:
-                assert (
-                    controller.store.session_draft(session.id) == "unsent draft later"
-                )
-        elif owner_state == "closed-visible":
-            assert composer.draft_text() == " later"
-            assert all(item.id != session.id for item in controller.store.sessions())
-        else:
             assert composer.draft_text() == "unsent draft later"
+            if owner_state in {"background", "closed"}:
+                console._session.switch_and_bind(other.id)
+            if owner_state in {"closed", "closed-visible"}:
+                store.close_session(session.id)
+
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert not runtime.has_custodied_turns(session.id)
+            assert conversation_id not in app._conversation_send_inflight
+            submit.assert_not_awaited()
+
+            console._session._sync_console_session_draft()
+            assert store.session_draft(other.id) == "other tab draft"
+            if owner_state == "visible":
+                assert composer.draft_text() == "unsent draft later"
+            else:
+                assert composer.draft_text() == "other tab draft"
+            if owner_state in {"closed", "closed-visible"}:
+                assert all(item.id != session.id for item in store.sessions())
+            else:
+                assert store.session_draft(session.id) == "unsent draft later"
+        finally:
+            await _settle_custody(console)
 
 
 @pytest.mark.asyncio

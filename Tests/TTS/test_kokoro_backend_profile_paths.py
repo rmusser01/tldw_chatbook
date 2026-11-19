@@ -81,6 +81,7 @@ async def test_manager_backends_keep_default_blends_in_their_profile(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_explicit_backend_blend_directory_is_preserved(tmp_path: Path) -> None:
     """A configured backend blend directory remains unchanged."""
     explicit = tmp_path / "configured-blends"
@@ -90,6 +91,7 @@ def test_explicit_backend_blend_directory_is_preserved(tmp_path: Path) -> None:
     assert backend.voice_blends_dir == explicit
 
 
+@pytest.mark.bootstrap_profile
 def test_configured_blend_directory_rejects_dangerous_path_syntax(
     tmp_path: Path,
 ) -> None:
@@ -102,6 +104,7 @@ def test_configured_blend_directory_rejects_dangerous_path_syntax(
     assert not unsafe.exists()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.skipif(os.name != "posix", reason="POSIX mode regression")
 def test_missing_configured_blend_directory_is_private_under_permissive_umask(
     tmp_path: Path,
@@ -121,6 +124,7 @@ def test_missing_configured_blend_directory_is_private_under_permissive_umask(
     assert backend._save_blends() is True
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.skipif(os.name != "posix", reason="POSIX mode regression")
 def test_existing_shared_writable_configured_blend_directory_is_rejected(
     tmp_path: Path,
@@ -200,12 +204,14 @@ def test_empty_configured_blend_directory_preserves_legacy_current_directory(
     assert blend_file.exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_path_configured_blend_directory_is_preserved_without_hardening(
     tmp_path: Path,
 ) -> None:
     """A Path-valued directory keeps its historical mkdir and writer behavior."""
     explicit = tmp_path / "path-blends"
     blend_file, _ = _seed_backend_blend_file(explicit)
+    explicit.chmod(0o755)
 
     backend = KokoroTTSBackend({"KOKORO_VOICE_BLENDS_DIR": explicit})
 
@@ -215,6 +221,7 @@ def test_path_configured_blend_directory_is_preserved_without_hardening(
     assert blend_file.exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_save_voice_blend_restores_memory_when_private_write_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -256,6 +263,7 @@ def test_save_voice_blend_restores_memory_when_private_write_fails(
     assert blend_file.read_text(encoding="utf-8") == original_text
 
 
+@pytest.mark.bootstrap_profile
 def test_delete_voice_blend_restores_memory_when_private_write_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -296,6 +304,7 @@ def test_delete_voice_blend_restores_memory_when_private_write_fails(
     assert blend_file.read_text(encoding="utf-8") == original_text
 
 
+@pytest.mark.bootstrap_profile
 def test_save_voice_blend_restores_memory_when_save_method_raises(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -316,6 +325,7 @@ def test_save_voice_blend_restores_memory_when_save_method_raises(
     assert blend_file.read_text(encoding="utf-8") == original_text
 
 
+@pytest.mark.bootstrap_profile
 def test_delete_voice_blend_restores_memory_when_save_method_raises(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

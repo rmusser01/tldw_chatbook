@@ -32,8 +32,12 @@ def _saved(**overrides) -> ConversationMenuTarget:
 def test_state_vocabulary_matches_the_database():
     """The menu must never offer a state the DB would reject."""
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.tldw_api.chat_conversation_schemas import (
+        ALLOWED_CONVERSATION_STATES,
+    )
 
     assert CONVERSATION_STATES == CharactersRAGDB._ALLOWED_CONVERSATION_STATES
+    assert CONVERSATION_STATES == ALLOWED_CONVERSATION_STATES
     assert ARCHIVED_STATE in CharactersRAGDB._ALLOWED_CONVERSATION_STATES
 
 

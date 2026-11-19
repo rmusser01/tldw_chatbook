@@ -1,0 +1,72 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/mixins-pr3346-frozen-final-five/commands.json",
+      "bytes": 3835,
+      "sha256": "9945bc63e4f030bd2cae4defd4c314dc63748dffc4d9ddc98a7ebc5f7bde0fc0"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-frozen-final-five/probe.py",
+      "bytes": 1590,
+      "sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-frozen-final-five/process-proof.json",
+      "bytes": 434,
+      "sha256": "8f3e67b673ca2e7cd8b79189170091bf5827a4370a8803e45a59f33461bd1aef"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-frozen-final-five/report.md",
+      "bytes": 3451,
+      "sha256": "c4b2679936892303174c4a0e1795379f47d3b874514e0a8319dc64b22f3a2605"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-frozen-final-five/source-after.json",
+      "bytes": 562098,
+      "sha256": "88dd6417aad4836a3beb367ecafa9b6222ace5102d6f422fdac3046aa6f9ac12"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-frozen-final-five/source-before.json",
+      "bytes": 562099,
+      "sha256": "19a09c5ec87a6c77ea4b0264ded2b18a8c9f893e56922f07fb3998a1678c0449"
+    },
+    {
+      "path": "/private/tmp/mixins-pr3346-frozen-final-five/source-proof.json",
+      "bytes": 509,
+      "sha256": "d66858192756a7087e85264885496ea53e6630b3dd4b4c696e4bb0575bba240a"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-pr3346-frozen.log",
+      "bytes": 2061,
+      "sha256": "1d7dfe9c7d4b5602c860213ed3aa162e98d8b5be382092798730a0f88343ef27"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-pr3346-frozen-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 49847,
+      "sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-pr3346-frozen-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 6576,
+      "sha256": "1d895b0f4eac2051f4809ba8fc3dce0a2fe387b574e92d7db7e450df78cc79f5"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-pr3346-frozen-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35127,
+      "sha256": "20dcabd356c2960996c344f86d4535615162db1de433074e4640ca552fef949d"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-pr3346-frozen-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 24403,
+      "sha256": "08210bc96a9ec8f51a5b8a55feb3f7f2b3deab4bb6f3e493203733b7d6206c26"
+    }
+  ],
+  "file_count": 12,
+  "inventory_itself": "/private/tmp/mixins-pr3346-frozen-final-five/artifact-files.json",
+  "excluded": [
+    {
+      "path": "/private/tmp/mixins-perf-pr3346-frozen-tmp",
+      "reason": "Generated private pytest profiles and temporary runtime state; not report evidence"
+    }
+  ]
+}

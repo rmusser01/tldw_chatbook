@@ -120,6 +120,8 @@ async def stream_fetch(
     headers: Mapping[str, str] | None = None,
     trusted_origins: frozenset[str] = frozenset(),
     on_chunk: Callable[[int], None] | None = None,
+    checkpoint_every: int | None = None,
+    on_checkpoint: Callable[[int, FetchValidators], None] | None = None,
 ) -> FetchResult:
     """Stream a URL to disk with egress guards, byte bounds, and resume.
 
@@ -134,6 +136,16 @@ async def stream_fetch(
         headers: Extra headers (credentials); stripped on cross-origin hops.
         trusted_origins: Egress-policy trust additions (fixture servers).
         on_chunk: Called with each chunk's byte count (progress).
+        checkpoint_every: TASK-34100.14: when set (with ``on_checkpoint``),
+            fsync the destination each time at least this many more bytes
+            have been written and report the durable length, so a transfer
+            killed part-way through one large file can resume from there
+            instead of byte zero. Only offered when the response carries
+            strong validators -- a checkpoint nothing can safely resume
+            from would only inflate the staged-bytes credit.
+        on_checkpoint: Called with ``(durable_bytes, validators)`` after
+            each fsync; ``durable_bytes`` counts from the start of the file
+            (``resume_from`` included).
 
     Returns:
         FetchResult with bytes written THIS call, captured validators, and
@@ -265,6 +277,13 @@ async def stream_fetch(
                         "Content-Range start does not match the requested resume offset"
                     )
             mode = "ab" if resume_from else "wb"
+            checkpointing = (
+                checkpoint_every is not None
+                and checkpoint_every > 0
+                and on_checkpoint is not None
+                and got.strong
+            )
+            checkpointed = 0
             with open(destination, mode) as fh:
                 async for chunk in response.aiter_bytes(_CHUNK_BYTES):
                     if resume_from + written + len(chunk) > max_bytes:
@@ -273,6 +292,11 @@ async def stream_fetch(
                     written += len(chunk)
                     if on_chunk:
                         on_chunk(len(chunk))
+                    if checkpointing and written - checkpointed >= checkpoint_every:
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                        checkpointed = written
+                        on_checkpoint(resume_from + written, got)
                 fh.flush()
                 os.fsync(fh.fileno())
             return FetchResult(written, got, resumed=bool(resume_from))

@@ -1,0 +1,6 @@
+Command: python -X utf8 scripts/check_persistent_diagnostic_inventory.py --diff
+Exit: 0
+no drift: the committed inventory matches the rebuild exactly.
+diagnostic inventory verified: 708 owners, 1058 TASK-492 calls, 56 TASK-31551 calls, 7772 TASK-494 calls, 16 sink files
+
+Statement review against57e330e735: agent_runtime.py only; 12 ->12 calls. warning changed from treating all review calls as proceed to refusing recovery calls while preserving legacy behavior for other tools. Interpolation remains existing tool names and exception context; no new content/path/secret field. No sink topology changed. Existing inventory already matches; no regeneration needed.

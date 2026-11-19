@@ -31,13 +31,30 @@ def bootstrap_personal_context_service(
 ) -> PersonalContextService:
     """Return an available service or a locked fail-closed facade."""
 
+    from .native_compatibility import (
+        ProfileCompatibilityError,
+        require_native_consumer,
+        validate_native_consumers,
+    )
+
     destination = db_path or get_personal_context_db_path()
     try:
+        validate_native_consumers()
+        require_native_consumer("bootstrap.bootstrap_personal_context_service")
         repository = PersonalContextRepository(
             destination,
             key_protector=key_protector,
             recovery_integrity_key=recovery_integrity_key,
             expected_recovery_profile_id=expected_recovery_profile_id,
+        )
+        if not repository.is_destroyed():
+            compatibility = repository.read_compatibility()
+            if compatibility is not None and compatibility.state != "legacy_v1":
+                raise ProfileCompatibilityError()
+    except ProfileCompatibilityError:
+        return PersonalContextService.locked(
+            ProfileCompatibilityError.reason_code,
+            profile_present=_profile_presence_hint(destination),
         )
     except ProfileLockedError as exc:
         return PersonalContextService.locked(

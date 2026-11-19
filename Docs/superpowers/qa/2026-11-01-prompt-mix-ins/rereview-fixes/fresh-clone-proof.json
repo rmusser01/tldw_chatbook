@@ -1,0 +1,112 @@
+{
+  "source_commit": "a443d71c5ceca74feca6d2fc5af1d6e29c682ccc",
+  "no_object_alternates": true,
+  "records": [
+    {
+      "argv": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/fresh-clone",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "fetch",
+        "--depth=1",
+        "origin",
+        "codex/prompt-mix-ins"
+      ],
+      "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/fresh-clone",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "From file:///Users/macbook-dev/Documents/GitHub/tldw_chatbook\n * branch              codex/prompt-mix-ins -> FETCH_HEAD\n + 1a58f0af...a443d71c codex/prompt-mix-ins -> origin/codex/prompt-mix-ins  (forced update)\n"
+    },
+    {
+      "argv": [
+        "git",
+        "checkout",
+        "--detach",
+        "FETCH_HEAD"
+      ],
+      "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/fresh-clone",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "Warning: you are leaving 1 commit behind, not connected to\nany of your branches:\n\n  1a58f0af fix: preserve mix-in layout revisions and dirty-editor projections\n\nIf you want to keep it by creating a new branch, this may be a good time\nto do so with:\n\n git branch <new-branch-name> 1a58f0af\n\nHEAD is now at a443d71c fix(console): retain accepted mix-in order and fence artifact opens\n"
+    },
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/fresh-clone",
+      "exit_code": 0,
+      "stdout": "a443d71c5ceca74feca6d2fc5af1d6e29c682ccc\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "rev-list",
+        "--count",
+        "HEAD"
+      ],
+      "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/fresh-clone",
+      "exit_code": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "5dac2bb0207285eca67d571565a3ee88113e4a84^{commit}"
+      ],
+      "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/fresh-clone",
+      "exit_code": 128,
+      "stdout": "",
+      "stderr": "fatal: Not a valid object name 5dac2bb0207285eca67d571565a3ee88113e4a84^{commit}\n"
+    },
+    {
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "247c9eb19ddbf49e49d55c7c1851f72fed2616a2^{commit}"
+      ],
+      "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/fresh-clone",
+      "exit_code": 128,
+      "stdout": "",
+      "stderr": "fatal: Not a valid object name 247c9eb19ddbf49e49d55c7c1851f72fed2616a2^{commit}\n"
+    },
+    {
+      "argv": [
+        "git",
+        "cat-file",
+        "-e",
+        "d7744a78e9094ad4df08a6466fab6d4eb8f412ce^{commit}"
+      ],
+      "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/fresh-clone",
+      "exit_code": 128,
+      "stdout": "",
+      "stderr": "fatal: Not a valid object name d7744a78e9094ad4df08a6466fab6d4eb8f412ce^{commit}\n"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py",
+        "HEAD"
+      ],
+      "cwd": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/fresh-clone",
+      "exit_code": 0,
+      "stdout": "Verified 756 current evidence/source records against HEAD.\nHistorical source verification UNAVAILABLE: 5dac2bb0207285eca67d571565a3ee88113e4a84 (79 hashes); historical commit object is absent (the port commit belongs to focused history; earlier mixed commits do not).\nHistorical source verification UNAVAILABLE: 247c9eb19ddbf49e49d55c7c1851f72fed2616a2 (77 hashes); historical commit object is absent (the port commit belongs to focused history; earlier mixed commits do not).\nHistorical source verification UNAVAILABLE: d7744a78e9094ad4df08a6466fab6d4eb8f412ce (77 hashes); historical commit object is absent (the port commit belongs to focused history; earlier mixed commits do not).\n",
+      "stderr": ""
+    }
+  ]
+}

@@ -5,6 +5,7 @@ path; nothing drove the wrapper directly, so a regression in its own
 routing (approval payload -> card, display gating) could hide behind the
 bigger harness's noise.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -73,8 +74,7 @@ async def test_sync_state_routes_an_approval_batch_to_the_card():
         rows = list(card.query(".approval-row"))
         assert len(rows) == 2, "one row per call id (TASK-1861 keying)"
         assert card._batch_round_id == "round-x", (
-            "the round id must ride through, or a decision resolves the "
-            "wrong round"
+            "the round id must ride through, or a decision resolves the wrong round"
         )
 
         cards.sync_state(TaskResumeState())
@@ -214,9 +214,7 @@ def test_stop_following_removes_controller_and_screen_state_without_cancelling()
             self.cancel_calls += 1
 
     controller = Controller()
-    task_state = TaskResumeState(
-        followed_watchlists_operations=(operation_id,)
-    )
+    task_state = TaskResumeState(followed_watchlists_operations=(operation_id,))
     screen = SimpleNamespace(
         _console_chat_controller=controller,
         _task_resume_state=task_state,

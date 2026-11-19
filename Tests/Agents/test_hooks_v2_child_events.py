@@ -225,3 +225,119 @@ async def test_late_child_settlement_cannot_attach_to_a_new_parent(tmp_path):
         lifecycle.seal()
         await engine.close()
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deny_resume", [False, True])
+async def test_resume_cannot_skip_actual_subagent_start(tmp_path, deny_resume):
+    from Tests.Agents.test_fleet_continuation import _run, _subagent_rows
+
+    marker, deny = tmp_path / "starts.jsonl", tmp_path / "deny"
+    code = (
+        "import json,sys;from pathlib import Path;e=json.load(sys.stdin);"
+        f"p=Path({str(marker)!r});p.write_text((p.read_text() if p.exists() else '')+json.dumps(e)+'\\n');"
+        f"blocked=Path({str(deny)!r}).exists();"
+        "print(json.dumps(dict(version=2,decision='deny' if blocked else 'pass',"
+        "**({} if blocked else {'child_limits':{'tool_ids':[], 'budget_caps':{'max_model_turns':2}}}))))"
+    )
+    engine = HookEngine(
+        (
+            command(
+                code,
+                name="SubagentStart",
+                required=True,
+                effects=["deny", "child_limits"],
+            ),
+        ),
+        lambda *_: True,
+        HookBudgetOwner(),
+    )
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="review")
+    holder = {}
+
+    def resume():
+        return fence(
+            "send_to_agent",
+            {"id": holder["handle"], "message": "private-supervisor-rider"},
+        )
+
+    service, chat, fleet = make_fleet_service(
+        db,
+        [
+            fence("spawn_subagent", {"task": "study"}),
+            fence("wait_agents", {}),
+            "first done",
+            resume,
+            fence("wait_agents", {}),
+            "second done",
+        ],
+        {"study": ["original child done", "resumed child done"]},
+        # The denied-control path intentionally leaves the denied child's reply.
+        allow_unconsumed=deny_resume,
+    )
+    service._hooks_v2_engine = engine
+    service._hooks_v2_session_id = "session"
+    service._hooks_v2_turn_id = "turn-one"
+    try:
+        old_parent, first = await asyncio.to_thread(
+            worker_guard(service)(_run), service
+        )
+        assert first.status == "done" and first.final_text == "first done"
+        original = _subagent_rows(db)
+        assert len(original) == 1 and original[0]["status"] == "done"
+        old = original[0]["id"]
+        handle = next(item for item in fleet.snapshot() if item.run_id == old)
+        assert fleet.get_retained(handle.handle_id) is not None
+        holder["handle"] = handle.handle_id
+        assert len(chat.child_calls["study"]) == 1
+        assert len(marker.read_text().splitlines()) == 1
+        assert original[0]["parent_run_id"] == old_parent
+        if deny_resume:
+            deny.touch()
+        service._hooks_v2_turn_id = "turn-two"
+        new_parent, second = await asyncio.to_thread(
+            worker_guard(service)(_run), service
+        )
+        assert second.status == "done" and second.final_text == "second done"
+        rows = _subagent_rows(db)
+        assert not engine.processes.records
+        assert engine.budget_owner.snapshot()["tickets"] == 0
+        if deny_resume:
+            assert len(rows) == 1, (
+                "required SubagentStart denial was bypassed by retained resume"
+            )
+            assert len(chat.child_calls["study"]) == 1
+        else:
+            assert len(rows) == 2 and len(chat.child_calls["study"]) == 2
+            resumed = next(row for row in rows if row["id"] != old)
+            assert resumed["resumed_from_run_id"] == old
+            assert resumed["parent_run_id"] == new_parent
+            assert resumed["budget"]["max_model_turns"] == 2
+            payload = chat.child_calls["study"][1]["messages_payload"]
+            for name in (
+                "list_peer_agents",
+                "send_to_peer",
+                "report_progress",
+                "read_agent_messages",
+            ):
+                assert name not in payload[0]["content"]
+            assert (
+                sum("original child done" in row.get("content", "") for row in payload)
+                == 1
+            )
+            assert (
+                sum(
+                    "private-supervisor-rider" in row.get("content", "")
+                    for row in payload
+                )
+                == 1
+            )
+            assert "private-supervisor-rider" not in json.dumps(
+                fleet.snapshot(), default=str
+            )
+        assert len(marker.read_text().splitlines()) == 2, (
+            "resumed child admission never emitted SubagentStart"
+        )
+    finally:
+        await engine.close()
+        db.close()

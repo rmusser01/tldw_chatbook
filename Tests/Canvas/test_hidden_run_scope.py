@@ -10,6 +10,7 @@ from tldw_chatbook.Canvas.models import CanvasScope
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "invalid_owner", (None, "session", "conversation", "branch", "closed")
 )

@@ -270,11 +270,8 @@ def test_chat_with_llama_posts_to_v1_chat_completions_regardless_of_suffix(
             },
         ),
     )
-    monkeypatch.setattr(
-        LLM_API_Calls_Local,
-        "create_default_session",
-        lambda: _CapturedSession(captured, response_data),
-    )
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
+    monkeypatch.setattr(LLM_API_Calls_Local, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
 
     LLM_API_Calls_Local.chat_with_llama(
         input_data=[{"role": "user", "content": "hi"}],
@@ -612,6 +609,7 @@ class TestChatFunction:
 
 @pytest.mark.unit
 class TestProviderRequestPayloads:
+    @pytest.mark.bootstrap_profile
     def test_deepseek_uses_refreshed_handler_fallback_model(self, monkeypatch):
         captured = {}
         monkeypatch.setattr(
@@ -629,13 +627,15 @@ class TestProviderRequestPayloads:
                 },
             ),
         )
-        monkeypatch.setattr(
-            llm_api_calls_module,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(llm_api_calls_module, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(llm_api_calls_module, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
+        monkeypatch.setattr(llm_api_calls_module, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
 
         llm_api_calls_module.chat_with_deepseek(
             input_data=[{"role": "user", "content": "test"}],
@@ -668,13 +668,15 @@ class TestProviderRequestPayloads:
             "load_settings",
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
 
         LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
@@ -707,13 +709,15 @@ class TestProviderRequestPayloads:
                 "openai_api": {"api_base_url": "https://legacy.test/v1"},
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
 
         LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
@@ -746,13 +750,15 @@ class TestProviderRequestPayloads:
                 },
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
 
         LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
@@ -773,13 +779,15 @@ class TestProviderRequestPayloads:
             "load_settings",
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
 
         LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
@@ -833,13 +841,15 @@ class TestProviderRequestPayloads:
             "load_settings",
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
+            ), raising=False)
 
         LLM_API_Calls.chat_with_openai(
             input_data=messages,
@@ -871,11 +881,8 @@ class TestProviderRequestPayloads:
             "load_settings",
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(captured, {"output_text": "OK"}),
-        )
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
 
         LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
@@ -900,11 +907,8 @@ class TestProviderRequestPayloads:
             "load_settings",
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(captured, {"output_text": "OK"}),
-        )
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
 
         LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
@@ -935,11 +939,8 @@ class TestProviderRequestPayloads:
             "load_settings",
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(captured, {"output_text": "OK"}),
-        )
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
 
         LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
@@ -980,11 +981,8 @@ class TestProviderRequestPayloads:
             "load_settings",
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(captured, response_data),
-        )
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
 
         response = LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
@@ -1012,6 +1010,7 @@ class TestProviderRequestPayloads:
             "total_tokens": 11,
         }
 
+    @pytest.mark.bootstrap_profile
     def test_openai_reasoning_stream_normalizes_responses_events(self, monkeypatch):
         from tldw_chatbook.LLM_Calls import LLM_API_Calls
 
@@ -1028,11 +1027,8 @@ class TestProviderRequestPayloads:
             "load_settings",
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(captured, response_events),
-        )
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, response_events), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, response_events), raising=False)
 
         stream = LLM_API_Calls.chat_with_openai(
             input_data=[{"role": "user", "content": "test"}],
@@ -1071,11 +1067,8 @@ class TestProviderRequestPayloads:
                 }
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(captured, response_data),
-        )
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
 
         response = LLM_API_Calls.chat_with_huggingface(
             input_data=[{"role": "user", "content": "test"}],
@@ -1111,11 +1104,8 @@ class TestProviderRequestPayloads:
                 }
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(captured, response_data),
-        )
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
         monkeypatch.setattr(
             LLM_API_Calls.logger,
             "debug",
@@ -1145,10 +1135,7 @@ class TestProviderRequestPayloads:
                 "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1157,8 +1144,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-4-20250514",
+                    "content": [{"type": "text", "text": "thinking answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-4-20250514",
+                    "content": [{"type": "text", "text": "thinking answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -1194,10 +1200,7 @@ class TestProviderRequestPayloads:
                 "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1206,8 +1209,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-haiku-4-5-20251001",
+                    "content": [{"type": "text", "text": "modern answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-haiku-4-5-20251001",
+                    "content": [{"type": "text", "text": "modern answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
         monkeypatch.setattr(
             LLM_API_Calls.logger,
             "warning",
@@ -1246,10 +1268,7 @@ class TestProviderRequestPayloads:
                 }
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1258,8 +1277,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-haiku-4-5-20251001",
+                    "content": [{"type": "text", "text": "top-p answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-haiku-4-5-20251001",
+                    "content": [{"type": "text", "text": "top-p answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -1284,10 +1322,7 @@ class TestProviderRequestPayloads:
                 "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1296,8 +1331,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-4-20250514",
+                    "content": [{"type": "text", "text": "thinking answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-4-20250514",
+                    "content": [{"type": "text", "text": "thinking answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
 
         response = LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -1327,10 +1381,7 @@ class TestProviderRequestPayloads:
                 "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1339,8 +1390,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-7",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-7",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -1366,10 +1436,7 @@ class TestProviderRequestPayloads:
                 "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1378,8 +1445,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-8",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-8",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -1417,10 +1503,7 @@ class TestProviderRequestPayloads:
                 }
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1429,8 +1512,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "Sonnet 5 answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "Sonnet 5 answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -1469,10 +1571,7 @@ class TestProviderRequestPayloads:
                 "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1481,8 +1580,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "Sonnet 5 answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "Sonnet 5 answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -1517,10 +1635,7 @@ class TestProviderRequestPayloads:
                 "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1529,8 +1644,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "Sonnet 5 answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-sonnet-5",
+                    "content": [{"type": "text", "text": "Sonnet 5 answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -1563,10 +1697,7 @@ class TestProviderRequestPayloads:
                 "anthropic_api": {"api_base_url": "https://api.anthropic.test/v1"}
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "msg_test",
@@ -1575,8 +1706,27 @@ class TestProviderRequestPayloads:
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 4, "output_tokens": 5},
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-8",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "msg_test",
+                    "model": "claude-opus-4-8",
+                    "content": [{"type": "text", "text": "adaptive answer"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 4, "output_tokens": 5},
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_anthropic(
             input_data=[{"role": "user", "content": "test"}],
@@ -1607,10 +1757,7 @@ class TestProviderRequestPayloads:
                 }
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "hf-test",
@@ -1619,8 +1766,27 @@ class TestProviderRequestPayloads:
                         {"message": {"content": "OK"}, "finish_reason": "stop"}
                     ],
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [
+                        {"message": {"content": "OK"}, "finish_reason": "stop"}
+                    ],
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [
+                        {"message": {"content": "OK"}, "finish_reason": "stop"}
+                    ],
+                },
+            ), raising=False)
 
         response = LLM_API_Calls.chat_with_huggingface(
             input_data=[{"role": "user", "content": "test"}],
@@ -1648,10 +1814,7 @@ class TestProviderRequestPayloads:
                 }
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "hf-test",
@@ -1660,8 +1823,27 @@ class TestProviderRequestPayloads:
                         {"message": {"content": "OK"}, "finish_reason": "stop"}
                     ],
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [
+                        {"message": {"content": "OK"}, "finish_reason": "stop"}
+                    ],
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [
+                        {"message": {"content": "OK"}, "finish_reason": "stop"}
+                    ],
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_huggingface(
             input_data=[{"role": "user", "content": "test"}],
@@ -1690,10 +1872,7 @@ class TestProviderRequestPayloads:
                 }
             },
         )
-        monkeypatch.setattr(
-            LLM_API_Calls,
-            "create_default_session",
-            lambda: _CapturedSession(
+        monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured,
                 {
                     "id": "hf-test",
@@ -1702,8 +1881,27 @@ class TestProviderRequestPayloads:
                         {"message": {"content": "OK"}, "finish_reason": "stop"}
                     ],
                 },
-            ),
-        )
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [
+                        {"message": {"content": "OK"}, "finish_reason": "stop"}
+                    ],
+                },
+            ), raising=False)
+        monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
+                captured,
+                {
+                    "id": "hf-test",
+                    "model": "openai/gpt-oss-120b",
+                    "choices": [
+                        {"message": {"content": "OK"}, "finish_reason": "stop"}
+                    ],
+                },
+            ), raising=False)
 
         LLM_API_Calls.chat_with_huggingface(
             input_data=[{"role": "user", "content": "test"}],
@@ -1743,6 +1941,7 @@ key2: |
         assert parsed["key2"] == "This is a\n  multiline value."
         assert parsed["/key3/i"] == "value3"
 
+    @pytest.mark.bootstrap_profile
     @patch("tldw_chatbook.Character_Chat.Chat_Dictionary_Lib.validate_path")
     def test_parse_user_dict_markdown_file_preserves_explicit_base_directory(
         self, mock_validate_path, tmp_path

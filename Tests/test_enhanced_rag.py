@@ -17,17 +17,11 @@ Note (chunking-template-parity PR 0): the bespoke table serialization
 dead code; tables are chunked as structural blocks by the vendored engine.
 """
 
-import pytest
 import logging
+import sys
+from contextlib import contextmanager
 
-# Import optional dependency checker
-from tldw_chatbook.Utils.optional_deps import DEPENDENCIES_AVAILABLE
-
-# Skip all tests in this module if embeddings dependencies are not available
-pytestmark = pytest.mark.skipif(
-    not DEPENDENCIES_AVAILABLE.get("embeddings_rag", False),
-    reason="RAG tests require embeddings dependencies: pip install tldw_chatbook[embeddings_rag]",
-)
+import pytest
 
 # Configure logging
 logging.basicConfig(
@@ -124,6 +118,7 @@ success in 2025 and beyond.
 """
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_enhanced_chunking():
     """Test enhanced chunking features."""
@@ -147,6 +142,7 @@ async def test_enhanced_chunking():
         clean_artifacts=True,
     )
 
+    assert chunks
     logger.info(f"Created {len(chunks)} hierarchical chunks")
     for i, chunk in enumerate(chunks[:3]):  # Show first 3 chunks
         logger.info(f"\nChunk {i}:")
@@ -163,6 +159,8 @@ async def test_enhanced_chunking():
         content, chunk_size=150, chunk_overlap=30, parent_size_multiplier=3
     )
 
+    assert parent_result["chunks"] and parent_result["parent_chunks"]
+    assert all(child["parent_id"] is not None for child in parent_result["chunks"])
     logger.info(f"Created {parent_result['metadata']['total_chunks']} retrieval chunks")
     logger.info(
         f"Created {parent_result['metadata']['total_parent_chunks']} parent chunks"
@@ -178,170 +176,168 @@ async def test_enhanced_chunking():
             logger.info(f"  Parent text: {parent_text[:150]}...")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_enhanced_rag_service():
-    """Test the enhanced RAG service."""
-    from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
-
-    logger.info("\n=== Testing Enhanced RAG Service ===")
-
-    # Create service with enhanced profile for parent retrieval.
-    # Use the deterministic mock backend so this test stays offline and
-    # isolated from EmbeddingFactory patches in the wider suite.
-    config = RAGConfig()
-    config.embedding.model = "mock"
-    config.vector_store.type = "in_memory"
-
-    service = create_rag_service(
-        profile_name="hybrid_enhanced",  # This profile has parent retrieval
-        config=config,
+async def test_enhanced_rag_service(tmp_path, monkeypatch):
+    """Index child chunks and expand a semantic result to its parent text."""
+    from tldw_chatbook.RAG_Search import config_profiles
+    from tldw_chatbook.RAG_Search.simplified import create_rag_service
+    from tldw_chatbook.RAG_Search.simplified.config import (
+        EmbeddingConfig,
+        RAGConfig,
+        VectorStoreConfig,
     )
 
-    content = create_test_document()
-
-    # Test indexing with parent retrieval
-    logger.info("\n1. Indexing document with parent retrieval...")
-    result = await service.index_document_with_parents(
-        doc_id="test_doc_001",
-        content=content,
-        title="Annual Report 2024",
-        metadata={"type": "annual_report", "year": 2024, "department": "finance"},
-        use_structural_chunking=True,
+    manager = config_profiles.get_profile_manager(profiles_dir=tmp_path / "profiles")
+    monkeypatch.setattr(config_profiles, "_GLOBAL_PROFILE_MANAGER", manager)
+    config = RAGConfig(
+        embedding=EmbeddingConfig(model="mock", device="cpu"),
+        vector_store=VectorStoreConfig(type="memory"),
     )
+    # Bind every possible keyword path to this test even though its search is semantic.
+    config.search.media_db_path = tmp_path / "absent-media.db"
+    config.search.chachanotes_db_path = tmp_path / "absent-chacha.db"
+    config.search.prompts_db_path = tmp_path / "absent-prompts.db"
 
-    logger.info(f"Indexing result: {result}")
-
-    # Test search with context expansion
-    logger.info("\n2. Testing search with context expansion...")
-    queries = [
-        "quarterly revenue growth",
-        "customer satisfaction score",
-        "investment plans for R&D",
-    ]
-
-    for query in queries:
-        logger.info(f"\nSearching for: '{query}'")
-
-        # Search without expansion
-        results_basic = await service.search(
-            query=query, top_k=2, search_type="semantic"
+    service = create_rag_service(profile_name="hybrid_enhanced", config=config)
+    try:
+        result = await service.index_document_with_parents(
+            doc_id="test_doc_001",
+            content=create_test_document(),
+            title="Annual Report 2024",
+            metadata={"type": "annual_report", "year": 2024, "department": "finance"},
+            use_structural_chunking=True,
         )
+        assert result.success and result.chunks_created > 0
+        assert result.metadata["parent_chunks_created"] > 0
+        assert set(result.to_dict()) == {
+            "doc_id",
+            "chunks_created",
+            "time_taken",
+            "success",
+            "error",
+        }
 
-        # Search with expansion (enhanced service should expand context automatically)
-        # The hybrid_enhanced profile has parent retrieval enabled
-        results_expanded = await service.search(
-            query=query, top_k=2, search_type="semantic"
-        )
-
-        logger.info(f"Basic results: {len(results_basic)} chunks")
-        logger.info(f"Expanded results: {len(results_expanded)} chunks")
-
-        # Compare first result
-        if results_basic and results_expanded:
-            basic_len = len(results_basic[0].document)
-            expanded_len = len(results_expanded[0].document)
-            logger.info(f"Context expansion: {basic_len} chars -> {expanded_len} chars")
-
-            if results_expanded[0].metadata.get("context_expanded"):
-                logger.info("✓ Context successfully expanded to parent chunk")
-
-
-@pytest.mark.asyncio
-async def test_v2_full_features():
-    """Test V2 service with all features enabled."""
-    from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
-
-    logger.info("\n=== Testing V2 Service with Full Features ===")
-
-    # Create service with full profile
-    config = RAGConfig()
-    config.embedding.model = "mock"
-    config.vector_store.type = "in_memory"
-
-    service = create_rag_service(
-        profile_name="hybrid_full",  # All features enabled
-        config=config,
-    )
-
-    # Verify all features are enabled
-    assert service.enable_parent_retrieval, "Parent retrieval should be enabled"
-    assert service.enable_reranking, "Reranking should be enabled"
-    assert service.enable_parallel_processing, "Parallel processing should be enabled"
-
-    content = create_test_document()
-
-    # Index document
-    result = await service.index_document(
-        doc_id="test_v2_001",
-        content=content,
-        title="Test Document for V2",
-        metadata={"test": "v2_features"},
-    )
-
-    logger.info(f"Indexed document: {result}")
-
-    # Test search with all features
-    queries = ["revenue growth", "customer satisfaction"]
-
-    for query in queries:
-        logger.info(f"\nSearching with all features for: '{query}'")
-
-        results = await service.search(
-            query=query,
-            top_k=5,
-            search_type="hybrid",  # Uses both keyword and semantic
-            rerank=True,  # Should use reranking
-        )
-
-        logger.info(f"Found {len(results)} results")
-        for i, result in enumerate(results[:2]):
-            logger.info(f"  Result {i + 1}: Score={result.score:.3f}")
-            logger.info(f"    Preview: {result.document[:100]}...")
+        for query in (
+            "quarterly revenue growth",
+            "customer satisfaction score",
+            "investment plans for R&D",
+        ):
+            basic = await service.search(query=query, top_k=2, search_type="semantic")
+            expanded = await service.search_with_context_expansion(
+                query=query, top_k=2, search_type="semantic"
+            )
+            assert basic, query
+            assert [item.id for item in expanded] == [item.id for item in basic]
+            assert any(
+                item.metadata.get("context_expanded")
+                and item.document == item.metadata["parent_chunk_text"]
+                for item in expanded
+            ), query
+    finally:
+        # The mock embeddings wrapper still checks CUDA on normal close.
+        # Its no-Torch branch leaves the service's real cleanup in place.
+        with monkeypatch.context() as cleanup:
+            cleanup.setitem(sys.modules, "torch", None)
+            service.close()
 
 
-@pytest.mark.asyncio
-async def test_profile_switching():
-    """Test switching between different profiles."""
-    from tldw_chatbook.RAG_Search.simplified import create_rag_service, RAGConfig
+@pytest.fixture
+def offline_profile_service(tmp_path, monkeypatch):
+    from Tests.RAG_Search.test_reranker_degraded_paths import _install_fake_provider
+    from tldw_chatbook.RAG_Search import config_profiles
+    from tldw_chatbook.RAG_Search.simplified import RAGConfig, create_rag_service
 
-    logger.info("\n=== Testing Profile Switching ===")
+    manager = config_profiles.get_profile_manager(profiles_dir=tmp_path / "profiles")
+    monkeypatch.setattr(config_profiles, "_GLOBAL_PROFILE_MANAGER", manager)
+    provider_calls = _install_fake_provider(monkeypatch)
 
-    config = RAGConfig()
-    config.embedding.model = "mock"
-    config.vector_store.type = "in_memory"
-
-    profiles = [
-        "bm25_only",
-        "vector_only",
-        "hybrid_basic",
-        "hybrid_enhanced",
-        "hybrid_full",
-    ]
-
-    for profile in profiles:
-        logger.info(f"\nTesting profile: {profile}")
+    @contextmanager
+    def open_service(profile, prompts_db=None):
+        config = RAGConfig()
+        config.embedding.model = "mock"
+        config.embedding.device = "cpu"
+        config.vector_store.type = "memory"
+        config.search.media_db_path = tmp_path / "absent-media.db"
+        config.search.chachanotes_db_path = tmp_path / "absent-chacha.db"
+        config.search.prompts_db_path = prompts_db or tmp_path / "absent-prompts.db"
         service = create_rag_service(profile_name=profile, config=config)
+        try:
+            assert service.profile.id == profile
+            yield service
+        finally:
+            with monkeypatch.context() as cleanup:
+                cleanup.setitem(sys.modules, "torch", None)
+                service.close()
 
-        # Index a simple document
-        await service.index_document(
-            doc_id=f"test_{profile}",
-            content="This is a test document for profile testing.",
-            title=f"Test {profile}",
+    return open_service, provider_calls
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_v2_full_features(tmp_path, offline_profile_service):
+    """Test V2 service with all features enabled."""
+    from Tests.RAG_Search.test_keyword_leg_prompts import _seed_prompts
+
+    prompts, ids = _seed_prompts(
+        tmp_path,
+        [("Quarterly review", "Summarize revenue growth and customer satisfaction.")],
+    )
+    open_service, provider_calls = offline_profile_service
+    with open_service("hybrid_full", prompts) as service:
+        assert service.enable_parent_retrieval
+        assert service.enable_reranking
+        assert service.enable_parallel_processing
+        indexed = await service.index_document(
+            doc_id="test_v2_001",
+            content=create_test_document(),
+            title="Test Document for V2",
+            metadata={"test": "v2_features"},
         )
+        assert indexed.success and indexed.chunks_created > 0
 
-        # Search based on profile type
-        if profile == "bm25_only":
-            search_type = "keyword"
-        elif profile == "vector_only":
-            search_type = "semantic"
-        else:
-            search_type = "hybrid"
+        for query in ("revenue growth", "customer satisfaction"):
+            calls_before = len(provider_calls)
+            results = await service.search(
+                query=query, top_k=5, search_type="hybrid", rerank=True
+            )
+            assert any(row.metadata.get("doc_id") == "test_v2_001" for row in results)
+            assert any(row.id == f"prompt_{ids['Quarterly review']}" for row in results)
+            assert any(row.metadata.get("rerank_score") == 0.5 for row in results)
+            assert len(provider_calls) > calls_before
 
-        results = await service.search(
-            query="test document", search_type=search_type, top_k=1
-        )
 
-        logger.info(f"  Search type: {search_type}, Results: {len(results)}")
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_profile_switching(tmp_path, offline_profile_service):
+    """Test switching between different profiles."""
+    from Tests.RAG_Search.test_keyword_leg_prompts import _seed_prompts
+
+    text = "This is a test document for profile testing."
+    prompts, ids = _seed_prompts(tmp_path, [("Profile test", text)])
+    open_service, _ = offline_profile_service
+    profiles = {
+        "bm25_only": "keyword",
+        "vector_only": "semantic",
+        "hybrid_basic": "hybrid",
+        "hybrid_enhanced": "hybrid",
+        "hybrid_full": "hybrid",
+    }
+    for profile, search_type in profiles.items():
+        doc_id = f"test_{profile}"
+        with open_service(profile, prompts if search_type == "keyword" else None) as service:
+            indexed = await service.index_document(
+                doc_id=doc_id, content=text, title=f"Test {profile}"
+            )
+            assert indexed.success and indexed.chunks_created > 0
+            results = await service.search(
+                query="test document", search_type=search_type, top_k=1
+            )
+            assert len(results) == 1, profile
+            if search_type == "keyword":
+                assert results[0].id == f"prompt_{ids['Profile test']}"
+            else:
+                assert results[0].metadata["doc_id"] == doc_id
 
 
 # Remove main function and if __name__ block - pytest will find and run the tests automatically

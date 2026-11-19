@@ -57,6 +57,7 @@ def test_the_production_credential_seam_resolves_to_no_os_store() -> None:
         build_default_server_credential_store()
 
 
+@pytest.mark.bootstrap_profile
 def test_a_constructed_app_records_the_store_as_unavailable() -> None:
     """The end state: app construction takes the documented fallback, not the OS.
 
@@ -77,4 +78,6 @@ def test_a_constructed_app_records_the_store_as_unavailable() -> None:
         "app construction found a usable OS credential store during tests -- the "
         "keyring sandbox is not in effect and tests can read/write real credentials"
     )
-    assert type(app.server_credential_store).__name__ == "UnavailableServerCredentialStore"
+    assert (
+        type(app.server_credential_store).__name__ == "UnavailableServerCredentialStore"
+    )

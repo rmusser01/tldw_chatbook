@@ -500,3 +500,57 @@ def test_shutdown_is_bounded_and_late_completion_reads_no_registry(
     service.shutdown(timeout=0.2)
 
     assert reads == reads_before_shutdown
+
+
+@private_profile_test
+def test_admission_revision_moves_only_when_ready_roots_can_change(
+    request, tmp_path
+) -> None:
+    """TASK-33620.15.1.6: an in-memory stamp of what ``admit_turn`` answers.
+
+    The Console Environment panel compares it on the UI loop, where the
+    admission read itself (a registry SELECT) is too slow, to drop a landing
+    whose root changed after its worker read the root. It must move when a
+    root finishes preparing, when consent is revoked, and at shutdown -- and
+    stay put across reads that change nothing, including the first read that
+    only schedules preparation, or the panel's own read would drop its own
+    landing.
+    """
+    registry = _registry(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    registry.add_folder_binding("ws-review", root)
+    registry.set_change_review_enabled("ws-review", True)
+    release = threading.Event()
+    service = consent_module.ChangeReviewConsentService(
+        registry,
+        initialize_root=lambda _path: release.wait(2.0),
+        worker_count=1,
+    )
+    try:
+        start = service.admission_revision
+        assert service.admit_turn("ws-review").ready_roots == ()
+        assert service.admission_revision == start, "scheduling admits nothing"
+
+        release.set()
+        _wait_until(
+            lambda: service.admit_turn("ws-review").ready_roots
+            == (str(root.resolve()),)
+        )
+        ready = service.admission_revision
+        assert ready != start, "the root became ready"
+        service.admit_turn("ws-review")
+        service.status("ws-review")
+        assert service.admission_revision == ready, "reads change nothing"
+
+        expected = registry.read_change_review_consent("ws-review")
+        service.toggle("ws-review", expected=expected, enabled=False)
+        assert service.admit_turn("ws-review").ready_roots == ()
+        revoked = service.admission_revision
+        assert revoked != ready, "consent revoked"
+
+        service.shutdown(timeout=0.2)
+        assert service.admission_revision != revoked, "a disposed service admits nothing"
+    finally:
+        release.set()
+        service.shutdown(timeout=0.2)

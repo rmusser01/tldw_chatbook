@@ -206,6 +206,7 @@ class LocalMCPControlService:
         if isinstance(self.runtime_delegate, LocalMCPRuntimeDelegate):
             self.runtime_delegate._definition_store = self.store
         self._runtime_activity_limit = 50
+        self._goal_connected_profiles: dict[str, tuple[object, str]] = {}
         self.connection_ownership = None
 
     def save_owned_profile(
@@ -309,11 +310,22 @@ class LocalMCPControlService:
         if definition["type"] != "stdio":
             return "", (), None, {}
         token = definition["command"]
-        command = (
-            str(Path(root) / token)
-            if token.startswith("./")
-            else shutil.which(token, path=environment.get("PATH"))
-        )
+        if token.startswith("./"):
+            command = str(Path(root) / token)
+        elif Path(token).is_absolute():
+            command = shutil.which(token)
+        else:
+            host_cwd = Path.cwd()
+            lookup_path = baseline.get("PATH", "")
+            if not lookup_path:
+                raise ValueError("plugin_executable_unavailable")
+            # Anchor empty and relative host entries before child cwd/PATH.
+            lookup_path = os.pathsep.join(
+                str(host_cwd / entry) for entry in lookup_path.split(os.pathsep)
+            )
+            command = shutil.which(token, path=lookup_path)
+            if command:
+                command = str(host_cwd / command)
         if not command:
             raise ValueError("plugin_executable_unavailable")
         args = tuple(expand(value) for value in definition.get("args", []))
@@ -385,11 +397,17 @@ class LocalMCPControlService:
                     and data_root["installation_id"] != installation_id
                 ):
                     raise CredentialError("credential_mapping_invalid")
+                lookup_baseline = dict(owner["environment"])
+                if "PATH" in definition.get("env", {}):
+                    # A saved child overlay is not executable lookup authority.
+                    # Compare the captured absolute executable with trusted host
+                    # lookup; a changed host selection requires a fresh review.
+                    lookup_baseline["PATH"] = os.environ.get("PATH", "")
                 expected = self._owned_launch_values(
                     definition,
                     inspection.materialized_identity,
                     data_root["path"] if data_root else None,
-                    owner["environment"],
+                    lookup_baseline,
                 )
                 if (
                     expected
@@ -554,7 +572,6 @@ class LocalMCPControlService:
             ``discovery_snapshot`` and ``is_connected``.
         """
         self._require_allowed("mcp.external_profiles.list.local")
-        servers: list[dict[str, Any]] = []
         client = self.client
         active_sessions = getattr(client, "sessions", {}) if client is not None else {}
         catalog_reader = getattr(self.store, "get_external_catalog", None)
@@ -567,23 +584,81 @@ class LocalMCPControlService:
                 (profile, self.store.get_discovery_snapshot(profile.profile_id))
                 for profile in self.store.list_profiles()
             ]
-        for profile, snapshot in catalog:
+        records = [
+            {**profile.to_dict(), "discovery_snapshot": snapshot}
+            for profile, snapshot in catalog
+        ]
+        return self._project_external_catalog(records, active_sessions=active_sessions)
+
+    def _project_external_catalog(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        active_sessions: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Project checked public catalog fields using live caller connections."""
+        servers: list[dict[str, Any]] = []
+        for record in records:
+            profile_id = record["profile_id"]
             servers.append(
                 {
-                    **profile.to_dict(),
-                    "discovery_snapshot": snapshot,
+                    **record,
                     "is_connected": (
-                        self.connection_ownership.is_connected(profile.profile_id)
-                        if profile.plugin_owner is not None
-                        and self.connection_ownership is not None
-                        else profile.profile_id in active_sessions
-                        and not getattr(
-                            active_sessions[profile.profile_id], "_closed", False
+                        self._profile_connected(
+                            profile_id, record.get("plugin_owner") is not None,
+                            active_sessions,
                         )
                     ),
                 }
             )
         return servers
+
+
+    def _profile_connected(self, profile_id, plugin_owned, active_sessions) -> bool:
+        if plugin_owned and self.connection_ownership is not None:
+            return self.connection_ownership.is_connected(profile_id)
+        return profile_id in active_sessions and not getattr(
+            active_sessions[profile_id], "_closed", False
+        )
+
+    def connection_states(self, profiles=()) -> tuple[bool, ...]:
+        """``is_connected`` as ``get_external_servers`` reports it, per profile.
+
+        Args:
+            profiles: ``(profile_id, plugin_owned)`` pairs.
+        """
+        client = self.client
+        active_sessions = getattr(client, "sessions", {}) if client is not None else {}
+        return tuple(
+            self._profile_connected(profile_id, owned, active_sessions)
+            for profile_id, owned in profiles
+        )
+
+    def catalog_fingerprint(self, profiles=()) -> tuple:
+        """What a catalog composition reads from this service, as of now.
+
+        TASK-33620.15.1: the governance checks ``get_external_servers`` and
+        ``get_inventory`` make (a refusal raises), the store's admission-checked
+        content identity, the built-in manifest's source, and the connection
+        state of ``profiles`` (``(profile_id, plugin_owned)`` pairs).
+
+        Returns:
+            ``(store identity, manifest identity, connection states)``.
+        """
+        self._require_allowed("mcp.external_profiles.list.local")
+        self._require_allowed("mcp.inventory.list.local")
+        if self.manifest_provider is _default_manifest_provider:
+            from pathlib import Path
+
+            source = Path(__file__).with_name("server.py").read_bytes()
+            manifest: Any = ("source", hashlib.sha256(source).hexdigest())
+        else:
+            manifest = ("manifest", self.manifest_provider() or {})
+        return (
+            self.store.catalog_fingerprint(),
+            manifest,
+            self.connection_states(profiles),
+        )
 
     def save_external_profile(
         self,
@@ -695,6 +770,11 @@ class LocalMCPControlService:
             )
 
         session = getattr(client, "sessions", {}).get(profile_id)
+        if session is not None:
+            self._goal_connected_profiles[profile_id] = (
+                session,
+                self._goal_profile_digest(profile),
+            )
         try:
             snapshot = await client.describe_server(profile.profile_id)
             if not self._has_capabilities(snapshot):
@@ -712,6 +792,84 @@ class LocalMCPControlService:
             ):
                 await self._disconnect_best_effort(client, profile_id)
             raise
+
+    @staticmethod
+    def _goal_profile_digest(profile) -> str:
+        """Hash launch arguments and unresolved environment references only."""
+        import hashlib
+
+        payload = (
+            profile.command,
+            profile.args,
+            profile.cwd,
+            profile.transport,
+            profile.protocol_version,
+            tuple(sorted(profile.env.items())),
+        )
+        return hashlib.sha256(
+            json.dumps(payload, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    def goal_tool_binding(self, profile_id: str, tool_name: str, *, tool_id: str):
+        """Snapshot an exact configured target and its currently discovered shape."""
+        from tldw_chatbook.Agents.goal_models import GoalMCPBinding
+        from tldw_chatbook.MCP.permission_store import definition_hash
+
+        profile = self.store.get_profile(profile_id)
+        if (
+            profile is None
+            or profile.transport != "stdio"
+            or profile.plugin_owner is not None
+        ):
+            raise ValueError("Goal MCP requires a selected local stdio profile")
+        tools = self._get_client().get_server_tools(profile_id)
+        tool = next((item for item in tools if item["name"] == tool_name), None)
+        if tool is None:
+            raise ValueError("MCP definition missing")
+        return GoalMCPBinding(
+            tool_id=tool_id,
+            server_key="local:" + profile_id,
+            tool_name=tool_name,
+            profile_sha256=self._goal_profile_digest(profile),
+            definition_sha256=definition_hash(
+                tool.get("description"), tool.get("inputSchema")
+            ),
+        )
+
+    def _check_goal_tool_binding(self, goal, profile_id, tool_name, *, connected):
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+        binding = next(
+            (
+                item
+                for item in goal.goal.request.tool_scope.mcp_bindings
+                if item.server_key == "local:" + profile_id
+                and item.tool_name == tool_name
+            ),
+            None,
+        )
+        profile = self.store.get_profile(profile_id)
+        if (
+            binding is None
+            or profile is None
+            or self._goal_profile_digest(profile) != binding.profile_sha256
+        ):
+            raise AutomaticWorkRefused("mcp_binding_changed")
+        if connected:
+            session, digest = self._goal_connected_profiles.get(
+                profile_id, (None, None)
+            )
+            if (
+                session is None
+                or session is not self._get_client().sessions.get(profile_id)
+                or digest != binding.profile_sha256
+            ):
+                raise AutomaticWorkRefused("mcp_connection_changed")
+            if (
+                self.goal_tool_binding(profile_id, tool_name, tool_id=binding.tool_id)
+                != binding
+            ):
+                raise AutomaticWorkRefused("mcp_definition_changed")
 
     @producer_call
     async def disconnect_profile(self, profile_id: str) -> bool:
@@ -792,6 +950,9 @@ class LocalMCPControlService:
         automatic_work = current_automatic_work()
         if automatic_work is not None:
             automatic_work.check()
+        goal = automatic_work.goal if automatic_work is not None else None
+        if goal is not None:
+            self._check_goal_tool_binding(goal, profile_id, tool_name, connected=False)
         client = self._get_client()
         profile = self.store.get_profile(profile_id)
         if profile is not None and profile.plugin_owner is not None:
@@ -825,6 +986,8 @@ class LocalMCPControlService:
         check_mcp_invocation_policies()
         if automatic_work is not None:
             automatic_work.check()
+        if goal is not None:
+            self._check_goal_tool_binding(goal, profile_id, tool_name, connected=True)
         if typed_result:
             call = getattr(client, "call_tool_result", None)
             if not callable(call):
@@ -1742,3 +1905,39 @@ class LocalMCPControlService:
             action_id=action_id,
             runtime_state_override=RuntimeSourceState(active_source="local"),
         )
+
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("get_external_servers", LocalMCPControlService.get_external_servers),
+    ("_project_external_catalog", LocalMCPControlService._project_external_catalog),
+    ("get_inventory", LocalMCPControlService.get_inventory),
+)
+
+
+# Pin only catalog callbacks whose bodies the joined Console reader consumes.
+# Keep the original guarded body as well as its public wrapper.
+_CONSOLE_STANDARD_BODY_BINDINGS = tuple(
+    (
+        name,
+        callback,
+        getattr(callback, "__wrapped__", None),
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                (
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+                ),
+            )
+            for function in (callback,)
+            + ((callback.__wrapped__,) if hasattr(callback, "__wrapped__") else ())
+        ),
+    )
+    for name, callback in _CONSOLE_STANDARD_METHODS
+)

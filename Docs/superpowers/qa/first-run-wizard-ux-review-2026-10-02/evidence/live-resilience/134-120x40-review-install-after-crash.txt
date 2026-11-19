@@ -1,0 +1,40 @@
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                 Set up tldw chatbook                                                 │
+│                     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                     │
+│▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▊                                                                          ▎▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│
+│    ┌──┐      ┌──┐   ▊  Install Parakeet v2 (English, INT8)?                                    ▎ ┌──┐       ┌──┐     │
+│    │✓ │      │✓ │   ▊                                                                          ▎ │10│       │11│     │
+│    └──┘      └──┘   ▊  Source: istupakov/parakeet-tdt-0.6b-v2-onnx                             ▎ └──┘       └──┘     │
+│─────────────────────▊  Revision: 0bbb45a3365852604aef28b538a8f066f4ccaa85                      ▎─────────────────────│
+│                     ▊  License: CC-BY-4.0                                                      ▎                     │
+│                     ▊  Terms: Curated Parakeet TDT ONNX export pinned to one immutable         ▎                     │
+│                     ▊  upstream revision and verified against the sizes and SHA-256 digests    ▎                     │
+│  Selected: Parakeet ▊  recorded by TASK-593.                                                   ▎skips it.            │
+│                     ▊  Source review page: https://creativecommons.org/licenses/by/4.0/        ▎                     │
+│  Not installed.     ▊  Precision: int8                                                         ▎                     │
+│                     ▊  Contents: 4 files, 630.6 MiB                                            ▎                     │
+│   Use model from dis▊  Provenance: Curated by Chatbook · Local integrity recorded              ▎                     │
+│   Review and install▊                                                                          ▎                     │
+│  No existing local t▊  Source: istupakov/silero-vad-onnx                                       ▎                     │
+│                     ▊  Revision: b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6                      ▎                     │
+│   Use an existing tr▊  License: mit                                                            ▎                     │
+│                     ▊  Terms: Pinned Silero VAD ONNX model used for offline long-form          ▎                     │
+│  Language           ▊  segmentation.                                                           ▎                     │
+│  ┌──────────────────▊  Source review page: https://opensource.org/license/mit                  ▎────────────────┐    │
+│  │ █▐●▌ English (rec▊  Precision: f32                                                          ▎                │    │
+│  │ ▐○▌ Bulgarian    ▊  Contents: 1 files, 2.2 MiB                                              ▎                │    │
+│  │ ▐○▌ Czech        ▊  Provenance: Curated by Chatbook · Local integrity recorded              ▎                │    │
+│  │ ▐○▌ Danish       ▊                                                                          ▎                │    │
+│  │ ▐○▌ German       ▊  Download: 632.8 MiB                                                     ▎                │    │
+│  └──────────────────▊  Already staged: 0.0 MiB                                                 ▎────────────────┘    │
+│                     ▊  Staging overhead: 0.0 MiB                                               ▎                     │
+│  Precision          ▊  Destination:                                                            ▎                 ▅▅  │
+│  ┌──────────────────▊  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wiz  ▎────────────────┐    │
+│  │ █▐●▌ INT8 (recomm▊                                                                          ▎                │    │
+│                     ▊                                             Cancel         Install       ▎                     │
+│▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▊                                                                          ▎▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+│                     ▊                                                                          ▎                     │
+│    Step 6 of 11     ▊                                                                          ▎       Exit setup    │
+│                     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                   Enter / Ctrl+N next · Ctrl+B back · Esc exit setup

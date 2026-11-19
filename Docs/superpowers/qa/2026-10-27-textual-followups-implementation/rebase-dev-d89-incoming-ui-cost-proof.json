@@ -1,0 +1,128 @@
+{
+  "run": 40627582664,
+  "head": "2f497915c8ad9e2ed832ba76415df00d860e6334",
+  "jobs": [
+    {
+      "id": 122636716442,
+      "shard": 9,
+      "seconds": 712.0,
+      "log_sha256": "3bf973ead6ec3ab9990e23793b3d9d6cb6f29233cdd648c1dd1b0c65bce7f4b9"
+    },
+    {
+      "id": 122636716610,
+      "shard": 10,
+      "seconds": 1015.0,
+      "log_sha256": "25ee4098a2b245ad80adc0470b31b1b7a13e83e53ee55b753e95803f94f737ab"
+    },
+    {
+      "id": 122636716618,
+      "shard": 17,
+      "seconds": 1071.0,
+      "log_sha256": "f48fb1a3a23e6e3e78527efa4aa58467baa11c40e3c100afd54ea85b87a7926f"
+    },
+    {
+      "id": 122636716623,
+      "shard": 14,
+      "seconds": 1024.0,
+      "log_sha256": "c140b2ecf11235919984c686a46c3b870aa05ffbfaae355517a00ddaa0dc16e1"
+    },
+    {
+      "id": 122636716632,
+      "shard": 13,
+      "seconds": 1027.0,
+      "log_sha256": "f984d360b132132f7f2c786c6438121d994473e4c7bb0ff4b7e7f50048a9c733"
+    },
+    {
+      "id": 122636716642,
+      "shard": 16,
+      "seconds": 846.0,
+      "log_sha256": "0aed61fcba183e2534ace2103024d1c68cfa3234a10cd8282fcb0b8f6cd9a597"
+    },
+    {
+      "id": 122636716655,
+      "shard": 12,
+      "seconds": 970.0,
+      "log_sha256": "38761ae4dc3db451799f9ddeaab208253dfeb34769a7ecb0787c194ba21efb61"
+    },
+    {
+      "id": 122636716656,
+      "shard": 11,
+      "seconds": 846.0,
+      "log_sha256": "9fac29bcc09711493be56d901740918aa10371ecfce7bbe421ba0617c50779d9"
+    },
+    {
+      "id": 122636716657,
+      "shard": 7,
+      "seconds": 913.0,
+      "log_sha256": "ef33943a672bee77f214913cc63f4c9b6af9352139048752f74575d532428eec"
+    },
+    {
+      "id": 122636716714,
+      "shard": 8,
+      "seconds": 779.0,
+      "log_sha256": "ad7eb1b9a66b293d588ba70ebc6326410ab21e1253ce83f779ba7aa4414e268d"
+    },
+    {
+      "id": 122636716735,
+      "shard": 6,
+      "seconds": 1070.0,
+      "log_sha256": "ac7d50802fad59122cfa9c6665dbb5a8211f2af0fe83f7e77471ded7d756b6ba"
+    },
+    {
+      "id": 122636716738,
+      "shard": 3,
+      "seconds": 994.0,
+      "log_sha256": "19d8cea016e422844ce6152bdef896848f7f892a4d80c6ecf053540201c9def7"
+    },
+    {
+      "id": 122636716764,
+      "shard": 1,
+      "seconds": 1064.0,
+      "log_sha256": "08f1ce9d7154f3c95720ab620c484c6327bc9ee70a9f111af050e92e73b72efb"
+    },
+    {
+      "id": 122636716836,
+      "shard": 5,
+      "seconds": 1002.0,
+      "log_sha256": "420a9ac7ddb1422b15a4af6c8b792126a58166f9ab468f00df9fafb87ca7547e"
+    },
+    {
+      "id": 122636716851,
+      "shard": 2,
+      "seconds": 1060.0,
+      "log_sha256": "ece6d3c81b3c4fd7ef456e6ee65a7dcaffe01c62430df43d0ca8f6ce4705e9dd"
+    },
+    {
+      "id": 122636716892,
+      "shard": 15,
+      "seconds": 899.0,
+      "log_sha256": "87211632ed62b9631580c04008815e2e82cdaae4b86de551850b914bf2497ab4"
+    },
+    {
+      "id": 122636716893,
+      "shard": 4,
+      "seconds": 812.0,
+      "log_sha256": "da556c94dcbc48565a229d1ba38f85f28673e2d5801356b1cff3c7912703893f"
+    }
+  ],
+  "used_charges": [
+    {
+      "selector": "Tests/UI/test_console_inspector_rail_deferral.py",
+      "shard": 16,
+      "actual_call_seconds": 2.4,
+      "cases": 6
+    },
+    {
+      "selector": "Tests/UI/test_console_collapsed_inspector_send_layout.py::test_a_send_asks_no_layout_of_the_collapsed_inspector",
+      "shard": 17,
+      "actual_call_seconds": 36.35,
+      "cases": 1
+    },
+    {
+      "selector": "Tests/UI/test_console_collapsed_inspector_send_layout.py::test_an_inspector_opened_after_a_send_matches_one_open_throughout",
+      "shard": 1,
+      "actual_call_seconds": 43.41,
+      "cases": 1
+    }
+  ]
+}

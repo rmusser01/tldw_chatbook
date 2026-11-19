@@ -1,0 +1,22 @@
+from common import *
+import ast,copy
+p='Tests/UI/test_console_runtime_ownership.py';before=blob(BASE,p);assert (W/p).read_bytes()==before
+old=b'    screen._session = SimpleNamespace(\n        _sync_console_session_draft=no_op,\n        _ensure_active_console_session_settings=lambda *_a, **_k: None,\n    )'
+new=old.replace(b'        _sync_console_session_draft=no_op,',b'        consume_pending_vllm_console_intent=no_op,\n        consume_pending_llamacpp_console_intent=no_op,\n        _sync_console_session_draft=no_op,')
+assert before.count(old)==1;after=before.replace(old,new);(W/p).write_bytes(after)
+assert after.replace(new,old)==before
+b=ast.parse(before);a=ast.parse(after);selected='_post_reconciliation_admission_screen'
+original={n.name:ast.dump(n,include_attributes=False) for n in b.body if isinstance(n,(ast.ClassDef,ast.FunctionDef,ast.AsyncFunctionDef))};final={n.name:ast.dump(n,include_attributes=False) for n in a.body if isinstance(n,(ast.ClassDef,ast.FunctionDef,ast.AsyncFunctionDef))}
+assert set(original)==set(final);assert all(original[k]==final[k] for k in original if k!=selected)
+removed=[]
+for n in ast.walk(a):
+ if isinstance(n,ast.FunctionDef) and n.name==selected:
+  for c in ast.walk(n):
+   if isinstance(c,ast.Call) and isinstance(c.func,ast.Name) and c.func.id=='SimpleNamespace':
+    for kw in list(c.keywords):
+     if kw.arg in ('consume_pending_vllm_console_intent','consume_pending_llamacpp_console_intent'):
+      assert isinstance(kw.value,ast.Name) and kw.value.id=='no_op';removed.append(kw.arg);c.keywords.remove(kw)
+assert len(removed)==2 and ast.dump(a,include_attributes=False)==ast.dump(b,include_attributes=False)
+assertions=[ast.dump(n,include_attributes=False) for n in ast.walk(b) if isinstance(n,ast.Assert)];assert assertions==[ast.dump(n,include_attributes=False) for n in ast.walk(ast.parse(after)) if isinstance(n,ast.Assert)]
+dump('fixture-reversal.json',{'path':p,'original_sha256':sha(before),'overlay_sha256':sha(after),'two_keywords_removed':removed,'full_original_ast_restored':True,'exact_original_bytes_restored':True,'nonselected_declarations':{k:sha(v.encode()) for k,v in original.items() if k!=selected},'all_nonselected_declarations_ast_exact':True,'original_assertion_count':len(assertions),'original_assertion_ast_sequence_sha256':sha(json.dumps(assertions).encode()),'original_assertion_identity_exact':True,'strict_xfail_declaration_ast_exact':original['test_captured_attach_timer_overlap_rearms_real_sync_worker']==final['test_captured_attach_timer_overlap_rearms_real_sync_worker']})
+(O/'fixture-overlay.patch').write_bytes(git('diff','--',p));print('Exact two-callback reversible overlay; original AST/assertions preserved.')

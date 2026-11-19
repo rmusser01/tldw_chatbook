@@ -45,6 +45,7 @@ def _assert_focus_paints(host: LibraryProductionCSSHarness, button: Button) -> N
     ), "The visible toggle must retain its underline focus cue."
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_tab_reveals_create_above_the_docked_cue(theme: str) -> None:
@@ -70,6 +71,7 @@ async def test_tab_reveals_create_above_the_docked_cue(theme: str) -> None:
         _assert_focus_paints(host, button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_all_section_toggles_paint_through_reverse_traversal_and_resize(

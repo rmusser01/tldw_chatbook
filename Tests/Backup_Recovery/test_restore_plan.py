@@ -22,6 +22,7 @@ from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 
+from Tests.Backup_Recovery.path_aliases import create_directory_alias
 from tldw_chatbook.Backup_Recovery.archive_reader import acquire
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
 from tldw_chatbook.Backup_Recovery.models import Inventory, StorageItem
@@ -224,7 +225,8 @@ def test_windows_ordinary_and_sqlite_files_keep_exact_byte_hashes(
 
 
 @pytest.mark.parametrize(
-    "change", ("identity", "type", "hardlink", "symlink", "mode", "mtime", "ancestor")
+    "change",
+    ("identity", "type", "hardlink", "directory_alias", "mode", "mtime", "ancestor"),
 )
 def test_windows_instance_lock_keeps_native_drift_refusal(
     tmp_path, monkeypatch, reviewed_instance_lock, change
@@ -243,15 +245,20 @@ def test_windows_instance_lock_keeps_native_drift_refusal(
         destinations={"root": tmp_path / "new"},
         target=case.target,
     )
-    if change in {"identity", "type", "symlink"}:
+    if change in {"identity", "type"}:
         saved = case.lock.with_name("saved")
         case.lock.rename(saved)
         if change == "identity":
             case.lock.write_bytes(saved.read_bytes())
-        elif change == "type":
-            case.lock.mkdir()
         else:
-            case.lock.symlink_to(saved)
+            case.lock.mkdir()
+    elif change == "directory_alias":
+        alias_target = case.lock.with_name("alias-target")
+        alias_target.mkdir()
+        saved = alias_target / "saved"
+        case.lock.rename(saved)
+        original = saved.read_bytes()
+        create_directory_alias(case.lock, alias_target)
     elif change == "hardlink":
         os.link(case.lock, case.lock.with_name("alias"))
     elif change == "mode":
@@ -298,8 +305,13 @@ def test_windows_instance_lock_keeps_native_drift_refusal(
         monkeypatch.setattr(case.facade, "stat", changed_ancestor)
     if change == "mode":
         assert _fingerprint(_paths(plan), plan.target) != plan.target_fingerprint
+    elif change == "directory_alias":
+        with pytest.raises(ValueError, match="^destination_alias$"):
+            _fingerprint(_paths(plan), plan.target)
     with pytest.raises(ValueError, match="^target_changed$"):
         recheck_targets(plan)
+    if change == "directory_alias":
+        assert saved.read_bytes() == original
 
 
 @pytest.mark.parametrize("change", ("named-identity", "after-metadata"))
@@ -365,21 +377,10 @@ def test_windows_instance_observation_binds_mode_without_normalizing_it(
     assert case.facade.stat(case.lock, follow_symlinks=False).st_mode == mode
 
 
-def sealed(tmp_path, *, partial=False, unknown=False, mutate=None, data=b"durable"):
-    from Tests.Backup_Recovery.test_archive_reader import manifest
-
-    doc = manifest(data)
-    doc["owners"][0]["owner_id"] = "unknown.newer" if unknown else "ui.state"
-    doc["files"][0]["owner_id"] = doc["owners"][0]["owner_id"]
-    doc["consistency"] = "partial" if partial else "coherent"
-    if mutate:
-        mutate(doc)
-    path = tmp_path / "fixture.zip"
-    with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("manifest.json", json.dumps(doc))
-        for payload in doc["files"]:
-            archive.writestr(payload["payload"], data)
-    return acquire(path, tmp_path / "archive-work", ArchiveLimits(), None, Event())
+# Defined beside manifest() in the hypothesis-free test_archive_reader, so a
+# child process that needs only this fixture (the UI lane installs no
+# hypothesis) can import it; re-exported here for its many importers.
+from Tests.Backup_Recovery.test_archive_reader import sealed
 
 
 def test_isolated_maps_explicit_new_root_without_loading_current_config(
@@ -400,24 +401,28 @@ def test_isolated_maps_explicit_new_root_without_loading_current_config(
     assert broken.read_text() == "not = [valid"
 
 
-@pytest.mark.parametrize("kind", ["relative", "existing", "symlink", "archive"])
+@pytest.mark.parametrize("kind", ["relative", "existing", "directory_alias", "archive"])
 def test_isolated_rejects_unsafe_destinations(tmp_path, kind):
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 
     archive = sealed(tmp_path)
+    original = archive.path.read_bytes()
     destination = tmp_path / "new"
     if kind == "relative":
         destination = Path("relative")
     elif kind == "existing":
         destination.mkdir()
-    elif kind == "symlink":
-        destination.symlink_to(archive.path.parent, target_is_directory=True)
+    elif kind == "directory_alias":
+        create_directory_alias(destination, archive.path.parent)
     else:
         destination = archive.path.parent
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match="^destination_alias$" if kind == "directory_alias" else None
+    ):
         plan_restore(
             archive, mode="isolated", destinations={"root": destination}, target=None
         )
+    assert archive.path.read_bytes() == original
 
 
 def test_rejects_unknown_installed_owner(tmp_path):
@@ -780,6 +785,79 @@ def test_real_older_sqlite_migrates_only_private_candidate(tmp_path):
             "SELECT query,lease_attempts FROM research_runs"
         ).fetchall() == [("nebula", 0)]
     assert source.read_bytes() == original
+
+
+@pytest.mark.parametrize("dictionary", [False, True])
+def test_shipped76_archive_stages_installed_schema_without_changing_source(
+    tmp_path, dictionary
+):
+    import sqlite3
+    from contextlib import closing
+
+    from Tests.Backup_Recovery.test_chachanotes_native76_compatibility import (
+        _assert_legacy_queue_quarantine,
+        _checkpoint_state,
+        _owner,
+        _shipped76,
+    )
+    from tldw_chatbook.Backup_Recovery import sqlite_validation as validation
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+    from tldw_chatbook.Backup_Recovery.staging import stage_restore
+
+    source = tmp_path / "shipped.sqlite"
+    before, messages, indexes = _shipped76(source, dictionary=dictionary)
+    original = source.read_bytes()
+    owner = _owner()
+    assert validation.validate_candidate(owner, source, Event(), migrate=False) == ()
+
+    def primary(doc):
+        producer(doc)
+        doc["directories"][0]["synthetic"] = True
+        doc["owners"][0].update(owner_id=owner.owner_id, schema_version=76)
+        doc["files"][0]["owner_id"] = owner.owner_id
+        logical_id = "profile:profile:" + owner.owner_id
+        doc["files"][0]["logical_id"] = logical_id
+        doc["dependency_groups"][0]["members"] = [logical_id]
+        for row in doc["producer_inventory"]:
+            row["owner_id"] = owner.owner_id
+            if row["logical_id"] == "file":
+                row["logical_id"] = logical_id
+
+    archive = sealed(tmp_path, mutate=primary, data=original)
+    archive_paths = (tmp_path / "fixture.zip", archive.path)
+    archive_bytes = tuple(path.read_bytes() for path in archive_paths)
+    destination = tmp_path / "new"
+    plan = plan_restore(
+        archive, mode="isolated", destinations={"root": destination}, target=None
+    )
+    assert plan.local_snapshot is None
+    candidate = stage_restore(archive, plan, tmp_path / "work", Event())
+    rows = json.loads((candidate / "candidate.json").read_bytes())["artifacts"]
+    path = Path(next(row for row in rows if row["kind"] == "file")["candidate"])
+    assert validation.validated_schema_version(owner, path, Event()) == max(
+        owner.schema_policy().versions
+    )
+    after, restored_messages, restored_indexes = _checkpoint_state(path)
+    for row in after:
+        assert row.pop("agent_chat_start_attempt_id") is None
+    assert after == before
+    assert restored_messages == messages
+    assert all(index in restored_indexes for index in indexes)
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(path, client_id="restored-read")
+    try:
+        assert tuple(db.get_connection().execute("PRAGMA quick_check").fetchone()) == (
+            "ok",
+        )
+        _assert_legacy_queue_quarantine(db)
+    finally:
+        db.close_connection()
+    assert source.read_bytes() == original
+    assert tuple(path.read_bytes() for path in archive_paths) == archive_bytes
+    assert not destination.exists()
 
 
 def test_synthetic_container_does_not_authorize_sibling_retirement(tmp_path):
@@ -1517,7 +1595,9 @@ def test_work_directory_cannot_be_a_preserved_live_target(tmp_path):
 def test_real_persona_core_bundle_never_discovers_unpublished_target(
     tmp_path, mode, monkeypatch, forged_synthetic
 ):
-    from Tests.Persona_Visual.test_persona_visual_publication import _snapshot
+    from Tests.Backup_Recovery.test_created_persona_subtree_rollback import (
+        _seed_persona,
+    )
     from tldw_chatbook.Backup_Recovery.models import (
         DISCOVERY_CONTEXT_KEY,
         DiscoveryContext,
@@ -1525,9 +1605,7 @@ def test_real_persona_core_bundle_never_discovers_unpublished_target(
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
     from tldw_chatbook.Backup_Recovery.staging import stage_restore
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-    from tldw_chatbook.Persona_Visual.publication import publish_persona_visual
     from tldw_chatbook.Persona_Visual.recovery import _Assets, recovery_adapters
-    from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
 
     data = tmp_path / "data" / "Ada"
     data.mkdir(parents=True)
@@ -1536,13 +1614,7 @@ def test_real_persona_core_bundle_never_discovers_unpublished_target(
     database = tmp_path / "core.db"
     db = CharactersRAGDB(database, "recovery")
     try:
-        publish_persona_visual(
-            PersonaVisualRepository(db),
-            _snapshot(source),
-            source_root=source,
-            profile_root=data,
-            authority_guard=lambda: True,
-        )
+        _seed_persona(db, source, data)
         asset_path = (
             data
             / db.get_connection()

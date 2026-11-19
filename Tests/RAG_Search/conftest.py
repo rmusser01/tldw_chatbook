@@ -13,10 +13,6 @@ import numpy as np
 import os
 import sys
 
-# Force dependency initialization for tests
-# This must happen before importing any modules that use optional_deps
-os.environ.pop("PYTEST_CURRENT_TEST", None)  # Remove pytest env var temporarily
-
 # HuggingFace stays offline unless a suite explicitly opts into real model
 # downloads (TLDW_RUN_REAL_EMBEDDINGS gates the real-integration suite;
 # TLDW_TEST_ALLOW_HF_DOWNLOADS is the general escape hatch). setdefault so an
@@ -42,13 +38,13 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Initialize dependencies before imports
+# The suite's collection marks need the RAG dependency flags.
 from tldw_chatbook.Utils.optional_deps import (  # noqa: E402
-    initialize_dependency_checks,
+    check_embeddings_rag_deps,
     DEPENDENCIES_AVAILABLE,
 )
 
-initialize_dependency_checks()
+check_embeddings_rag_deps()
 
 # Log the dependency status for debugging
 print(

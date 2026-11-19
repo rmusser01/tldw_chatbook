@@ -1,0 +1,325 @@
+{
+  "baseline_revision": "d6dffdf7270bcc9e31f8b048e86581e576cd9ae7",
+  "baseline_scope": [
+    "tldw_chatbook/UI/Screens/chat_screen.py",
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py"
+  ],
+  "runs": {
+    "control1": {
+      "returns": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 203.7947999779135,
+          "resume_to_attach_ms": 1973.9544999902137,
+          "input_ms": 18.787899985909462,
+          "max_loop_overshoot_ms": 153.7121000001207,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 2014.5861999772023
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 145.90489998226985,
+          "resume_to_attach_ms": 1026.8897999776527,
+          "input_ms": 9.285499982070178,
+          "max_loop_overshoot_ms": 105.33489999943413,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1069.2889999772888
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 172.87490001763217,
+          "resume_to_attach_ms": 1417.790800012881,
+          "input_ms": 12.007799989078194,
+          "max_loop_overshoot_ms": 129.58410001010634,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1463.237600022694
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 167.27420000825077,
+          "resume_to_attach_ms": 996.1761999875307,
+          "input_ms": 6.193600012920797,
+          "max_loop_overshoot_ms": 129.7822000051383,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1029.0797000052407
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 187.49660000321455,
+          "resume_to_attach_ms": 1248.541099979775,
+          "input_ms": 44.355699996231124,
+          "max_loop_overshoot_ms": 111.87399999471381,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1272.2421999787912
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 153.91349999117665,
+          "resume_to_attach_ms": 774.6007000096142,
+          "input_ms": 33.11280001071282,
+          "max_loop_overshoot_ms": 89.52820001286454,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 780.517500010319
+        }
+      ],
+      "median_input_ms": 170.07455001294147,
+      "median_attach_ms": 1137.7154499787139,
+      "worst_input_ms": 203.7947999779135,
+      "worst_attach_ms": 1973.9544999902137,
+      "exit_receipt": "memory-control1-exit.json",
+      "guards": [
+        0,
+        0
+      ],
+      "baseline_scope": [
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "tldw_chatbook/UI/Console_Modules/console_spend_projection.py"
+      ]
+    },
+    "after1": {
+      "returns": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 201.70190001954325,
+          "resume_to_attach_ms": 1560.745800001314,
+          "input_ms": 53.10369998915121,
+          "max_loop_overshoot_ms": 117.33559999265708,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1582.0605000189971
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 149.20370001345873,
+          "resume_to_attach_ms": 1243.0080999911297,
+          "input_ms": 21.662999992258847,
+          "max_loop_overshoot_ms": 96.26130000106059,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1288.657700002659
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 167.6822000008542,
+          "resume_to_attach_ms": 1587.854800018249,
+          "input_ms": 46.06579997926019,
+          "max_loop_overshoot_ms": 90.32950000255369,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1612.8907999955118
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 247.49169999267906,
+          "resume_to_attach_ms": 1082.3560999997426,
+          "input_ms": 4.878500010818243,
+          "max_loop_overshoot_ms": 211.2879000196699,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1129.4514000182971
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 169.9187000049278,
+          "resume_to_attach_ms": 901.649700012058,
+          "input_ms": 44.596899999305606,
+          "max_loop_overshoot_ms": 94.02509999927133,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 944.9962000071537
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 231.71089999959804,
+          "resume_to_attach_ms": 1097.2115000186022,
+          "input_ms": 37.57459999178536,
+          "max_loop_overshoot_ms": 162.85419999621809,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1143.014100001892
+        }
+      ],
+      "median_input_ms": 185.81030001223553,
+      "median_attach_ms": 1170.109800004866,
+      "worst_input_ms": 247.49169999267906,
+      "worst_attach_ms": 1587.854800018249,
+      "exit_receipt": "memory-after1-exit.json",
+      "guards": [
+        0,
+        0
+      ],
+      "baseline_scope": null
+    },
+    "after2": {
+      "returns": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 158.922899980098,
+          "resume_to_attach_ms": 994.535999983782,
+          "input_ms": 17.75420000194572,
+          "max_loop_overshoot_ms": 109.88429997814819,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1041.5261999878567
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 148.36610000929795,
+          "resume_to_attach_ms": 783.52779999841,
+          "input_ms": 17.832100013038144,
+          "max_loop_overshoot_ms": 99.2530999938026,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 821.4454000117257
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 191.47449999582022,
+          "resume_to_attach_ms": 945.1862999994773,
+          "input_ms": 27.22279998124577,
+          "max_loop_overshoot_ms": 132.9828999878373,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 966.302100016037
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 181.88089999603108,
+          "resume_to_attach_ms": 771.6376000025775,
+          "input_ms": 40.25070002535358,
+          "max_loop_overshoot_ms": 110.35709999850951,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 820.341400016332
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 232.21489999559708,
+          "resume_to_attach_ms": 764.1856000118423,
+          "input_ms": 17.521100002340972,
+          "max_loop_overshoot_ms": 183.42300000949763,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 788.8171999948099
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 242.2591999929864,
+          "resume_to_attach_ms": 1590.373199986061,
+          "input_ms": 7.5413000013213605,
+          "max_loop_overshoot_ms": 203.45080000697635,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1631.755099981092
+        }
+      ],
+      "median_input_ms": 186.67769999592565,
+      "median_attach_ms": 864.3570499989437,
+      "worst_input_ms": 242.2591999929864,
+      "worst_attach_ms": 1590.373199986061,
+      "exit_receipt": "memory-after2-exit.json",
+      "guards": [
+        0,
+        0
+      ],
+      "baseline_scope": null
+    },
+    "control2": {
+      "returns": [
+        {
+          "iteration": 0,
+          "resume_to_input_ms": 185.02870001248084,
+          "resume_to_attach_ms": 829.8305000062101,
+          "input_ms": 65.28700000490062,
+          "max_loop_overshoot_ms": 88.34039999055676,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 840.3194000129588
+        },
+        {
+          "iteration": 1,
+          "resume_to_input_ms": 169.17629999807104,
+          "resume_to_attach_ms": 1675.3426999785006,
+          "input_ms": 28.41579998494126,
+          "max_loop_overshoot_ms": 109.48250000365078,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1713.659800007008
+        },
+        {
+          "iteration": 2,
+          "resume_to_input_ms": 154.69799999846146,
+          "resume_to_attach_ms": 808.2632000150625,
+          "input_ms": 25.41819997713901,
+          "max_loop_overshoot_ms": 98.00559998257086,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 848.929700005101
+        },
+        {
+          "iteration": 3,
+          "resume_to_input_ms": 181.155599973863,
+          "resume_to_attach_ms": 1020.9496999741532,
+          "input_ms": 28.540800005430356,
+          "max_loop_overshoot_ms": 121.33220001123846,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1063.4339999814983
+        },
+        {
+          "iteration": 4,
+          "resume_to_input_ms": 201.14889999968,
+          "resume_to_attach_ms": 920.1191999891307,
+          "input_ms": 32.05290000187233,
+          "max_loop_overshoot_ms": 137.85279999137856,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 958.8366999814752
+        },
+        {
+          "iteration": 5,
+          "resume_to_input_ms": 200.70359998499043,
+          "resume_to_attach_ms": 1062.5783999857958,
+          "input_ms": 50.096699997084215,
+          "max_loop_overshoot_ms": 119.34189999010414,
+          "draft_retained": true,
+          "attach_reconciled": true,
+          "elapsed_ms": 1110.2144999895245
+        }
+      ],
+      "median_input_ms": 183.09214999317192,
+      "median_attach_ms": 970.534449981642,
+      "worst_input_ms": 201.14889999968,
+      "worst_attach_ms": 1675.3426999785006,
+      "exit_receipt": "memory-control2-exit.json",
+      "guards": [
+        0,
+        0
+      ],
+      "baseline_scope": [
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "tldw_chatbook/UI/Console_Modules/console_spend_projection.py"
+      ]
+    }
+  },
+  "pooled": {
+    "control": {
+      "input_ms": 177.01524999574758,
+      "attach_ms": 1023.919749975903,
+      "worst_input_ms": 203.7947999779135,
+      "worst_attach_ms": 1973.9544999902137
+    },
+    "after": {
+      "input_ms": 186.67769999592565,
+      "attach_ms": 1038.4460499917623,
+      "worst_input_ms": 247.49169999267906,
+      "worst_attach_ms": 1590.373199986061
+    }
+  }
+}

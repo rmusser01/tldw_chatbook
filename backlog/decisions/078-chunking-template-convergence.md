@@ -11,7 +11,7 @@
 - **Related:** `Docs/superpowers/specs/2026-08-21-chunking-template-parity-design.md`
   (design; §13's eight maintainer rulings are the long-form version of this
   ADR), `Docs/superpowers/plans/2026-08-21-chunking-template-parity.md`
-  (execution plan), ADR-073 (vendored engine this builds on), ADR-030
+  (execution plan), ADR-318 (vendored engine this builds on), ADR-030
   (atomic media migrations), ADR-003 (Library owns the RAG surface),
   ADR-032 (distribution obligations for deleted template data)
 - **Number sweep (2026-08-21):** remote refs
@@ -25,7 +25,7 @@
 
 ## Context
 
-ADR-073 vendored the chunking **engine** but left templates forked: two
+ADR-318 vendored the chunking **engine** but left templates forked: two
 stores in two incompatible shapes (the Media DB `ChunkingTemplates` table
 with five seeded templates vs `Chunking/templates/*.json` with thirteen
 files), three of the five seeds naming methods that do not exist (they
@@ -64,7 +64,7 @@ concurrently with no migration. Parity therefore means converging on the
    and its sole reader cannot ship apart (spec §5.2.1).
 3. **The template processor is vendored, not re-implemented.** The
    server's `templates.py` (`TemplateProcessor` + dataclasses) joins
-   ADR-073's manifest at the existing pin; `TemplateManager`,
+   ADR-318's manifest at the existing pin; `TemplateManager`,
    `TemplateClassifier`, and `TemplateLearner` are vendored-but-fenced
    (no production module may construct them — `TemplateManager` mkdirs a
    directory and carries a divergent second in-memory store).
@@ -94,11 +94,11 @@ concurrently with no migration. Parity therefore means converging on the
 
 ## Consequences
 
-- **v7 makes downgrade impossible, voiding ADR-073's `git revert` safety
+- **v7 makes downgrade impossible, voiding ADR-318's `git revert` safety
   net.** `_initialize_schema` hard-raises `SchemaError` when the DB
   version exceeds the code's (`Client_Media_DB_v2.py:1477-1480`), so after
   v7 ships, reverting the code leaves every migrated media DB unopenable.
-  ADR-073 named `git revert` as a program-wide safety net; for this
+  ADR-318 named `git revert` as a program-wide safety net; for this
   sub-project that net does not exist. The remaining safety nets are the
   ADR-030 single-transaction migration (a seeded mid-rebuild failure
   leaves the DB at v6 intact) and pre-proven seeds (validated at

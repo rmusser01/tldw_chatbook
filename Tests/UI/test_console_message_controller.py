@@ -53,11 +53,12 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_message_send_persists_user_and_assistant_rows():
     """Send/receive path: a real send queues a user turn and persists the
     streamed assistant reply as store rows, not just visible text."""
     gateway = CapturingGateway(chunks=("hello ", "there"))
-    app = _build_console_send_test_app()
+    app = _build_console_send_test_app(retire_chachanotes_db=True)
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
@@ -65,7 +66,7 @@ async def test_console_message_send_persists_user_and_assistant_rows():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("characterisation probe")
 
@@ -87,6 +88,7 @@ async def test_console_message_send_persists_user_and_assistant_rows():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_message_action_delete_removes_persisted_row():
     """`handle_console_message_action`'s delete branch: two presses actually
     remove the row from the store (persisted result), not just the widget."""
@@ -135,6 +137,7 @@ async def test_console_message_action_delete_removes_persisted_row():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_message_action_feedback_persists_to_store():
     """`handle_console_message_action`'s feedback branch writes through to
     the store's own `feedback` field, not just `_last_console_action`."""
@@ -187,6 +190,7 @@ def test_console_message_serialize_restore_round_trip():
     assert restored.status == "complete"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_message_select_variant_moves_active_leaf():
     """`_select_console_message_variant` moves the store's active leaf to
     the target sibling -- persisted store state, not a transcript selection.
@@ -217,6 +221,7 @@ def test_console_message_select_variant_moves_active_leaf():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_roleplay_character_greeting_actions_use_live_presentation():
     app = _build_test_app()
     app.copy_to_clipboard = Mock()
@@ -310,6 +315,7 @@ async def test_roleplay_character_greeting_actions_use_live_presentation():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_production_message_controller_resolves_canvas_source_only_at_open_callback():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -342,30 +348,37 @@ async def test_production_message_controller_resolves_canvas_source_only_at_open
     assert "secret" not in repr(result)
 
 
-def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_canvas_auto_open_is_suppressed_only_by_same_session_browser(monkeypatch):
     app = _build_test_app()
     screen = ChatScreen(app)
     runtime = screen._console_runtime()
+    monkeypatch.setattr(runtime, "canvas_enabled", lambda: True)
+    monkeypatch.setattr(
+        "tldw_chatbook.Canvas.config_policy.get_canvas_config_policy",
+        lambda: SimpleNamespace(auto_open_on_create=True),
+    )
     runtime._canvas_gateway = SimpleNamespace(
         has_browser_session_for=lambda session_id: session_id == "session-a"
     )
     screen.app_instance = SimpleNamespace(call_from_thread=lambda callback: callback())
-    screen._open_console_canvas_selection = Mock(
-        side_effect=lambda **_kwargs: _closed_coroutine()
-    )
-    workers: list[object] = []
+    screen._open_console_canvas_selection = AsyncMock()
+    workers = []
 
     def capture_worker(coroutine, **_kwargs):
         workers.append(coroutine)
-        coroutine.close()
 
     screen.run_worker = capture_worker
     info = SimpleNamespace(canvas_id="canvas-a", revision_id="revision-a")
 
-    screen._schedule_console_canvas_tool_open("session-a", info)
-    screen._schedule_console_canvas_tool_open("session-b", info)
+    try:
+        screen._schedule_console_canvas_tool_open("session-a", info)
+        screen._schedule_console_canvas_tool_open("session-b", info)
+    finally:
+        await asyncio.gather(*workers)
 
-    screen._open_console_canvas_selection.assert_called_once_with(
+    screen._open_console_canvas_selection.assert_awaited_once_with(
         session_id="session-b",
         canvas_id="canvas-a",
         revision_id="revision-a",
@@ -374,6 +387,7 @@ def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
     assert len(workers) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -410,6 +424,7 @@ def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
     assert screen._console_canvas_publication_is_current(publication) is False
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_composer_sink_validates_exact_session_and_branch_target():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -456,6 +471,7 @@ def test_canvas_composer_sink_validates_exact_session_and_branch_target():
     assert store.session_draft(session.id) == "exact draft"
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -500,11 +516,8 @@ def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
     assert store.session_draft(session.id) == "exact unsent draft"
 
 
-async def _closed_coroutine() -> None:
-    return None
-
-
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_production_message_controller_prefills_canvas_repair_without_source_state():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -545,6 +558,7 @@ async def test_production_message_controller_prefills_canvas_repair_without_sour
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("invalidate", ["disable", "session-owner", "source"])
 async def test_late_canvas_compile_refusal_cannot_replace_stale_draft(
     monkeypatch, invalidate
@@ -611,7 +625,7 @@ async def test_late_canvas_compile_refusal_cannot_replace_stale_draft(
             store.update_message_content(message.id, "```html\n<p>replacement</p>\n```")
     finally:
         release.set()
-    result = (await asyncio.gather(action, return_exceptions=True))[0]
+        result = (await asyncio.gather(action, return_exceptions=True))[0]
 
     assert isinstance(result, RuntimeError)
     assert store.session_draft(session.id) == "unchanged draft"
@@ -619,6 +633,7 @@ async def test_late_canvas_compile_refusal_cannot_replace_stale_draft(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh_open():
     app = _build_test_app()
     screen = ChatScreen(app)
@@ -665,6 +680,7 @@ async def test_production_canvas_card_handler_routes_exact_and_retry_mints_fresh
     ["stale-session", None],
     ids=["stale", "missing"],
 )
+@pytest.mark.bootstrap_profile
 async def test_production_canvas_card_handler_rejects_unowned_session_events(
     event_session_id: str | None,
 ) -> None:
@@ -690,6 +706,7 @@ async def test_production_canvas_card_handler_rejects_unowned_session_events(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_served_canvas_selection_binds_child_without_opening_native_browser():
     app = _build_test_app()
     app.served_canvas_control = SimpleNamespace(child_id="app-service-child-a")
@@ -728,6 +745,7 @@ async def test_served_canvas_selection_binds_child_without_opening_native_browse
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_fork_requested_dispatches_to_the_named_session_callback_once():
     """The message controller remains a narrow action-to-session seam."""
 

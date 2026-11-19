@@ -200,6 +200,29 @@ def test_structured_fields_rewrite_trace_without_rewriting_answer():
 
 
 @pytest.mark.parametrize(
+    ("provider", "model", "expected"),
+    [
+        ("llama_cpp", "Qwen3-8B", True),
+        ("local_llamacpp", "Qwen/Qwen3.5-27B", True),
+        ("vllm", "unsloth/Qwen3.6-27B-Q4.gguf", True),
+        ("local_vllm", "qwen3.8:27b", True),
+        ("ollama", "Qwen3-Coder-30B", True),
+        ("local_ollama", "gemma-4-26B-A4B", True),
+        ("local_llamafile", "my-model-alias", True),
+        ("llama_cpp", "DeepSeek-R1", True),
+        ("local_vllm", "Qwen3.8", True),
+        ("openai", "Qwen3.8-27B", False),
+        ("openai", "Llama-3", False),
+        ("anthropic", "Qwen2.5", False),
+        ("custom", "qwen30", False),
+        ("ollama", "", False),
+    ],
+)
+def test_supports_local_reasoning_is_transport_based(provider, model, expected):
+    assert replay.supports_local_reasoning(provider, model) is expected
+
+
+@pytest.mark.parametrize(
     "provider,source",
     [
         ("llama_cpp", "reasoning_content"),

@@ -1,7 +1,7 @@
 ---
 id: TASK-293
 title: MCP bridge hardening follow-ups from Phase 5 reviews
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-17 19:18'
 labels:
@@ -17,5 +17,12 @@ Non-blocking items from PR #675 final/pre-merge reviews: (1) wedged-loop >5s rac
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each item fixed or explicitly declined with a reason recorded in this task
+- [x] #1 Each item fixed or explicitly declined with a reason recorded in this task
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Bridge hardening items were implemented/absorbed by the unified control-plane rework: hash-keyed rug-pull guard (definition_hash comparisons, 44b6b340de 'typed permission methods, tool-test gate, and rug-pull downgrade audit'), documented no-double-recording (Agents/mcp_tool_provider.py:936), and admission-refusal finalization replacing the pre-try ValueError gap (376b1b9618).

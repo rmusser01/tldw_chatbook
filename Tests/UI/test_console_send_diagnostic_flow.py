@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("failure", ["admission", "resolution", "trace", None])
 @pytest.mark.parametrize(
     "entrypoint,size",

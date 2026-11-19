@@ -39,6 +39,7 @@ def _phase_six_power_user_metadata(text: str) -> dict:
     return json.loads(match.group(1))
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_power_user_shell_replay_supports_fast_repeated_core_workflows() -> None:
     """Verify repeated shell workflows use direct, deterministic app paths."""

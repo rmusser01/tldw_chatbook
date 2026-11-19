@@ -60,6 +60,7 @@ from Tests.UI.test_library_shell import (
 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_reader_read_button_returns_to_read_mode_after_info() -> None:
     """Characterization (pre-extraction): pins show_library_conversation_reader_read.
@@ -110,6 +111,7 @@ async def test_reader_read_button_returns_to_read_mode_after_info() -> None:
         assert not info_button.has_class("-selected")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_select_all_press_selects_every_rendered_row() -> None:
     """Characterization (pre-extraction): pins handle_library_conversations_select_all.
@@ -141,6 +143,7 @@ async def test_select_all_press_selects_every_rendered_row() -> None:
         assert screen._conversations_state.reader_state.bulk_selected_count == 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_previous_page_press_retreats_the_conversation_page() -> None:
     """Characterization (pre-extraction): pins handle_library_conversations_previous.

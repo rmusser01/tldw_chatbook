@@ -1,0 +1,246 @@
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:9:def normalize_artifact_type(artifact_type: Any) -> str:
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:11:    if artifact_type is None:
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:13:    if not isinstance(artifact_type, str) or artifact_type not in {
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:17:        raise ValueError("artifact_type must be either 'prompt' or 'recipe'.")
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:18:    return artifact_type
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:56:        "prompt_schema_version": local_prompt.get("prompt_schema_version"),
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:58:        "artifact_type": normalize_artifact_type(local_prompt.get("artifact_type")),
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:89:        "prompt_schema_version",
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:94:    if "artifact_type" in payload:
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:95:        update["artifact_type"] = normalize_artifact_type(payload.get("artifact_type"))
+tldw_chatbook/Prompt_Management/server_prompt_adapter.py:97:        update["artifact_type"] = "prompt"
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:207:    prompt_schema_version: Optional[int] = None,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:209:    artifact_type: Optional[str] = None,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:223:        prompt_schema_version=prompt_schema_version,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:225:        artifact_type=artifact_type,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:421:        prompt_schema_version=local_update.get("prompt_schema_version"),
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:423:        artifact_type=local_update.get("artifact_type"),
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:513:    prompt_schema_version: Optional[int] = None,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:515:    artifact_type: Optional[str] = None,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:532:        prompt_schema_version=prompt_schema_version,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:534:        artifact_type=artifact_type,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:605:    "prompt_schema_version",
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:607:    "artifact_type",
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:643:    artifact_type = normalized["artifact_type"]
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:644:    if artifact_type is None:
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:645:        normalized["artifact_type"] = "prompt"
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:646:    elif not isinstance(artifact_type, str) or artifact_type not in {
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:650:        raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:652:    if normalized["prompt_schema_version"] is not None and not isinstance(
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:653:        normalized["prompt_schema_version"], int
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:656:            normalized["prompt_schema_version"] = int(
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:657:                normalized["prompt_schema_version"]
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:662:                f"{normalized['prompt_schema_version']}. Resetting to None."
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:664:            normalized["prompt_schema_version"] = None
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:758:    artifact_type = parsed_data.pop("artifact_type_raw", None)
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:761:    if definition is None or not isinstance(artifact_type, str):
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:762:        return artifact_type is not None or structure_text is not None
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:766:        "artifact_type": artifact_type,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:768:        "prompt_schema_version": definition.get("schema_version"),
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:775:    if decoded.state != "supported_v2":
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:779:        artifact_type=decoded.artifact_type,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:781:        prompt_schema_version=2,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:807:        "ARTIFACT_TYPE": "artifact_type_raw",
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:945:                prompt_schema_version=None,
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:947:                artifact_type="prompt",
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:1143:                        prompt_schema_version=prompt_data.get("prompt_schema_version"),
+tldw_chatbook/Prompt_Management/Prompts_Interop.py:1145:                        artifact_type=prompt_data.get("artifact_type"),
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:44:    artifact_types: frozenset[str]
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:78:        artifact_types=frozenset({"prompt", "recipe"}),
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:98:        artifact_types=frozenset({"prompt"}),
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:116:        version = item_mapping.get("schema_version")
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:124:def _normalize_artifact_types(value: Any) -> frozenset[str] | None:
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:181:    artifact_types = _normalize_artifact_types(capabilities.get("artifact_types"))
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:182:    if structured_kinds is None or artifact_types is None:
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:190:        artifact_types=artifact_types,
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:218:    version = payload.get("prompt_schema_version")
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:222:    if payload.get("artifact_type", "prompt") not in capabilities.artifact_types:
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:225:            f"artifact type {payload.get('artifact_type', 'prompt')!r}",
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:228:        decoded.state != "supported_v2"
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:250:        "schema_version": decoded.definition.schema_version,
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:283:            "artifact_type": decoded.artifact_type,
+tldw_chatbook/Prompt_Management/prompt_source_capabilities.py:285:            "prompt_schema_version": decoded.definition.schema_version,
+tldw_chatbook/Prompt_Management/local_prompt_service.py:117:        prompt_schema_version: int | None = None,
+tldw_chatbook/Prompt_Management/local_prompt_service.py:119:        artifact_type: str | None = None,
+tldw_chatbook/Prompt_Management/local_prompt_service.py:130:            prompt_schema_version=prompt_schema_version,
+tldw_chatbook/Prompt_Management/local_prompt_service.py:132:            artifact_type=artifact_type,
+tldw_chatbook/Prompt_Management/local_prompt_service.py:154:            "prompt_schema_version": kwargs.get("prompt_schema_version"),
+tldw_chatbook/Prompt_Management/local_prompt_service.py:156:            "artifact_type": kwargs.get("artifact_type", "prompt"),
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:23:from .prompt_artifact_codec import deserialize_definition
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:53:from .server_prompt_adapter import normalize_artifact_type
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:136:        "artifact_type": "draft",
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:179:    prompt_schema_version: Optional[int] = None,
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:181:    artifact_type: Optional[str] = None,
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:191:        "prompt_schema_version": prompt_schema_version,
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:193:        "artifact_type": (
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:194:            normalize_artifact_type(artifact_type)
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:195:            if artifact_type is not None
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:904:            prompt_schema_version=payload.get("prompt_schema_version"),
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:906:            artifact_type=payload.get("artifact_type"),
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:939:            prompt_schema_version=payload.get(
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:940:                "prompt_schema_version", existing.get("prompt_schema_version")
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:945:            artifact_type=payload.get("artifact_type", existing.get("artifact_type")),
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:1924:        prompt_schema_version: Optional[int] = None,
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:1926:        artifact_type: Optional[str] = None,
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:1941:            prompt_schema_version=prompt_schema_version,
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:1943:            artifact_type=artifact_type,
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:1945:        raw_definition = deserialize_definition(payload.get("prompt_definition"))
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:1950:            raw_definition.get("schema_version") if raw_definition is not None else None
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:1954:                type(payload.get("prompt_schema_version")) is int
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:1955:                and payload.get("prompt_schema_version") == 2
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:2148:        if normalized_current.get("artifact_type") == "recipe":
+tldw_chatbook/Prompt_Management/prompt_scope_service.py:2152:        if normalized_current.get("artifact_type") != "prompt":
+tldw_chatbook/UI/Console_Modules/prompts.py:291:                artifact_types=frozenset(),
+tldw_chatbook/UI/Console_Modules/prompts.py:800:        if decoded.artifact_type != "recipe" or decoded.definition is None:
+tldw_chatbook/UI/Console_Modules/prompts.py:828:        if decoded.artifact_type != "prompt" or decoded.definition is None:
+tldw_chatbook/UI/Console_Modules/prompts.py:1575:        return str(record.get("artifact_type") or "prompt").casefold() == "recipe"
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:23:    deserialize_definition,
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:41:    set_artifact_type,
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:126:        "schema_version": definition.schema_version,
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:546:                parts.append(self._decoded.artifact_type.title())
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:654:    def _supports_structured_save(self, artifact_type: str) -> bool:
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:661:        kind = "block_recipe" if artifact_type == "recipe" else "block_prompt"
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:663:            artifact_type in getattr(capabilities, "artifact_types", frozenset())
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:701:            and self._decoded.artifact_type == "prompt"
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:943:                artifact_type="prompt",
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:945:                raw_definition=deserialize_definition(record.get("prompt_definition")),
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:953:                decoded.state != "supported_v2"
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:954:                or decoded.artifact_type != "recipe"
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:983:        if decoded.state == "supported_v2" and decoded.definition is not None:
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:985:            unsaved = decoded.artifact_type == "recipe"
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:991:                artifact_type="prompt", definition=definition
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:996:        if decoded.state == "legacy" and decoded.artifact_type == "prompt":
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1001:                artifact_type="prompt",
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1324:                    artifact_type="recipe",
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1421:                    artifact_type="prompt",
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1624:        artifact_type: Literal["prompt", "recipe"] = "recipe",
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1627:        if artifact_type == "recipe":
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1630:            artifact_type=artifact_type,
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1633:        if artifact_type == "prompt":
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1640:            if artifact_type == "prompt"
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1658:        if artifact_type == "recipe":
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1732:        if artifact_type == "recipe":
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1941:        await self._save_editor_state(event.state, artifact_type="prompt")
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1948:        await self._save_editor_state(event.state, artifact_type="recipe")
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1958:                artifact_type="prompt",
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:1976:                or decoded.artifact_type != "prompt"
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2073:        artifact_type: Literal["prompt", "recipe"],
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2076:        artifact_label = artifact_type.title()
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2084:            target_state = set_artifact_type(editor_state, artifact_type)
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2088:                if artifact_type == "recipe" and not editor_state.can_save_as_recipe
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2093:        if not self._supports_structured_save(artifact_type):
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2102:        if not self._supports_structured_save(artifact_type):
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2126:            "prompt_schema_version": 2,
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2128:            "artifact_type": artifact_type,
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2138:        if artifact_type == "recipe":
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2356:                    artifact_type="prompt",
+tldw_chatbook/Widgets/Console/console_prompts_modal.py:2546:                artifact_type="prompt",
+tldw_chatbook/DB/Prompts_DB.py:83:    """Exception for schema version mismatches or migration failures."""
+tldw_chatbook/DB/Prompts_DB.py:185:    CREATE TABLE IF NOT EXISTS schema_version (
+tldw_chatbook/DB/Prompts_DB.py:188:    INSERT OR IGNORE INTO schema_version (version) VALUES (0);
+tldw_chatbook/DB/Prompts_DB.py:776:            cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
+tldw_chatbook/DB/Prompts_DB.py:780:            if "no such table: schema_version" in str(e).lower():
+tldw_chatbook/DB/Prompts_DB.py:786:        "UPDATE schema_version SET version = 1 WHERE version = 0;"
+tldw_chatbook/DB/Prompts_DB.py:797:            "function": "_apply_migration_v1_to_v2",
+tldw_chatbook/DB/Prompts_DB.py:802:            "function": "_apply_migration_v2_to_v3",
+tldw_chatbook/DB/Prompts_DB.py:807:            "function": "_apply_migration_v3_to_v4",
+tldw_chatbook/DB/Prompts_DB.py:812:            "function": "_apply_migration_v4_to_v5",
+tldw_chatbook/DB/Prompts_DB.py:857:                    "SELECT version FROM schema_version LIMIT 1"
+tldw_chatbook/DB/Prompts_DB.py:881:    def _apply_migration_v1_to_v2(self, conn: sqlite3.Connection):
+tldw_chatbook/DB/Prompts_DB.py:883:            f"Applying prompts migration from version 1 to 2 for DB: {self.db_path_str}..."
+tldw_chatbook/DB/Prompts_DB.py:885:        migration_sql = """
+tldw_chatbook/DB/Prompts_DB.py:887:        ALTER TABLE Prompts ADD COLUMN prompt_schema_version INTEGER;
+tldw_chatbook/DB/Prompts_DB.py:889:        UPDATE schema_version SET version = 2 WHERE version = 1;
+tldw_chatbook/DB/Prompts_DB.py:894:                conn.executescript(migration_sql)
+tldw_chatbook/DB/Prompts_DB.py:900:                    "prompt_schema_version",
+tldw_chatbook/DB/Prompts_DB.py:910:                    "SELECT version FROM schema_version LIMIT 1"
+tldw_chatbook/DB/Prompts_DB.py:919:                f"Prompts migration to version 2 applied successfully for DB: {self.db_path_str}."
+tldw_chatbook/DB/Prompts_DB.py:923:                f"[Migration v1->v2] Failed during migration: {e}"
+tldw_chatbook/DB/Prompts_DB.py:927:    def _apply_migration_v2_to_v3(self, conn: sqlite3.Connection):
+tldw_chatbook/DB/Prompts_DB.py:930:            f"Applying prompts migration from version 2 to 3 for DB: {self.db_path_str}..."
+tldw_chatbook/DB/Prompts_DB.py:937:                    ADD COLUMN artifact_type TEXT NOT NULL DEFAULT 'prompt'
+tldw_chatbook/DB/Prompts_DB.py:938:                    CHECK(artifact_type IN ('prompt', 'recipe'))
+tldw_chatbook/DB/Prompts_DB.py:941:                conn.execute("UPDATE schema_version SET version = 3 WHERE version = 2")
+tldw_chatbook/DB/Prompts_DB.py:945:                if "artifact_type" not in columns:
+tldw_chatbook/DB/Prompts_DB.py:947:                        "Validation Error: Prompts table missing artifact_type column."
+tldw_chatbook/DB/Prompts_DB.py:950:                    "SELECT version FROM schema_version LIMIT 1"
+tldw_chatbook/DB/Prompts_DB.py:958:                f"[Migration v2->v3] Failed during migration: {e}"
+tldw_chatbook/DB/Prompts_DB.py:962:    def _apply_migration_v3_to_v4(self, conn: sqlite3.Connection):
+tldw_chatbook/DB/Prompts_DB.py:965:            f"Applying prompts migration from version 3 to 4 for DB: {self.db_path_str}..."
+tldw_chatbook/DB/Prompts_DB.py:1011:                conn.execute("UPDATE schema_version SET version = 4 WHERE version = 3")
+tldw_chatbook/DB/Prompts_DB.py:1014:                    "SELECT version FROM schema_version LIMIT 1"
+tldw_chatbook/DB/Prompts_DB.py:1022:                f"[Migration v3->v4] Failed during migration: {e}"
+tldw_chatbook/DB/Prompts_DB.py:1026:    def _apply_migration_v4_to_v5(self, conn: sqlite3.Connection):
+tldw_chatbook/DB/Prompts_DB.py:1028:        logging.info("Applying prompts migration from version 4 to 5.")
+tldw_chatbook/DB/Prompts_DB.py:1048:                conn.execute("UPDATE schema_version SET version = 5 WHERE version = 4")
+tldw_chatbook/DB/Prompts_DB.py:1079:                    "SELECT version FROM schema_version LIMIT 1"
+tldw_chatbook/DB/Prompts_DB.py:1088:                "Prompts migration v4-to-v5 failed category={}",
+tldw_chatbook/DB/Prompts_DB.py:1120:                migration = self._MIGRATIONS.get(current_db_version)
+tldw_chatbook/DB/Prompts_DB.py:1121:                if not migration:
+tldw_chatbook/DB/Prompts_DB.py:1123:                        f"No migration path defined from version {current_db_version}."
+tldw_chatbook/DB/Prompts_DB.py:1126:                next_version = migration["to_version"]
+tldw_chatbook/DB/Prompts_DB.py:1127:                migration_func = getattr(self, migration["function"], None)
+tldw_chatbook/DB/Prompts_DB.py:1128:                if migration_func is None:
+tldw_chatbook/DB/Prompts_DB.py:1130:                        f"Migration function {migration['function']} not found."
+tldw_chatbook/DB/Prompts_DB.py:1134:                    f"Applying migration: {migration['description']} (v{current_db_version} -> v{next_version})"
+tldw_chatbook/DB/Prompts_DB.py:1136:                migration_func(conn)
+tldw_chatbook/DB/Prompts_DB.py:1141:                        f"Migration {migration['function']} failed. Expected version {next_version}, got {current_db_version}."
+tldw_chatbook/DB/Prompts_DB.py:1147:                logging.debug("Verified FTS tables exist after migrations.")
+tldw_chatbook/DB/Prompts_DB.py:1150:                    f"Could not verify/create FTS tables after migrations: {fts_err}"
+tldw_chatbook/DB/Prompts_DB.py:1158:                f"Schema initialization/migration failed: {e}"
+tldw_chatbook/DB/Prompts_DB.py:1192:    def _normalize_artifact_type(self, artifact_type: Optional[str]) -> str:
+tldw_chatbook/DB/Prompts_DB.py:1194:        if artifact_type is None:
+tldw_chatbook/DB/Prompts_DB.py:1196:        if not isinstance(artifact_type, str) or artifact_type not in {
+tldw_chatbook/DB/Prompts_DB.py:1200:            raise InputError("artifact_type must be either 'prompt' or 'recipe'.")
+tldw_chatbook/DB/Prompts_DB.py:1201:        return artifact_type
+tldw_chatbook/DB/Prompts_DB.py:1435:        prompt_schema_version: Optional[int] = None,
+tldw_chatbook/DB/Prompts_DB.py:1437:        artifact_type: Optional[str] = None,
+tldw_chatbook/DB/Prompts_DB.py:1458:        normalized_artifact_type = self._normalize_artifact_type(artifact_type)
+tldw_chatbook/DB/Prompts_DB.py:1470:                    SELECT id, uuid, version, deleted, prompt_format, prompt_schema_version,
+tldw_chatbook/DB/Prompts_DB.py:1471:                           prompt_definition, artifact_type
+tldw_chatbook/DB/Prompts_DB.py:1514:                    resolved_prompt_schema_version = (
+tldw_chatbook/DB/Prompts_DB.py:1515:                        prompt_schema_version
+tldw_chatbook/DB/Prompts_DB.py:1516:                        if prompt_schema_version is not None
+tldw_chatbook/DB/Prompts_DB.py:1517:                        else existing["prompt_schema_version"]
+tldw_chatbook/DB/Prompts_DB.py:1524:                    resolved_artifact_type = (
+tldw_chatbook/DB/Prompts_DB.py:1525:                        normalized_artifact_type
+tldw_chatbook/DB/Prompts_DB.py:1526:                        if artifact_type is not None
+tldw_chatbook/DB/Prompts_DB.py:1527:                        else existing["artifact_type"]
+tldw_chatbook/DB/Prompts_DB.py:1536:                        "prompt_schema_version": resolved_prompt_schema_version,
+tldw_chatbook/DB/Prompts_DB.py:1538:                        "artifact_type": resolved_artifact_type,
+tldw_chatbook/DB/Prompts_DB.py:1552:                                          prompt_schema_version=?,
+tldw_chatbook/DB/Prompts_DB.py:1554:                                          artifact_type=?,
+tldw_chatbook/DB/Prompts_DB.py:1567:                            resolved_prompt_schema_version,
+tldw_chatbook/DB/Prompts_DB.py:1569:                            resolved_artifact_type,
+tldw_chatbook/DB/Prompts_DB.py:1629:                        "prompt_schema_version": prompt_schema_version,
+tldw_chatbook/DB/Prompts_DB.py:1631:                        "artifact_type": normalized_artifact_type,
+tldw_chatbook/DB/Prompts_DB.py:1646:                                                prompt_schema_version,
+tldw_chatbook/DB/Prompts_DB.py:1648:                                                artifact_type,
+tldw_chatbook/DB/Prompts_DB.py:1663:                            prompt_schema_version,
+tldw_chatbook/DB/Prompts_DB.py:1665:                            normalized_artifact_type,
+tldw_chatbook/DB/Prompts_DB.py:1816:        normalized_artifact_type = None
+tldw_chatbook/DB/Prompts_DB.py:1817:        if "artifact_type" in update_data:
+tldw_chatbook/DB/Prompts_DB.py:1818:            normalized_artifact_type = self._normalize_artifact_type(
+tldw_chatbook/DB/Prompts_DB.py:1819:                update_data.get("artifact_type")
+tldw_chatbook/DB/Prompts_DB.py:1906:                if "prompt_schema_version" in update_data:
+tldw_chatbook/DB/Prompts_DB.py:1907:                    set_clauses.append("prompt_schema_version = ?")
+tldw_chatbook/DB/Prompts_DB.py:1908:                    params.append(update_data.get("prompt_schema_version"))
+tldw_chatbook/DB/Prompts_DB.py:1912:                if "artifact_type" in update_data:
+tldw_chatbook/DB/Prompts_DB.py:1913:                    set_clauses.append("artifact_type = ?")
+tldw_chatbook/DB/Prompts_DB.py:1914:                    params.append(normalized_artifact_type)
+tldw_chatbook/DB/Prompts_DB.py:2200:            artifact_type=row["artifact_type"],
+tldw_chatbook/DB/Prompts_DB.py:2282:            artifact_type=row["artifact_type"],
+tldw_chatbook/DB/Prompts_DB.py:2725:                           artifact_type, prompt_format, prompt_schema_version,
+tldw_chatbook/DB/Prompts_DB.py:2754:                    "artifact_type": row["artifact_type"],
+tldw_chatbook/DB/Prompts_DB.py:2756:                    "prompt_schema_version": row["prompt_schema_version"],
+tldw_chatbook/DB/Prompts_DB.py:2922:                                version, artifact_type,
+tldw_chatbook/DB/Prompts_DB.py:3097:                               p.last_modified, p.version, p.artifact_type,
+tldw_chatbook/DB/Prompts_DB.py:3876:                "prompt_schema_version",
+tldw_chatbook/DB/Prompts_DB.py:3878:                "artifact_type",
+tldw_chatbook/DB/Prompts_DB.py:3923:                "prompt_schema_version": candidate["prompt_schema_version"],
+tldw_chatbook/DB/Prompts_DB.py:3925:                "artifact_type": self._normalize_artifact_type(
+tldw_chatbook/DB/Prompts_DB.py:3926:                    candidate["artifact_type"]
+tldw_chatbook/DB/Prompts_DB.py:4335:    prompt_schema_version: Optional[int] = None,
+tldw_chatbook/DB/Prompts_DB.py:4337:    artifact_type: Optional[str] = None,
+tldw_chatbook/DB/Prompts_DB.py:4355:        prompt_schema_version=prompt_schema_version,
+tldw_chatbook/DB/Prompts_DB.py:4357:        artifact_type=artifact_type,

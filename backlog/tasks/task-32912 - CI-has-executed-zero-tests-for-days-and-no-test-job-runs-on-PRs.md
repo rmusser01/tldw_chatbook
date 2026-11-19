@@ -1,7 +1,7 @@
 ---
 id: TASK-32912
 title: CI has executed zero tests for days, and no test job runs on PRs at all
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-22 09:00'
 labels:
@@ -87,3 +87,23 @@ Source: tier-2 code review 2026-09-21, found while implementing TASK-32908.
 - [ ] #3 Some test job runs on `pull_request` and is a required check
 - [ ] #4 A check or alert fires when a scheduled run executes zero tests — "failed" and "ran nothing" must not look the same
 <!-- AC:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+All four ACs are satisfied on dev:
+- AC#1: `_google_tools_payload` defined at `tldw_chatbook/LLM_Calls/LLM_API_Calls.py:3524` with
+  call site restored and the blank-name-guard mirror test in `Tests/Chat/test_cohere_native_tools.py`
+  (PR #2810, 18a9e9ab0e "fix(llm): restore three helpers deleted by migrations - one has been
+  blanking all of CI (TASK-32912)").
+- AC#2/#4: nightly-deep.yml repaired (PR #2809): `--continue-on-collection-errors` with in-file
+  rationale (TASK-32908 note; run 35706024071 had zero tests for six nights), and the run "still
+  reports the collection error and still exits non-zero -- nothing is being swallowed", so
+  ran-nothing no longer looks like success.
+- AC#3: PR #2809 (96ad17c75e) "ci: put a verified-green Tests/UI subset on the PR gate (TASK-32908,
+  TASK-32912)": derived-artifacts.yml PR gate + scripts/check_ui_pr_gate_census.py +
+  ui_pr_gate_census.txt.
+
+AC checkboxes are left as found; this section is the audit's evidence record.

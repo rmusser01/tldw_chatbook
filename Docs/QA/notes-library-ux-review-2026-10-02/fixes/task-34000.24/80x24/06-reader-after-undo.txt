@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N    I       ‹ Back
+  a    t  roadmap-interview
+  v    e  file:///Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.n
+       m  lrev-harness/runs/clr-t5-2/cwd/roadmap-interview.txt
+       s    Find  Note  Read later  Use in Console  More
+            Read (selected)  Analysis  Highlights  Info
+--->      ┌────────────────────────────────────────────────────────────────────┐
+          │ Quarterly roadmap interview                                        │
+          │                                                                    │
+     ---> │ The interview covers the quarterly roadmap, the hiring plan and    │
+          │ the two launches scheduled for spring. Jordan asked about the      │
+          │ research budget; Morgan confirmed the thesis workstream keeps its  │
+--->      │ allocation.                                                        │
+          │                                                                    │
+          │                                                                    │
+          │                                                                    │
+          │                                                                    │
+          └────────────────────────────────────────────────────────────────────┘
+
+  F6 next pane | ctrl+f find | n note | F1 · Ctrl+P · Ctrl+Q

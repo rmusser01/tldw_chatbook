@@ -13,6 +13,7 @@ import time
 from typing import Callable
 
 import pytest
+from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
 from Tests.UI.test_console_native_chat_flow import (
@@ -28,6 +29,7 @@ from tldw_chatbook.Terminal.contracts import (
 from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_terminal_workspace import (
     ConsoleTerminalWorkspace,
     TerminalViewport,
@@ -92,6 +94,7 @@ async def _send_terminal_command(
     await pilot.press("enter")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_posix_mounted_real_terminal_focus_input_and_navigation(
     tmp_path: Path,
@@ -219,9 +222,13 @@ async def test_posix_mounted_real_terminal_focus_input_and_navigation(
 
             assert await pilot.click("#console-terminal-return")
             await _wait_for_selector(console, pilot, "#console-native-transcript")
+            await _wait_for_selector(console, pilot, "#console-native-composer")
             before_turn = manager.projection(session_id)
-            await console._submit_console_native_draft("ordinary model turn")
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            composer.load_draft("ordinary model turn")
+            console.query_one("#console-send-message", Button).press()
             await _wait_until(pilot, lambda: bool(gateway.sent_messages))
+            assert gateway.sent_messages[-1][-1]["content"] == "ordinary model turn"
             assert manager.projection(session_id) == before_turn
 
             console.action_open_console_terminal()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 
@@ -36,6 +38,7 @@ class TestEveryChunkingMethodReturnsUsableText:
         ("xml", "<root><item>alpha beta gamma</item><item>delta epsilon</item></root>"),
     ]
 
+    @pytest.mark.bootstrap_profile
     @pytest.mark.parametrize(("method", "content"), CASES)
     def test_method_yields_string_text(self, method, content, monkeypatch):
         if method == "tokens":
@@ -68,9 +71,8 @@ class TestEveryChunkingMethodReturnsUsableText:
                 property(lambda self: _StubTokenizer()),
             )
         elif method == "semantic":
-            import tldw_chatbook.Chunking.Chunk_Lib as chunk_lib
-
-            monkeypatch.setattr(chunk_lib, "_ensure_nltk", lambda: None)
+            # The engine has its own optional NLTK import.
+            monkeypatch.setitem(sys.modules, "nltk", None)
 
         from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
 
@@ -149,7 +151,9 @@ class TestSemanticChunkingWithoutNltkData:
             state["corpus_present"] = downloadable
 
         monkeypatch.setattr(nltk.tokenize, "sent_tokenize", fake_sent_tokenize)
-        monkeypatch.setattr(chunk_lib, "_download_nltk_tokenizer_corpora", fake_download)
+        monkeypatch.setattr(
+            chunk_lib, "_download_nltk_tokenizer_corpora", fake_download
+        )
         # Reset every latch, and unbind whatever an earlier test left bound --
         # otherwise the module-level `sent_tokenize` could still be a working
         # tokeniser and the assertions would prove nothing.
@@ -162,15 +166,21 @@ class TestSemanticChunkingWithoutNltkData:
         )
         return chunk_lib
 
+    @pytest.mark.bootstrap_profile
     def test_semantic_falls_back_instead_of_raising(self, monkeypatch):
         """A missing corpus yields simpler chunks, never a failed ingest.
 
         Args:
             monkeypatch: pytest's monkeypatch fixture.
         """
-        self._simulate_missing_corpus(monkeypatch)
+        import nltk.data
 
         from tldw_chatbook.RAG_Search.chunking_service import ChunkingService
+
+        def missing_punkt(_path):
+            raise LookupError("No punkt data in the test fixture")
+
+        monkeypatch.setattr(nltk.data, "load", missing_punkt)
 
         prose = (
             "The first sentence is here. The second follows it. A third arrives. "
@@ -259,18 +269,28 @@ def test_validation_messages_preserved():
         svc.chunk_text("text", chunk_size=10, chunk_overlap=10, method="words")
 
 
+@pytest.mark.bootstrap_profile
 def test_all_methods_flat_contract():
     svc = ChunkingService()
     for method in ["words", "sentences", "paragraphs"]:
         chunks = svc.chunk_text(
             "One two three. Four five six. Seven eight nine ten.",
-            chunk_size=4, chunk_overlap=1, method=method,
+            chunk_size=4,
+            chunk_overlap=1,
+            method=method,
         )
         assert chunks
         for c in chunks:
-            assert set(c) >= {"text", "start_char", "end_char", "word_count", "chunk_index"}
+            assert set(c) >= {
+                "text",
+                "start_char",
+                "end_char",
+                "word_count",
+                "chunk_index",
+            }
 
 
+@pytest.mark.bootstrap_profile
 def test_ebook_chapters_no_whitelist():
     text = "# Chapter 1\n\nText one.\n\n# Chapter 2\n\nText two.\n"
     chunks = svc_ebook(text)
@@ -279,7 +299,9 @@ def test_ebook_chapters_no_whitelist():
 
 def svc_ebook(text):
     svc = ChunkingService()
-    return svc.chunk_text(text, chunk_size=400, chunk_overlap=0, method="ebook_chapters")
+    return svc.chunk_text(
+        text, chunk_size=400, chunk_overlap=0, method="ebook_chapters"
+    )
 
 
 def test_exceptions_are_aliases_of_the_engine_classes():

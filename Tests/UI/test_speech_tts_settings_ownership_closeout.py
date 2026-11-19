@@ -718,6 +718,7 @@ async def test_delayed_audio_cpp_save_preserves_advanced_disclosure_focus() -> N
         assert app.focused is panel.query_one("CollapsibleTitle")
 
 
+@pytest.mark.bootstrap_profile
 async def test_supported_narrow_layout_uses_vertical_scroll_without_clipping_actions() -> (
     None
 ):

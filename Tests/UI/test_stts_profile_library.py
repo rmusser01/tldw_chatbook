@@ -21,6 +21,7 @@ from textual.widget import Widget
 from textual.widgets import Button, Checkbox, DataTable, Input, Select, Static, TextArea
 from textual.worker import WorkerFailed
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.background_signals import wait_for_background_signal
 from tldw_chatbook.TTS import (
     LoadedTTSProfile,
@@ -690,7 +691,9 @@ def test_dependency_recovery_projection_preserves_blocker_then_advisory_truth(
         ),
     ),
 )
+@private_profile_test
 async def test_profile_library_routes_projected_dependency_recovery_exactly(
+    request,
     size: tuple[int, int],
     dependency: TTSProfileDependencyProjection,
     button_id: str,
@@ -1082,7 +1085,9 @@ def _playground_is_mounted(app: App[Any]) -> bool:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_views(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _OptionalAudioBookWidget(Widget):
@@ -1152,6 +1157,7 @@ async def test_voice_profiles_view_mounts_focused_library_without_hiding_other_v
         assert app.query_one("#tts-generate-btn", Button)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_audiobook_kokoro_blend_group_is_not_a_keyboard_select_option(
     monkeypatch: pytest.MonkeyPatch,
@@ -1288,7 +1294,8 @@ async def test_legacy_default_voice_select_has_no_keyboard_separator(
 
 
 @pytest.mark.asyncio
-async def test_profile_store_unavailable_isolated_to_stable_library_recovery() -> None:
+@private_profile_test
+async def test_profile_store_unavailable_isolated_to_stable_library_recovery(request) -> None:
     app = _STTSHost(None)
 
     async with app.run_test(size=(150, 55)) as pilot:
@@ -1304,7 +1311,8 @@ async def test_profile_store_unavailable_isolated_to_stable_library_recovery() -
 
 
 @pytest.mark.asyncio
-async def test_store_unavailable_recovery_wraps_without_becoming_a_tab_stop_at_80x24() -> (
+@private_profile_test
+async def test_store_unavailable_recovery_wraps_without_becoming_a_tab_stop_at_80x24(request) -> (
     None
 ):
     app = _STTSHost(None)
@@ -1319,7 +1327,8 @@ async def test_store_unavailable_recovery_wraps_without_becoming_a_tab_stop_at_8
 
 
 @pytest.mark.asyncio
-async def test_empty_profile_page_offers_only_current_library_recovery() -> None:
+@private_profile_test
+async def test_empty_profile_page_offers_only_current_library_recovery(request) -> None:
     service = _ControlledProfileService()
     app = _STTSHost(service)
 
@@ -1340,7 +1349,9 @@ async def test_empty_profile_page_offers_only_current_library_recovery() -> None
     ["unavailable", "closed", "terminal", "restoring"],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_refresh_reloads_service_after_store_level_list_failure(
+    request,
     store_code: str,
 ) -> None:
     failed_service = _StoreFailureProfileService(store_code)
@@ -1385,7 +1396,8 @@ async def test_refresh_reloads_service_after_store_level_list_failure(
 
 
 @pytest.mark.asyncio
-async def test_repository_page_renders_before_availability_and_selection_arms_actions() -> (
+@private_profile_test
+async def test_repository_page_renders_before_availability_and_selection_arms_actions(request) -> (
     None
 ):
     profiles = tuple(_profile(index) for index in range(50))
@@ -1435,7 +1447,8 @@ async def test_repository_page_renders_before_availability_and_selection_arms_ac
 
 
 @pytest.mark.asyncio
-async def test_voice_profile_actions_fit_and_remain_keyboard_reachable_at_80x24() -> (
+@private_profile_test
+async def test_voice_profile_actions_fit_and_remain_keyboard_reachable_at_80x24(request) -> (
     None
 ):
     service = _ActionProfileService(_profile(0))
@@ -1484,7 +1497,9 @@ async def test_voice_profile_actions_fit_and_remain_keyboard_reachable_at_80x24(
     ],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_profile_recovery_copy_is_visible_at_80x24(
+    request,
     availability_state: str,
     expected_recovery: str,
 ) -> None:
@@ -1506,7 +1521,8 @@ async def test_profile_recovery_copy_is_visible_at_80x24(
 
 
 @pytest.mark.asyncio
-async def test_unverified_legacy_profile_offers_an_exact_playground_test() -> None:
+@private_profile_test
+async def test_unverified_legacy_profile_offers_an_exact_playground_test(request) -> None:
     """A provider without catalog authority needs sample evidence, not Ready."""
 
     legacy = replace(
@@ -1551,7 +1567,9 @@ async def test_unverified_legacy_profile_offers_an_exact_playground_test() -> No
     ],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_availability_cell_uses_the_three_truthful_profile_states(
+    request,
     provider_id: str,
     state: str,
     recovery_action: str,
@@ -1577,7 +1595,8 @@ async def test_availability_cell_uses_the_three_truthful_profile_states(
 
 
 @pytest.mark.asyncio
-async def test_publish_page_preserves_needs_test_during_same_page_refresh() -> None:
+@private_profile_test
+async def test_publish_page_preserves_needs_test_during_same_page_refresh(request) -> None:
     """The availability cell is filled at two sites -- `_publish_page` (from
     preserved availability across a same-page refresh) and
     `_publish_availability` (from a fresh observation) -- and both must go
@@ -1622,7 +1641,8 @@ async def test_publish_page_preserves_needs_test_during_same_page_refresh() -> N
 
 
 @pytest.mark.asyncio
-async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> None:
+@private_profile_test
+async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24(request) -> None:
     display_name = "profile-" + ("n" * 120)
     model_id = f"model/{'opaque-model-segment/' * 5}model-tail"
     voice_id = f"voice/{'opaque-voice-segment/' * 5}voice-tail"
@@ -1698,7 +1718,9 @@ async def test_long_profile_identifiers_are_keyboard_scrollable_at_80x24() -> No
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_search_validates_shared_text_bound_before_queueing_request(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -1732,7 +1754,9 @@ async def test_search_validates_shared_text_bound_before_queueing_request(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_search_debounces_before_one_active_and_one_latest_page_request(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -1786,7 +1810,8 @@ async def test_search_debounces_before_one_active_and_one_latest_page_request(
 
 
 @pytest.mark.asyncio
-async def test_stale_rendered_rows_cannot_arm_actions_or_emit_preview() -> None:
+@private_profile_test
+async def test_stale_rendered_rows_cannot_arm_actions_or_emit_preview(request) -> None:
     service = _PipelineProfileService()
     app = _ActionHost(service)
     initial_page = _page(_profile(0), generation=5)
@@ -1873,7 +1898,9 @@ async def test_stale_rendered_rows_cannot_arm_actions_or_emit_preview() -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_cancellation_resistant_availability_keeps_one_cleanup_and_drains_latest(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -1969,7 +1996,9 @@ async def test_cancellation_resistant_availability_keeps_one_cleanup_and_drains_
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_late_search_and_repository_generation_pages_never_replace_current_rows(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -2024,7 +2053,8 @@ async def test_late_search_and_repository_generation_pages_never_replace_current
 
 
 @pytest.mark.asyncio
-async def test_availability_revisions_cannot_regress_the_rendered_page() -> None:
+@private_profile_test
+async def test_availability_revisions_cannot_regress_the_rendered_page(request) -> None:
     service = _PipelineProfileService()
     app = _STTSHost(service)
     page = _page(_profile(0), generation=5)
@@ -2095,7 +2125,8 @@ async def test_availability_revisions_cannot_regress_the_rendered_page() -> None
 
 
 @pytest.mark.asyncio
-async def test_unmount_cancels_and_settles_the_retained_page_pipeline() -> None:
+@private_profile_test
+async def test_unmount_cancels_and_settles_the_retained_page_pipeline(request) -> None:
     service = _PipelineProfileService()
     app = _STTSHost(service)
     loop = asyncio.get_running_loop()
@@ -2123,7 +2154,8 @@ async def test_unmount_cancels_and_settles_the_retained_page_pipeline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_preview_posts_the_exact_loaded_profile_and_current_availability() -> (
+@private_profile_test
+async def test_preview_posts_the_exact_loaded_profile_and_current_availability(request) -> (
     None
 ):
     service = _ActionProfileService(_profile(0))
@@ -2164,7 +2196,8 @@ async def test_preview_posts_the_exact_loaded_profile_and_current_availability()
 
 
 @pytest.mark.asyncio
-async def test_unavailable_profile_disables_playground_action_with_clear_recovery() -> (
+@private_profile_test
+async def test_unavailable_profile_disables_playground_action_with_clear_recovery(request) -> (
     None
 ):
     service = _ActionProfileService(
@@ -2184,7 +2217,9 @@ async def test_unavailable_profile_disables_playground_action_with_clear_recover
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_matching_profile_sample_records_evidence_and_enables_save(
+    request,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2231,7 +2266,9 @@ async def test_matching_profile_sample_records_evidence_and_enables_save(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_different_profile_sample_cannot_enable_save(
+    request,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2274,7 +2311,8 @@ async def test_different_profile_sample_cannot_enable_save(
 
 
 @pytest.mark.asyncio
-async def test_same_page_refresh_preserves_selected_profile_focus_and_scroll() -> None:
+@private_profile_test
+async def test_same_page_refresh_preserves_selected_profile_focus_and_scroll(request) -> None:
     profiles = tuple(_profile(index) for index in range(50))
     service = _ControlledProfileService(profiles)
     service.availability_future = asyncio.get_running_loop().create_future()
@@ -2321,7 +2359,9 @@ async def test_same_page_refresh_preserves_selected_profile_focus_and_scroll() -
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_stts_window_consumes_exact_profile_preview_once_on_playground_remount(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _ActionProfileService(
@@ -2380,7 +2420,9 @@ async def test_stts_window_consumes_exact_profile_preview_once_on_playground_rem
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_exact_preview_at_80x24_focuses_playground_with_visible_recovery_banner(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _ActionProfileService(
@@ -2895,7 +2937,9 @@ async def test_profile_modals_escape_returns_their_cancel_result(
     ],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_switching_stts_view_dismisses_owned_profile_modal_and_worker(
+    request,
     button_selector: str,
     modal_type: type[object],
 ) -> None:
@@ -2955,7 +2999,9 @@ async def test_switching_stts_view_dismisses_owned_profile_modal_and_worker(
     ],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_cancelled_profile_action_preserves_exact_current_detail(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     action_name: str,
     modal_type: type[object],
@@ -3005,7 +3051,9 @@ async def test_cancelled_profile_action_preserves_exact_current_detail(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_edit_cancel_preserves_pending_availability_failure(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _PendingAvailabilityActionProfileService(
@@ -3063,7 +3111,9 @@ async def test_edit_cancel_preserves_pending_availability_failure(
     ["success", "failure", "invalid"],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_late_availability_does_not_replace_newer_action_failure(
+    request,
     availability_outcome: str,
 ) -> None:
     service = _PendingAvailabilityActionProfileService(_profile(0))
@@ -3109,7 +3159,9 @@ async def test_late_availability_does_not_replace_newer_action_failure(
 
 @pytest.mark.parametrize("generation_edit", [False, True])
 @pytest.mark.asyncio
+@private_profile_test
 async def test_edit_passes_exact_loaded_token_for_rename_and_generation_changes(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     generation_edit: bool,
 ) -> None:
@@ -3152,7 +3204,9 @@ async def test_edit_passes_exact_loaded_token_for_rename_and_generation_changes(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_edit_conflict_retains_the_exact_draft_without_leaking_values(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _ActionProfileService(_profile(0))
@@ -3226,7 +3280,9 @@ async def test_edit_conflict_retains_the_exact_draft_without_leaking_values(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_duplicate_uses_source_token_and_name_as_the_only_modal_authority(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _ActionProfileService(_profile(0))
@@ -3267,7 +3323,8 @@ async def test_duplicate_uses_source_token_and_name_as_the_only_modal_authority(
 
 
 @pytest.mark.asyncio
-async def test_create_from_artifact_handoff_preserves_the_exact_artifact() -> None:
+@private_profile_test
+async def test_create_from_artifact_handoff_preserves_the_exact_artifact(request) -> None:
     service = _ActionProfileService(_profile(0))
     artifact = _artifact()
     app = _ActionHost(service)
@@ -3286,7 +3343,8 @@ async def test_create_from_artifact_handoff_preserves_the_exact_artifact() -> No
 
 
 @pytest.mark.asyncio
-async def test_create_from_artifact_maps_stale_configuration_to_honest_copy_for_any_provider() -> (
+@private_profile_test
+async def test_create_from_artifact_maps_stale_configuration_to_honest_copy_for_any_provider(request) -> (
     None
 ):
     """`create_from_artifact` checks the exact provider's configuration
@@ -3327,7 +3385,9 @@ async def test_create_from_artifact_maps_stale_configuration_to_honest_copy_for_
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_delete_shows_advisory_count_but_repository_conflict_is_final(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _ActionProfileService(_profile(0))
@@ -3356,7 +3416,9 @@ async def test_delete_shows_advisory_count_but_repository_conflict_is_final(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_assigned_profile_delete_is_blocked_before_repository_mutation(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _ActionProfileService(_profile(0))
@@ -3392,7 +3454,9 @@ async def test_assigned_profile_delete_is_blocked_before_repository_mutation(
     ],
 )
 @pytest.mark.asyncio
+@private_profile_test
 async def test_delete_confirmation_flags_the_configured_app_default_profile(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     configured_default: str | None,
     expected_is_app_default: bool,
@@ -3479,7 +3543,9 @@ async def test_delete_modal_copy_names_the_app_default_voice(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_refresh_and_editor_repair_keep_unavailable_persisted_values(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     profile = replace(
@@ -3522,7 +3588,9 @@ async def test_refresh_and_editor_repair_keep_unavailable_persisted_values(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_unexpected_action_errors_render_only_value_independent_copy(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _ActionProfileService(_profile(0))
@@ -3560,7 +3628,9 @@ async def test_unexpected_action_errors_render_only_value_independent_copy(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_selected_profile_exports_the_sanitized_standalone_payload(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3603,7 +3673,9 @@ async def test_selected_profile_exports_the_sanitized_standalone_payload(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_profile_export_cancellation_writes_nothing(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3623,7 +3695,9 @@ async def test_profile_export_cancellation_writes_nothing(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_profile_export_path_failure_never_logs_sensitive_destination(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -3927,7 +4001,9 @@ def test_export_action_projection_supplies_both_visible_and_executable_truths() 
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_profile_export_rejects_a_hostile_non_export_projection(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     profile = _clone_profile()
@@ -4219,7 +4295,9 @@ class _ReviewPushAbort(BaseException):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4267,7 +4345,9 @@ async def test_reference_export_defaults_sanitized_and_bundle_requires_ack(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_bundle_export_failure_never_surfaces_private_canaries(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4324,7 +4404,9 @@ async def test_bundle_export_failure_never_surfaces_private_canaries(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_import_warns_before_picker_and_stale_successor_requires_reconfirm(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4385,7 +4467,9 @@ async def test_import_warns_before_picker_and_stale_successor_requires_reconfirm
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_import_review_cancel_invalidates_handle_without_committing(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4420,7 +4504,9 @@ async def test_import_review_cancel_invalidates_handle_without_committing(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_repeated_import_cancels_release_completed_invalidation_tasks(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -4463,7 +4549,8 @@ async def test_repeated_import_cancels_release_completed_invalidation_tasks(
 
 
 @pytest.mark.asyncio
-async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task() -> (
+@private_profile_test
+async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task(request) -> (
     None
 ):
     profile = _profile(0)
@@ -4501,7 +4588,8 @@ async def test_unmount_racing_existing_invalidation_joins_once_and_releases_task
 
 
 @pytest.mark.asyncio
-async def test_completed_invalidation_cannot_clear_a_replacement_task() -> None:
+@private_profile_test
+async def test_completed_invalidation_cannot_clear_a_replacement_task(request) -> None:
     profile = _profile(0)
     bundle_service = _BundleUIService(profile)
     handle = bundle_service.reviews[0].handle
@@ -4540,7 +4628,9 @@ async def test_completed_invalidation_cannot_clear_a_replacement_task() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_type", (RuntimeError, _ReviewPushAbort))
+@private_profile_test
 async def test_import_review_push_failure_invalidates_handle_exactly_once(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     failure_type: type[BaseException],
@@ -4584,7 +4674,8 @@ async def test_import_review_push_failure_invalidates_handle_exactly_once(
 
 
 @pytest.mark.asyncio
-async def test_cancelled_handle_cleanup_joins_without_masking_cancellation() -> None:
+@private_profile_test
+async def test_cancelled_handle_cleanup_joins_without_masking_cancellation(request) -> None:
     profile = _profile(0)
     bundle_service = _BundleUIService(profile)
     handle = bundle_service.reviews[0].handle
@@ -4617,7 +4708,9 @@ async def test_cancelled_handle_cleanup_joins_without_masking_cancellation() -> 
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_unmount_invalidates_handle_returned_by_late_inspection(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:

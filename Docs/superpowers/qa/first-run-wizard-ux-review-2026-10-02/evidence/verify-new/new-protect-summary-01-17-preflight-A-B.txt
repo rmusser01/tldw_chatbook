@@ -1,0 +1,5 @@
+2026-10-03 00:55:50.204 | ERROR    | tldw_chatbook.Utils.config_encryption:decrypt_value:146 - Decryption failed: ValueError
+2026-10-03 00:55:50.257 | ERROR    | tldw_chatbook.Utils.config_encryption:decrypt_value:146 - Decryption failed: ValueError
+config: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-qa/homes/vn1-b/.config/tldw_cli/config.toml
+password A: reason='configuration_unlock_failed' password_returned=False
+password B: reason='configuration_unlock_failed' password_returned=False

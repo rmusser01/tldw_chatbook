@@ -38,14 +38,35 @@ def _modules_using_stdlib_logger() -> list[pathlib.Path]:
     return [path for path in sorted(_ROOT.rglob("*.py")) if _uses_stdlib_logger(path)]
 
 
+def _scoped_nodes(node, scopes=()):
+    if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        scopes = (*(scope for scope in scopes if not isinstance(scope, ast.ClassDef)), node)
+    yield node, scopes
+    for child in ast.iter_child_nodes(node):
+        yield from _scoped_nodes(child, scopes)
+
+
 def _brace_style_calls(path: pathlib.Path) -> list[tuple[int, str]]:
     """Return (lineno, message) for `logger.x("...{}...", arg)` calls."""
+    source = path.read_text(errors="replace")
     try:
-        tree = ast.parse(path.read_text(errors="replace"))
+        tree = ast.parse(source)
     except SyntaxError:  # pragma: no cover - a syntax error is another test's job
         return []
+
+    lines = source.splitlines()
+    scoped_nodes = list(_scoped_nodes(tree))
+    bindings = {}
+    for node, scopes in scoped_nodes:
+        if isinstance(node, ast.Assign) and _STDLIB_LOGGER_ASSIGNMENT.match(lines[node.lineno - 1]):
+            bindings[scopes[-1]] = True
+        elif isinstance(node, ast.ImportFrom) and node.module == "loguru" and any(
+            (alias.asname or alias.name) == "logger" for alias in node.names
+        ):
+            bindings[scopes[-1]] = False
+
     found = []
-    for node in ast.walk(tree):
+    for node, scopes in scoped_nodes:
         if not isinstance(node, ast.Call):
             continue
         func = node.func
@@ -61,7 +82,9 @@ def _brace_style_calls(path: pathlib.Path) -> list[tuple[int, str]]:
         first = node.args[0]
         if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
             continue
-        if "{}" in first.value:
+        if "{}" in first.value and next(
+            (bindings[scope] for scope in reversed(scopes) if scope in bindings), False
+        ):
             found.append((node.lineno, first.value[:80].replace("\n", " ")))
     return found
 
@@ -103,6 +126,24 @@ def test_stdlib_logger_module_detection_requires_exact_target(tmp_path):
 
     assert _uses_stdlib_logger(stdlib) is True
     assert _uses_stdlib_logger(loguru) is False
+
+
+def test_mixed_loggers_are_checked_in_their_binding_scope(tmp_path):
+    mixed = tmp_path / "mixed.py"
+    mixed.write_text(
+        "import logging\n"
+        "from loguru import logger\n"
+        'logger.warning("valid module loguru={}", 1)\n'
+        "class Example:\n"
+        "    def update(self):\n"
+        "        logger = logging.getLogger(__name__)\n"
+        '        logger.warning("invalid stdlib={}", 1)\n'
+        "    def show(self):\n"
+        '        logger.warning("valid method loguru={}", 1)\n'
+    )
+
+    assert _uses_stdlib_logger(mixed)
+    assert _brace_style_calls(mixed) == [(7, "invalid stdlib={}")]
 
 
 def test_no_stdlib_logger_uses_loguru_brace_style():

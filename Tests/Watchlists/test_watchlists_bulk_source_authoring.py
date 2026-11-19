@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
+# Real guarded config consumers retain their collection-time private profile.
+pytestmark = pytest.mark.bootstrap_profile
 from unittest.mock import AsyncMock, Mock
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea
@@ -110,7 +113,9 @@ async def test_source_authoring_controls_fit_production_layout(size):
             control = editor.query_one(selector)
             assert control.region.width > 0 and control.region.height > 0
             assert control.region.right <= pane.region.right
-        assert [str(label.render()) for label in editor.query(".sources-filter-label")] == [
+        assert [
+            str(label.render()) for label in editor.query(".sources-filter-label")
+        ] == [
             "Type",
             "Status",
             "Active",
@@ -149,9 +154,9 @@ async def test_bulk_modal_cannot_dismiss_an_admitted_write():
     async with app.run_test(size=(160, 42)) as pilot:
         modal = app.screen
         assert isinstance(modal, BulkSourcesModal)
-        modal.query_one("#bulk-sources-draft", TextArea).text = (
-            "https://admitted.example/feed"
-        )
+        modal.query_one(
+            "#bulk-sources-draft", TextArea
+        ).text = "https://admitted.example/feed"
         modal.query_one("#bulk-sources-create", Button).press()
         await pilot.pause()
 
@@ -286,11 +291,7 @@ async def test_bulk_modal_preserves_order_and_pauses_on_partial_results(size):
             for label in modal.query(".bulk-sources-field-label").results(Static)
         ] == ["Type", "Tags", "Next"]
         draft = modal.query_one("#bulk-sources-draft", TextArea)
-        draft.text = (
-            "https://one.example/feed\n"
-            "not a URL\n"
-            "https://two.example/feed"
-        )
+        draft.text = "https://one.example/feed\nnot a URL\nhttps://two.example/feed"
         modal.query_one("#bulk-sources-create", Button).press()
         modal.query_one("#bulk-sources-create", Button).press()
         await pilot.pause()
@@ -446,9 +447,9 @@ async def test_dismissed_bulk_modal_ignores_late_batch_callback():
         service.create_sources_exact_batch = AsyncMock(side_effect=delayed_batch)
         screen._local_watchlists_service = Mock(return_value=service)
         modal.apply_results = Mock()
-        modal.query_one("#bulk-sources-draft", TextArea).text = (
-            "https://late.example/feed"
-        )
+        modal.query_one(
+            "#bulk-sources-draft", TextArea
+        ).text = "https://late.example/feed"
         modal.query_one("#bulk-sources-create", Button).press()
         await entered.wait()
 
@@ -560,9 +561,10 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
         assert screen.selected_source is not None
         assert screen.selected_source["id"] == second["id"]
         assert pane.query_one("#sources-add-several-button", Button).disabled is False
-        assert pane.query_one(
-            "#sources-create-watchlist-selected", Button
-        ).disabled is False
+        assert (
+            pane.query_one("#sources-create-watchlist-selected", Button).disabled
+            is False
+        )
 
         screen.runtime_backend = "server"
         await pilot.pause()
@@ -593,9 +595,749 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
         assert pane.selected_source is None
         assert pane.selected_source_ids == frozenset({first["id"]})
         assert pane.query_one("#sources-add-several-button", Button).disabled is False
-        assert pane.query_one(
-            "#sources-create-watchlist-selected", Button
-        ).disabled is False
+        assert (
+            pane.query_one("#sources-create-watchlist-selected", Button).disabled
+            is False
+        )
+
+
+def _hold_loader(monkeypatch, loader):
+    """Hold one screen loader until the returned ``land`` lets it finish.
+
+    Args:
+        monkeypatch: The test's monkeypatch.
+        loader: ``"tree"`` (the rail snapshot), ``"overview"`` (its counts) or
+            ``"sources"`` (the Sources rows).
+
+    Returns:
+        ``land(host, screen)``: release the loader and await its workers.
+    """
+    import threading
+
+    from tldw_chatbook.UI.Watchlists_Modules.watchlists_backend_controller import (
+        WatchlistsBackendController,
+    )
+
+    release = threading.Event()
+    if loader == "tree":
+        group, read = "wc_tree", WatchlistsCollectionsScreen._read_tree_data_snapshot
+
+        def held(*args):
+            assert release.wait(30), "the tree load was never released"
+            return read(*args)
+
+        monkeypatch.setattr(
+            WatchlistsCollectionsScreen, "_read_tree_data_snapshot", staticmethod(held)
+        )
+    else:
+        group, name = {
+            "overview": ("wc_overview", "get_overview_data"),
+            "sources": ("wc_sources", "list_sources"),
+        }[loader]
+        read = getattr(WatchlistsBackendController, name)
+
+        async def held(self, **kwargs):
+            await asyncio.to_thread(release.wait, 30)
+            return await read(self, **kwargs)
+
+        monkeypatch.setattr(WatchlistsBackendController, name, held)
+
+    async def land(host, screen):
+        release.set()
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in host.workers
+                if worker.node is screen and worker.group == group
+            ),
+            return_exceptions=True,  # an exclusive refresh cancels its forerunner
+        )
+
+    return land
+
+
+async def _until(pilot, done):
+    for _ in range(100):
+        if done():
+            return
+        await pilot.pause(0.05)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("target", "loader"),
+    [("sources", "tree"), ("overview", "tree"), ("overview", "overview")],
+)
+async def test_a_load_landing_while_a_section_pane_mounts_reaches_that_pane(
+    monkeypatch, target, loader
+):
+    """TASK-34951: the section swap builds the new pane, then awaits its
+    remove/mount; a loader landing in that gap found no pane to push into,
+    and the post-mount reseed restored the rows only. The Sources create form
+    then offered no watchlist, and choosing one raised InvalidSelectValueError
+    (the backend-switch test's CI failure); the Overview kept counting no
+    watchlists, or kept its loading layout (review of #3107, item V2)."""
+    from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
+    from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+        WatchlistsWorkbench,
+    )
+
+    app_instance = _build_test_app()
+    watchlist = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    land = _hold_loader(monkeypatch, loader)
+    replace = WatchlistsWorkbench._replace_region_content
+    swaps, landed = [], []
+
+    async def load_lands_first(workbench, container, replacement):
+        screen = workbench.screen
+        swaps.append(screen.active_section)
+        if screen.active_section == target and swaps.count(target) == 1:
+            # The target pane is built but not mounted: let the load land.
+            await land(host, screen)
+            landed.append(
+                watchlist["id"] in {r["id"] for r in screen._tree_watchlists}
+                if loader == "tree"
+                else bool(screen.overview_data)
+            )
+        await replace(workbench, container, replacement)
+
+    monkeypatch.setattr(
+        WatchlistsWorkbench, "_replace_region_content", load_lands_first
+    )
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        for section in ("sources",) if target == "sources" else ("sources", target):
+            screen.active_section = section
+            await _until(pilot, lambda section=section: section in swaps)
+        await _until(pilot, lambda: bool(landed))
+        await pilot.pause()
+        if target == "sources":
+            pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+            shown = {int(row["id"]) for row in pane.watchlist_choices}
+            expected = {watchlist["id"]}
+        elif loader == "tree":
+            pane = screen.query_one("#watchlists-overview-pane", OverviewPane)
+            shown, expected = pane.watchlist_count, 1
+        else:
+            pane = screen.query_one("#watchlists-overview-pane", OverviewPane)
+            shown, expected = pane.data, screen.overview_data
+
+    assert landed == [True]
+    assert shown == expected
+
+
+@pytest.mark.asyncio
+async def test_a_load_landing_while_the_items_region_is_recreated_reaches_its_pane(
+    monkeypatch,
+):
+    """Review of #3107, item V1: re-expanding a collapsed Items region on Read
+    rebuilds its pane through the same factory-then-mount path, and a Read
+    reload committing in between (no pane to present into) was dropped: the
+    re-created pane showed the rows from before the reload."""
+    from datetime import UTC, datetime
+
+    from textual.widget import Widget
+
+    from Tests.Watchlists.test_watchlists_scoped_rebuilds import _open, _seed, _settle
+    from tldw_chatbook.Subscriptions.item_persist import persist_subscription_item
+    from tldw_chatbook.UI.Watchlists_Modules.article_list import ArticleListPane
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    app = _build_test_app()
+    watchlist_id = _seed(app, items=2)
+    async with _open(app, watchlist_id) as (screen, pilot, host):
+        await _settle(pilot, host)
+        assert len(screen._loaded_items) == 2
+        screen._toggle_preferred_region(Region.ITEMS)
+        await _until(pilot, lambda: not screen.query("#watchlists-items-pane"))
+        assert not screen.query("#watchlists-items-pane"), "Items did not collapse"
+
+        db = app.watchlist_bundle_service.db
+        source_id = db.get_all_subscriptions()[0]["id"]
+        with db.transaction() as conn:
+            persist_subscription_item(
+                conn,
+                source_id,
+                {
+                    "url": "https://ai-news.example/late",
+                    "title": "Late story",
+                    "content": "body of the late story",
+                    "content_hash": "hash-late",
+                    "content_kind": "article",
+                    "content_format": "text",
+                },
+                run_id=None,
+                now=datetime.now(UTC).isoformat(),
+            )
+        release = asyncio.Event()
+        list_page = screen._controller.list_reader_items_page
+
+        async def held_page(**kwargs):
+            await release.wait()
+            return await list_page(**kwargs)
+
+        screen._controller.list_reader_items_page = held_page
+        screen._load_active_section_data()  # the reload is held until the rebuild
+        mount = Widget.mount
+        landed = []
+
+        def mount_after_the_reload(self, *widgets, **kwargs):
+            if landed or not any(w.id == "wl-region-items" for w in widgets):
+                return mount(self, *widgets, **kwargs)
+
+            async def later():
+                # The re-created Items region is built but not mounted.
+                release.set()
+                await asyncio.gather(
+                    *(
+                        worker.wait()
+                        for worker in host.workers
+                        if worker.node is screen and worker.group == "wc_items"
+                    ),
+                    return_exceptions=True,
+                )
+                landed.append(len(screen._loaded_items))
+                return await mount(self, *widgets, **kwargs)
+
+            return later()
+
+        monkeypatch.setattr(Widget, "mount", mount_after_the_reload)
+        screen._toggle_preferred_region(Region.ITEMS)
+        await _until(pilot, lambda: bool(landed))
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
+        shown = len(pane.items)
+
+    assert landed == [3]
+    assert shown == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("private_names", ["present", "absent"])
+async def test_an_open_create_form_offers_a_watchlist_the_tree_load_adds(
+    monkeypatch, private_names
+):
+    """Review of #3107, item V3: a tree load pushing new watchlist choices into
+    a pane whose create form is already open also refreshes the form's
+    Select, and keeps the destination the user chose; also without the
+    private Textual name the highlight restore uses (round 3, Q3)."""
+    from tldw_chatbook.UI.Watchlists_Modules import sources_pane
+
+    if private_names == "absent":
+        monkeypatch.setattr(sources_pane, "SelectOverlay", None)
+    app_instance = _build_test_app()
+    chosen = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async def tree_loaded(screen):
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in host.workers
+                if worker.node is screen and worker.group == "wc_tree"
+            )
+        )
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await tree_loaded(screen)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+        destination = pane.query_one("#sources-create-watchlist", Select)
+        destination.value = chosen["id"]
+        await pilot.pause()
+        later = app_instance.watchlist_bundle_service.create("Later")
+        screen._load_tree_data()
+        await pilot.pause()
+        await tree_loaded(screen)
+        await pilot.pause()
+        offered = {value for _label, value in destination._options}
+
+    assert later["id"] in offered
+    assert destination.value == chosen["id"]
+    assert pane.create_draft_destination == chosen["id"]
+
+
+@pytest.mark.asyncio
+async def test_a_sources_load_landing_while_the_pane_mounts_prunes_its_selection(
+    monkeypatch,
+):
+    """Review of #3107, item V4: the swap gap also dropped the Sources loader's
+    authoritative ids and pruned selection, so the mounted pane kept a
+    selected source the reload had already found deleted."""
+    from tldw_chatbook.UI.Watchlists_Modules.watchlists_workbench import (
+        WatchlistsWorkbench,
+    )
+
+    app_instance = _build_test_app()
+    db = app_instance.watchlist_bundle_service.db
+    kept_id = db.add_subscription(name="Kept", type="rss", source="https://k.example/f")
+    gone_id = db.add_subscription(name="Gone", type="rss", source="https://g.example/f")
+    kept, gone = (f"local:subscription:{n}" for n in (kept_id, gone_id))
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    replace = WatchlistsWorkbench._replace_region_content
+    landed = []
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await _until(pilot, lambda: len(screen._loaded_sources) == 2)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.set_selected_source_ids((kept, gone))
+        await _until(pilot, lambda: len(screen._selected_source_ids) == 2)
+        assert set(screen._selected_source_ids) == {kept, gone}
+        screen.active_section = "rules"
+        await _until(pilot, lambda: not screen.query("#watchlists-sources-pane"))
+        db.delete_subscription(gone_id)
+        land = _hold_loader(monkeypatch, "sources")
+
+        async def sources_load_lands_first(workbench, container, replacement):
+            if workbench.screen.active_section == "sources" and not landed:
+                # The Sources pane is built but not mounted: let the load land.
+                await land(host, workbench.screen)
+                landed.append(workbench.screen._selected_source_ids)
+            await replace(workbench, container, replacement)
+
+        monkeypatch.setattr(
+            WatchlistsWorkbench, "_replace_region_content", sources_load_lands_first
+        )
+        screen.active_section = "sources"
+        await _until(pilot, lambda: bool(landed))
+        await pilot.pause()
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        selected = pane.selected_source_ids
+
+    assert landed == [(kept,)]
+    assert selected == {kept}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rail", ["right_rail", "left_rail"])
+async def test_a_load_landing_while_a_rail_is_recreated_reaches_it(monkeypatch, rail):
+    """Review of #3107, round 2, item Y1: expanding a collapsed rail builds
+    its content before mounting it, so an overview refresh (the Inspector's
+    profile state) or a tree load (the rail's watchlists) landing in between
+    reached nothing and the rail showed the state from before the load."""
+    from textual.widget import Widget
+
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+    from tldw_chatbook.UI.Watchlists_Modules.overview_pane import OverviewPane
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
+
+    app_instance = _build_test_app()
+    watchlist = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    land = _hold_loader(monkeypatch, "overview" if rail == "right_rail" else "tree")
+    region, node_id = Region(rail), f"wl-region-{rail}"
+    mount = Widget.mount
+    landed = []
+
+    def mount_after_the_load(self, *widgets, **kwargs):
+        if landed or not any(w.id == node_id for w in widgets):
+            return mount(self, *widgets, **kwargs)
+
+        async def later():
+            # The re-created rail is built but not mounted.
+            await land(host, self.screen)
+            landed.append(True)
+            return await mount(self, *widgets, **kwargs)
+
+        return later()
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        if screen.query(f"#{node_id}"):
+            screen._toggle_preferred_region(region)
+            await _until(pilot, lambda: not screen.query(f"#{node_id}"))
+        assert not screen.query(f"#{node_id}"), f"{rail} did not collapse"
+        monkeypatch.setattr(Widget, "mount", mount_after_the_load)
+        screen._toggle_preferred_region(region)
+        await _until(pilot, lambda: bool(landed))
+        if rail == "right_rail":
+
+            def shown():
+                return screen.query_one(InspectorPane).profile_state
+
+            expected = screen._watchlists_profile_state()
+            assert expected != OverviewPane.LOADING
+        else:
+
+            def shown():
+                tree = screen.query_one("#wl-tree", WatchlistTree)
+                return [int(row["id"]) for row in tree._watchlists]
+
+            expected = [watchlist["id"]]
+        await _until(pilot, lambda: shown() == expected)
+        result = shown()
+
+    assert landed == [True]
+    assert result == expected
+
+
+def test_the_private_select_names_the_highlight_restore_uses_still_exist():
+    """Review of #3107, round 3, item Q3: the restore reads Textual's private
+    `SelectOverlay` and `Select._options`; it degrades without them, so this
+    makes a Textual upgrade that renames them fail here, loudly."""
+    from textual.widgets import OptionList
+    from textual.widgets._select import SelectOverlay
+
+    from tldw_chatbook.UI.Watchlists_Modules import sources_pane
+
+    select = Select([("Alpha", 1), ("Beta", 2)], allow_blank=False)
+    assert sources_pane.SelectOverlay is SelectOverlay
+    assert issubclass(SelectOverlay, OptionList)
+    assert select._options == [("Alpha", 1), ("Beta", 2)]
+    assert hasattr(Select, "expanded") and hasattr(OptionList, "highlighted")
+
+
+@pytest.mark.asyncio
+async def test_an_open_destination_list_keeps_its_highlight_when_choices_change():
+    """Review of #3107, round 2, item Y2: re-offering the choices under an
+    expanded destination list kept it open but dropped its highlight; the
+    source-type list was re-set too. Both now keep their state."""
+    from textual.widgets._select import SelectOverlay
+
+    app_instance = _build_test_app()
+    service = app_instance.watchlist_bundle_service
+    service.create("Alpha")
+    second = service.create("Beta")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async def tree_loaded(screen):
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in host.workers
+                if worker.node is screen and worker.group == "wc_tree"
+            )
+        )
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await tree_loaded(screen)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane.query_one("#sources-new-button", Button).press()
+        await pilot.pause()
+        destination = pane.query_one("#sources-create-watchlist", Select)
+        kind = pane.query_one("#sources-create-type", Select)
+        kind.expanded = True
+        await pilot.pause()
+        kind_overlay = kind.query_one(SelectOverlay)
+        kind_overlay.highlighted = 1
+        kind.expanded = False
+        destination.expanded = True
+        await pilot.pause()
+        overlay = destination.query_one(SelectOverlay)
+        overlay.highlighted = 2  # Unassigned, Alpha, Beta: two rows down
+        assert destination._options[2][1] == second["id"]
+        service.create("Gamma")
+        screen._load_tree_data()
+        await pilot.pause()
+        await tree_loaded(screen)
+        await pilot.pause()
+        expanded, highlighted = destination.expanded, overlay.highlighted
+        offered = len(destination._options)
+        kind_highlighted = kind_overlay.highlighted
+
+    assert offered == 4
+    assert expanded
+    assert highlighted == 2
+    assert kind_highlighted == 1
+
+
+@pytest.mark.asyncio
+async def test_the_reseed_keeps_a_selection_the_screen_has_not_heard_of_yet():
+    """Review of #3107, round 2, item Y3: a reseed handled one message after
+    the pane was shown (the Items re-creation path) replaced the pane's
+    selection with the screen's copy, which lags the pane by that message,
+    so a toggle made in the fresh pane in that instant was lost."""
+    app_instance = _build_test_app()
+    db = app_instance.watchlist_bundle_service.db
+    source_id = db.add_subscription(
+        name="One", type="rss", source="https://o.example/f"
+    )
+    selected = f"local:subscription:{source_id}"
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await _until(pilot, lambda: len(screen._loaded_sources) == 1)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        assert screen._selected_source_ids == ()
+        pane.set_selected_source_ids((selected,))  # its message is still queued
+        screen._reseed_active_section_pane()
+        kept = pane.selected_source_ids
+        await pilot.pause()
+        mirrored = screen._selected_source_ids
+
+    assert kept == {selected}
+    assert mirrored == (selected,)
+
+
+def _land_before_mounting(monkeypatch, node_id, landing):
+    """Run ``landing(screen)`` once, after the region ``node_id`` is built and
+    before it mounts; returns the list ``landing`` results are appended to."""
+    from textual.widget import Widget
+
+    mount = Widget.mount
+    landed = []
+
+    def mount_after_landing(self, *widgets, **kwargs):
+        if landed or not any(w.id == node_id for w in widgets):
+            return mount(self, *widgets, **kwargs)
+
+        async def later():
+            landed.append(await landing(self.screen))
+            return await mount(self, *widgets, **kwargs)
+
+        return later()
+
+    monkeypatch.setattr(Widget, "mount", mount_after_landing)
+    return landed
+
+
+async def _reopen(pilot, screen, region, node_id):
+    """Collapse ``region`` if it is open, and return once it is gone."""
+    if screen.query(f"#{node_id}"):
+        screen._toggle_preferred_region(region)
+        await _until(pilot, lambda: not screen.query(f"#{node_id}"))
+    assert not screen.query(f"#{node_id}"), f"{node_id} did not collapse"
+
+
+@pytest.mark.asyncio
+async def test_a_check_starting_while_the_right_rail_is_recreated_reaches_the_inspector(
+    monkeypatch,
+):
+    """Review of #3107, round 3, item Q1: the Inspector's factory seeds the
+    busy source ids, and _set_check_now_busy pushes them into a mounted
+    Inspector only, so a check starting while the right rail re-expanded
+    left its Check-now state stale."""
+    from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+
+    host = BulkSourcesScreenHarness(_build_test_app(), "watchlists_collections")
+
+    async def a_check_starts(screen):
+        screen._checks_in_flight.add("local:subscription:1")
+        screen._set_check_now_busy()
+        return True
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await _reopen(pilot, screen, Region.RIGHT_RAIL, "wl-region-right_rail")
+        landed = _land_before_mounting(
+            monkeypatch, "wl-region-right_rail", a_check_starts
+        )
+        screen._toggle_preferred_region(Region.RIGHT_RAIL)
+        await _until(pilot, lambda: bool(landed))
+        await pilot.pause()
+        busy = screen.query_one(InspectorPane).busy_source_ids
+
+    assert landed == [True]
+    assert busy == {"local:subscription:1"}
+
+
+@pytest.mark.asyncio
+async def test_a_rail_reopened_after_a_discarded_build_shows_the_landed_tree(
+    monkeypatch,
+):
+    """Review of #3107, round 3, item Q2: recording the tree snapshot when a
+    rail was BUILT let a build that was then discarded claim the reopened
+    rail was current, so the rebuild the landed load needed was skipped."""
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
+
+    app_instance = _build_test_app()
+    watchlist = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    land = _hold_loader(monkeypatch, "tree")
+
+    async def the_load_lands_then_a_build_is_discarded(screen):
+        await land(host, screen)
+        screen._build_tree_pane()  # built for nothing; never mounted
+        return True
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await _reopen(pilot, screen, Region.LEFT_RAIL, "wl-region-left_rail")
+        landed = _land_before_mounting(
+            monkeypatch, "wl-region-left_rail", the_load_lands_then_a_build_is_discarded
+        )
+        screen._toggle_preferred_region(Region.LEFT_RAIL)
+        await _until(pilot, lambda: bool(landed))
+
+        def shown():
+            tree = screen.query_one("#wl-tree", WatchlistTree)
+            return [int(row["id"]) for row in tree._watchlists]
+
+        await _until(pilot, lambda: shown() == [watchlist["id"]])
+        result = shown()
+
+    assert landed == [True]
+    assert result == [watchlist["id"]]
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_rail_reopen_builds_the_tree_once(monkeypatch):
+    """Review of #3107, round 3, item Q2: with nothing landing during the
+    rebuild, a reopened rail is not rebuilt a second time (a rebuild costs
+    200-500 ms on a 30-watchlist rail)."""
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import WatchlistTree
+
+    app_instance = _build_test_app()
+    app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await _reopen(pilot, screen, Region.LEFT_RAIL, "wl-region-left_rail")
+        init, builds = WatchlistTree.__init__, []
+
+        def counted(self, *args, **kwargs):
+            builds.append(True)
+            init(self, *args, **kwargs)
+
+        monkeypatch.setattr(WatchlistTree, "__init__", counted)
+        screen._toggle_preferred_region(Region.LEFT_RAIL)
+        await _until(pilot, lambda: bool(screen.query("#wl-tree")))
+        await pilot.pause()
+        await pilot.pause(0.3)
+
+    assert len(builds) == 1
+
+
+@pytest.mark.asyncio
+async def test_expanding_in_a_fresh_rail_before_its_layout_message_builds_it_once(
+    monkeypatch,
+):
+    """Review of #3107, round 4, item R1: an expansion the fresh rail made
+    itself (and the screen mirrored) before RegionLayoutApplied was handled
+    looked like stale inputs and cost a second, needless tree build."""
+    from textual.widget import Widget
+
+    from tldw_chatbook.UI.Watchlists_Modules.region_layout import Region
+    from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import (
+        TreeExpansionChanged,
+        WatchlistTree,
+    )
+
+    app_instance = _build_test_app()
+    watchlist = app_instance.watchlist_bundle_service.create("Research")
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+    mount, init, builds, expanded = Widget.mount, WatchlistTree.__init__, [], []
+
+    def counted(self, *args, **kwargs):
+        builds.append(True)
+        init(self, *args, **kwargs)
+
+    def mount_then_expand(self, *widgets, **kwargs):
+        if expanded or not any(w.id == "wl-region-left_rail" for w in widgets):
+            return mount(self, *widgets, **kwargs)
+
+        async def later():
+            result = await mount(self, *widgets, **kwargs)
+            screen = self.screen
+            tree = screen.query_one("#wl-tree", WatchlistTree)
+            tree.expanded = frozenset({watchlist["id"]})  # the user, in the fresh rail
+            screen.handle_tree_expansion_changed(
+                TreeExpansionChanged(tree.expanded_root_kinds, tree.expanded)
+            )
+            expanded.append(True)
+            return result
+
+        return later()
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await _reopen(pilot, screen, Region.LEFT_RAIL, "wl-region-left_rail")
+        monkeypatch.setattr(WatchlistTree, "__init__", counted)
+        monkeypatch.setattr(Widget, "mount", mount_then_expand)
+        screen._toggle_preferred_region(Region.LEFT_RAIL)
+        await _until(pilot, lambda: bool(expanded))
+        await pilot.pause()
+        await pilot.pause(0.3)
+        shown = screen.query_one("#wl-tree", WatchlistTree).expanded
+
+    assert shown == {watchlist["id"]}
+    assert len(builds) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_sources_reload_on_a_mounted_pane_keeps_the_range_anchor():
+    """Review of #3107, round 4, item R2: _load_sources followed the in-place
+    prune with set_selected_source_ids(screen copy), whose replace() reset
+    the shift-range anchor (and could put back the screen's older copy)."""
+    app_instance = _build_test_app()
+    db = app_instance.watchlist_bundle_service.db
+    source_id = db.add_subscription(
+        name="One", type="rss", source="https://o.example/f"
+    )
+    picked = f"local:subscription:{source_id}"
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await _until(pilot, lambda: len(screen._loaded_sources) == 1)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane._multi_selection.toggle(picked)  # a click: the pick is the anchor
+        pane._update_multi_selection_ui()
+        await pilot.pause()
+        await screen._load_sources()
+        anchor = pane._multi_selection.anchor_id
+        selected = pane.selected_source_ids
+
+    assert selected == {picked}
+    assert anchor == picked
+
+
+@pytest.mark.asyncio
+async def test_the_reseed_keeps_the_selection_range_anchor():
+    """Review of #3107, round 3, item Q4: re-applying the pane's selection
+    through replace() also reset its shift-range anchor, so a shift-click
+    range started in that moment lost its start."""
+    app_instance = _build_test_app()
+    db = app_instance.watchlist_bundle_service.db
+    source_id = db.add_subscription(
+        name="One", type="rss", source="https://o.example/f"
+    )
+    picked = f"local:subscription:{source_id}"
+    host = BulkSourcesScreenHarness(app_instance, "watchlists_collections")
+
+    async with host.run_test(size=(220, 52)) as pilot:
+        screen = host.screen_stack[-1]
+        screen.active_section = "sources"
+        await _until(pilot, lambda: len(screen._loaded_sources) == 1)
+        pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        pane._multi_selection.toggle(picked)  # a click: the pick is the anchor
+        screen._reseed_active_section_pane()
+        anchor = pane._multi_selection.anchor_id
+        selected = pane.selected_source_ids
+
+    assert selected == {picked}
+    assert anchor == picked
 
 
 @pytest.mark.asyncio
@@ -611,6 +1353,15 @@ async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size)
         screen.active_section = "sources"
         await pilot.pause()
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in host.workers
+                if worker.node is screen and worker.group == "wc_tree"
+            )
+        )
+        assert not screen._tree_snapshot_failures
+        assert watchlist["id"] in {row["id"] for row in screen._tree_watchlists}
         pane.query_one("#sources-new-button", Button).press()
         await pilot.pause()
         table = pane.query_one("#sources-table", DataTable)
@@ -704,7 +1455,9 @@ async def test_bulk_modal_keeps_draft_after_validation_and_write_failure():
         modal.query_one("#bulk-sources-create", Button).press()
         await pilot.pause()
         assert len(app.create_requests) == 1
-        modal.show_write_failure("Sources could not be saved. Return to the draft and retry.")
+        modal.show_write_failure(
+            "Sources could not be saved. Return to the draft and retry."
+        )
         await pilot.pause()
 
         assert draft.text == "https://recover.example/feed"
@@ -727,9 +1480,9 @@ async def test_watchlists_screen_uses_exact_batch_and_continuation_changes_no_me
         )
         host.push_screen(modal)
         await pilot.pause()
-        modal.query_one("#bulk-sources-draft", TextArea).text = (
-            "https://one.example/feed\nhttps://two.example/feed"
-        )
+        modal.query_one(
+            "#bulk-sources-draft", TextArea
+        ).text = "https://one.example/feed\nhttps://two.example/feed"
         modal.query_one("#bulk-sources-create", Button).press()
 
         for _ in range(100):

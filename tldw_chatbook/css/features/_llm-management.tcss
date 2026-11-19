@@ -33,8 +33,6 @@
 #snapshot-details,
 #snapshot-preferences-result,
 #snapshot-enabled,
-#settings-snapshot-enabled,
-#settings-snapshot-controls CollapsibleTitle,
 #llamacpp-snapshot-manager CollapsibleTitle,
 #settings-snapshot-controls .settings-help-copy,
 #settings-snapshot-controls .settings-input-label {
@@ -106,11 +104,6 @@
     width: $ds-size-12;
 }
 
-#settings-snapshot-controls {
-    height: auto;
-    margin-bottom: $ds-space-1;
-}
-
 .gguf-source-mode-row {
     layout: horizontal;
     width: $ds-width-full;
@@ -125,10 +118,16 @@
     padding-right: $ds-space-1;
 }
 
+/* TASK-33641.2: the mode Select is compact, so it paints its value on the
+ * first of its three rows, one row above the centred label. One row of top
+ * padding puts the value on the middle row, where every other row of this
+ * form has its text. The row keeps its height: at 80x24 that height is
+ * what scrolls the managed controls into view when the mode changes. */
 .gguf-source-mode {
     width: $ds-width-fill;
     min-width: $ds-size-12;
     height: $ds-size-3;
+    padding-top: $ds-space-1;
 }
 
 .gguf-source-region {

@@ -128,7 +128,8 @@ def _assert_metrics(counter, histogram, *, status, subscription_type, shadow=Non
 
 
 @pytest.mark.parametrize(
-    "sub_type", ["rss", "atom", "json_feed", "podcast", "url", "url_list", "sitemap", "api"]
+    "sub_type",
+    ["rss", "atom", "json_feed", "podcast", "url", "url_list", "sitemap", "api"],
 )
 @pytest.mark.asyncio
 async def test_every_executable_type_is_launched_as_a_run(handler, sub_type):
@@ -153,6 +154,7 @@ async def test_every_executable_type_is_launched_as_a_run(handler, sub_type):
     handler.url_monitor.check_url.assert_not_awaited()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scheduler_and_scope_share_one_durable_winner(tmp_path):
     path = tmp_path / "subscriptions.db"
@@ -225,20 +227,22 @@ async def test_scheduler_and_scope_share_one_durable_winner(tmp_path):
     scheduler_receipt = scheduler_receipts[0]
     durable = await scope_service.get_run(scope_receipt["run_id"])
     assert scheduler_receipt == durable
-    assert {key: value for key, value in scope_receipt.items() if key != "triggered_alerts"} == durable
+    assert {
+        key: value for key, value in scope_receipt.items() if key != "triggered_alerts"
+    } == durable
     assert scope_receipt["triggered_alerts"] == []
     assert durable["status"] == "completed" and durable["error_msg"] is None
-    assert _durable_claim_state(
-        scope_db, scope_receipt["run_id"], source["source_id"]
-    ) == observed_states[0]
+    assert (
+        _durable_claim_state(scope_db, scope_receipt["run_id"], source["source_id"])
+        == observed_states[0]
+    )
     scope_db.close()
     scheduler_db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_scheduler_loser_timeout_preserves_stranded_winner(
-    monkeypatch, tmp_path
-):
+async def test_scheduler_loser_timeout_preserves_stranded_winner(monkeypatch, tmp_path):
     path = tmp_path / "scheduler-timeout.db"
     owner_db = SubscriptionsDB(path, "owner")
     scheduler_db = SubscriptionsDB(path, "scheduler")
@@ -291,6 +295,7 @@ async def test_scheduler_loser_timeout_preserves_stranded_winner(
     scheduler_db.close()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_scheduler_loser_cancellation_preserves_stranded_winner(tmp_path):
     path = tmp_path / "scheduler-cancel.db"
@@ -724,7 +729,9 @@ async def test_metrics_missing_task_id(handler, metrics_patch):
 @pytest.mark.asyncio
 async def test_metrics_error_path(handler, metrics_patch):
     counter, histogram = metrics_patch
-    handler.watchlists_service.execute_run.side_effect = RuntimeError("feed unreachable")
+    handler.watchlists_service.execute_run.side_effect = RuntimeError(
+        "feed unreachable"
+    )
     handler.subscriptions_db.get_subscription.return_value = _subscription("rss")
 
     await handler.handle(_task())

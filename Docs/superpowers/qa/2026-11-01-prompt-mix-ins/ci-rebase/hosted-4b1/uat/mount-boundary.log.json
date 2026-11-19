@@ -1,0 +1,4 @@
+{
+  "sha256": "47a188997bbd7091339208245dc9f8e1a971d57f36ff77c00059b882d48c2f3e",
+  "raw_text": "{\n  \"before\": {\n    \"rows\": 1,\n    \"headers\": 0,\n    \"row_mounted\": false\n  },\n  \"after\": {\n    \"rows\": 1,\n    \"headers\": 1,\n    \"header\": [\n      \"list_directory\"\n    ]\n  }\n}\n"
+}

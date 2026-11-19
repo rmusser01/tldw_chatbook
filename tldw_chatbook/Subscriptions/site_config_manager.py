@@ -25,7 +25,7 @@ from loguru import logger
 # Local Imports
 from ..DB.ChaChaNotes_DB import CharactersRAGDB
 from ..DB.Subscriptions_DB import ensure_site_configs_schema
-from ..Backup_Recovery.participants import _core_operation
+from ..Backup_Recovery.participants import core_operation
 from ..Backup_Recovery.profile_paths import lexical_path
 from ..Utils.config_encryption import ConfigEncryption
 from ..Metrics.metrics_logger import log_counter
@@ -284,7 +284,7 @@ class SiteConfigManager:
 
     def _initialize_site_configs(self) -> None:
         """Own only this manager's initial table setup; core use is independent."""
-        with _core_operation(self):
+        with core_operation(self):
             ensure_site_configs_schema(self.db_path, _source=self)
 
     def get_config(self, url: str) -> SiteConfig:

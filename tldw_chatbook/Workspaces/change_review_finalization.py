@@ -207,9 +207,7 @@ class ChangeReviewFinalizationCoordinator:
         self._tracker = tracker
         self._publish = publish
         self._close_publisher = close_publisher
-        self.publication_signal = (
-            publication_signal or ChangeReviewPublicationSignal()
-        )
+        self.publication_signal = publication_signal or ChangeReviewPublicationSignal()
         self._capacity = capacity
         self._lock = threading.Lock()
         self._lanes: dict[str, deque[str]] = {}
@@ -221,12 +219,10 @@ class ChangeReviewFinalizationCoordinator:
         self._idle = threading.Event()
         self._idle.set()
         self._operations: queue.Queue[_Operation | object] = queue.Queue(capacity)
-        self._results: queue.Queue[
-            _OperationResult | _DirectPublication | object
-        ] = queue.Queue(capacity)
-        self._direct_results: queue.Queue[_DirectPublication] = queue.Queue(
-            capacity
+        self._results: queue.Queue[_OperationResult | _DirectPublication | object] = (
+            queue.Queue(capacity)
         )
+        self._direct_results: queue.Queue[_DirectPublication] = queue.Queue(capacity)
         self._direct_slots = threading.BoundedSemaphore(capacity)
         self._direct_pending = 0
         self._publisher_stop_requested = threading.Event()
@@ -278,9 +274,7 @@ class ChangeReviewFinalizationCoordinator:
             self._start_threads_locked()
             reservation_id = uuid.uuid4().hex
             handle = self._tracker.new_turn_handle(canonical)
-            degraded = tuple(
-                root for root in canonical if root in self._degraded_roots
-            )
+            degraded = tuple(root for root in canonical if root in self._degraded_roots)
             if degraded:
                 admission_error = (
                     "change-review root is resynchronizing after a baseline "
@@ -291,8 +285,8 @@ class ChangeReviewFinalizationCoordinator:
                     self._degraded_roots.setdefault(
                         root, _DegradedRootState()
                     ).reservation_ids.add(reservation_id)
-                self._degraded_reservations[reservation_id] = (
-                    _DegradedReservationState(canonical, survivor_key)
+                self._degraded_reservations[reservation_id] = _DegradedReservationState(
+                    canonical, survivor_key
                 )
                 handle._baseline_ready.set()
                 return ChangeReviewReservation(
@@ -380,9 +374,7 @@ class ChangeReviewFinalizationCoordinator:
                 self._direct_pending += 1
                 self._idle.clear()
                 try:
-                    self._direct_results.put_nowait(
-                        _DirectPublication(publication)
-                    )
+                    self._direct_results.put_nowait(_DirectPublication(publication))
                 except queue.Full:
                     self._direct_slots.release()
                     self._direct_pending -= 1
@@ -402,10 +394,7 @@ class ChangeReviewFinalizationCoordinator:
             state.end_shas = dict(end_shas) if end_shas is not None else None
             state.has_live_survivors = has_live_survivors
             if has_live_survivors and not state.survivors_settled:
-                survivor_token = (
-                    state.survivor_key
-                    or f"unsettleable:{state.public.id}"
-                )
+                survivor_token = state.survivor_key or f"unsettleable:{state.public.id}"
                 for root in state.attribution_invalid_roots:
                     self._degraded_roots.setdefault(
                         root, _DegradedRootState()
@@ -485,9 +474,7 @@ class ChangeReviewFinalizationCoordinator:
             if predecessor_id == state.public.id:
                 break
             predecessor = self._states.get(predecessor_id)
-            if predecessor is None or not self._window_can_claim_changes(
-                predecessor
-            ):
+            if predecessor is None or not self._window_can_claim_changes(predecessor):
                 continue
             predecessor.attribution_invalid_roots.add(root)
             active = predecessor.active_handle or predecessor.public._handle
@@ -651,9 +638,7 @@ class ChangeReviewFinalizationCoordinator:
             else:
                 state.phase = "finalizing"
 
-    def _complete_locked(
-        self, state: _ReservationState, *, published: bool
-    ) -> None:
+    def _complete_locked(self, state: _ReservationState, *, published: bool) -> None:
         reservation_id = state.public.id
         self._states.pop(reservation_id, None)
         for root in state.roots:
@@ -737,9 +722,7 @@ class ChangeReviewFinalizationCoordinator:
                         )
                     else:
                         tracker.populate_baseline(operation.handle)
-                        result = _OperationResult(
-                            operation.reservation_id, "baseline"
-                        )
+                        result = _OperationResult(operation.reservation_id, "baseline")
                 elif operation.kind == "baseline":
                     tracker.populate_prepared_baseline(
                         operation.handle, operation.preparations
@@ -887,7 +870,11 @@ class ChangeReviewFinalizationCoordinator:
                         root=root,
                         tracking_error=(
                             state.public._handle.errors.get(root)
-                            or (state.active_handle.errors.get(root) if state.active_handle else "")
+                            or (
+                                state.active_handle.errors.get(root)
+                                if state.active_handle
+                                else ""
+                            )
                             or "change attribution invalidated after baseline timeout"
                         ),
                     )
@@ -950,9 +937,7 @@ class ChangeReviewFinalizationCoordinator:
                 records=tuple(
                     TurnChangeRecord(
                         root=root,
-                        tracking_error=(
-                            "change-review publication failed; " + detail
-                        ),
+                        tracking_error=("change-review publication failed; " + detail),
                     )
                     for root in roots
                 ),

@@ -10,13 +10,17 @@ from .skill_trust_crypto import sha256_hex
 from .skill_trust_models import SkillDirectorySnapshot, SkillFileFingerprint
 
 _SKILL_FILENAME = "SKILL.md"
-SUPPORTING_JUNK_DIRS = frozenset({".git", ".github", ".hg", ".svn", "node_modules", "__pycache__"})
+SUPPORTING_JUNK_DIRS = frozenset(
+    {".git", ".github", ".hg", ".svn", "node_modules", "__pycache__"}
+)
 SUPPORTING_JUNK_FILES = frozenset({".DS_Store", "Thumbs.db"})
 SUPPORTING_JUNK_SUFFIXES = (".pyc", ".pyo", "~", ".tmp", ".swp", ".part")
 
 
 def _is_junk(name: str) -> bool:
-    return name in SUPPORTING_JUNK_FILES or name.lower().endswith(SUPPORTING_JUNK_SUFFIXES)
+    return name in SUPPORTING_JUNK_FILES or name.lower().endswith(
+        SUPPORTING_JUNK_SUFFIXES
+    )
 
 
 def _validate_relative_path(relative_path: str) -> bool:
@@ -89,7 +93,9 @@ def scan_skill_directory(skill_name: str, skill_dir: Path) -> SkillDirectorySnap
         # exists to reject *shadow* SKILL.md files nested under subdirectories; the
         # real top-level body file must bypass it rather than be misclassified as
         # unsupported.
-        if path.is_symlink() or (not is_body and not _validate_relative_path(relative_path)):
+        if path.is_symlink() or (
+            not is_body and not _validate_relative_path(relative_path)
+        ):
             unsupported_paths.append(relative_path)
             continue
         try:

@@ -122,6 +122,7 @@ class _BatchObserver:
             setattr(WatchlistsWorkbench, name, original)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "layout",
     [
@@ -257,6 +258,7 @@ _PANE_BY_SECTION = {
 }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("section", list(_PANE_BY_SECTION))
 async def test_detail_pane_seeding_queues_no_recompose(section):
     """A freshly built, data-seeded pane must not be scheduled for an
@@ -288,6 +290,7 @@ async def test_detail_pane_seeding_queues_no_recompose(section):
         _pane_of(built, pane_type)  # the seeded pane really is in there
 
 
+@pytest.mark.bootstrap_profile
 async def test_rules_editing_seed_still_prefills_the_form_state():
     """`edit_rule`'s pre-mount route must seed the same reactives the
     mounted route assigns -- `compose()` reads them to pre-fill the form."""
@@ -302,6 +305,7 @@ async def test_rules_editing_seed_still_prefills_the_form_state():
     assert pane._recompose_required is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_content_pane_item_seeding_queues_no_recompose():
     """`_build_content_pane` (the CONTENT region the cold Read swap mounts
     back): `item` is `recompose=True`, so a plain assignment re-rendered the
@@ -331,6 +335,7 @@ async def test_content_pane_item_seeding_queues_no_recompose():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_runs_pane_seeding_keeps_the_detail_set_after_the_selection():
     """`selected_run`'s watcher clears the detail (a run's items must never
     outlive the run they belong to), so `_build_detail_pane` must keep
@@ -350,6 +355,7 @@ async def test_runs_pane_seeding_keeps_the_detail_set_after_the_selection():
     assert pane.run_items_note == "1 item"
 
 
+@pytest.mark.bootstrap_profile
 async def test_runs_pane_seeding_still_starts_the_poll_for_a_running_run():
     """`watch_selected_run` starts the status poll when the seeded run is
     still running -- the reason `selected_run` stays a PLAIN assignment in
@@ -385,6 +391,7 @@ async def test_runs_pane_seeding_still_starts_the_poll_for_a_running_run():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 async def test_warm_revisits_cost_zero_pane_recomposes():
     """Mounted proof of the seeding fix: revisiting a section whose rows are
     already on screen state builds the pane once, carrying the rows, and

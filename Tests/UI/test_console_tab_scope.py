@@ -88,6 +88,7 @@ async def _ready_console(app, pilot):
     return console
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_tab_from_composer_stays_in_region_and_wraps():
     """Tab from the composer cycles composer+control-bar only -- never nav-*."""
@@ -134,6 +135,7 @@ async def test_console_tab_from_composer_stays_in_region_and_wraps():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_shift_tab_reverses_tab_within_region():
     app = _build_test_app()
@@ -161,6 +163,7 @@ async def test_console_shift_tab_reverses_tab_within_region():
         assert getattr(app.focused, "id", None) == "console-native-composer"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "switch_id",
@@ -185,6 +188,7 @@ async def test_console_f6_from_header_switch_advances_from_composer_pane(
         await _wait_for_focused_id(app, pilot, "console-terminal-open")
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_tab_cycles_within_left_rail_region():
     """Tab inside the left rail never crosses into nav chrome or other panes."""
@@ -212,6 +216,7 @@ async def test_console_tab_cycles_within_left_rail_region():
             )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_tab_from_nav_button_keeps_default_chain():
     """Focus already in app chrome (a clicked nav button) keeps the old chain.
@@ -238,6 +243,7 @@ async def test_console_tab_from_nav_button_keeps_default_chain():
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_focus_tour_reaches_transcript_chips_inspector_under_ten_stops():
     """AC#5: scripted F6+Tab tour reaches transcript, chips, Inspector fast."""

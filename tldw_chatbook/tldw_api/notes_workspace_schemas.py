@@ -399,9 +399,7 @@ class WorkspaceSourceCreateRequest(_WorkspaceSourceModel):
     title: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_TITLE_CHARS)
     source_type: str = Field(..., max_length=128)
     url: Optional[str] = Field(None, max_length=4096)
-    position: StrictInt = Field(
-        0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS - 1
-    )
+    position: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS - 1)
     selected: StrictBool = True
 
     @field_validator("id", "title", "source_type", mode="before")
@@ -433,9 +431,7 @@ class WorkspaceSourceUpdateRequest(_WorkspaceSourceModel):
         if value is None:
             return None
         maximum = (
-            MAX_WORKSPACE_SOURCE_TITLE_CHARS
-            if info.field_name == "title"
-            else 128
+            MAX_WORKSPACE_SOURCE_TITLE_CHARS if info.field_name == "title" else 128
         )
         return _bounded_required_text(value, info.field_name, maximum)
 
@@ -449,9 +445,7 @@ class WorkspaceSourceResponse(_WorkspaceSourceModel):
     title: str = Field(..., max_length=MAX_WORKSPACE_SOURCE_TITLE_CHARS)
     source_type: str = Field(..., max_length=128)
     url: Optional[str] = Field(None, max_length=4096)
-    position: StrictInt = Field(
-        0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS - 1
-    )
+    position: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS - 1)
     selected: StrictBool = True
     added_at: Optional[str] = Field(None, max_length=128)
     version: StrictInt = Field(1, ge=1)
@@ -568,9 +562,7 @@ class WorkspaceSourceStatusSummary(_WorkspaceSourceModel):
     total: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
     selected: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
     queryable: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
-    partially_queryable: StrictInt = Field(
-        0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS
-    )
+    partially_queryable: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
     processing: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
     failed: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
     missing: StrictInt = Field(0, ge=0, le=MAX_WORKSPACE_SOURCE_OWNER_ROWS)
@@ -677,7 +669,9 @@ class WorkspaceProjectRoot(_WorkspaceSourceModel):
     path_hint: Optional[str] = Field(None, max_length=4096)
     git_state: Optional[str] = Field(None, max_length=128)
     file_inventory_state: Optional[str] = Field(None, max_length=128)
-    file_inventory: WorkspaceFileInventory = Field(default_factory=WorkspaceFileInventory)
+    file_inventory: WorkspaceFileInventory = Field(
+        default_factory=WorkspaceFileInventory
+    )
     indexing_state: Optional[str] = Field(None, max_length=128)
     sandbox_mount_state: Optional[str] = Field(None, max_length=128)
     mcp_trust_state: Optional[str] = Field(None, max_length=128)

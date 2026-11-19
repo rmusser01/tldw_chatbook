@@ -110,6 +110,13 @@ from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.Tool_Packs.binding import ToolProfileLifecycleCoordinator
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+# TASK-38111: a send reaches hook admission (read_hooks_config_snapshot) and
+# the controller reads config elsewhere too, which the per-test
+# TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed; hook admission reports it as "Hooks
+# unavailable"). Keep the collection-time sandbox profile for the whole file.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class ConsoleChatStore(_ConsoleChatStore):
     """Ephemeral test store with a permissive frozen policy ceiling."""
@@ -455,14 +462,13 @@ class ThinkingHistoryGateway(ContinuationHistoryGateway):
 
 
 class WipBlockedGateway:
+    visible_copy = "WIP: Console native provider 'openai' is not wired yet."
+
     async def resolve_for_send(self, selection):
         return type(
             "Resolution",
             (),
-            {
-                "ready": False,
-                "visible_copy": "WIP: Console native provider 'openai' is not wired yet.",
-            },
+            {"ready": False, "visible_copy": self.visible_copy},
         )()
 
 
@@ -519,14 +525,45 @@ def _last_failed_assistant(store, session_id=None):
 
 
 class FakePersistence:
+    # Since 7970fbcada (2026-11-01) a persisted chat's turn saves its mix-in
+    # attempt before the provider, and refuses the send when the persistence
+    # has no save or no ``db`` (TASK-38718, TASK-38947). A memory ``db`` keeps
+    # the save and the retry read inline, as the native commit does.
+    db = SimpleNamespace(is_memory_db=True)
+
     def __init__(self):
         self.created_conversations = []
         self.created_messages = []
         self.updated_messages = []
+        self.mixin_attempts = {}
         self.console_library_policy_repository = SimpleNamespace(read=self._read_policy)
         self.console_dispatch_repository = self
         self._policy_snapshot = None
         self._checkpoint = None
+
+    def save_conversation_mixin_attempt(
+        self, conversation_id, *, batch, native_message_ids, pending_assistant=None
+    ):
+        del pending_assistant
+        self.mixin_attempts[batch.attempt_id] = (
+            conversation_id,
+            native_message_ids[batch.assistant_message_id],
+            batch.snapshot,
+        )
+
+    def get_conversation_mixin_attempt(
+        self, conversation_id, *, assistant_message_id, attempt_id=None
+    ):
+        from tldw_chatbook.Chat.console_prompt_mixin_models import MixinReplayRead
+
+        saved = self.mixin_attempts.get(attempt_id)
+        if saved is None:
+            return MixinReplayRead(
+                "legacy" if attempt_id is None else "unavailable", None
+            )
+        if saved[:2] != (conversation_id, assistant_message_id):
+            return MixinReplayRead("unavailable", None)
+        return MixinReplayRead("recorded", saved[2])
 
     def _read_policy(self, conversation_id):
         del conversation_id
@@ -1595,23 +1632,40 @@ async def test_submit_draft_blocks_unsafe_markup_before_storage_or_provider_send
     assert "unsafe" in messages[0].content
 
 
+@pytest.mark.parametrize(
+    ("gateway_copy", "row"),
+    [
+        # TASK-33621.11 AC#5: the gateway's blocked sentence is the row,
+        # whatever its words. The controller used to prefix any sentence
+        # starting "WIP:" (and lacking "Provider blocked") -- a row chosen by
+        # matching display copy, for a prefix no gateway emits any more.
+        (
+            "WIP: Console native provider 'openai' is not wired yet.",
+            "WIP: Console native provider 'openai' is not wired yet.",
+        ),
+        # Only a resolution that says nothing gets the generic sentence.
+        ("", "Provider blocked."),
+        ("   ", "Provider blocked."),
+    ],
+    ids=["sentence-verbatim", "empty", "blank"],
+)
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_blocked_provider_wip_copy_is_normalized_once_in_controller():
+async def test_a_blocked_resolution_s_sentence_is_the_row_whatever_its_words(
+    gateway_copy, row
+):
     store = ConsoleChatStore()
-    controller = ConsoleChatController(
-        store=store, provider_gateway=WipBlockedGateway()
-    )
+    gateway = WipBlockedGateway()
+    gateway.visible_copy = gateway_copy
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
 
     result = await controller.submit_draft("hello")
 
-    messages = store.messages_for_session(store.active_session_id)
     assert result.accepted is False
-    assert (
-        result.visible_copy
-        == "Provider blocked: WIP: Console native provider 'openai' is not wired yet."
-    )
+    assert result.visible_copy == row
     # TASK-457(a): the send now echoes the USER row before the block-row instead
     # of silently dropping it.
+    messages = store.messages_for_session(store.active_session_id)
     assert [message.content for message in messages] == ["hello", result.visible_copy]
     assert controller.run_state.visible_copy == result.visible_copy
     assert controller.run_state_history[-1] is ConsoleRunStatus.BLOCKED
@@ -1804,6 +1858,7 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_shutdown_stops_and_awaits_active_stream_task():
     """Verify controller shutdown stops and drains an active stream task."""
 
@@ -3143,6 +3198,7 @@ def test_image_budget_counts_images_newest_first(monkeypatch):
     assert decoded == b"old-0"
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_messages_for_next_send_estimate_uses_lightweight_projection_without_media_serialization(
     monkeypatch,
 ):
@@ -3391,7 +3447,7 @@ class _FakeReviewProvider:
             # carries the per-call key so the card can offer one decision per
             # TARGET instead of one per tool name.
             call_id=call_id,
-            # ADR-090: mirrors the real provider's rationale pass-through.
+            # ADR-332: mirrors the real provider's rationale pass-through.
             rationale=rationale,
             reason="ask",
         )
@@ -5094,6 +5150,15 @@ def _controller_active_history_checkpoint(call_state: str):
 
 
 @pytest.mark.asyncio
+# TASK-18313: submit_draft's hook admission gate reads the saved hooks
+# config through the guarded config loader, which under the per-test
+# sandbox redirect fails closed with RecoveryRequired("raw_source_
+# selection_changed"); the gate's broad except turns that into a
+# "Hooks unavailable" refusal before any payload assertion runs. Keep
+# the collection-time profile (ADR-126 admission; per-node marker per
+# the TASK-32873 pattern) so the read succeeds and the test exercises
+# the real continuation contracts.
+@pytest.mark.bootstrap_profile
 async def test_controller_real_gateway_budgets_active_continuation_owner_atomically():
     store = ConsoleChatStore()
     session = _arm_session(store)
@@ -5258,6 +5323,11 @@ def test_controller_thinking_sidecars_exclude_opaque_application_copy() -> None:
 
 
 @pytest.mark.asyncio
+# TASK-18313: same config-admission class as the budget test above --
+# the bridge send path also crosses submit_draft's hook admission gate
+# before dispatch, so the per-test sandbox redirect would refuse the
+# send ("Hooks unavailable") before the prepared-payload assertions.
+@pytest.mark.bootstrap_profile
 async def test_controller_bridge_agent_service_bound_private_history_on_real_send(
     tmp_path, monkeypatch
 ):
@@ -7508,6 +7578,7 @@ class _ControllerLibraryService:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_run_agent_reply_threads_library_provider_from_factory():
     """The controller resolves the injected `library_provider_factory` exactly
     once per run, on the main loop, and hands the resulting provider to the
@@ -7550,6 +7621,7 @@ async def test_run_agent_reply_threads_library_provider_from_factory():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_run_agent_reply_threads_exact_admitted_trace_request_to_bridge():
     store = ConsoleChatStore()
     gateway = StreamingGateway()
@@ -7683,6 +7755,7 @@ async def _run_remote_session_reply(fixture, **overrides):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ending", ["completes", "provider_raises", "cancelled"])
+@pytest.mark.bootstrap_profile
 async def test_run_agent_reply_closes_the_runs_remote_sessions_at_run_end(
     monkeypatch, ending
 ):
@@ -8667,6 +8740,9 @@ async def test_agent_controller_retry_anyway_preserves_explicit_recovery(
     )
 
 
+# The real gateway reads compaction config during construction. Keep the private
+# collection-time config participant instead of reselecting it per test.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
 async def test_controller_retry_retains_reservation_after_repreparation_failure(
@@ -9467,7 +9543,9 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
                 _tool_dict(name)
                 for name in sorted(CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS)
             ),
-            _tool_dict("chat_with_llm"),
+            # TASK-34100.5: ``chat_with_llm`` is never offered (the direct
+            # runtime refuses it), so the surviving sample is another built-in.
+            _tool_dict("chat_with_character"),
         ]
     }
     service = FakeMCPService(
@@ -9483,7 +9561,7 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
     assert provider is not None
     names = {entry.name for entry in provider.list_catalog()}
     assert names == {
-        "mcp__tldw_chatbook__chat_with_llm",
+        "mcp__tldw_chatbook__chat_with_character",
         "mcp__docs__library_list_media",
     }
 
@@ -11160,6 +11238,7 @@ async def test_agent_cancellation_before_worker_start_retires_and_rejects_handof
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_teardown_refusal_occurs_before_generation_issuance(
     monkeypatch,
 ) -> None:
@@ -11704,17 +11783,26 @@ def test_a_wedged_bootstrap_does_not_park_a_second_worker(monkeypatch):
     loop = asyncio.new_event_loop()
     try:
         assert loop.run_until_complete(controller._personal_context_service()) is None
+        # TASK-39046: the second call gets a budget far above its bound, so
+        # host load cannot reach the bound (it failed at 11 ms against 10),
+        # while a second call that waits the budget out still fails it.
+        monkeypatch.setattr(
+            controller_module, "CONSOLE_PRE_PROVIDER_SETUP_BUDGET_SECONDS", 2.0
+        )
         started = time.monotonic()
         second = loop.run_until_complete(controller._personal_context_service())
         second_elapsed = time.monotonic() - started
     finally:
         released.set()
+        # Join the wedged worker while the patched guard is still in place:
+        # its ``finally`` clears whichever guard is patched in when it ends.
+        loop.run_until_complete(loop.shutdown_default_executor())
         loop.close()
     assert second is None
     # One submission, not two: the wedged worker is still holding the lock.
     assert calls == [1], calls
     # And the second send did not even wait out the (patched) budget.
-    assert second_elapsed < 0.01, second_elapsed
+    assert second_elapsed < 1.0, second_elapsed
 
 
 def test_a_finished_bootstrap_clears_the_in_flight_guard(monkeypatch):

@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import threading
 
+import pytest
 import toml
 from textual.app import App, ComposeResult
 from textual.widgets import Input
@@ -56,6 +57,7 @@ def _config_path():
     return _get_effective_config_path()
 
 
+@pytest.mark.bootstrap_profile
 async def test_buffer_duration_keystroke_does_not_write_synchronously():
     """AC #1: no config rewrite fires on a parsing keystroke."""
     async with _DictationHarness().run_test() as pilot:
@@ -71,11 +73,12 @@ async def test_buffer_duration_keystroke_does_not_write_synchronously():
         config_path = _config_path()
         if config_path.exists():
             on_disk = toml.load(config_path)
-            assert (
-                on_disk.get("dictation", {}).get("buffer_duration_ms") != 300
-            ), "the keystroke wrote to disk synchronously instead of debouncing"
+            assert on_disk.get("dictation", {}).get("buffer_duration_ms") != 300, (
+                "the keystroke wrote to disk synchronously instead of debouncing"
+            )
 
 
+@pytest.mark.bootstrap_profile
 async def test_burst_of_edits_collapses_into_one_batched_write():
     """AC #1: the eventual write is ONE atomic batched mutation.
 
@@ -124,6 +127,7 @@ async def test_burst_of_edits_collapses_into_one_batched_write():
         assert on_disk["dictation"]["buffer_duration_ms"] == 250
 
 
+@pytest.mark.bootstrap_profile
 async def test_switch_away_immediately_after_edit_flushes_the_pending_write():
     """AC #1/#3 flush test: unmount (matching STTS_Window's view switch,
     which calls `content_container.remove_children()`) before the debounce
@@ -146,6 +150,7 @@ async def test_switch_away_immediately_after_edit_flushes_the_pending_write():
     assert on_disk["dictation"]["commands"] is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_quit_immediately_after_edit_flushes_the_pending_write():
     """AC #1/#3 flush test: app quit while the Dictation view is mounted."""
     async with _DictationHarness().run_test() as pilot:
@@ -161,6 +166,7 @@ async def test_quit_immediately_after_edit_flushes_the_pending_write():
     assert on_disk["dictation"]["punctuation"] is False
 
 
+@pytest.mark.bootstrap_profile
 async def test_edit_during_in_flight_write_survives_a_quit():
     """Review round (task-15470): an edit landing WHILE a debounced write
     is still in flight must survive a quit -- not just an edit landing
@@ -200,8 +206,7 @@ async def test_edit_during_in_flight_write_survives_a_quit():
         assert write_started.wait(timeout=2), "worker never started its write"
         worker = window._settings_persist_worker
         assert worker is not None and not worker.is_finished, (
-            "edit 1's worker must still be in flight for this test to mean "
-            "anything"
+            "edit 1's worker must still be in flight for this test to mean anything"
         )
 
         # Edit 2 lands while edit 1's write is still blocked in flight.

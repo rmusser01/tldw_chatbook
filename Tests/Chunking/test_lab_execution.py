@@ -37,6 +37,7 @@ def words(*post, pre=()):
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_full_pipeline_has_identical_saved_and_unsaved_outputs():
     body = words(
         {"operation": "filter_empty", "config": {"min_length": 4}},
@@ -58,6 +59,7 @@ def test_full_pipeline_has_identical_saved_and_unsaved_outputs():
     assert all("span" not in c for c in report.chunks)
 
 
+@pytest.mark.bootstrap_profile
 def test_legitimate_empty_filter_and_preprocess_results_remain_empty():
     body = words({"operation": "filter_empty", "config": {"min_length": 100}})
     assert run(body, "one two").chunks == ()
@@ -66,6 +68,7 @@ def test_legitimate_empty_filter_and_preprocess_results_remain_empty():
     assert run(empty, "one two").chunks == ()
 
 
+@pytest.mark.bootstrap_profile
 def test_exact_span_survives_filter_and_repeated_text_is_not_guessed():
     report = run(
         words({"operation": "filter_empty", "config": {"min_length": 8}}),
@@ -84,6 +87,7 @@ def test_exact_span_survives_filter_and_repeated_text_is_not_guessed():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "source", ["one  two one two", "one two one\ttwo", "one\ntwo one two"]
 )
@@ -109,6 +113,7 @@ def test_fixed_size_preserves_exact_whitespace_without_word_normalization():
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_preprocessing_metadata_and_transformed_coordinates_survive():
     report = run(
         words(
@@ -130,6 +135,7 @@ def test_preprocessing_metadata_and_transformed_coordinates_survive():
     }
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "operation,expected",
     [
@@ -159,6 +165,7 @@ def test_postprocessing_uses_real_operations_and_invalidates_rewritten_maps(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "operation,expected",
     [
@@ -202,6 +209,7 @@ def test_fixed_size_and_sanitized_text_are_reported_honestly():
     assert report.chunks[1]["span"]["coordinate_space"] == "transformed"
 
 
+@pytest.mark.bootstrap_profile
 def test_prepared_runtime_or_document_tampering_is_refused():
     assert hasattr(runtime, "execute_prepared"), (
         "Prepared execution reports are missing"
@@ -225,6 +233,7 @@ def test_publication_copies_nested_metadata_and_rejects_invalid_chunks():
         ExecutionReport(chunks=({"text": {"wrong": "shape"}},), transformed_text="ok")
 
 
+@pytest.mark.bootstrap_profile
 def test_merging_preserves_each_contributors_prior_transformation():
     report = run(
         words(
@@ -243,6 +252,7 @@ def test_merging_preserves_each_contributors_prior_transformation():
     assert [event["output_index"] for event in history[:2]] == [0, 1]
 
 
+@pytest.mark.bootstrap_profile
 def test_hierarchical_saved_apply_offsets_use_whole_transformed_document():
     body = words()
     body["chunking"]["config"]["hierarchical"] = True
@@ -257,6 +267,7 @@ def test_hierarchical_saved_apply_offsets_use_whole_transformed_document():
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_publication_revalidates_a_mutated_nested_record():
     report = run(words(), "one two")
     report.chunks[0]["text"] = {"not": "text"}
@@ -264,6 +275,7 @@ def test_publication_revalidates_a_mutated_nested_record():
         report.model_dump_json()
 
 
+@pytest.mark.bootstrap_profile
 def test_merge_after_empty_text_formatter_is_refused_at_admission():
     from tldw_chatbook.Chunking.lab_preflight import PreviewUnsupportedError
 
@@ -275,6 +287,7 @@ def test_merge_after_empty_text_formatter_is_refused_at_admission():
         prepare_recipe(body, runtime=current_local_runtime())
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "operation,source,transformed,metadata",
     [
@@ -324,12 +337,14 @@ def test_qualified_preprocessing_options_have_real_effects(
     assert report.diagnostics[0]["operations"][0]["metadata"] == metadata
 
 
+@pytest.mark.bootstrap_profile
 def test_qualified_word_size_overlap_and_tail_options_have_real_effects():
     body = words()
     body["chunking"]["config"].update(max_size=3, overlap=1, min_chunk_size=2)
     assert [c["text"] for c in run(body, "a b c d e").chunks] == ["a b c", "c d e"]
 
 
+@pytest.mark.bootstrap_profile
 def test_vendor_sentence_preservation_word_loss_explains_lab_refusal():
     # Qualification evidence only: saved apply retains the pinned algorithm.
     # Lab refuses this value rather than quietly pretending it is faithful.
@@ -343,6 +358,7 @@ def test_vendor_sentence_preservation_word_loss_explains_lab_refusal():
     ] == ["aaaaaaaa bbbbbbbb cccccccc.", "e"]
 
 
+@pytest.mark.bootstrap_profile
 def test_word_whitespace_normalization_does_not_claim_exact_source_span():
     report = run(words(), "one  two")
     assert report.chunks[0]["text"] == "one two"

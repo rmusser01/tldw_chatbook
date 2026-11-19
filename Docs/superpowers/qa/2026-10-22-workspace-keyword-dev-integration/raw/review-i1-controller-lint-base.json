@@ -1,0 +1,69 @@
+[
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 43,
+      "row": 9794
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\Tests\\Chat\\test_console_chat_controller.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 9794
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 9794,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 41,
+      "row": 11440
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\Tests\\Chat\\test_console_chat_controller.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 11440
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 11440,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 66,
+      "row": 11962
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\Tests\\Chat\\test_console_chat_controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from tldw_chatbook.Agents.run_hooks import load_hooks_config",
+          "end_location": {
+            "column": 85,
+            "row": 11962
+          },
+          "location": {
+            "column": 9,
+            "row": 11962
+          }
+        }
+      ],
+      "message": "Remove unused import: `tldw_chatbook.Agents.run_hooks.RunHooksEngine`"
+    },
+    "location": {
+      "column": 52,
+      "row": 11962
+    },
+    "message": "`tldw_chatbook.Agents.run_hooks.RunHooksEngine` imported but unused",
+    "noqa_row": 11962,
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  }
+]

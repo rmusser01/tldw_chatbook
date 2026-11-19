@@ -1033,6 +1033,8 @@ class TestConcurrentEvaluations:
     @pytest.mark.asyncio
     async def test_concurrent_task_creation(self, temp_db_path, tmp_path):
         """Test concurrent task creation and evaluation."""
+        from tldw_chatbook.Evals.eval_runner import DatasetLoader, QuestionAnswerRunner
+
         # Create multiple task files
         task_files = []
         for i in range(3):
@@ -1050,11 +1052,30 @@ class TestConcurrentEvaluations:
                 json.dump(task_data, f)
             task_files.append(str(task_file))
 
-        # Create concurrent orchestrators
-        orchestrators = [
-            EvaluationOrchestrator(db_path=temp_db_path, client_id=f"client_{i}")
+        samples_by_dataset = {
+            f"dataset_{i}": [
+                EvalSample(
+                    id=f"sample_{i}", input_text=f"Q{i}", expected_output=f"A{i}"
+                )
+            ]
             for i in range(3)
-        ]
+        }
+        started_datasets = set()
+        all_started = asyncio.Event()
+
+        def load_samples(task_config, split=None, max_samples=None):
+            samples = samples_by_dataset[task_config.dataset_name]
+            return samples[:] if max_samples is None else samples[:max_samples]
+
+        async def answer_for_task(runner, prompt, system_prompt=None, **kwargs):
+            dataset_name = runner.task_config.dataset_name
+            sample = samples_by_dataset[dataset_name][0]
+            assert sample.input_text in prompt
+            started_datasets.add(dataset_name)
+            if started_datasets == samples_by_dataset.keys():
+                all_started.set()
+            await all_started.wait()
+            return sample.expected_output
 
         # Concurrently create tasks
         async def create_and_run_task(orchestrator, task_file, index):
@@ -1068,43 +1089,90 @@ class TestConcurrentEvaluations:
                 config={"api_key": f"test-key-{index}"},
             )
 
-            from tldw_chatbook.Evals.eval_runner import EvalSample
+            run_id = await orchestrator.run_evaluation(
+                task_id=task_id, model_id=model_id, max_samples=1
+            )
+            return task_id, model_id, run_id
 
-            eval_samples = [
-                EvalSample(
-                    id=f"sample_{index}",
-                    input_text=f"Q{index}",
-                    expected_output=f"A{index}",
-                )
-            ]
-
-            with patch(
-                "tldw_chatbook.Evals.eval_runner.DatasetLoader.load_dataset_samples",
-                return_value=eval_samples,
-            ):
-                # Mock at the runner level
-                with patch(
-                    "tldw_chatbook.Evals.eval_runner.QuestionAnswerRunner._call_llm"
-                ) as mock_llm:
-                    # Return correct answer for the sample
-                    mock_llm.return_value = f"A{index}"
-
-                    return await orchestrator.run_evaluation(
-                        task_id=task_id,
-                        model_id=model_id,
-                        max_samples=len(eval_samples),
+        loader_descriptor = DatasetLoader.__dict__["load_dataset_samples"]
+        missing = object()
+        qa_owner = QuestionAnswerRunner.__dict__.get("_call_llm", missing)
+        qa_method = QuestionAnswerRunner._call_llm
+        orchestrators = []
+        try:
+            for i in range(3):
+                orchestrators.append(
+                    EvaluationOrchestrator(
+                        db_path=temp_db_path, client_id=f"client_{i}"
                     )
+                )
 
-        # Execute concurrent operations
-        tasks = [
-            create_and_run_task(orchestrators[i], task_files[i], i) for i in range(3)
-        ]
+            # One owner holds both patches until every concurrent task has drained.
+            try:
+                with (
+                    patch.object(
+                        DatasetLoader,
+                        "load_dataset_samples",
+                        staticmethod(load_samples),
+                    ),
+                    patch.object(QuestionAnswerRunner, "_call_llm", answer_for_task),
+                ):
+                    tasks = [
+                        asyncio.create_task(
+                            create_and_run_task(orchestrators[i], task_files[i], i)
+                        )
+                        for i in range(3)
+                    ]
+                    try:
+                        runs = await asyncio.gather(*tasks)
+                    finally:
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
+                        await asyncio.gather(*tasks, return_exceptions=True)
+            finally:
+                assert (
+                    DatasetLoader.__dict__["load_dataset_samples"] is loader_descriptor
+                )
+                assert (
+                    QuestionAnswerRunner.__dict__.get("_call_llm", missing) is qa_owner
+                )
+                assert QuestionAnswerRunner._call_llm is qa_method
 
-        run_ids = await asyncio.gather(*tasks)
+            run_ids = [run_id for _, _, run_id in runs]
+            assert len(run_ids) == 3
+            assert all(run_id is not None for run_id in run_ids)
+            assert len(set(run_ids)) == 3
+            assert len({task_id for task_id, _, _ in runs}) == 3
+            assert len({model_id for _, model_id, _ in runs}) == 3
+            assert started_datasets == samples_by_dataset.keys()
 
-        # Verify all operations completed successfully
-        assert len(run_ids) == 3
-        assert all(run_id is not None for run_id in run_ids)
+            for i, (orchestrator, (task_id, model_id, run_id)) in enumerate(
+                zip(orchestrators, runs, strict=True)
+            ):
+                task_info = orchestrator.db.get_task(task_id)
+                assert task_info["config_data"]["dataset_name"] == f"dataset_{i}"
+                run_info = orchestrator.db.get_run(run_id)
+                assert run_info["task_id"] == task_id
+                assert run_info["model_id"] == model_id
+                assert run_info["status"] == "completed"
+                assert run_info["completed_samples"] == 1
+                results = orchestrator.db.get_results_for_run(run_id)
+                assert len(results) == 1
+                assert results[0]["run_id"] == run_id
+                assert results[0]["sample_id"] == f"sample_{i}"
+                assert results[0]["input_data"] == {"input": f"Q{i}"}
+                assert results[0]["expected_output"] == f"A{i}"
+                assert results[0]["actual_output"] == f"A{i}"
+                assert results[0]["metrics"]["exact_match"] == 1.0
+        finally:
+            close_results = await asyncio.gather(
+                *(orchestrator.aclose() for orchestrator in orchestrators),
+                return_exceptions=True,
+            )
+            for result in close_results:
+                if isinstance(result, BaseException):
+                    raise result
 
 
 class TestErrorRecoveryIntegration:

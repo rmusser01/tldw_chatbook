@@ -19,7 +19,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
-from tldw_chatbook.Chat.thinking_blocks import DisplayableThinkingBlock, ThinkingEnvelope
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import (
     DEFAULT_PRUNE_HIGH_WATERMARK,
     DEFAULT_PRUNE_LOW_WATERMARK,
@@ -170,8 +173,7 @@ def _mounted_message_ids(transcript: ConsoleTranscript) -> list[str]:
     # Class query, not a type query: assistant rows may render as
     # ConsoleMarkdownMessage (TASK-1990) while other roles stay plain.
     return [
-        widget.message_id
-        for widget in transcript.query(".console-transcript-message")
+        widget.message_id for widget in transcript.query(".console-transcript-message")
     ]
 
 
@@ -267,9 +269,9 @@ async def test_pruning_is_view_only_store_keeps_full_history():
         transcript.set_messages(store.messages_for_session(session.id))
         await transcript.refresh_messages()
 
-        assert await _wait_for(
-            pilot, lambda: bool(transcript._pruned_message_ids)
-        ), "pruning never fired"
+        assert await _wait_for(pilot, lambda: bool(transcript._pruned_message_ids)), (
+            "pruning never fired"
+        )
 
         remaining = store.messages_for_session(session.id)
         assert len(remaining) == 24
@@ -287,9 +289,9 @@ async def test_pruning_preserves_scroll_position_when_scrolled_up():
         transcript = app.query_one(ConsoleTranscript)
         transcript.set_messages(_messages(30))
         await transcript.refresh_messages()
-        assert await _wait_for(
-            pilot, lambda: bool(transcript._pruned_message_ids)
-        ), "initial prune never fired"
+        assert await _wait_for(pilot, lambda: bool(transcript._pruned_message_ids)), (
+            "initial prune never fired"
+        )
 
         def _top_visible_message_id() -> str | None:
             region = transcript.content_region
@@ -342,13 +344,15 @@ async def test_pruning_reanchors_when_following_tail():
         transcript.set_messages(_messages(24))
         await transcript.refresh_messages()
 
-        assert await _wait_for(
-            pilot, lambda: bool(transcript._pruned_message_ids)
-        ), "pruning never fired"
+        assert await _wait_for(pilot, lambda: bool(transcript._pruned_message_ids)), (
+            "pruning never fired"
+        )
         assert await _wait_for(
             pilot,
-            lambda: transcript.scroll_y == transcript.max_scroll_y
-            and transcript._is_following_tail(),
+            lambda: (
+                transcript.scroll_y == transcript.max_scroll_y
+                and transcript._is_following_tail()
+            ),
         ), "tail-follow was not restored after pruning"
 
 
@@ -364,9 +368,9 @@ async def test_streaming_row_is_never_pruned():
         transcript.set_messages(history)
         await transcript.refresh_messages()
 
-        assert await _wait_for(
-            pilot, lambda: bool(transcript._pruned_message_ids)
-        ), "pruning never fired"
+        assert await _wait_for(pilot, lambda: bool(transcript._pruned_message_ids)), (
+            "pruning never fired"
+        )
 
         assert "mstream" not in transcript._pruned_message_ids
         assert "mstream" in _mounted_message_ids(transcript)
@@ -398,9 +402,9 @@ async def test_refresh_and_recompose_do_not_resurrect_pruned_rows():
         transcript.set_messages(history)
         await transcript.refresh_messages()
 
-        assert await _wait_for(
-            pilot, lambda: bool(transcript._pruned_message_ids)
-        ), "pruning never fired"
+        assert await _wait_for(pilot, lambda: bool(transcript._pruned_message_ids)), (
+            "pruning never fired"
+        )
         pruned = set(transcript._pruned_message_ids)
         mounted_after_prune = _mounted_message_ids(transcript)
 

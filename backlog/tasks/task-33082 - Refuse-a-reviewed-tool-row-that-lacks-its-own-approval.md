@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-27 16:40'
-updated_date: '2026-09-29 15:56'
+updated_date: '2026-10-02 18:06'
 labels:
   - agents
   - permissions
@@ -59,4 +59,6 @@ Qodo round 1 (PR #2908), three fixes:
 - One _APPROVING_DECISIONS constant (also _review_decision's default); MCP extends it with allow_matching.
 - Args sections on the new tests.
 New tests: test_review_hook_refuses_and_audits_an_mcp_sibling_without_its_own_approval (hook-level audit), test_record_hook_refusal_writes_the_dispatch_decision (MCP seam), and the local runtime test now asserts one denied-* row for the refused sibling.
+
+PR2953 integration with hooks/plugins dev e92b01515f selected the existing Stop-mid-approval audit test. It failed before its assertions because its real LocalToolProvider config read used the per-test redirect. Added the existing bootstrap_profile marker to this one node, matching the neighboring real-provider tests; the ordinary exact-node run now passes (1 passed, zero failures/errors/skips), with no production change or admission bypass. ADR required: no; existing ADR-126 config/profile ownership applies. Final-head review and CI remain required in PR2953.
 <!-- SECTION:NOTES:END -->

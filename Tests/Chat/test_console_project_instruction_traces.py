@@ -246,6 +246,7 @@ async def _project_console(
                 await gateway.aclose()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("source_name", ["AGENTS.md", "AGENTS.override.md"])
 @pytest.mark.parametrize("capture_enabled", [False, True])
 @pytest.mark.parametrize("pii_redaction_enabled", [False, True])
@@ -305,6 +306,7 @@ async def test_fresh_project_send_preserves_turn_and_captured_context(
             assert not calls
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("tool_rounds", [2, 3])
 async def test_repeated_project_tool_calls_preserve_the_request_history(
     tmp_path, monkeypatch, tool_rounds
@@ -320,6 +322,7 @@ async def test_repeated_project_tool_calls_preserve_the_request_history(
         assert len(app.http_payloads) == tool_rounds + 1
 
 
+@pytest.mark.bootstrap_profile
 async def test_nested_project_context_during_tool_calls_preserves_history(
     tmp_path, monkeypatch
 ):
@@ -338,6 +341,7 @@ async def test_nested_project_context_during_tool_calls_preserves_history(
         assert "NESTED_second_GUIDANCE" in json.dumps(app.http_payloads[2])
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("capture_enabled", [False, True])
 @pytest.mark.parametrize("cold_factory", [False, True])
 @pytest.mark.parametrize("project_enabled", [False, True])
@@ -434,6 +438,7 @@ async def test_discovered_tool_schema_changes_preserve_the_captured_run(
                 )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("prior_response", ["ordinary", "tools", "fallback"])
 @pytest.mark.parametrize("context_change", ["same", "changed", "disabled"])
 @pytest.mark.parametrize("cold_factory", [False, True])
@@ -515,6 +520,7 @@ async def test_consecutive_project_sends_preserve_each_request(
             assert reader.read_calls(first_user.persisted_message_id) == original
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("prior_response", ["ordinary", "tools", "fallback"])
 @pytest.mark.parametrize("cold_factory", [False, True])
 async def test_transformed_project_sends_preserve_source_and_context(

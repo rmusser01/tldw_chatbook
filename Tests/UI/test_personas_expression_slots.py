@@ -56,16 +56,30 @@ from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
 from Tests.UI.test_personas_dictionaries import PersonasTestApp, patch_character_paging
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
 @pytest.fixture
 def expr_db(tmp_path):
     db = CharactersRAGDB(tmp_path / "personas_char_expression.db", "test-client")
     yield db
     db.close_connection()
+    # The mounted app has drained; retire native handles opened by its workers.
+    registry = db._connection_quiescence
+    token = registry.begin_quiescence(timeout_seconds=1.0)
+    try:
+        registry.close_registered(token)
+        assert registry.connection_count() == 0
+    finally:
+        registry.end_quiescence(token)
 
 
 async def _select_character(pilot, char_id):
     await pilot.pause()
-    await pilot.click(f"#personas-library-row-character-{char_id}")
+    from Tests.UI.roleplay_frame_harness import select_roleplay_item
+
+    await select_roleplay_item(
+        pilot, pilot.app.screen, f"character:{char_id}", via="click"
+    )
     await pilot.pause()
     await pilot.app.workers.wait_for_complete()
     await pilot.pause()

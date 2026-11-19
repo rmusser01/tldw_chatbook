@@ -25,6 +25,8 @@ class ConsolePromptTargetProjection:
 
     target_session_id: str
     system_fingerprint: str = field(repr=False)
+    target_incarnation_id: str | None = None
+    preference_revision: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -33,6 +35,16 @@ class ConsolePromptTargetProjection:
             or self.target_session_id != self.target_session_id.strip()
         ):
             raise ValueError("Console prompt target session is invalid")
+        if self.target_incarnation_id is not None and (
+            type(self.target_incarnation_id) is not str
+            or not self.target_incarnation_id.strip()
+            or self.target_incarnation_id != self.target_incarnation_id.strip()
+        ):
+            raise ValueError("Console mix-in target incarnation is invalid")
+        if self.preference_revision is not None and (
+            type(self.preference_revision) is not int or self.preference_revision < 0
+        ):
+            raise ValueError("Console mix-in preference revision is invalid")
         if (
             not isinstance(self.system_fingerprint, str)
             or _SYSTEM_FINGERPRINT.fullmatch(self.system_fingerprint) is None
@@ -259,4 +271,6 @@ class ScreenStateStore:
         return ConsolePromptTargetProjection(
             target_session_id=projection.target_session_id,
             system_fingerprint=projection.system_fingerprint,
+            target_incarnation_id=projection.target_incarnation_id,
+            preference_revision=projection.preference_revision,
         )

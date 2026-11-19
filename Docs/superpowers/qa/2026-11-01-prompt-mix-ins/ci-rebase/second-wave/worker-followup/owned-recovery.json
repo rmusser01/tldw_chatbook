@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_agent_project_instructions.py::test_preflight_disable_terminalizes_turn_and_releases_send_gate",
+    "Tests/Chat/test_console_agent_project_instructions.py::test_preflight_cancel_terminalizes_turn_and_releases_send_gate",
+    "Tests/Chat/test_console_agent_project_instructions.py::test_preflight_without_chooser_callback_terminalizes_turn",
+    "Tests/Chat/test_console_agent_project_instructions.py::test_project_instruction_disable_terminalizes_and_allows_retry",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-worker-final-z7pf1nj1/owned-recovery-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-worker-final-z7pf1nj1/owned-recovery.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 0,
+  "elapsed": 5.370645459042862
+}

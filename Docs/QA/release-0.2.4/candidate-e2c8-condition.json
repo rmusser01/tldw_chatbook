@@ -1,0 +1,918 @@
+{
+  "collector_failures": [
+    "Tests/UI/test_persona_buddy_host.py",
+    "Tests/UI/test_persona_buddy_view.py"
+  ],
+  "completed_groups": {
+    "ACP": {
+      "passed": 7
+    },
+    "Actor_Packs": {
+      "passed": 241
+    },
+    "Agents": {
+      "error": 69,
+      "failed": 136,
+      "passed": 4948,
+      "skipped": 4
+    },
+    "App": {
+      "error": 1,
+      "failed": 41,
+      "passed": 304,
+      "skipped": 1
+    },
+    "Architecture": {
+      "failed": 10,
+      "passed": 1204,
+      "skipped": 4
+    },
+    "Audio": {
+      "failed": 90,
+      "passed": 1568,
+      "skipped": 5
+    },
+    "Audio_Services": {
+      "passed": 31
+    },
+    "Auth_Account": {
+      "failed": 4,
+      "passed": 27
+    },
+    "Backup_Recovery": {
+      "error": 35,
+      "failed": 317,
+      "passed": 6553,
+      "skipped": 54
+    },
+    "Benchmarks": {
+      "error": 2,
+      "passed": 83
+    },
+    "CI": {
+      "passed": 1220,
+      "skipped": 1
+    },
+    "Canvas": {
+      "failed": 55,
+      "passed": 1156,
+      "skipped": 2
+    },
+    "ChaChaNotesDB": {
+      "failed": 107,
+      "passed": 444
+    },
+    "Character_Chat": {
+      "failed": 14,
+      "passed": 1237,
+      "skipped": 1
+    },
+    "Chat": {
+      "error": 11,
+      "failed": 619,
+      "passed": 20149,
+      "skipped": 147
+    },
+    "Chat_Grammars": {
+      "failed": 1,
+      "passed": 13
+    },
+    "Chatbooks": {
+      "error": 2,
+      "failed": 30,
+      "passed": 688
+    },
+    "Chunking": {
+      "failed": 50,
+      "passed": 811,
+      "skipped": 16
+    },
+    "Claims": {
+      "passed": 11
+    },
+    "Collections": {
+      "failed": 1,
+      "passed": 14
+    },
+    "Companion": {
+      "passed": 25
+    },
+    "Config": {
+      "passed": 3
+    },
+    "Console": {
+      "passed": 56
+    },
+    "DB": {
+      "failed": 174,
+      "passed": 2922,
+      "skipped": 2
+    },
+    "Diarization": {
+      "failed": 21,
+      "passed": 5
+    },
+    "Docs": {
+      "failed": 4,
+      "passed": 21
+    },
+    "Dreams": {
+      "failed": 1,
+      "passed": 938
+    },
+    "Evals": {
+      "error": 10,
+      "failed": 58,
+      "passed": 1009,
+      "skipped": 12
+    },
+    "Evaluations_Interop": {
+      "failed": 1,
+      "passed": 45
+    },
+    "Event_Handlers": {
+      "failed": 17,
+      "passed": 39,
+      "skipped": 1
+    },
+    "External_Connectors": {
+      "failed": 1,
+      "passed": 9
+    },
+    "Feedback": {
+      "failed": 1,
+      "passed": 14
+    },
+    "Guardian": {
+      "passed": 145
+    },
+    "Helper_Scripts": {
+      "passed": 91
+    },
+    "Home": {
+      "passed": 142
+    },
+    "Image_Generation": {
+      "failed": 1,
+      "passed": 437,
+      "skipped": 9
+    },
+    "Internal_Prompts": {
+      "failed": 14,
+      "passed": 74
+    },
+    "Kanban": {
+      "passed": 48
+    },
+    "LLM": {
+      "passed": 4
+    },
+    "LLM_Calls": {
+      "failed": 11,
+      "passed": 2225,
+      "skipped": 47
+    },
+    "LLM_Management": {
+      "error": 2,
+      "failed": 9,
+      "passed": 819,
+      "skipped": 2
+    },
+    "LLM_Provider_Catalog": {
+      "passed": 459
+    },
+    "Library": {
+      "error": 2,
+      "failed": 71,
+      "passed": 4007,
+      "skipped": 1
+    },
+    "Live": {
+      "error": 2,
+      "failed": 12,
+      "passed": 505,
+      "skipped": 1
+    },
+    "Local_Ingestion": {
+      "failed": 142,
+      "passed": 302
+    },
+    "MCP": {
+      "failed": 74,
+      "passed": 2182
+    },
+    "MCP_Governance": {
+      "failed": 1,
+      "passed": 13
+    },
+    "Media": {
+      "failed": 11,
+      "passed": 338
+    },
+    "Media_Creation": {
+      "passed": 27
+    },
+    "Media_DB": {
+      "failed": 1,
+      "passed": 102
+    },
+    "Media_Playback": {
+      "passed": 123
+    },
+    "Meetings": {
+      "passed": 12
+    },
+    "Metrics": {
+      "passed": 57
+    },
+    "Model_Artifacts": {
+      "error": 14,
+      "failed": 3,
+      "passed": 919
+    },
+    "Notes": {
+      "error": 128,
+      "failed": 44,
+      "passed": 3835,
+      "skipped": 8
+    },
+    "Notifications": {
+      "passed": 101
+    },
+    "Outputs": {
+      "failed": 1,
+      "passed": 24
+    },
+    "Packaging": {
+      "failed": 14,
+      "passed": 1041,
+      "skipped": 1
+    },
+    "Performance": {
+      "error": 1,
+      "failed": 140,
+      "passed": 933,
+      "skipped": 1,
+      "xfailed": 2
+    },
+    "Persona_Buddy": {
+      "failed": 19,
+      "passed": 218
+    },
+    "Persona_Visual": {
+      "error": 2,
+      "failed": 29,
+      "passed": 589,
+      "skipped": 1
+    },
+    "Personal_Context": {
+      "failed": 1,
+      "passed": 640
+    },
+    "Petdex": {
+      "error": 6,
+      "passed": 120
+    },
+    "Plugins": {
+      "error": 1,
+      "failed": 3,
+      "passed": 1233,
+      "skipped": 4
+    },
+    "ProductionApp": {
+      "error": 7,
+      "failed": 58,
+      "passed": 39,
+      "skipped": 2
+    },
+    "Prompt_Management": {
+      "passed": 843
+    },
+    "Prompt_Studio": {
+      "passed": 14
+    },
+    "Prompts_DB": {
+      "passed": 339
+    },
+    "Property": {
+      "passed": 21
+    },
+    "Provider": {
+      "passed": 23
+    },
+    "QA": {
+      "failed": 4,
+      "passed": 86
+    },
+    "RAG": {
+      "error": 21,
+      "failed": 173,
+      "passed": 736,
+      "skipped": 1,
+      "xfailed": 2
+    },
+    "RAG_Admin": {
+      "failed": 21,
+      "passed": 68
+    },
+    "RAG_Eval": {
+      "failed": 1,
+      "passed": 357,
+      "skipped": 14
+    },
+    "RAG_Search": {
+      "failed": 102,
+      "passed": 414,
+      "skipped": 12
+    },
+    "Research": {
+      "failed": 8,
+      "passed": 250
+    },
+    "Research_Interop": {
+      "passed": 4
+    },
+    "Research_Workspace": {
+      "failed": 17,
+      "passed": 301
+    },
+    "RuntimePolicy": {
+      "error": 16,
+      "failed": 18,
+      "passed": 412
+    },
+    "STT": {
+      "error": 8,
+      "failed": 10,
+      "passed": 916,
+      "skipped": 3
+    },
+    "Scheduling": {
+      "failed": 78,
+      "passed": 1035
+    },
+    "Scripts": {
+      "failed": 1,
+      "passed": 458
+    },
+    "Security": {
+      "error": 1,
+      "failed": 2,
+      "passed": 38
+    },
+    "Server_Runtime": {
+      "failed": 2,
+      "passed": 11
+    },
+    "Sharing": {
+      "passed": 32
+    },
+    "Skills": {
+      "error": 4,
+      "failed": 75,
+      "passed": 516,
+      "skipped": 1
+    },
+    "State": {
+      "passed": 167
+    },
+    "Stats": {
+      "passed": 1
+    },
+    "Study_Interop": {
+      "failed": 2,
+      "passed": 125
+    },
+    "Subscriptions": {
+      "error": 9,
+      "failed": 257,
+      "passed": 871,
+      "skipped": 1
+    },
+    "Sync_Interop": {
+      "failed": 3,
+      "passed": 633
+    },
+    "TTS": {
+      "error": 154,
+      "failed": 259,
+      "passed": 5205,
+      "skipped": 19
+    },
+    "TTS_Events": {
+      "passed": 73
+    },
+    "Terminal": {
+      "error": 6,
+      "passed": 620,
+      "skipped": 1
+    },
+    "Text2SQL_Interop": {
+      "failed": 1,
+      "passed": 11
+    },
+    "Tool_Packs": {
+      "error": 5,
+      "failed": 4,
+      "passed": 411
+    },
+    "Tools": {
+      "error": 27,
+      "failed": 208,
+      "passed": 2112,
+      "skipped": 19
+    },
+    "Tools_Interop": {
+      "failed": 1,
+      "passed": 9
+    },
+    "Transcription": {
+      "error": 26,
+      "failed": 22,
+      "passed": 157,
+      "skipped": 32
+    },
+    "Translation": {
+      "failed": 1,
+      "passed": 10
+    },
+    "UI": {
+      "error": 78,
+      "failed": 3424,
+      "passed": 31632,
+      "skipped": 3,
+      "xfailed": 3
+    },
+    "UX_Interop": {
+      "passed": 18
+    },
+    "User_Governance": {
+      "failed": 1,
+      "passed": 9
+    },
+    "Utils": {
+      "failed": 14,
+      "passed": 2154,
+      "skipped": 21
+    },
+    "Video_Generation": {
+      "error": 8,
+      "failed": 1,
+      "passed": 383,
+      "skipped": 2
+    },
+    "Voice_Assistant": {
+      "passed": 12
+    },
+    "Watchlists": {
+      "failed": 28,
+      "passed": 1022
+    },
+    "WebClipper": {
+      "failed": 1,
+      "passed": 10
+    },
+    "Web_Scraping": {
+      "failed": 125,
+      "passed": 255,
+      "skipped": 3
+    },
+    "Web_Scraping_Interop": {
+      "failed": 1,
+      "passed": 10
+    },
+    "Web_Server": {
+      "failed": 13,
+      "passed": 247
+    },
+    "Widgets": {
+      "error": 2,
+      "failed": 14,
+      "passed": 782
+    },
+    "Wizards": {
+      "passed": 1658
+    },
+    "Workflows": {
+      "error": 6,
+      "failed": 2,
+      "passed": 553,
+      "skipped": 1
+    },
+    "Workspaces": {
+      "error": 2,
+      "failed": 11,
+      "passed": 775,
+      "skipped": 1
+    },
+    "Writing_Interop": {
+      "failed": 1,
+      "passed": 57
+    },
+    "fixtures": {
+      "passed": 5
+    },
+    "integration": {
+      "error": 9,
+      "failed": 41,
+      "passed": 114
+    },
+    "root": {
+      "failed": 55,
+      "passed": 938,
+      "skipped": 7,
+      "xfailed": 1
+    },
+    "supplemental-portable-archive": {
+      "passed": 3
+    },
+    "supplemental-profile-core": {
+      "passed": 740
+    },
+    "supplemental-voice-aec-binding": {
+      "passed": 35
+    },
+    "supplemental-voice-aec-provenance": {
+      "passed": 95
+    },
+    "tldw_api": {
+      "failed": 1,
+      "passed": 659
+    },
+    "unit": {
+      "passed": 1
+    }
+  },
+  "completed_utc": "2026-11-09T21:25:08.718798+00:00",
+  "descriptor_qualified": false,
+  "descriptor_warning_partitions": 44,
+  "descriptor_warnings": [
+    {
+      "end": 806,
+      "growth": 792,
+      "limit": 200,
+      "start": 14,
+      "unit": "009-Agents-01"
+    },
+    {
+      "end": 860,
+      "growth": 846,
+      "limit": 200,
+      "start": 14,
+      "unit": "012-Agents-04"
+    },
+    {
+      "end": 438,
+      "growth": 424,
+      "limit": 200,
+      "start": 14,
+      "unit": "013-Agents-05"
+    },
+    {
+      "end": 234,
+      "growth": 220,
+      "limit": 200,
+      "start": 14,
+      "unit": "041-ChaChaNotesDB-01"
+    },
+    {
+      "end": 704,
+      "growth": 690,
+      "limit": 200,
+      "start": 14,
+      "unit": "045-Chat-02"
+    },
+    {
+      "end": 264,
+      "growth": 250,
+      "limit": 200,
+      "start": 14,
+      "unit": "047-Chat-04"
+    },
+    {
+      "end": 684,
+      "growth": 670,
+      "limit": 200,
+      "start": 14,
+      "unit": "048-Chat-05"
+    },
+    {
+      "end": 451,
+      "growth": 437,
+      "limit": 200,
+      "start": 14,
+      "unit": "049-Chat-06"
+    },
+    {
+      "end": 407,
+      "growth": 393,
+      "limit": 200,
+      "start": 14,
+      "unit": "050-Chat-07"
+    },
+    {
+      "end": 405,
+      "growth": 391,
+      "limit": 200,
+      "start": 14,
+      "unit": "053-Chat-10"
+    },
+    {
+      "end": 309,
+      "growth": 295,
+      "limit": 200,
+      "start": 14,
+      "unit": "054-Chat-11"
+    },
+    {
+      "end": 286,
+      "growth": 272,
+      "limit": 200,
+      "start": 14,
+      "unit": "057-Chat-14"
+    },
+    {
+      "end": 362,
+      "growth": 348,
+      "limit": 200,
+      "start": 14,
+      "unit": "058-Chat-15"
+    },
+    {
+      "end": 246,
+      "growth": 232,
+      "limit": 200,
+      "start": 14,
+      "unit": "061-Chat-18"
+    },
+    {
+      "end": 365,
+      "growth": 351,
+      "limit": 200,
+      "start": 14,
+      "unit": "064-Chat-21"
+    },
+    {
+      "end": 496,
+      "growth": 482,
+      "limit": 200,
+      "start": 14,
+      "unit": "065-Chat-22"
+    },
+    {
+      "end": 284,
+      "growth": 270,
+      "limit": 200,
+      "start": 14,
+      "unit": "067-Chat-24"
+    },
+    {
+      "end": 798,
+      "growth": 784,
+      "limit": 200,
+      "start": 14,
+      "unit": "080-Chatbooks-01"
+    },
+    {
+      "end": 308,
+      "growth": 294,
+      "limit": 200,
+      "start": 14,
+      "unit": "087-DB-01"
+    },
+    {
+      "end": 339,
+      "growth": 325,
+      "limit": 200,
+      "start": 14,
+      "unit": "088-DB-02"
+    },
+    {
+      "end": 416,
+      "growth": 402,
+      "limit": 200,
+      "start": 14,
+      "unit": "094-Evals-01"
+    },
+    {
+      "end": 249,
+      "growth": 235,
+      "limit": 200,
+      "start": 14,
+      "unit": "111-Library-01"
+    },
+    {
+      "end": 509,
+      "growth": 495,
+      "limit": 200,
+      "start": 14,
+      "unit": "112-Library-02"
+    },
+    {
+      "end": 426,
+      "growth": 412,
+      "limit": 200,
+      "start": 14,
+      "unit": "113-Library-03"
+    },
+    {
+      "end": 322,
+      "growth": 308,
+      "limit": 200,
+      "start": 14,
+      "unit": "116-MCP-01"
+    },
+    {
+      "end": 1470,
+      "growth": 1456,
+      "limit": 200,
+      "start": 14,
+      "unit": "126-Notes-01"
+    },
+    {
+      "end": 3617,
+      "growth": 3603,
+      "limit": 200,
+      "start": 14,
+      "unit": "127-Notes-02"
+    },
+    {
+      "end": 476,
+      "growth": 462,
+      "limit": 200,
+      "start": 14,
+      "unit": "146-RAG-03"
+    },
+    {
+      "end": 523,
+      "growth": 509,
+      "limit": 200,
+      "start": 14,
+      "unit": "153-Research_Workspace-01"
+    },
+    {
+      "end": 345,
+      "growth": 331,
+      "limit": 200,
+      "start": 14,
+      "unit": "166-Subscriptions-01"
+    },
+    {
+      "end": 404,
+      "growth": 390,
+      "limit": 200,
+      "start": 14,
+      "unit": "168-Sync_Interop-01"
+    },
+    {
+      "end": 291,
+      "growth": 277,
+      "limit": 200,
+      "start": 14,
+      "unit": "184-UI-03"
+    },
+    {
+      "end": 856,
+      "growth": 842,
+      "limit": 200,
+      "start": 14,
+      "unit": "186-UI-05"
+    },
+    {
+      "end": 323,
+      "growth": 309,
+      "limit": 200,
+      "start": 14,
+      "unit": "235-UI-54"
+    },
+    {
+      "end": 269,
+      "growth": 255,
+      "limit": 200,
+      "start": 14,
+      "unit": "237-UI-56"
+    },
+    {
+      "end": 452,
+      "growth": 438,
+      "limit": 200,
+      "start": 14,
+      "unit": "240-UI-59"
+    },
+    {
+      "end": 391,
+      "growth": 377,
+      "limit": 200,
+      "start": 14,
+      "unit": "244-UI-63"
+    },
+    {
+      "end": 231,
+      "growth": 217,
+      "limit": 200,
+      "start": 14,
+      "unit": "245-UI-64"
+    },
+    {
+      "end": 280,
+      "growth": 266,
+      "limit": 200,
+      "start": 14,
+      "unit": "248-UI-67"
+    },
+    {
+      "end": 901,
+      "growth": 887,
+      "limit": 200,
+      "start": 14,
+      "unit": "249-UI-68"
+    },
+    {
+      "end": 803,
+      "growth": 789,
+      "limit": 200,
+      "start": 14,
+      "unit": "252-UI-71"
+    },
+    {
+      "end": 352,
+      "growth": 338,
+      "limit": 200,
+      "start": 14,
+      "unit": "262-UI-81"
+    },
+    {
+      "end": 2522,
+      "growth": 2508,
+      "limit": 200,
+      "start": 14,
+      "unit": "268-UI-87"
+    },
+    {
+      "end": 824,
+      "growth": 810,
+      "limit": 200,
+      "start": 14,
+      "unit": "311-Workspaces-01"
+    }
+  ],
+  "evidence": {
+    "final_result_sha256": "d1389f1cedfe75b918ee1370dbf4008f1336d2e0802cd9c7eb9e80e8432354a1",
+    "settled_comparison_sha256": "8bcd1bc6497cbea4c972c582b2a82fed30e92c4cc1ccd8b79c5cdb4dc29b8270"
+  },
+  "failed_phases": {
+    "call": 7471,
+    "setup": 490,
+    "teardown": 187
+  },
+  "frozen_base": "a0ae30b7ed9c313fe19cb3a0da5d95ebde182385",
+  "frozen_node_comparison": {
+    "adverse_without_frozen_failure_receipt": 190,
+    "frozen_adverse_not_observed_in_checkpoint": 10,
+    "frozen_adverse_now_passed": 7641,
+    "frozen_adverse_now_skip_or_xfail": 1,
+    "still_adverse_changed_failed_phases": 71,
+    "still_adverse_same_failed_phases": 7833
+  },
+  "fully_accounted": true,
+  "integrated_tests_qualified": false,
+  "limitations": [
+    "This is the actual condition of e2c8c432; it does not qualify a later repair head.",
+    "Missing comparison receipts are not inferred to pass.",
+    "Packaging and independent fresh offline installs have not run.",
+    "A process retiring naturally does not establish in-process descriptor retirement."
+  ],
+  "logical_parents": 135613,
+  "outcomes": {
+    "error": 677,
+    "failed": 7415,
+    "passed": 127045,
+    "skipped": 468,
+    "xfailed": 8
+  },
+  "partitions": {
+    "natural_retirement": 390,
+    "planned": 390,
+    "recorded": 390,
+    "unqualified": 0
+  },
+  "raw_outcomes": {
+    "error": 677,
+    "failed": 7415,
+    "passed": 127044,
+    "skipped": 468,
+    "subtests passed": 1,
+    "xfailed": 8
+  },
+  "revision": "e2c8c4320398a06890f1c8b582d8d8a17ec2f06e",
+  "source_files": 5671,
+  "subtest_events": 5,
+  "tree": "e45892a93691b67f5445949d304dbc6e7b25b705",
+  "unapproved_skips": 47,
+  "unexpected_counts": {
+    "collection_failed": 2,
+    "error": 677,
+    "failed": 7415,
+    "skipped": 47
+  }
+}
