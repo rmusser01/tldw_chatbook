@@ -190,9 +190,9 @@ def test_checker_steps_survive_an_earlier_failure():
     checker_steps = [step for step in _steps() if "python " in step.get("run", "")]
     assert len(checker_steps) == len(CHECKERS)
     for step in checker_steps:
-        assert "cancelled()" in str(
-            step.get("if", "")
-        ), f"step {step.get('name')!r} would be skipped after an earlier failure"
+        assert "cancelled()" in str(step.get("if", "")), (
+            f"step {step.get('name')!r} would be skipped after an earlier failure"
+        )
 
 
 def test_job_installs_nothing():
@@ -213,6 +213,7 @@ def test_derived_artifact_checkers_use_mermaid_builder_python_pin():
     )
 
     assert setup["with"] == {"python-version": "3.12.11"}
+    assert _job()["runs-on"] == "ubuntu-24.04"
 
 
 def test_required_check_name_is_stable():
