@@ -200,15 +200,17 @@ async def test_ready_local_skill_capture_runs_original_body_on_worker_and_matche
     assert "capture-worker-fixture" in {
         row["name"] for row in actual_skill["available_skills"]
     }
-    # Legacy synchronous capture still reads MCP; stock temporary sessions
-    # intentionally capture an empty ceiling because they never compose MCP.
-    assert case.store.session_is_ephemeral(case.session.id)
-    assert expected.mcp_definition_maximum
+    # Under a managed runtime, legacy synchronous capture reads only closed MCP
+    # metadata (11d71e5db5). runtime_case's loop projection installs a
+    # policy_enforcer and a custom manifest_provider, so the metadata is open
+    # and the legacy capture defers MCP with an empty ceiling; the owned one
+    # must match. The closed case is the next test.
+    from tldw_chatbook.MCP.console_snapshot import _mcp_metadata_is_closed
+
+    assert not _mcp_metadata_is_closed(case.service)
+    assert expected.mcp_capture_pending and not expected.mcp_definition_maximum
     assert (
         actual.mcp_definition_capture == expected.mcp_definition_capture == "captured"
-    )
-    expected = replace(
-        expected, mcp_tool_maximum=frozenset(), mcp_definition_maximum={}
     )
     for name in actual.__dataclass_fields__:
         if name != "skill_context_maximum":
@@ -218,6 +220,51 @@ async def test_ready_local_skill_capture_runs_original_body_on_worker_and_matche
     assert (
         case.controller._preparation_reads == case.runtime._preparation_reads == set()
     )
+
+
+@pytest.mark.asyncio
+async def test_closed_mcp_metadata_gives_owned_and_legacy_capture_one_ceiling(
+    runtime_case,
+):
+    import tldw_chatbook.MCP.server  # noqa: F401 - load the original closed manifest source
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        capture_console_turn_configuration_owned,
+    )
+    from tldw_chatbook.MCP.console_snapshot import _mcp_metadata_is_closed
+    from tldw_chatbook.MCP.local_control_service import _default_manifest_provider
+
+    case = runtime_case
+    case.local.policy_enforcer = None
+    case.local.manifest_provider = _default_manifest_provider
+    assert _mcp_metadata_is_closed(case.service)
+    expected = case.controller.resolve_runtime_turn_configuration_snapshot(
+        case.session.id
+    )
+    actual = await capture_console_turn_configuration_owned(
+        case.app,
+        case.store,
+        case.session.id,
+        selection=_selection(case),
+        creator=case.controller,
+        reads=case.controller._preparation_reads,
+        observers=(case.runtime._preparation_reads,),
+        require_current=lambda: None,
+    )
+    assert not expected.mcp_capture_pending and expected.mcp_definition_maximum
+    # Only the owned capture can prove its definition set complete; the
+    # synchronous one always reports incomplete. Each capture also mints its
+    # own skill attempt nonce. Every other field must agree.
+    assert actual.mcp_definition_complete and not expected.mcp_definition_complete
+    skills = [dict(c.skill_context_maximum) for c in (actual, expected)]
+    for skill in skills:
+        skill.pop("plugin_run_id", None)
+    assert skills[0] == skills[1]
+    differing = {
+        name
+        for name in actual.__dataclass_fields__
+        if getattr(actual, name) != getattr(expected, name)
+    }
+    assert differing <= {"mcp_definition_complete", "skill_context_maximum"}, differing
 
 
 @pytest.mark.asyncio

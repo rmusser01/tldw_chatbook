@@ -26,6 +26,26 @@ async def until(probe):
             await asyncio.sleep(0.005)
 
 
+def _record_executions(monkeypatch):
+    """Record every execution owner begun and every tool operation reserved."""
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, RuntimeCapacity
+
+    owners, tools = [], []
+    begin, reserve = RuntimeCapacity.begin_execution, ExecutionOwner.reserve_tool
+
+    def recorded_begin(self, *args, **kwargs):
+        owners.append(begin(self, *args, **kwargs))
+        return owners[-1]
+
+    def recorded_reserve(self):
+        tools.append(self)
+        return reserve(self)
+
+    monkeypatch.setattr(RuntimeCapacity, "begin_execution", recorded_begin)
+    monkeypatch.setattr(ExecutionOwner, "reserve_tool", recorded_reserve)
+    return owners, tools
+
+
 @pytest.fixture
 async def reference_host(tmp_path, monkeypatch):
     root = tmp_path / "project"
@@ -179,6 +199,7 @@ async def test_unadmitted_reference_never_calls_custom_parser(
         return original(text)
 
     monkeypatch.setattr(refs, "find_reference_candidates", custom_parser)
+    owners, tools = _record_executions(monkeypatch)
     with ExitStack() as stack:
         if blocked == "no-roots":
             missing = h.tmp_path / "missing-reference-sandbox"
@@ -198,14 +219,29 @@ async def test_unadmitted_reference_never_calls_custom_parser(
             "read @visible.txt", session_id=h.session.id
         )
     assert reads == [], "failed admission still invoked the effectful parser"
+    assert tools == [], "an unadmitted reference reserved a native operation"
+    assert h.runtime.execution_capacity.snapshot().executions == ()
+    assert not h.runtime._preparation_reads
+    if blocked == "activity":
+        # Owner decision 2026-11-18 (TASK-41655): while another workspace
+        # activity holds the worktree, the whole Send is refused at ordinary
+        # turn admission, before any reference parsing, execution owner,
+        # provider call or persisted row.
+        assert not result.accepted and not result.should_clear_draft
+        assert (
+            result.visible_copy
+            == "Workspace activity is busy; retry after it finishes."
+        )
+        assert owners == [] and not result.provider_started
+        assert h.gateway.payloads == []
+        assert not h.store.messages_for_session(h.session.id)
+        return
     assert result.accepted
     assert h.gateway.payloads[-1][-1]["content"] == "read @visible.txt"
     assert any(
         "refused" in row.content.lower()
         for row in h.store.messages_for_session(h.session.id)
     )
-    assert h.runtime.execution_capacity.snapshot().executions == ()
-    assert not h.runtime._preparation_reads
 
 
 @pytest.mark.parametrize("draft", ["plain text", "mail bob@example.com", "literal @."])
@@ -387,7 +423,6 @@ async def test_missing_sandbox_is_not_created_and_bound_roots_remain(
 async def test_zero_roots_has_no_native_operation_or_git_launch(
     reference_host, monkeypatch
 ):
-    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
     from tldw_chatbook.Tools import file_operation_tools
 
     h = reference_host
@@ -395,15 +430,10 @@ async def test_zero_roots_has_no_native_operation_or_git_launch(
     monkeypatch.setattr(
         file_operation_tools, "_sandbox_config_path", lambda settings: missing
     )
+    owners, tools = _record_executions(monkeypatch)
+    launches = []
     monkeypatch.setattr(
-        RuntimeCapacity,
-        "begin_execution",
-        lambda *a, **k: pytest.fail("invented owner"),
-    )
-    monkeypatch.setattr(
-        refs,
-        "run_git_reference",
-        lambda *a, **k: pytest.fail("Git launched without roots"),
+        refs, "run_git_reference", lambda *a, **k: launches.append((a, k))
     )
     with roots_api.run_workspace("workspace-default"), roots_api.run_file_sandbox(None):
         assert (
@@ -411,8 +441,18 @@ async def test_zero_roots_has_no_native_operation_or_git_launch(
                 "read @diff @/unavailable", session_id=h.session.id
             )
         ).accepted
+    # Owner decision 2026-11-18 (TASK-41655): every ordinary turn takes its one
+    # execution owner (the design TASK-40715 built on). With zero roots, the
+    # references are refused without a native operation or a git launch.
+    assert len(owners) == 1, "only the ordinary turn may begin an execution"
+    assert tools == [], "a reference reserved a native operation without roots"
+    assert launches == [] and "git-diff" not in str(h.gateway.payloads)
     assert not missing.exists()
-    assert "git-diff" not in str(h.gateway.payloads)
+    rows = [row.content for row in h.store.messages_for_session(h.session.id)]
+    assert any(
+        "@diff: REFUSED" in row and "@/unavailable: REFUSED" in row for row in rows
+    ), rows
+    assert h.runtime.execution_capacity.snapshot().executions == ()
 
 
 def git(root, *args):
