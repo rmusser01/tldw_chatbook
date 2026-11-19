@@ -429,6 +429,95 @@ async def test_viewless_first_send_is_saved_through_a_wrapped_config_writer(
     assert saved["console"]["onboarding"]["first_send_completed"] is True
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
+    monkeypatch,
+) -> None:
+    """TASK-41904: the first reply's one-time onboarding save fences new
+    captures while it writes. A Send pressed then met that fence in its
+    synchronous intake and read "Draft or chat changed; Send again."; the
+    provider never saw it. It now waits for the save, as a queued dispatch
+    does, and is sent. The save is held open so the Send lands inside it."""
+    from textual.widgets import Button
+
+    from Tests.UI.test_console_native_chat_flow import (
+        CapturingGateway,
+        _build_console_send_test_app,
+        _select_llamacpp_console,
+        _wait_for_reply,
+    )
+    from Tests.UI.test_console_send_admission_off_pump import _record_notices
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+
+    gateway = CapturingGateway()
+    app = _build_console_send_test_app()
+    # The production app wires this; a send to a saved chat consults it.
+    app.local_chat_conversation_service = ChatConversationService(app.chachanotes_db)
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    saving, release = threading.Event(), threading.Event()
+    writer = config.apply_settings_mutation_to_cli_config
+
+    def held(mutations, **kwargs):
+        if "console.onboarding" in mutations:
+            saving.set()
+            assert release.wait(30), "the test never released the save"
+        return writer(mutations, **kwargs)
+
+    monkeypatch.setattr(config, "apply_settings_mutation_to_cli_config", held)
+    host = ConsoleHarness(app)
+    try:
+        async with host.run_test(size=(160, 48)) as pilot:
+            console = host.screen_stack[-1]
+            notices = _record_notices(console)
+            await _wait_for_selector(console, pilot, "#console-native-composer")
+            await _select_llamacpp_console(console)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            send = console.query_one("#console-send-message", Button)
+            composer.load_draft("first message")
+            send.press()
+            await _wait_for_reply(console, pilot)
+            for _ in range(200):
+                if saving.is_set():
+                    break
+                await pilot.pause(0.05)
+            runtime = console._console_runtime()
+            assert saving.is_set() and runtime._first_send_publishing
+
+            composer.load_draft("second message")
+            send.press()
+            for _ in range(20):  # the Send is pressed and waits on the save
+                await pilot.pause(0.05)
+            assert notices == []
+            release.set()
+            for _ in range(200):
+                if len(gateway.sent_messages) == 2:
+                    break
+                await pilot.pause(0.05)
+            store = console._ensure_console_chat_store()
+            replies = [
+                m.content
+                for m in store.messages_for_session(store.active_session_id)
+                if m.role.value == "assistant"
+            ]
+    finally:
+        release.set()
+
+    assert notices == []
+    assert [m[-1]["content"] for m in gateway.sent_messages] == [
+        "first message",
+        "second message",
+    ]
+    assert replies == ["accepted", "accepted"]
+    assert app.app_config["console"]["onboarding"]["first_send_completed"] is True
+
+
 @pytest.mark.asyncio
 async def test_runtime_injects_its_scratch_manager_into_chat_controller():
     runtime = ConsoleRuntime(type("App", (), {})())

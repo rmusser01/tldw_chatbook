@@ -331,7 +331,9 @@ as a file path, as llama.cpp models often are, shows its file name). The
 readiness word is the one the header shows, so after a test it reads, for
 example, "Ready · reachable 14:01 — type a message to begin." That line is the
 arrival receipt: it shows until your first-ever send, and nothing about it is
-sent to the model.
+sent to the model. Chatbook records that first send in config.toml once
+Console is idle after the reply; a Send you press while that save runs waits
+for it and is then sent.
 
 
 A pair picked in Switch model from the card applies to this chat. While no

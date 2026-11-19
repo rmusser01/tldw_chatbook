@@ -1034,10 +1034,14 @@ async def _dispatch_console_draft_send(
         from ..Console_Modules.wiring import receive_console_visible_intent
 
         try:
-            received = receive_console_visible_intent(
-                self, draft, session_id, stash,
-                _captured_inputs=_captured_inputs,
-            )
+            # TASK-41904: a Send pressed while the one-time first-send save
+            # runs waits for it, as a queued dispatch does, rather than meet
+            # the save's source fence in the synchronous intake below.
+            async with self._console_runtime()._first_send_source_scope_async():
+                received = receive_console_visible_intent(
+                    self, draft, session_id, stash,
+                    _captured_inputs=_captured_inputs,
+                )
         except (RuntimeError, ValueError):
             self.app_instance.notify(
                 "Draft or chat changed; Send again.", severity="warning"
