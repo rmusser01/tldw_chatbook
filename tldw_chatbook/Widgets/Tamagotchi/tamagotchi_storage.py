@@ -599,8 +599,8 @@ def _shared_pets_path() -> Path:
 def _read_shared_pets() -> Dict[str, Any]:
     """Return the old shared pets, or ``{}`` when there is nothing to copy.
 
-    A link is never followed; a link, a non-file, an oversized file or bytes
-    that are not a JSON object count as nothing to copy.
+    A link is never followed and a FIFO never blocks; a link, a non-file, an
+    oversized file or bytes that are not a JSON object count as nothing to copy.
 
     Raises:
         OSError: The file exists but could not be read. Nothing has been
@@ -608,7 +608,10 @@ def _read_shared_pets() -> Dict[str, Any]:
     """
     path = _shared_pets_path()
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+        )
     except FileNotFoundError:
         return {}
     except OSError as error:
@@ -650,8 +653,9 @@ class ConfigFileStorage(JSONStorage):
 
         folder = config._get_effective_config_path().parent
         filepath = folder / "tamagotchi_pets.json"
-        # A link must not lead the pet file outside the profile's folder.
-        validate_path(filepath, folder)
+        # A link must not lead the pet file outside the profile's folder. The
+        # folder itself may be dot-named (TLDW_CONFIG_PATH=~/.tldw/config.toml).
+        validate_path(filepath, folder, allow_hidden=True)
         super().__init__(str(filepath))
 
     def _prepare(self, operation) -> None:

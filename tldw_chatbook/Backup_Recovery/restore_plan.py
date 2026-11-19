@@ -20,8 +20,10 @@ from .native_files import pinned_directory
 from .owner_registry import install_adapters
 
 #: TASK-42000: pet files were one folder every profile shared, so a backup of
-#: several profiles holds them as aliases. They now restore into each profile's
-#: own folder, so their shared group no longer binds one destination.
+#: several profiles holds them as aliases. With every alias selected, each may
+#: restore into its own profile's folder: the group no longer binds one
+#: destination. A partial selection still refuses, as for any shared file, so a
+#: restore never overwrites a pet file another profile's config folder holds.
 _PER_PROFILE_ALIAS_OWNERS = frozenset({"tamagotchi.config"})
 
 
@@ -1115,14 +1117,10 @@ def plan_restore(
         if item is not None:
             if item.owner_id not in owners:
                 raise ValueError("unsupported_owner")
-            if (
-                item.shared_group
-                and item.owner_id not in _PER_PROFILE_ALIAS_OWNERS
-                and any(
-                    row.logical_id not in selected
-                    for row in producer.values()
-                    if row.shared_group == item.shared_group
-                )
+            if item.shared_group and any(
+                row.logical_id not in selected
+                for row in producer.values()
+                if row.shared_group == item.shared_group
             ):
                 raise ValueError("shared_scope_expansion_required")
     mapped = dict(restore)

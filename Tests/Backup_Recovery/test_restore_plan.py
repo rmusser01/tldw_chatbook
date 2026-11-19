@@ -729,19 +729,23 @@ def test_shared_alias_cannot_be_split_by_forged_independent_groups(tmp_path):
 
 
 @pytest.mark.parametrize("owner", ["tamagotchi.config", "ui.state"])
-@pytest.mark.parametrize("selected", ["one", "both"])
+@pytest.mark.parametrize("folders", ["differ", "shared", "one-selected"])
 def test_only_pet_aliases_restore_into_each_profiles_own_folder(
-    tmp_path, owner, selected
+    tmp_path, owner, folders
 ):
     """TASK-42000: a backup of several profiles holds their once-shared pet
-    files as aliases; each alias restores into its own profile's folder. Any
-    other owner's aliases still restore together or not at all."""
+    files as aliases. With every alias selected, each restores into its own
+    profile's folder. Aliases sent into one shared folder, or a selection of
+    only some of them, refuse exactly as any other owner's aliases do, so a
+    restore never overwrites a pet file another profile in that folder reads."""
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 
     archive = _alias_archive(tmp_path, owner)
     destinations = {"root": tmp_path / "alpha"}
-    if selected == "both":
-        destinations["other-root"] = tmp_path / "beta"
+    if folders != "one-selected":
+        destinations["other-root"] = tmp_path / (
+            "beta" if folders == "differ" else "alpha"
+        )
     plans = []
     refusal = _refusal(
         lambda: plans.append(
@@ -750,19 +754,20 @@ def test_only_pet_aliases_restore_into_each_profiles_own_folder(
             )
         )
     )
-    if owner == "ui.state":
-        assert refusal == (
-            "shared_scope_expansion_required"
-            if selected == "one"
-            else "shared_target_split"
-        )
+    if folders == "one-selected":
+        assert refusal == "shared_scope_expansion_required"
+        return
+    if folders == "shared":
+        # Restored into one folder, the aliases collide like any other owner's.
+        assert refusal == "destination_collision"
+        return
+    if owner == "ui.state" and folders == "differ":
+        assert refusal == "shared_target_split"
         return
     assert refusal is None
     restore = dict(plans[0].restore)
     assert restore["file"] == tmp_path / "alpha" / "note.txt"
-    assert restore.get("alias") == (
-        tmp_path / "beta" / "note.txt" if selected == "both" else None
-    )
+    assert restore["alias"] == destinations["other-root"] / "note.txt"
 
 
 def test_empty_root_stages_supported_directory_metadata(tmp_path):

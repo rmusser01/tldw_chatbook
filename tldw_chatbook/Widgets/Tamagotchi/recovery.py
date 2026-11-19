@@ -48,12 +48,22 @@ class _ConfiguredPets(_RawDeclaration):
 
         context = discovery_context(config)
         parent = context.config_path.parent
+        if not os.path.lexists(parent):
+            # No config folder yet, so no pet files: the same unused row an
+            # absent pet file beside an existing config gets.
+            return (
+                StorageItem(
+                    self.owner_id,
+                    storage_logical_id(context, self.owner_id),
+                    parent / _CURRENT,
+                    "unused",
+                    (storage_logical_id(context, "config"),),
+                ),
+            )
         items = [self._item(config, parent / _CURRENT)]
         try:
             with pinned_directory(parent) as fd:
                 names = sorted(os.listdir(fd))
-        except FileNotFoundError:
-            return tuple(items)
         except (OSError, ValueError, RuntimeError):
             return (
                 StorageItem(

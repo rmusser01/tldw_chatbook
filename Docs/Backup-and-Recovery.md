@@ -148,7 +148,8 @@ Pet settings are part of **Settings** and live in each profile's configuration
 folder, beside `config.toml`, so Replace treats them like the profile's other
 settings files. A backup's pets replace the profile's pets, and a backup from a
 profile without pets removes them. An older backup taken while every profile
-shared one pet folder restores its pets into this profile. The old shared folder
+shared one pet folder restores its pets into this profile. If that backup holds
+several profiles, restore all of them together, as for any data they share. The old shared folder
 (`~/.config/tldw_chatbook`, or `%APPDATA%\tldw_chatbook` on Windows) is never
 changed or removed. If source and target locations cannot
 be matched safely, replacement refuses. Restore into a separate profile to recover

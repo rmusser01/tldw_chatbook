@@ -4,7 +4,7 @@ title: "Pet settings are per-profile and are backed up and restored"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 15:58
-updated_date: 2026-11-19 17:23
+updated_date: 2026-11-19 17:59
 labels:
 - backup
 - settings
@@ -133,7 +133,7 @@ Coordinator's call on the upgrade path (engineering, stated to the owner): a pro
   - `_restore_path(..., config_target)` keeps every structural check and maps to `config_target.parent`.
 - `Backup_Recovery/staging.py` passes the target config.
 - `Backup_Recovery/later_rollback.py`: `tamagotchi.config` joins `_CREATED_FILE_OWNERS` and `_CREATED_OWNER_CLASSES`.
-- `Backup_Recovery/restore_plan.py`: `_PER_PROFILE_ALIAS_OWNERS` exempts only `tamagotchi.config` alias rows from `shared_scope_expansion_required` and `shared_target_split` (D5).
+- `Backup_Recovery/restore_plan.py`: `_PER_PROFILE_ALIAS_OWNERS` exempts only `tamagotchi.config` alias rows from `shared_target_split` (D5; narrowed in fix round 1, below).
 - `Backup_Recovery/portable_relocation.py`: `_pet_destination` and the pet-only `AppData/Roaming` creation are deleted.
 - `Backup_Recovery/detached_layout.py`: the profile's own pet files are imported; old roaming ones only when the profile has none, otherwise declared and reported ("Old shared pet files were not imported; this profile has its own.").
 - **Retired-root fixes.** Capture enrolls each config-folder file outside `_CONFIG_CAPTURE_LEAVES` as its own registered root. After a Replace retired such a file (pets under D4), the next start failed: first `FileNotFoundError` in `config_participants.verified_user_data_directory`, then `storage_admission_unavailable` from `storage_admission._contains_owned_path` (`resolve(strict=True)`). Both now treat a missing registered root as containing nothing.
@@ -207,3 +207,31 @@ Coordinator's call on the upgrade path (engineering, stated to the owner): a pro
 **Not verified here:**
 - Windows: the `%APPDATA%` old shared path, and `host_environment` without the AppData creation. The portable relocation test now runs on macOS and passed.
 - A real multi-profile older backup end to end: the alias carve-out is pinned at planner level with a crafted manifest.
+
+### Review r17pt-rev1, fix round 1
+
+- **Important 1: a dot-named config folder.**
+  - The pet store refused a dot-named config folder: `validate_path` rejects a base directory whose name starts with a dot, so with `TLDW_CONFIG_PATH=~/.tldw/config.toml` the footer fell back to an in-memory pet on every start.
+  - The check now passes `allow_hidden=True`. It is there only to refuse a link out of the folder, and `raw.file` already opens with `O_NOFOLLOW` under a pinned parent.
+  - Test: `test_operational_owners.py::test_pet_store_persists_in_a_dot_named_config_folder`, in a `.tldw` folder, across two stores. Red with the fix reverted: `[ValueError('Access to hidden files/directories is not allowed'), …]`.
+- **Important 2: direct tests for the retired-root guard.** Three tests in `Tests/Backup_Recovery/test_config_participant_lifetimes.py`, which runs on the PR lane "recovered suites" (32 passed, 12.6 s under that step's flags `--storage-lease-guard --timeout=180 --tb=short`, run with `-p no:xdist`, load 12-16):
+  - `test_an_absent_registered_root_grants_nothing_beneath_it` checks two things for a bound profile whose enrolled directory is then removed: `_contains_capture_path((absent,), absent/'x') is False`, and `acquire_storage(absent/'x')` refuses (`RecoveryRequired('storage_admission_unavailable')`, from `bootstrap._binding`'s strict resolve).
+  - `test_a_retired_settings_root_does_not_break_the_data_directory_check`: a retired `note_templates.json` root enrolled before the data directory's root, and `verified_user_data_directory` still returns the data directory.
+  - `test_a_data_directory_check_with_every_root_absent_refuses`: the check raises `config_directory_selection_changed`.
+  - Red with `storage_admission.py` and `config_participants.py` taken from c176f553b3: `assert FileNotFoundError(...) is False`, `assert FileNotFoundError(...) == PosixPath(...)`, and `AssertionError: FileNotFoundError(...)`.
+- **Minor 3: a FIFO at the old shared path.** The copy's open adds `O_NONBLOCK`, so a FIFO counts as nothing to copy. Test: `test_pet_store_copy_treats_a_fifo_as_nothing_to_copy` (skipped without `os.mkfifo`). Red with the flag removed: `Failed: Timeout (>60.0s)` at the open.
+- **Minor 4: a missing config folder.** `_ConfiguredPets.discover` on a missing folder returned a blocking `unavailable` row. The dead `except FileNotFoundError` could not catch it, because `pinned_directory` raises `PrivatePathError('missing_parent')`. It now checks `os.path.lexists(parent)` first and returns the same `unused` current-file row, with its config dependency, that an absent pet file beside an existing config gets. Test: `test_pet_owner_reports_a_missing_config_folder_as_no_pets`. Red at 124c2d9bc7: `'unavailable' != 'unused'`.
+- **Minor 5: comments.** The comments in `storage_admission._contains_owned_path` and `config_participants.verified_user_data_directory` now say the guard covers every absent root. The `effective_roots.py` comment now names `bootstrap._binding` as the strict resolver that still refuses an unproved root.
+- **Minor 6: D5 narrowed (coordinator's call).**
+  - `_PER_PROFILE_ALIAS_OWNERS` now exempts pet aliases only from `shared_target_split`, so every alias selected may restore into differing folders.
+  - A partial selection refuses `shared_scope_expansion_required` again, as for every owner. A Replace of one profile therefore cannot overwrite a pet file that a co-foldered profile reads.
+  - Aliases sent into one shared folder refuse as `ui.state`'s do (`destination_collision` in the crafted manifest).
+  - Consequence: an older multi-profile backup restores its pets when all its profiles are restored together. `Docs/Backup-and-Recovery.md` says so.
+  - Test: `test_restore_plan.py::test_only_pet_aliases_restore_into_each_profiles_own_folder[differ|shared|one-selected × tamagotchi.config|ui.state]`. Red at 124c2d9bc7: `[one-selected-tamagotchi.config]` with `assert None == 'shared_scope_expansion_required'`.
+- **Minor 7: User Guide.** `settings.md` now says the marker is written on the first run whether or not anything was copied.
+- **Runs (fix round 1, load 11-17):**
+  - Changed fast files with `-n 4` (`test_operational_owners`, `test_restore_plan`, `test_config_participant_lifetimes`, `test_inventory_unused_owners`, `test_settings_file_participant_lifetimes`, `test_detached_layout`, `test_config_sibling_capture`, `test_effective_admission_roots`, `test_admission_path_resolution`, `Tests/Widgets/test_tamagotchi*.py`): 497 passed and 2 failed. The two are the `test_settings_file_participant_lifetimes` reds already present at base.
+  - The five pet cases of `test_created_owner_rollback.py` and `test_profile_pet_roundtrip.py`, with the owner-suites flags (`-n 4 --timeout=300 --tb=short`): 35 passed (219 s; cases 73-143 s).
+  - `Tests/CI`: 1811 passed, 2 skipped.
+  - `Tests/Architecture/test_backup_owner_inventory.py` (serial): 75 passed.
+  - Preflight passed.

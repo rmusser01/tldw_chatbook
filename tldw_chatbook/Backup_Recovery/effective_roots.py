@@ -97,7 +97,8 @@ def effective_roots(roots, entries):
                         chain.append((cursor, component, (held.st_dev, held.st_ino)))
                         cursor = child
             except OSError:
-                # The existing strict resolver will refuse this unproved root.
+                # bootstrap._binding's strict resolver will refuse this unproved
+                # root; containment checks treat it as holding nothing.
                 covered = False
                 continue
             if covered:

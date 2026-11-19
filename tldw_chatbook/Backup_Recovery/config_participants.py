@@ -375,7 +375,8 @@ def verified_user_data_directory(source):
         try:
             info = os.stat(root, follow_symlinks=False)
         except FileNotFoundError:
-            # A file a Replace retired since it was enrolled (TASK-42000).
+            # An absent root cannot associate the data directory (TASK-42000:
+            # e.g. a file a Replace retired since it was enrolled).
             continue
         if (
             root.parent == selected and (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))

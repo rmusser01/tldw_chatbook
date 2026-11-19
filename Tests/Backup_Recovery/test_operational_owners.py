@@ -777,11 +777,24 @@ def test_pet_owner_discovers_only_its_files_beside_the_config(tmp_path):
     ]
 
 
-def _pet_profile(tmp_path, monkeypatch):
+def test_pet_owner_reports_a_missing_config_folder_as_no_pets(tmp_path):
+    """TASK-42000: before the profile's config folder exists, its pet file is
+    absent (unused), not an unreadable folder that blocks a backup."""
+    from tldw_chatbook.Widgets.Tamagotchi.recovery import recovery_adapters
+
+    folder = tmp_path / "not-yet"
+    config = {DISCOVERY_CONTEXT_KEY: DiscoveryContext(folder / "config.toml", "fixture")}
+    items = recovery_adapters()[0].discover(config)
+    assert [(item.path, item.status) for item in items] == [
+        (folder / "tamagotchi_pets.json", "unused")
+    ]
+
+
+def _pet_profile(tmp_path, monkeypatch, name="profile"):
     """A profile config folder and the old shared pet folder (TASK-42000)."""
     from tldw_chatbook import config
 
-    folder = tmp_path / "profile"
+    folder = tmp_path / name
     folder.mkdir(mode=0o700)
     home = tmp_path / "home"
     monkeypatch.setattr(
@@ -899,6 +912,39 @@ def test_a_registered_file_a_replace_retired_contains_nothing(tmp_path):
     except OSError as error:
         contained = error
     assert contained is False
+
+
+def test_pet_store_persists_in_a_dot_named_config_folder(tmp_path, monkeypatch):
+    """TASK-42000 review: a profile whose config folder is dot-named
+    (TLDW_CONFIG_PATH=~/.tldw/config.toml) keeps its pets across starts."""
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+
+    folder, _ = _pet_profile(tmp_path, monkeypatch, ".tldw")
+    stores = []
+    for _ in range(2):
+        try:
+            stores.append(ConfigFileStorage())
+        except ValueError as error:
+            stores.append(error)
+    assert all(isinstance(store, ConfigFileStorage) for store in stores), stores
+    assert stores[0].filepath == folder / "tamagotchi_pets.json"
+    assert stores[0].save("bit", {"name": "Bit"})
+    assert stores[1].load("bit")["name"] == "Bit"
+
+
+@pytest.mark.timeout(60)
+def test_pet_store_copy_treats_a_fifo_as_nothing_to_copy(tmp_path, monkeypatch):
+    """TASK-42000 review: a FIFO at the old shared path never blocks the
+    copy; it counts as nothing to copy."""
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("no FIFOs on this platform")
+    folder, shared = _pet_profile(tmp_path, monkeypatch)
+    os.mkfifo(shared / "tamagotchi_pets.json")
+    store = ConfigFileStorage()
+    assert store.list_pets() == []
+    assert (folder / "tamagotchi_pets.seeded").exists()
 
 
 def test_pet_store_follows_no_link_out_of_place(tmp_path, monkeypatch):

@@ -2055,9 +2055,11 @@ The pets are backed up and restored with **Settings**.
 Pets used to live in one folder that every profile shared
 (`~/.config/tldw_chatbook`, or `%APPDATA%\tldw_chatbook` on Windows). The first
 time the pet runs in a profile that has no pet files of its own, it copies that
-shared file once and records the copy in `tamagotchi_pets.seeded` beside it.
-Pets you remove later, or that a restore removes, are not copied back. The
-shared folder is only read; it is never changed or removed.
+shared file, if there is one. On that first run it also writes
+`tamagotchi_pets.seeded` beside the pet file, whether or not anything was
+copied, so the copy is never made again. Pets you remove later, or that a
+restore removes, are not copied back. The shared folder is only read; it is
+never changed or removed.
 
 ### Domain Defaults — Image Gen
 
