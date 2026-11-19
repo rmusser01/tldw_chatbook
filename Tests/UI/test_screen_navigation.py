@@ -6505,13 +6505,16 @@ async def test_library_completions_after_the_exit_fence_skip_the_empty_stack(tmp
     is still the current one before it applies the outcome. Here the exit
     fence lands, and the stack empties, inside the last save; the rest of
     the completion runs without yielding, as in the test above. The other
-    Library readers are then called inside the same window. Each used to
-    raise ``ScreenStackError: No screens on stack``.
+    Library readers, controllers included, are then called inside the same
+    window. Each used to raise ``ScreenStackError: No screens on stack``.
     """
     import json
 
     from textual.app import ScreenStackError
 
+    from tldw_chatbook.UI.Library_Modules.library_artifacts_controller import (
+        LibraryArtifactsController,
+    )
     from tldw_chatbook.UI.Library_Modules.library_note_autosave import (
         resume_library_note_autosave,
     )
@@ -6573,15 +6576,36 @@ async def test_library_completions_after_the_exit_fence_skip_the_empty_stack(tmp
         # Past the fence the completion applies nothing.
         assert library._prompts_state.import_path == str(source)
 
+        # The artifacts, navigation and repair readers each check their own
+        # state before the stack; set just enough of it to reach the read.
+        artifacts = LibraryArtifactsController(library)
+        navigation = library._artifacts_navigation
+        repair = library._navigation_controller
+        saved_state = (
+            library._library_selected_row_id,
+            navigation._eligible,
+            navigation._retry_pending,
+            repair.pending_repair_context,
+            repair.repair_present_on_resume,
+        )
+        library._library_selected_row_id = "artifacts-chatbooks"
+        navigation._eligible, navigation._retry_pending = True, False
+        repair.pending_repair_context = object()
+        repair.repair_present_on_resume = True
         enter_window()
         try:
             for name, late_call in (
                 ("prompts import status", lambda: library._apply_library_prompts_import_status("x")),
+                ("skills import row", library._library_skills_import_row_visible),
                 ("skills import snapshot", lambda: library._present_library_skills_import_snapshot(refresh_sources=False)),
                 ("skills import choice", library._present_library_skills_import_choice_if_needed),
                 ("notes autosave resume", lambda: resume_library_note_autosave(library)),
                 ("prompt action result", lambda: library._prompts_controller._report_library_prompt_action_result("x")),
                 ("artifacts share", library._artifacts_share_controller._active),
+                ("artifacts presentable", lambda: artifacts.presentable(artifacts.presentation, artifacts.profile())),
+                ("artifacts scripts closed", lambda: artifacts._scripts_closed(artifacts.selected, artifacts.profile(), artifacts.scope)),
+                ("artifacts navigation resume", navigation.resume),
+                ("pending repair", repair.present_pending_repair),
             ):
                 try:
                     late_call()
@@ -6589,6 +6613,13 @@ async def test_library_completions_after_the_exit_fence_skip_the_empty_stack(tmp
                     errors.append((name, exc))
         finally:
             leave_window()
+            (
+                library._library_selected_row_id,
+                navigation._eligible,
+                navigation._retry_pending,
+                repair.pending_repair_context,
+                repair.repair_present_on_resume,
+            ) = saved_state
         assert errors == [], f"a late Library completion read the emptied stack: {errors!r}"
 
 

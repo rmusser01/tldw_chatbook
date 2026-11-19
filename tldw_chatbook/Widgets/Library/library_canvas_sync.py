@@ -60,6 +60,9 @@ def _keep_presses_through_the_removal(canvas: Any) -> None:
     does not bubble the press and the user's click does nothing. Each node
     between a button and the canvas child bubbles such a press to the canvas
     instead, which outlives its recompose and bubbles it on to the screen.
+    The forwarded press reaches the canvas and what is above it only: the
+    handlers on the removed nodes it skips, the canvas child's own
+    ``@on(Button.Pressed, ...)`` handlers included, do not run.
     """
     for button in canvas.walk_children(Button):
         node = button

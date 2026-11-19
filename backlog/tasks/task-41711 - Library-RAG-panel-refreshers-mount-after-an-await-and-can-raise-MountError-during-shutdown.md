@@ -4,7 +4,7 @@ title: "Library RAG panel refreshers mount after an await and can raise MountErr
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-18 06:57
-updated_date: 2026-11-19 16:07
+updated_date: 2026-11-19 16:39
 labels:
 - follow-up
 - ui
@@ -38,7 +38,7 @@ Found by TASK-41500 (round 16). TASK-41500 guarded the RAG scope recovery mirror
 
 Each RAG panel refresher now checks its mount target's `is_attached` right before it mounts, the TASK-41500 guard on the scope block. `is_attached` reads False for every node once `app._exit` is set, so past the exit fence a refresher mounts nothing. While the app runs nothing is caught: a pruned target already mounts nothing in Textual, and no `MountError` is swallowed.
 
-- **Shape.** The query-status, answer, history and results refreshers used to mount their new children one at a time, each mount awaited, so the fence could land between any two of them. Each now mounts its children in one `mount(*children)` call (with the same `after=`/`before=` anchor, which keeps their order), behind a single check. That closes the window with one check per refresher and keeps `library_rag_search_controller.py` inside its size ratchet (it was at its pin; the file is one line shorter).
+- **Shape.** The query-status, answer, history and results refreshers used to mount their new children one at a time, each mount awaited, so the fence could land between any two of them. Each now mounts its children in one `mount(*children)` call (with the same `after=`/`before=` anchor, which keeps their order), behind a single check. That closes the window with one check per refresher and keeps `library_rag_search_controller.py` inside its size ratchet: it was at its pin, and the batching is line-neutral (2061 lines at base and head).
 - **Plan step 2 dropped.** `_refresh_search_rag_panel_state_widgets` still goes on after the scope block. Past the fence the later refreshers only remove rows and then skip their mount, and removal past the fence works (the TASK-41500 test removes there), so a separate stop added nothing the AC asks for.
 - **Test.** `Tests/UI/test_screen_navigation.py::test_rag_panel_refreshers_mount_nothing_once_the_app_is_exiting`, one case per refresher, next to TASK-41500's test. Each case stubs the region's builder so the region has one widget to remove and one to mount, mounts once while the app runs (the positive half), then holds the removal, sets `app._exit`, releases, and asserts no `MountError`.
 - **Red/green.** With the source at base: 4 of 4 failed on the assertion, each naming its container ("Can't mount widget(s) before Vertical(id='library-rag-results' ...) is mounted", `library-rag-query-controls`, `LibrarySearchRagPanel`, `Contents()`). With the fix: 4 of 4 passed, with the TASK-41500 test (`-n 4`, load 34-37).

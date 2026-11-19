@@ -140,7 +140,8 @@ class LibraryNavigationController:
         if (
             context is None
             or not self.repair_present_on_resume
-            or not screen.is_mounted or not screen.is_attached  # TASK-41715: the stack may be empty
+            or not screen.is_mounted
+            or not screen.is_attached  # TASK-41715: the stack may be empty
             or screen.app.screen is not screen
         ):
             return

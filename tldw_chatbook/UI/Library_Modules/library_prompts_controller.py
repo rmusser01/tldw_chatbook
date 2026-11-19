@@ -3030,7 +3030,8 @@ class LibraryPromptsController:
             prompt_id: Original export identity; omit for immediate Copy results.
         """
         if (
-            self._screen.is_attached and self.app.screen is self._screen  # TASK-41715: the stack may be empty
+            self._screen.is_attached  # TASK-41715: the stack may be empty
+            and self.app.screen is self._screen
             and self._library_prompt_editor_active()
             and (prompt_id is None or self._selected_prompt_id == prompt_id)
         ):
