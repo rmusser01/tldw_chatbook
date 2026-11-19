@@ -17,7 +17,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The text selected in a focused Input (`$input-selection-background` and `-foreground`, which is what a keyboard return to a field shows) is under 4.5:1 as painted on most themes: camono is 2.49:1, litestep_dark 3.39:1, agentic_terminal 4.01:1 on `$panel`. It exists on dev today (`4b90eb860b`). No open PR fixes it: PR #3468 (TASK-38229) is about the caret. The Workflows search fixed its own field (TASK-33003.15 round 5); nothing fixes the general Input. Found incidentally by the Roleplay B2b follow-up burn-down (2026-11-07); evidence in `fu-caret-report.md` finding 2.
+The text selected in a focused Input (`$input-selection-background` and `-foreground`, which is what a keyboard return to a field shows) is under 4.5:1 as painted on most themes: camono is 2.49:1, litestep_dark 3.39:1, agentic_terminal 4.01:1 on `$panel`. It exists on dev today (`4b90eb860b`). No open PR fixes it; PR #3468 (TASK-38229, merged 2026-11-14) fixed only the Input caret. The Workflows search fixed its own field (TASK-33003.15 round 5); nothing fixes the general Input. Found incidentally by the Roleplay B2b follow-up burn-down (2026-11-07); evidence in `fu-caret-report.md` finding 2.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

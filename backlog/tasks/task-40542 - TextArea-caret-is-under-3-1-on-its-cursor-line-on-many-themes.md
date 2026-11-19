@@ -17,9 +17,9 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-A TextArea's caret is painted in `$input-cursor-background` on the widget's `$boost` cursor line, and that pairing is under 3:1 on 47 of the 267 theme x pane rows on dev today (`4b90eb860b`), across 19 themes. No open PR fixes it. Open PR #3468 (TASK-38229) pins the Input caret only; its fill model describes the Input's focus tint, not the TextArea cursor line. As a side effect it lifts 12 TextArea rows on the 4 dark themes it re-pins, which leaves 41 rows under 3:1 once it merges. Found by the Roleplay B2b follow-up burn-down (2026-11-07), measured as painted by #3468's theme x pane probe (its TextArea rows).
+A TextArea's caret is painted in `$input-cursor-background` on the widget's `$boost` cursor line, and that pairing is under 3:1 on 41 of the 267 theme x pane rows on dev today. On dev `4b90eb860b` it was 47 rows across 19 themes. PR #3468 (TASK-38229, merged 2026-11-14) pins the Input caret only, because its fill model describes the Input's focus tint, not the TextArea cursor line. As a side effect it lifted 12 TextArea rows on the 4 dark themes it re-pinned, which left 41. No open PR fixes it. The counts come from #3468's theme x pane probe (its TextArea rows) and were not re-measured on later dev. Found by the Roleplay B2b follow-up burn-down (2026-11-07).
 
-Affected themes on dev (19): ancient_papyrus, atom-one-dark, bunny_fluff, catppuccin-latte, cloudy_day, confectionery_bliss, kawaii_candy, litestep, pastel_dreams, retro_mint_chip, rose-pine-dawn, sakura_viewing_picnic, solarized_dark, solarized_light, solarized-dark, solarized-light, sweet_sorbet, tokyo-night and vintage_scroll.
+Affected themes on dev `4b90eb860b`, before #3468 (19): ancient_papyrus, atom-one-dark, bunny_fluff, catppuccin-latte, cloudy_day, confectionery_bliss, kawaii_candy, litestep, pastel_dreams, retro_mint_chip, rose-pine-dawn, sakura_viewing_picnic, solarized_dark, solarized_light, solarized-dark, solarized-light, sweet_sorbet, tokyo-night and vintage_scroll.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
