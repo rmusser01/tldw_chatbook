@@ -563,6 +563,10 @@ the editor alone, so keystrokes never land in the wrong box and focus never
 jumps away as you type or after you move to another field. The next refresh
 that arrives once your hands are off the field paints normally.
 
+A refresh of the Notes list also leaves alone a control outside the list
+that you clicked or Tabbed to: a pane grip, or **Library notes** / **Folder
+files** on the source strip, keeps focus when the list repaints beside it.
+
 Notes does not use **Ctrl+S**, and there is no replacement Notes save
 shortcut. Use the visible **Save** button when you want an immediate Library
 notes save; normal Tab navigation and **F6** can reach it. Autosave continues to
@@ -705,7 +709,9 @@ area beside it reads "Select a note to edit it here." — and puts focus on the
 first note row, where opening Notes puts it, not in the filter, so the next
 letter is a list key rather than filter text. When the list has no note row
 — no notes yet ("No notes yet. Create your first note."), or a kept filter
-that matches nothing — focus goes to its **New** button instead.
+that matches nothing — focus goes to its **New** button instead. (Opening
+an empty Notes list from the rail, from anywhere other than Create, puts
+focus in the filter.)
 
 ### Add from files and lasting sync
 
@@ -1225,7 +1231,8 @@ batch created, across all of them, which is why it can be larger than the
 number of notes that carry one. When the batch imported notes containing
 Obsidian embeds, the receipt says so too ("3 embedded files left as text").
 The receipt's own action then takes you to the Notes list holding what it
-created, with the count on its label. A file the app skipped for you — an unchanged repeat, an empty or
+created, with the count on its label, and leaves focus where leaving Import
+once does: on the first note row. A file the app skipped for you — an unchanged repeat, an empty or
 unsupported source — keeps its own reason there; only a row you set to Skip
 yourself reads "Skipped by you." A partial receipt states what finished. Retryable failures show
 **Retry N failures**; a cancelled batch with unfinished items shows **Retry

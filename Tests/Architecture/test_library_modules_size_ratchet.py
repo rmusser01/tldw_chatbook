@@ -179,7 +179,11 @@ _BUDGETS: dict[str, int] = {
     # refused as stale reloads the capture: 1756 -> 1771 (measured). Review
     # r16mo-rev1: the early toggle reaches the measured resolve as an explicit
     # priority, bound to its shell: 1771 -> 1782 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1782,
+    # repaint now keeps: 1747 -> 1756 (measured). 2026-11-18, TASK-41504
+    # review r16fo-rev1: an empty page's entry lands on Quick Capture unless
+    # a scope or filter narrowed it: 1756 -> 1776 (measured).
+    # 2026-11-18, TASK-41504 fix round 1 on the round-16 stack (TASK-41503's row plus this branch's growth): measured 1802.
+    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1802,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to
@@ -745,7 +749,12 @@ _BUDGETS: dict[str, int] = {
     # entry with New as its empty target: 7463 -> 7459.
     # 2026-11-17, TASK-41129 review r15lf-rev3: the targeted-sync restore
     # names its landing for the entry's descendant rule: 7459 -> 7462.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7462,
+    # 2026-11-18, TASK-41600/41601/41504: the targeted-sync restore keeps the
+    # control the user last clicked or Tabbed to, and stands down in Folder
+    # files; Folder files lands its search box or Change…/Choose folder…,
+    # after its first layout sync reads the workspace's real width; View
+    # imported notes lands like Import once's exits: 7462 -> 7492 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7492,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

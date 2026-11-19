@@ -534,6 +534,9 @@ _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID = {
     # makes this canvas's Escape hop live, and therefore what lets its footer
     # advertise the key honestly.
     LIBRARY_ROW_BROWSE_CONVERSATIONS: "library-conversation-row",
+    # TASK-41504: a press that left focus in the outgoing canvas landed on a
+    # pane grip or the rail; Collections now enters like the other lists.
+    LIBRARY_ROW_BROWSE_COLLECTIONS: "library-collections-item-row",
 }
 
 

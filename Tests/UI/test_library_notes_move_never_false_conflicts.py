@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from dataclasses import replace
+from uuid import uuid4
 
 import pytest
 from textual.widgets import Button
@@ -27,17 +29,35 @@ import tldw_chatbook.Notes.note_folder_repository as folder_repository_module
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import SIZE, _NotesProfile, _open_notes, _until
 from Tests.UI.test_library_shell import (
+    LIBRARY_TEST_SIZE,
     _FakeSkillsScopeService,
     LibraryProductionCSSHarness,
     _active_library_screen,
+    _build_test_app as _build_shell_app,
+    _hold_notes_placements,
     _seed_conversations,
+    _start_a_waiting_notes_entry,
+    _two_conversations,
+    _two_media_items,
+    _two_notes,
     _wait_for_library_shell,
+    _wait_for_notes_entry_focus_landing,
+    _wait_for_selector,
 )
+from tldw_chatbook.Library.library_note_import_state import NoteImportPhase
 from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
+from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.note_import_execution_models import (
+    ImportExecutionReceipt,
+    ImportSessionState,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+    LibraryFileNotesWorkspace,
+)
 from tldw_chatbook.Widgets.Library.library_note_folder_dialog import (
     LibraryNoteFolderTargetDialog,
 )
@@ -715,3 +735,327 @@ async def test_new_note_keeps_focus_after_a_targeted_notes_refresh(tmp_path) -> 
             ),
             lambda: f"New retains focus after its replacement: {screen.focused!r}",
         )
+
+
+def _fake_notes_library(*, held: bool = False):
+    """Two notes and two media items over the shell's fake services.
+
+    With ``held``, the Notes placements load waits while ``hold["on"]`` until
+    ``release`` is set (TASK-41129's waiting entry).
+    """
+    app = _build_shell_app()
+    _seed_conversations(
+        app, _two_conversations(), notes=_two_notes(), media=_two_media_items()
+    )
+    hold, release = _hold_notes_placements(app) if held else (None, None)
+    return LibraryProductionCSSHarness(app), hold, release
+
+
+def _focus_is(screen, widget_id: str) -> bool:
+    """Focus is on ``widget_id`` and Tab can reach it."""
+    focused = screen.focused
+    return (
+        focused is not None
+        and focused.id == widget_id
+        and focused in screen.focus_chain
+    )
+
+
+async def test_view_imported_notes_lands_on_the_notes_page() -> None:
+    """TASK-41504 AC#2: Import once's receipt action "View N imported notes"
+    lands where TASK-41128's exits do (owner: "Library notes page/blank
+    center"): the first note row, not the filter."""
+    host, _hold, _release = _fake_notes_library()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        receipt = ImportExecutionReceipt(
+            approval_id=str(uuid4()),
+            state=ImportSessionState.COMPLETED,
+            total=1,
+            completed=1,
+            imported=1,
+            updated=0,
+            skipped=0,
+            failed=0,
+            retryable=0,
+        )
+        controller = screen._library_note_import_controller
+        controller._state = replace(
+            controller.snapshot,
+            phase=NoteImportPhase.RECEIPT,
+            receipt=receipt,
+            latest_receipt=receipt,
+        )
+        controller.publish()
+        screen._notes_state.view = "import"
+        library_screen_module._sync_library_canvas(screen, "notes")
+        view = await _wait_for_selector(screen, pilot, "#note-import-view-notes")
+        await pilot.click(view)
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        await pilot.pause(0.5)
+        assert _focus_is(screen, "library-notes-tree-note-1"), screen.focused
+
+
+@pytest.mark.parametrize(
+    ("act", "target", "expected"),
+    [
+        pytest.param(
+            "tab",
+            "library-notes-source-database",
+            "library-notes-source-database",
+            id="tab",
+        ),
+        pytest.param(
+            "click",
+            "library-browse-library-grip",
+            "library-browse-library-grip",
+            id="grip-click",
+        ),
+        # Out of scope, unchanged: TASK-34000.89 owns the rail search box,
+        # which a sync still moves to the Notes rail row.
+        pytest.param(
+            "click", "library-search-input", "library-row-browse-notes", id="rail-search"
+        ),
+    ],
+)
+async def test_a_notes_canvas_sync_keeps_focus_on_a_control_outside_the_canvas(
+    act, target, expected, monkeypatch
+) -> None:
+    """TASK-41600: the user's Tab or grip click during a waiting Notes entry
+    keeps focus when the held rows arrive. The rows' canvas sync used to
+    replay an identity with no role for these controls, which fell back to
+    the Notes filter, although the control sits outside the repainted canvas
+    and was never replaced."""
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 10.0
+    )
+    host, hold, release = _fake_notes_library(held=True)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _start_a_waiting_notes_entry(screen, pilot, "media-switch", hold)
+        if act == "tab":
+            await pilot.press("tab")
+        else:
+            await pilot.click(f"#{target}")
+        await _wait(
+            pilot,
+            lambda: _focus_is(screen, target),
+            lambda: f"{act} to land on {target}: {screen.focused!r}",
+        )
+        assert not screen._library_pending_list_entry_focus
+        release.set()
+        await _wait_for_selector(screen, pilot, ".library-notes-row")
+        await pilot.pause(0.5)  # the rows' sync has restored by now
+        assert _focus_is(screen, expected), f"after the rows: {screen.focused!r}"
+
+
+async def test_a_click_while_a_notes_sync_repaints_keeps_its_target(monkeypatch) -> None:
+    """Review r16fo-rev1: a click that lands while a Notes canvas sync is
+    repainting keeps its target. The restore used to compare the widget
+    focused when the sync began, so it replayed the old row's identity over
+    the click. The click's focus half is done here exactly as Textual's
+    MouseDown forwarding does it: ``get_focusable_widget_at``, then
+    ``set_focus``.
+    """
+    host, _hold, _release = _fake_notes_library()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        await _wait(
+            pilot,
+            lambda: not screen._library_pending_list_entry_focus,
+            "the entry window to close",
+        )
+        grip = screen.query_one("#library-browse-library-grip")
+        restore = screen._restore_library_notes_after_targeted_sync
+
+        def click_the_grip_then_restore(*args, **kwargs):
+            region = grip.region
+            screen.set_focus(screen.get_focusable_widget_at(region.x, region.y))
+            return restore(*args, **kwargs)
+
+        monkeypatch.setattr(
+            screen,
+            "_restore_library_notes_after_targeted_sync",
+            click_the_grip_then_restore,
+        )
+        library_screen_module._sync_library_canvas(screen, "notes")
+        await _wait(
+            pilot,
+            lambda: _focus_is(screen, "library-browse-library-grip"),
+            lambda: f"the clicked grip to keep focus: {screen.focused!r}",
+        )
+        await pilot.pause(0.5)
+        assert _focus_is(screen, "library-browse-library-grip"), screen.focused
+
+
+async def test_a_notes_canvas_sync_still_restores_a_grip_the_user_did_not_choose() -> None:
+    """TASK-41600: only a click or Tab keeps a grip through a Notes sync.
+
+    Focus the app left on a grip (Textual's reset off a removed control does
+    this; it is set directly here) is restored as before, to the navigator's
+    fallback, the filter. Keeping it broke Import once's picker return.
+    """
+    host, _hold, _release = _fake_notes_library()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        await _wait(
+            pilot,
+            lambda: not screen._library_pending_list_entry_focus,
+            "the entry window to close",
+        )
+        screen.set_focus(screen.query_one("#library-browse-library-grip"))
+        await _wait(
+            pilot,
+            lambda: _focus_is(screen, "library-browse-library-grip"),
+            "focus on the grip",
+        )
+        library_screen_module._sync_library_canvas(screen, "notes")
+        await _wait(
+            pilot,
+            lambda: _focus_is(screen, "library-notes-filter"),
+            lambda: f"the sync to restore the filter: {screen.focused!r}",
+        )
+
+
+@pytest.mark.parametrize(
+    ("journey", "linked", "size", "expected"),
+    [
+        pytest.param(
+            "switch", False, LIBRARY_TEST_SIZE, "file-notes-choose-root",
+            id="switch-no-folder",
+        ),
+        pytest.param(
+            "switch", True, LIBRARY_TEST_SIZE, "file-notes-search", id="switch-linked"
+        ),
+        pytest.param(
+            "rail-entry", False, LIBRARY_TEST_SIZE, "file-notes-choose-root",
+            id="rail-entry-no-folder",
+        ),
+        pytest.param(
+            "rail-entry", True, LIBRARY_TEST_SIZE, "file-notes-search",
+            id="rail-entry-linked",
+        ),
+        # Review r16fo-rev1: below 120 columns the Files pane is closed, so
+        # its search box is hidden; Change… (the same button) takes focus.
+        pytest.param(
+            "switch", True, (80, 24), "file-notes-choose-root",
+            id="switch-linked-80x24",
+        ),
+    ],
+)
+async def test_folder_files_focus_lands_on_a_visible_files_control(
+    journey, linked, size, expected, tmp_path, monkeypatch
+) -> None:
+    """TASK-41601: Folder files hides the Database Notes shell, filter and
+    rows mounted. Switching to Folder files left focus on that hidden filter
+    (a Database canvas sync's restore), and a Notes rail entry ended on a
+    files search box hidden with the unlinked Files pane. Both now land on
+    the Folder files entry target, inside ``screen.focus_chain``: the Files
+    search box when the Files pane shows it, otherwise Choose folder… (or
+    Change…, with a folder linked)."""
+    replica = FileNotesReplica(":memory:")
+    host, _hold, _release = _fake_notes_library()
+    async with host.run_test(size=size) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        if linked:
+            root = tmp_path / "vault"
+            root.mkdir()
+            (root / "note.md").write_text("note", encoding="utf-8")
+            screen._notes_state.file_notes_workspace_factory = lambda: (
+                LibraryFileNotesWorkspace(root=root, replica=replica)
+            )
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        # Every focus write into the Database Notes shell, which the switch
+        # hides, from the switch on.
+        database = screen.query_one(".library-notes-route")
+        hidden = []
+        set_focus = screen.set_focus
+
+        def recording_set_focus(widget, *args, **kwargs):
+            if widget is not None and database in widget.ancestors:
+                hidden.append(widget)
+            return set_focus(widget, *args, **kwargs)
+
+        monkeypatch.setattr(screen, "set_focus", recording_set_focus)
+        await pilot.click("#library-notes-source-files")
+
+        def where() -> str:
+            focused = screen.focused
+            reachable = focused is not None and focused in screen.focus_chain
+            return f"{journey}: focus on {focused!r} (in the focus chain: {reachable})"
+
+        if journey == "rail-entry":
+            # Folder files has its own rail; the Database one is hidden.
+            await _wait(pilot, screen._file_notes_active, "Folder files to open")
+            await pilot.pause(0.5)
+            rail_row = next(
+                row
+                for row in screen.query("#library-row-browse-notes")
+                if row in screen.focus_chain
+            )
+            await pilot.click(rail_row)
+        await _wait(pilot, lambda: _focus_is(screen, expected), where)
+        await _wait(
+            pilot,
+            lambda: not screen._library_pending_list_entry_focus,
+            "the entry window to close",
+        )
+        await pilot.pause(0.5)
+        assert _focus_is(screen, expected), where()
+        # Not even for a moment on the hidden Database Notes shell.
+        assert not hidden, f"focus went to hidden Database Notes controls: {hidden!r}"
+        workspace = screen._notes_state.file_notes_workspace
+    if workspace is not None:
+        await workspace.shutdown()
+    replica.close()
+
+
+async def test_the_folder_files_layout_sync_reads_the_workspaces_real_width(
+    tmp_path,
+) -> None:
+    """TASK-41601, review r16fo-rev2: the deterministic pin for the width
+    refresh. The workspace learns its width from its own Resize, which can
+    arrive after the first layout sync; two width-0 Resizes left it
+    ``narrow``, and that sync opened the Files pane at 80 columns. Here the
+    stale flag is set by hand, so no timing is involved."""
+    replica = FileNotesReplica(":memory:")
+    host, _hold, _release = _fake_notes_library()
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        root = tmp_path / "vault"
+        root.mkdir()
+        (root / "note.md").write_text("note", encoding="utf-8")
+        screen._notes_state.file_notes_workspace_factory = lambda: (
+            LibraryFileNotesWorkspace(root=root, replica=replica)
+        )
+        screen.query_one("#library-row-browse-notes").press()
+        await _wait_for_notes_entry_focus_landing(screen, pilot)
+        await pilot.click("#library-notes-source-files")
+        await _wait(
+            pilot,
+            lambda: _focus_is(screen, "file-notes-choose-root"),
+            lambda: f"Folder files to settle: {screen.focused!r}",
+        )
+        workspace = screen._notes_state.file_notes_workspace
+        shell = workspace.query_one("#library-file-notes-reader-shell")
+        assert workspace.size.width >= 80 and not shell.items.display
+
+        workspace._narrow = True  # what two width-0 Resizes leave behind
+        screen._sync_library_file_notes_reader_layout_from_shell()
+        assert not workspace.narrow, "the sync kept the stale narrow flag"
+        assert not shell.items.display, "the sync opened the Files pane at 80 columns"
+    await workspace.shutdown()
+    replica.close()

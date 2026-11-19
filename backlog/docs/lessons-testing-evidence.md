@@ -25,6 +25,12 @@
 
 **What to do.** A "cold" or "headless" test must start where nothing has warmed the service under test: check which screens and startup paths build it, pick a start tab that does not, and assert the cold precondition (here `vars(app)["_local_skill_trust_service"] is None`) before the action.
 
+## A focus test that checks only where focus ends passes a moment on a hidden control (TASK-41601, 2026-11-18)
+
+**Incident.** Removing the Folder files guard from the Notes targeted-sync restore left all four Folder files focus pins green. The restore still put focus on the hidden Database filter, and a deferred restore moved it to the visible Folder files control one refresh later, so the end state was right. With every `set_focus` write into the hidden shell recorded (`monkeypatch.setattr(screen, "set_focus", recorder)`), the same mutant failed 4 of 4.
+
+**What to do.** When the claim is "focus never lands on X", record the focus writes and assert none hit X. A sample of the final focus only proves where focus ended.
+
 ## A check made right after pressing a dialog's confirm races the worker its callback starts, and was filed as a product bug (TASK-41513, 2026-11-18)
 
 **Incident.** TASK-41513 was filed as "RAG's own Review recovery never approves `rag.definitions`, `rag.projections` or `db.rag_indexing`", from a red `[rebuild]` node in `test_rag_model_recovery_controls.py`. The product approved them. The test pressed the review dialog's confirm, then ran `await host.workers.wait_for_complete(); await pilot.pause()` and checked the approvals. The approval worker is started by the dialog's dismiss callback, after the press is handled, so `wait_for_complete()` found no worker and returned at once. `pilot.pause()` waits only until the process stops using CPU (`wait_for_idle`, at most 1 s), and a worker thread that is descheduled under load, or blocked on I/O, uses none. With a temporary 3 s sleep in `approve_recovery_review` the base test failed the same way (all three owners unapproved, no approval message yet); with a 10 s wait before the check it passed, and the index became searchable.

@@ -1993,6 +1993,16 @@ Pilot pins were green.
     the user leaving the list and disarmed the landing (1 of 10 runs under
     CPU load; certain once the attempt is held). Landing at once, while the
     rows are known to be mounted, takes the race away.
+- **A third incident (TASK-41600, 2026-11-18).** A Notes canvas sync was
+  changed to leave a pane grip focused when the repaint had not replaced it,
+  so a user's grip click survives the rows arriving. The first cut kept any
+  grip. Import once's picker return then stayed on `#library-browse-items-grip`
+  (`test_tab_from_the_selection_pane_cycles_the_three_actions`): Textual's
+  reset had parked focus there before the sync, and the sync's restore used
+  to heal it. The fix keeps only a widget a click (`get_focusable_widget_at`)
+  or Tab (`action_focus_next`/`_previous`) focused, recorded on the screen
+  and cleared when focus moves anywhere else. "Is it still focused?" cannot
+  tell the user's choice from the framework's.
 
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 
@@ -2713,3 +2723,10 @@ nodes had been red for weeks; a `set_focus` wrapper with a short stack, plus a l
 **The same window also raises `ScreenStackError` (TASK-41702).** Textual's `_close_all` prunes only the screens on the stack, then clears the stack. Installed screens that are suspended, the reused Home and Library here, are not pruned, so their workers and refreshes keep running. Any `self.app.screen` they read now raises `ScreenStackError: No screens on stack`. Review r16lb-rev1 hit it from `HomeScreen._sync_home_triage_after_refresh`. A serial 5-round run of the laned Home visitors then hit it 2 of 5 times from `LibraryScreen._library_emergency_return_eligibility`, which `LibraryScreen.refresh` reaches when a pruned child refreshes its parent. The fence is set before the stack empties, so the same `is_attached` check covers both. Put it ahead of the `self.app.screen` read: `self.is_mounted and self.is_attached and self.app.screen is ...`.
 
 **A Select's `NoMatches 'SelectOverlay'` at boot was a prune, not the exit fence (TASK-41502).** The same round's Prompts boot and route nodes failed on `NoMatches 'SelectOverlay'` (and `'#label'`) from `Select._on_mount`, the error TASK-41141 had gated for `App._exit`. A probe of `App._prune` and `Select._on_mount` showed `_pruning` True at the Select's Mount in 10 of 10 failing runs, and `_exit` False in 9 (the tenth was already shutting down): the Library snapshot reconcile removed the Prompts canvas for its source-error callout while the canvas's own recompose had a new type filter registered but not yet composed. A pruned widget's `mount` mounts nothing, so its `_on_mount` found no children. Print `_pruning` as well as `_exit` at the failing call. For a `Select` that a recompose or a replacement can catch mid-compose, the fix is `PruneSafeSelect`, which skips child setup only once Textual has committed to removing it.
+
+## A repaint that awaits one pane at a time lets a timer put focus in a pane it has not reached yet (TASK-41504, 2026-11-18)
+
+**Incident.** Collections joined the Library list entry channel, which retries its landing every 50 ms. Media -> Collections then ended on `#library-collections-library-grip` in 2 of 10 runs, and 4 of 16 in a `set_focus` trace. The capture loader repaints through `recompose_capture_panes`, which reads `screen.focused` once and then awaits each pane's `recompose()` in turn: scope rows, then Items, then Work. The entry's retry tick ran while the scope rows recomposed. It focused the filter in the old Items pane, and the Items recompose then removed it. Textual's reset parked focus on the grip. The pane's own restore by id did not fire, because focus had been None when it read it. Waiting for the controller's page state did not help either: `load_page` had settled the state before the next repaint began.
+
+**What to do.** When a seam lands focus on content that its owner repaints in several awaited steps, wait until the owner's whole sequence has ended, not until its data is ready. Here that means the loader worker (`group="library_collections_capture_entry"`) has finished. A later repaint then finds focus set and restores it by id.
+

@@ -44,13 +44,22 @@ from Tests.UI.library_quit_guard_support import (
     _until,
 )
 from Tests.UI.test_library_shell import (
+    LIBRARY_TEST_SIZE,
     LibraryHarness,
+    LibraryProductionCSSHarness,
     _active_library_screen,
     _build_test_app,
     _seed_conversations,
+    _two_conversations,
+    _two_media_items,
+    _two_notes,
+    _wait_for_condition,
     _wait_for_library_shell,
     _wait_for_selector,
 )
+from tldw_chatbook.Library.collections_capture_models import CaptureSaveRequest
+from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Widgets.Library import LIBRARY_ADAPTIVE_READER_GRIP_CLASS
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
 )
@@ -690,3 +699,159 @@ async def test_controller_hosted_media_sync_re_requests_an_armed_list_entry_focu
 
         assert requested == [generation]
     profile.db.close_connection()
+
+#: The first row each destination lands on, once settled.
+_FIRST_ROW = {"media": "library-media-row-0", "notes": "library-notes-tree-note-1"}
+
+
+@pytest.mark.parametrize(
+    ("notes", "captures", "setup", "switch", "expected"),
+    [
+        # TASK-41504: each switch the libfocus stream saw land on a pane grip
+        # or the rail row, and where it must land: the first row, or the empty
+        # list's documented control (the Notes filter, task-31946; Collections'
+        # Quick Capture, or its filter when a scope or filter narrowed it).
+        pytest.param(
+            True, "", (), ("click", "notes"), _FIRST_ROW["notes"], id="rail-click-notes"
+        ),
+        pytest.param(
+            False, "", (), ("press", "notes"), "library-notes-filter",
+            id="press-empty-notes",
+        ),
+        pytest.param(
+            False, "", (), ("click", "notes"), "library-notes-filter",
+            id="click-empty-notes",
+        ),
+        pytest.param(
+            False, "", ("media",), ("click", "notes"), "library-notes-filter",
+            id="media-click-empty-notes",
+        ),
+        pytest.param(
+            True, "", ("media",), ("press", "collections"),
+            "library-collections-quick-capture",
+            id="media-press-collections",
+        ),
+        pytest.param(
+            True, "saved", ("media",), ("press", "collections"),
+            "library-collections-row-0",
+            id="media-press-collections-with-captures",
+        ),
+        pytest.param(
+            True, "saved-archived-scope", ("media",), ("press", "collections"),
+            "library-collections-filter",
+            id="media-press-collections-empty-scope",
+        ),
+        pytest.param(
+            True, "capture-unavailable", ("media",), ("press", "collections"),
+            "library-collections-filter",
+            id="media-press-collections-quick-capture-disabled",
+        ),
+        pytest.param(
+            True, "", ("media", "notes"), ("press", "media"), _FIRST_ROW["media"],
+            id="notes-press-resident-media",
+        ),
+        pytest.param(
+            True, "", ("notes", "media"), ("click", "notes"), _FIRST_ROW["notes"],
+            id="media-click-resident-notes",
+        ),
+    ],
+)
+async def test_each_library_switch_lands_on_its_first_row_never_a_grip(
+    notes, captures, setup, switch, expected, monkeypatch
+):
+    """TASK-41504: a rail click or a code-driven ``press()`` lands entry focus
+    on the destination's first row (or its empty list's control), reachable,
+    and still there once the entry window has closed -- never a pane grip
+    or the rail row. Production stylesheet at 170x48, where grips were seen.
+    """
+    app = _build_test_app()
+    _seed_conversations(
+        app,
+        _two_conversations(),
+        notes=_two_notes() if notes else [],
+        media=_two_media_items(),
+    )
+    scope = app.collections_capture_scope_service
+    if captures == "capture-unavailable":
+        # No capability answer, so Quick Capture is drawn disabled.
+        async def no_capabilities():
+            raise RuntimeError("capabilities unavailable")
+
+        scope.capabilities = no_capabilities
+    elif captures:
+        # Two saved captures, so the entry has rows to wait for.
+        for title in ("Alpha", "Beta"):
+            await scope.save_capture(
+                CaptureSaveRequest(
+                    scope.active_authority.key,
+                    f"https://example.test/{title.lower()}",
+                    title=title,
+                    text_content=f"Readable {title} body.",
+                )
+            )
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        if captures == "saved-archived-scope":
+            # Nothing is archived, so the page is empty but narrowed.
+            screen._collections_state.active_scope = "archived"
+
+        def on(widget_id: str) -> bool:
+            focused = screen.focused
+            return (
+                focused is not None
+                and focused.id == widget_id
+                and focused in screen.focus_chain
+            )
+
+        def where() -> str:
+            focused = screen.focused
+            reachable = focused is not None and focused in screen.focus_chain
+            return f"focus on {focused!r} (in the focus chain: {reachable})"
+
+        async def settle_on(widget_id: str) -> None:
+            await _wait_for_condition(
+                pilot, lambda: on(widget_id), message=lambda: f"{widget_id}: {where()}"
+            )
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen._library_pending_list_entry_focus,
+                message="The entry window never closed.",
+            )
+
+        def put_focus_on(widget_id: str) -> bool:
+            """Focus ``widget_id`` until it holds, whatever the entry did."""
+            if on(widget_id) and not screen._library_pending_list_entry_focus:
+                return True
+            for widget in screen.query(f"#{widget_id}"):
+                screen.set_focus(widget)
+            return False
+
+        for row in setup:
+            # The user is on the first row before the switch under test.
+            screen.query_one(f"#library-row-browse-{row}").press()
+            first = _FIRST_ROW[row]
+            for _ in range(2):  # again after a pause, should a late repaint move it
+                await _wait_for_condition(
+                    pilot,
+                    lambda first=first: put_focus_on(first),
+                    message=lambda first=first: f"setup {first}: {where()}",
+                )
+                await pilot.pause(0.3)
+        how, row = switch
+        if captures == "saved":
+            # Review r16fo-rev2: this entry waits out the whole capture
+            # loader, the closest of these to the 2 s window; give it room.
+            monkeypatch.setattr(
+                library_screen_module, "LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS", 6.0
+            )
+        if how == "click":
+            await pilot.click(f"#library-row-browse-{row}")
+        else:
+            screen.query_one(f"#library-row-browse-{row}").press()
+        await settle_on(expected)
+        await pilot.pause(0.5)  # a late restore or repaint would show here
+        assert on(expected), where()
+        assert not screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
