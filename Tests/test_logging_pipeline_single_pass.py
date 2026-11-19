@@ -449,10 +449,10 @@ class EarlyApp:
 lc.configure_application_logging(EarlyApp())
 evaluated = []
 logger.opt(lazy=True).debug("lazy {}", lambda: evaluated.append(1) or "x")
-started = time.perf_counter()
+started = time.process_time()
 for _ in range(20000):
     logger.debug("dropped")
-dropped_us = (time.perf_counter() - started) / 20000 * 1e6
+dropped_us = (time.process_time() - started) / 20000 * 1e6
 logger.info("provider call api_key={} failed", sys.argv[1])
 for handler in logging.getLogger().handlers:
     handler.flush()
@@ -501,7 +501,9 @@ def test_production_wiring_drops_debug_before_evaluating_lazy_arguments(tmp_path
     result = json.loads(lines[-1][len("RESULT ") :])
 
     assert result["lazy_evaluated"] == 0
-    # ~0.15 us measured with the gate, ~7-8 us without; 2 us leaves CI headroom.
+    # CPU time per dropped call: 0.13-0.16 us with the gate, 8.1-8.3 us without
+    # (load ~58, TASK-41602). Wall time also counted the child's waits for a
+    # CPU: one run at that load read 3.44 us of wall time for 0.14 us of CPU.
     assert result["dropped_debug_us"] < 2.0, result["dropped_debug_us"]
     assert "provider call api_key=" in result["log"]
     assert SECRET not in result["log"]
