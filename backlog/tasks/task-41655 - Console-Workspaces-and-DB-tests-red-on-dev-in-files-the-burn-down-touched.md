@@ -1,7 +1,7 @@
 ---
 id: TASK-41655
 title: "Console, Workspaces and DB tests red on dev in files the burn-down touched"
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-11-17 19:05
 labels:
@@ -35,7 +35,7 @@ Found during the TASK-41306..41320 follow-up burn-down (2026-11-17, merged as #3
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each listed node passes, or is filed as its own task with its cause
+- [x] #1 Each listed node passes, or is filed as its own task with its cause
 - [x] #2 Nodes that turn out to be load flakes are recorded as such, with a passing isolated run
 <!-- AC:END -->
 
@@ -59,7 +59,7 @@ Re-checked on dev d0486978dd (2026-11-18, load 20-100 on 18 CPUs). Per node:
 
 **Fixed here (test drift):**
 - `test_trigger_census.py`, both nodes x both params: v85->v86 (7970fbcada) added five `console_prompt_mixin_*` triggers and rewrote `conversations_ad`, and v84->v85 (dd8d60c9e8) rewrote `conversations_sync_update`, without pinning them. Each new digest was computed from the declaring migration's SQL text and matches the live one. Base red 4/4, head 19/19.
-- `test_console_trace_provenance.py::test_explicit_prepared_request_constructor_rejects_missing_on_provenance`: 7970fbcada added the derived `cache_boundary` field (`init=False`); the test fed every field back to the constructor and died with a `TypeError`. It now passes constructor fields only and reaches the missing-provenance refusal.
+- `test_console_trace_provenance.py::test_explicit_prepared_request_constructor_rejects_missing_on_provenance`: 7970fbcada added the derived `cache_boundary` field (`init=False`); the test fed every field back to the constructor and died with a `TypeError`. It now passes constructor fields only and reaches the missing-provenance refusal. Dev's TASK-41508 (#3631) landed the same fix first, so this branch's commit for it was dropped when the stack was rebased onto dev e446ab06eb on 2026-11-19.
 - `test_console_configuration_preparation.py::test_ready_local_skill_capture_runs_original_body_on_worker_and_matches_snapshot`: since 11d71e5db5 (#3480), synchronous capture under a managed runtime reads only closed MCP metadata (`MCP/console_snapshot.py::_mcp_metadata_is_closed`: no `policy_enforcer`, stock manifest loaded). `runtime_case`'s loop projection installs both a policy enforcer and a custom manifest provider, so the legacy snapshot is pending with an empty ceiling. The test now asserts the open metadata and the deferral. It no longer asserts session ephemerality, because the deferral does not depend on it. The owned-vs-legacy parity over every field is unchanged.
   - **Dropped property, for the owner to see.** The test used to assert "legacy synchronous capture still reads MCP; stock temporary sessions capture an empty ceiling because they never compose MCP". #3480 (11d71e5db5) removed that behaviour, and #3480 was merged without owner approval. This repair records the new behaviour; it does not endorse it. Under #3480 an open-metadata capture is pending, and a pending capture makes the ordinary footprint opaque (`console_ordinary_tree.py` `_capture_maximum`), even for a temporary session.
   - **New node for the non-empty case:** `test_closed_mcp_metadata_gives_owned_and_legacy_capture_one_ceiling`. With closed metadata (stock manifest, no enforcer), both captures produce the same non-empty ceiling and agree on every field except the skill nonce and `mcp_definition_complete`. Only the owned capture can prove its definition set complete; the synchronous `_capture_mcp_definition_selection` always reports incomplete. Mutation check: dropping one definition from the owned capture's maximum fails the node, on `mcp_definition_maximum`/`mcp_tool_maximum`. The whole file passes at `-n 4` (24 passed).
@@ -93,4 +93,6 @@ Re-checked on dev d0486978dd (2026-11-18, load 20-100 on 18 CPUs). Per node:
 - ssh custody: `test_caller_snapshot_cannot_prove_mcp_footprint_is_bounded[True-ssh_console0]`, `test_changed_original_provider_callback_refuses_after_enqueue[handler]`, `test_original_local_virtual_source_and_roots_are_in_initial_maximum[False-ssh_console0]`.
 
 **Files.** `Tests/ChaChaNotesDB/test_trigger_census.py`, `Tests/Chat/test_console_trace_provenance.py`, `Tests/Chat/test_console_configuration_preparation.py`, `Tests/Chat/test_console_reference_custody.py`, `tldw_chatbook/DB/migrations/README.md`.
+
+**AC #1 (coordinator, 2026-11-19).** Remaining nodes are owned: the three ssh-custody nodes are appended to TASK-41060 (same cause as its stock_local node); ordinary tree stays with TASK-41028; the stock-owned send_enter/send_button cases with TASK-34563.35; reference custody is fixed here per the owner's 2026-11-18 decision (keep refusing the Send); the other ChaChaNotes reds seen on the way are TASK-41954 and the index census TASK-41953. Laned: reference custody and configuration preparation (admission-4), trigger census (architecture-guards).
 <!-- SECTION:NOTES:END -->
