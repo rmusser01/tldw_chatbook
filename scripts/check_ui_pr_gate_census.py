@@ -1161,6 +1161,12 @@ MINIMUM_FILES = 2407
 # retargets in files the slices' lane notes missed. The floor is the
 # measured entry count.
 MINIMUM_FILES = 2412
+MINIMUM_FILES = 2258
+MINIMUM_FILES = 2250
+# TASK-41502/TASK-41503 (2026-11-18): append the two Prompts boot and route
+# nodes, the prune-safe type filter pin and the two Collections reader pins at
+# the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2417
 
 
 def read_census(path: Path) -> list[str]:

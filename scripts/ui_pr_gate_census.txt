@@ -3499,3 +3499,12 @@ Tests/UI/test_library_per_click_recompose_t21116.py::test_media_viewer_back_is_c
 Tests/UI/test_library_review_round_t21116.py::test_routine_snapshot_midswap_still_runs_the_projection_follow_up
 Tests/UI/test_library_review_round_t21116.py::test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync
 Tests/UI/test_library_review_round_t21116.py::test_viewer_substate_escape_refreshes_the_footer_shortcut_set
+# TASK-41502 (2026-11-18): the Prompts type filter is prune-safe. The Prompts
+# boot and route nodes TASK-41127 left red, and the pin.
+Tests/UI/test_screen_navigation.py::test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected
+Tests/UI/test_screen_navigation.py::test_prompts_route_lands_on_library_with_prompts_row_selected
+Tests/UI/test_library_prompts_canvas.py::test_type_filter_survives_its_canvas_being_replaced_mid_recompose
+# TASK-41503 (2026-11-18): Collections keeps a pane toggle sent before the
+# first measure, and a hard delete refused as stale reloads the capture.
+Tests/UI/test_library_collection_reader_journeys.py::test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is
+Tests/UI/test_library_collection_reader_journeys.py::test_a_hard_delete_refused_as_stale_reloads_so_the_next_confirm_deletes

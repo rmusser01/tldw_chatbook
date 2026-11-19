@@ -161,6 +161,9 @@ class LibraryCollectionsController:
             set_library_collections_capture_controller
         )
         self._pane_sync_lock = asyncio.Lock()
+        # TASK-41503: (shell, pane) of a toggle that arrived before that shell
+        # was measured; its measured sync applies it.
+        self._deferred_layout_priority: tuple[Any, str] | None = None
 
     # -- framework services: live-read properties, never snapshotted -----
 
@@ -243,7 +246,21 @@ class LibraryCollectionsController:
             return
         width = shell.content_size.width
         if width <= 0 or not self._library_adaptive_reader_allocation_is_current(shell):
+            if priority is not None:
+                self._deferred_layout_priority = (shell, priority)
             return
+        deferred, self._deferred_layout_priority = self._deferred_layout_priority, None
+        if (
+            priority is None
+            and deferred is not None
+            and deferred[0] is shell
+            and getattr(
+                self._library_collections_reader_preferences, f"{deferred[1]}_open"
+            )
+        ):
+            # Explicit, not inherited: the resolver's reopen hysteresis would
+            # close an inherited pane again. A later close cancels it.
+            priority = deferred[1]
         previous = self._library_collections_reader_layout
         if not (previous.reader_width or previous.library_width or previous.items_width):
             previous = None
@@ -1716,6 +1733,15 @@ class LibraryCollectionsController:
                 else "hard_delete_failed"
             )
             self._notify_library_collections_warning(reason)
+            if reason == "revision_conflict":
+                # TASK-41503: the loaded revision is stale. Reload it so the
+                # confirm, still armed, sends the current one.
+                try:
+                    await self._run_library_collections_capture_transition(
+                        controller.refresh_selected_detail()
+                    )
+                except CollectionsCaptureError as reload_exc:
+                    self._notify_library_collections_warning(reload_exc.reason)
         else:
             self._library_collections_confirming_hard_delete = False
             request = self._library_collections_capture_request()

@@ -13967,3 +13967,67 @@ async def test_prompts_selection_action_labels_hold_their_column_when_enabled():
             assert not button.disabled, selector
             after[selector] = _painted_word_column(host, button, word)
         assert after == before, (before, after)
+
+
+@pytest.mark.asyncio
+async def test_type_filter_survives_its_canvas_being_replaced_mid_recompose(
+    monkeypatch,
+):
+    """TASK-41502: a canvas replaced mid-recompose must not crash its type filter.
+
+    At boot on Prompts, the browse result's ``sync_state`` recomposes the
+    canvas while the Library snapshot reconcile removes that canvas for the
+    source-error callout. The new type filter is in the DOM but has not
+    composed, so it composes as a pruned widget: ``mount`` mounts nothing,
+    and a stock ``Select._on_mount`` raised ``NoMatches 'SelectOverlay'``
+    into ``App._exception``, which ends the app. The Compose is held here to
+    make that window certain.
+    """
+    from textual.widget import Widget
+
+    app = _CanvasHost(_three_row_state())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
+        first = canvas.query_one("#library-prompts-type-filter", Select)
+        held, release = asyncio.Event(), asyncio.Event()
+
+        async def held_compose(widget, event):
+            if widget.id == "library-prompts-type-filter" and widget is not first:
+                held.set()
+                await release.wait()
+            await Widget._on_compose(widget, event)
+
+        monkeypatch.setattr(Select, "_on_compose", held_compose, raising=False)
+        canvas.sync_state(
+            state=_three_row_state(sort="name"),
+            sort_mode="name",
+            filter_value="",
+            browse_result=None,
+            pager=None,
+            mode="list",
+            editor_state=None,
+            conflict=False,
+            status="",
+            show_open_existing=False,
+            import_open=False,
+            import_path="",
+            import_status="",
+            dirty=False,
+            can_update_original=False,
+            include_starter_content=False,
+            history_state=None,
+            history_current_compatible=True,
+            collection_label="",
+            membership_state=None,
+            sort_choices_visible=False,
+            page_actions_disabled=False,
+        )
+        await asyncio.wait_for(held.wait(), timeout=10)
+        removal = canvas.remove()  # What the Library snapshot reconcile does.
+        release.set()
+        await asyncio.wait_for(removal, timeout=10)
+        await pilot.pause()
+
+        assert app._exception is None, "the replaced type filter crashed the app"
+        assert not app.query("#library-prompts-canvas")

@@ -174,8 +174,12 @@ _BUDGETS: dict[str, int] = {
     # takes the same pane-sync lock: 1740 -> 1741 (measured). The pane sync
     # reads an open Quick Capture form's mounted fields: 1741 -> 1747 (measured).
     # Review r15lc-rev2: Clear and a landed link empty the free-text fields a
-    # repaint now keeps: 1747 -> 1756 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1756,
+    # repaint now keeps: 1747 -> 1756 (measured). 2026-11-18, TASK-41503: a
+    # toggle before the first measure keeps its priority, and a hard delete
+    # refused as stale reloads the capture: 1756 -> 1771 (measured). Review
+    # r16mo-rev1: the early toggle reaches the measured resolve as an explicit
+    # priority, bound to its shell: 1771 -> 1782 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1782,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to
