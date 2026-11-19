@@ -853,3 +853,11 @@ already-issued discovery workers. After the bounded Task wait, check Worker.wait
 too: Textual can consume cancellation and return normally. A real cancellation
 control reproduced that normal return and then WorkerCancelled before any queue
 dispatch, with clean teardown. No publication guard or source authority changed.
+
+Checking the actual comprehensive release selection then exposed six more
+fixture failures hidden outside the PR census: two profile-bound Console tests
+needed per-node bootstrap markers, and four native cancellation controls reached
+an async function that their coroutine-only worker double rejected. Match the
+installed worker's async-function contract in the shared double, keeping invalid
+synchronous work rejected. The original six failures and one pass became twenty
+passing affected/caller controls with all native and UI assertions unchanged.

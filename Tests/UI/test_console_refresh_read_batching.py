@@ -1,6 +1,7 @@
 """Finite refresh reads avoid repeated UI-thread database admission."""
 
 import asyncio
+import inspect
 import threading
 from types import SimpleNamespace
 
@@ -19,6 +20,8 @@ def _agent(bridge):
     runtime = SimpleNamespace(agent_bridge=bridge)
 
     def run_worker(operation, **_kwargs):
+        if inspect.iscoroutinefunction(operation):
+            operation = operation()
         task = asyncio.create_task(operation)
         tasks.append(task)
         return task
@@ -41,6 +44,14 @@ def _agent(bridge):
         reveal_agent_detail=lambda: None,
     )
     return controller, tasks
+
+
+@pytest.mark.asyncio
+async def test_agent_worker_double_rejects_synchronous_functions():
+    agent, tasks = _agent(None)
+    with pytest.raises(TypeError):
+        agent.run_worker(lambda: None)
+    assert tasks == []
 
 
 class _Bridge:

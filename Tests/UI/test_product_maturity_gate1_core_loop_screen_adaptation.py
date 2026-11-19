@@ -211,6 +211,7 @@ async def test_home_selected_item_matches_prioritized_details_control():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_core_loop_exposes_agentic_shell_regions():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -260,6 +261,7 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_native_session_surface_survives_screen_recompose():
     app = _build_test_app()
     host = ConsoleHarness(app)
