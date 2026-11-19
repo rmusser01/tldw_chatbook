@@ -50,6 +50,7 @@ def test_project_turn_witness_rejects_invalid_context_counts(count):
         "disabled",
         "missing_tag",
         "wrong_role",
+        "compatible_policy",
         "wrong_policy",
         "wrong_source",
         "wrong_count",
@@ -68,8 +69,12 @@ def test_project_turn_preparation_validates_current_context_and_prior_anchor(
     with db.transaction() as cursor:
         origin = repository.get_call(cursor, witness.origin_call_id)
         policy = repository.get_policy(cursor, origin.policy_id)
-    if scenario == "wrong_policy":
+    if scenario == "compatible_policy":
         policy = replace(_policy(), credential_filter_version="credentials-v2")
+    elif scenario == "wrong_policy":
+        policy = replace(
+            _policy(), credential_filter_version="unsupported-test-version"
+        )
     context = {
         "role": "assistant" if scenario == "wrong_role" else "user",
         "content": "current project guidance",
@@ -113,7 +118,7 @@ def test_project_turn_preparation_validates_current_context_and_prior_anchor(
     admission = replace(admission, descriptors=descriptors, completed_tool_turn=witness)
     with db.transaction() as cursor:
         before = _compound_storage_snapshot(cursor)
-        if scenario in {"valid", "disabled"}:
+        if scenario in {"valid", "disabled", "compatible_policy"}:
             boundary = service.prepare_surface_provenance(
                 cursor,
                 admission.projection_checkpoint,

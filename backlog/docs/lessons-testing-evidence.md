@@ -26137,3 +26137,13 @@ advancing through the tie. The first combined targeted run timed out.
 converted column for the index entry. Exercise the converter and a dense
 timestamp tie. Bound iteration in the regression so a repeated cursor fails
 with the offending IDs.
+
+## Readable credential-filter versions can share a trace policy (TASK-41805)
+
+**Incident.** The project-context replacement test expected a refusal when
+the old trace used credentials-v1 and the context used credentials-v2.
+Both the frozen original and the optimized trace accepted the pair under
+`trace_policies_agree`.
+
+**Practice.** For this boundary, exercise an unsupported version for the
+refusal and keep an accepted mixed-version case to pin compatibility.

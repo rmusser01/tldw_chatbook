@@ -84,6 +84,7 @@ from tldw_chatbook.Chat.console_trace_repository import (
     ConsoleTraceRepository,
     HeaderComponentRef,
     RequestHeaderRecord,
+    SemanticRevisionRecord,
     SurfaceNodeRecord,
     SurfaceReplacementRecord,
     TraceCallRecord,
@@ -830,7 +831,7 @@ class _ProjectedProviderValues(Sequence[object]):
         service: ConsoleTraceService,
         cursor: sqlite3.Cursor,
         parent: _ProjectionRoot,
-        appended: tuple[tuple[int, TraceProvenance, object], ...],
+        appended: tuple[tuple[int, object], ...],
         replacement: tuple[int, int] | None,
         descriptor_root: _DescriptorRoot,
         owner_id: str,
@@ -855,19 +856,11 @@ class _ProjectedProviderValues(Sequence[object]):
         if self._cache is not None:
             return iter(self._cache)
         parent = list(self._parent.iter_entries())
-        inserted = tuple(
-            (
-                sequence,
-                self._service._expected_descriptor_value(
-                    self._cursor, self._owner_id, descriptor, value
-                ),
-            )
-            for sequence, descriptor, value in self._appended
-        )
+        inserted = [(sequence, None, value) for sequence, value in self._appended]
         if self._replacement is None:
             combined: list[tuple[int, SurfaceReferenceKey | None, object | None]] = [
                 (sequence, key, None) for sequence, key in parent
-            ] + [(sequence, None, value) for sequence, value in inserted]
+            ] + inserted
         else:
             start, end = self._replacement
             insert_at = self._parent.first_position_in_range(start, end)
@@ -875,30 +868,41 @@ class _ProjectedProviderValues(Sequence[object]):
                 raise ValueError("surface_replacement_target_inactive")
             parent = [entry for entry in parent if not start <= entry[0] <= end]
             combined = [(sequence, key, None) for sequence, key in parent]
-            combined[insert_at:insert_at] = [
-                (sequence, None, value) for sequence, value in inserted[:1]
-            ]
-            combined.extend((sequence, None, value) for sequence, value in inserted[1:])
+            combined[insert_at:insert_at] = inserted[:1]
+            combined.extend(inserted[1:])
         domains = dict(self._descriptor_root.iter_domains())
         selected = tuple(
             (sequence, key, value)
             for sequence, key, value in combined
             if domains.get(sequence) == self._domain
         )
+        descriptors = dict(self._descriptor_root.iter_entries())
+        direct_refs: dict[int, SurfaceReferenceKey] = {}
+        for sequence, key, _ in selected:
+            if key is not None:
+                continue
+            descriptor = descriptors[sequence]
+            if type(descriptor) is SavedRevisionTraceProvenance:
+                direct_refs[sequence] = ("message", "revision", descriptor.revision_id)
         resolved = self._service._resolve_reference_values(
             self._cursor,
             tuple(
                 key
                 for sequence, key, _ in selected
                 if key is not None and sequence not in self._retained_artifact_values
-            ),
+            ) + tuple(direct_refs.values()),
             owner_id=self._owner_id,
         )
         values: list[object] = []
-        descriptors = dict(self._descriptor_root.iter_entries())
         for sequence, key, value in selected:
-            if key is None:
-                values.append(value)
+            if sequence in direct_refs:
+                values.append(resolved[direct_refs[sequence]])
+            elif key is None:
+                values.append(
+                    self._service._expected_descriptor_value(
+                        self._cursor, self._owner_id, descriptors[sequence], value
+                    )
+                )
             elif (
                 key[0] == "continuation"
                 and (reference := _saved_reference_key(descriptors[sequence]))
@@ -2040,6 +2044,7 @@ class ConsoleTraceService:
             or surface_delta.rewritten_tail is not None
         ):
             offset = 1 if replacement is not None else 0
+            next_event_sequence = None
             for descriptor, value in zip(
                 descriptors[offset:], values[offset:], strict=True
             ):
@@ -2052,17 +2057,19 @@ class ConsoleTraceService:
                     value=value,
                 )
                 appended.append(tail)
-                self._append_event(
+                next_event_sequence = self._append_event(
                     cursor,
                     segment_id=segment_id,
+                    sequence=next_event_sequence,
                     event_type="surface_append",
                     surface_node_id=tail.node_id,
                 )
                 if tail.reference_kind == "omission":
                     assert tail.omission_reason_code is not None
-                    self._append_event(
+                    next_event_sequence = self._append_event(
                         cursor,
                         segment_id=segment_id,
+                        sequence=next_event_sequence,
                         event_type="gap",
                         omission_reason_code=tail.omission_reason_code,
                     )
@@ -3956,11 +3963,11 @@ class ConsoleTraceService:
                 ),
                 descriptor_count=1,
             )
+        # Direct revisions are checked when the canonical values are batched.
         for descriptor in admitted:
-            for saved in _saved_descriptors(descriptor):
-                self._validate_revision_owner(
-                    cursor, parent.owner_id, saved.revision_id
-                )
+            if type(descriptor) is DerivedTraceProvenance:
+                for saved in _saved_inputs(descriptor):
+                    self._validate_revision_owner(cursor, parent.owner_id, saved.revision_id)
         admitted_domains = ("messages_payload",) * len(provenance.messages_payload) + (
             "provider_continuations",
         ) * len(provenance.continuations)
@@ -3992,17 +3999,13 @@ class ConsoleTraceService:
             domain: parent.descriptors.domain_count(domain)
             for domain in {"messages_payload", "provider_continuations"}
         }
-        prepared_items = tuple(
-            VerifiedSurfaceDeltaItem(
-                domain,
-                parent_domain_counts[domain]
-                + sum(previous == domain for previous in admitted_domains[:offset]),
-                descriptor,
-            )
-            for offset, (domain, descriptor) in enumerate(
-                zip(admitted_domains, admitted, strict=True)
-            )
-        )
+        next_ordinal = parent_domain_counts.copy()
+        items = []
+        for domain, descriptor in zip(admitted_domains, admitted, strict=True):
+            ordinal = next_ordinal[domain]
+            items.append(VerifiedSurfaceDeltaItem(domain, ordinal, descriptor))
+            next_ordinal[domain] = ordinal + 1
+        prepared_items = tuple(items)
         if admission.live_native is not None:
             prepared_items = (
                 replace(
@@ -4148,13 +4151,11 @@ class ConsoleTraceService:
             continuations=full_continuations,
             tool_loop=projected_tool_loop,
         )
-        physical_pairs = tuple(zip(admitted, values, strict=True))
         if admission.live_native is not None:
-            physical_pairs = (physical_pairs[-1],) + physical_pairs[:-1]
-        projected_values = tuple(
-            (next_sequence + offset, descriptor, value)
-            for offset, (descriptor, value) in enumerate(physical_pairs)
-        )
+            physical_values = (values[-1],) + values[:-1]
+        else:
+            physical_values = values
+        projected_values = tuple(enumerate(physical_values, next_sequence))
         replacement_span = (
             None
             if replacement_range is None
@@ -4163,27 +4164,19 @@ class ConsoleTraceService:
                 replacement_range.end_sequence,
             )
         )
-        message_values = _ProjectedProviderValues(
-            self,
-            cursor,
-            parent.root,
-            projected_values,
-            replacement_span,
-            descriptor_root,
-            parent.owner_id,
-            "messages_payload",
-            retained_artifact_values,
-        )
-        continuation_values = _ProjectedProviderValues(
-            self,
-            cursor,
-            parent.root,
-            projected_values,
-            replacement_span,
-            descriptor_root,
-            parent.owner_id,
-            "provider_continuations",
-            retained_artifact_values,
+        message_values, continuation_values = (
+            _ProjectedProviderValues(
+                self,
+                cursor,
+                parent.root,
+                projected_values,
+                replacement_span,
+                descriptor_root,
+                parent.owner_id,
+                domain,
+                retained_artifact_values,
+            )
+            for domain in ("messages_payload", "provider_continuations")
         )
         boundary = _PreparedSurfaceBoundary(
             self,
@@ -5079,10 +5072,7 @@ class ConsoleTraceService:
                 raise ValueError("surface_value_unavailable") from exc
         if reference_kind != "revision":
             raise ValueError("surface_value_unavailable")
-        self._validate_revision_owner(cursor, owner_id, identity)
-        revision = self.repository.get_semantic_revision(cursor, identity)
-        if revision is None:
-            raise ValueError("revision_owner_mismatch")
+        revision = self._validate_revision_owner(cursor, owner_id, identity)
         if key[0] == "continuation":
             return project_semantic_revision_provider_continuations(
                 cursor,
@@ -5152,10 +5142,7 @@ class ConsoleTraceService:
                     raise ValueError("surface_value_unavailable") from exc
         revision_keys_by_conversation: dict[str, list[SurfaceReferenceKey]] = {}
         for key in revision_keys:
-            self._validate_revision_owner(cursor, owner_id, key[2])
-            revision = self.repository.get_semantic_revision(cursor, key[2])
-            if revision is None:
-                raise ValueError("revision_owner_mismatch")
+            revision = self._validate_revision_owner(cursor, owner_id, key[2])
             revision_keys_by_conversation.setdefault(
                 revision.source_conversation_id,
                 [],
@@ -5613,13 +5600,13 @@ class ConsoleTraceService:
         cursor: sqlite3.Cursor,
         owner_id: str,
         revision_id: str,
-    ) -> None:
+    ) -> SemanticRevisionRecord:
         owner = self.repository.get_owner(cursor, owner_id)
         revision = self.repository.get_semantic_revision(cursor, revision_id)
         if owner is None or owner.conversation_id is None or revision is None:
             raise ValueError("revision_owner_mismatch")
         if revision.source_conversation_id == owner.conversation_id:
-            return
+            return revision
         segment = self.repository.get_segment(cursor, owner.root_segment_id)
         inherited_head = None if segment is None else segment.inherited_surface_head_id
         head = (
@@ -5640,6 +5627,7 @@ class ConsoleTraceService:
             for _sequence, key in inherited.entries
         ):
             raise ValueError("revision_owner_mismatch")
+        return revision
 
     def _store_artifact(
         self,
@@ -6278,16 +6266,20 @@ class ConsoleTraceService:
         *,
         segment_id: str,
         event_type: TraceEventType,
+        sequence: int | None = None,
         **references: str,
-    ) -> None:
-        tail = self.repository.get_event_tail(cursor, segment_id)
+    ) -> int:
+        if sequence is None:
+            tail = self.repository.get_event_tail(cursor, segment_id)
+            sequence = 0 if tail is None else tail.sequence + 1
         self.repository.append_event(
             cursor,
             segment_id=segment_id,
-            sequence=0 if tail is None else tail.sequence + 1,
+            sequence=sequence,
             event_type=event_type,
             **references,
         )
+        return sequence + 1
 
 
 def _binding(
