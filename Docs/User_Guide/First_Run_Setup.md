@@ -710,11 +710,14 @@ machine's own default profile.
   folder that earlier versions created the first time Console opened. Carry
   config.toml and the data folder as described above instead.
 - Do not remove a folder that a backup has included, such as that tokenizers
-  folder. Each backup registers what it copies, so once such a folder is gone
-  **Create backup** stops with "The location shown above no longer exists…"
-  (`registered_storage_missing`) under its path, and chatbook will not start
-  ("Recovery required: storage_admission_unavailable", then the missing
-  path). Create the folder again, empty, and both work again.
+  folder, or the private folder you restored an isolated profile into, such
+  as `~/chatbook-restores`. Backups and restores register the folders they
+  use, so once such a folder is gone **Create backup**, **Replace selected
+  stored data** and a later rollback stop with "The location shown above no
+  longer exists…" (`registered_storage_missing`) under its path,
+  and chatbook will not start ("Recovery required:
+  storage_admission_unavailable", then the missing path). Create the folder
+  again, empty, and they work again.
 - **Replace selected stored data** has stopped at `recovery_required`
   (`credential_unreadable`) after a Review that listed no credential
   problems, and the next launch opened only recovery mode. **Abort untouched
