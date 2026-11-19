@@ -1630,7 +1630,12 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-12, rebased onto dev 4b90eb860b: 38164 -> 38888 lines,
     #: 1376 -> 1403 methods (polish-1b's own +724 lines, +27 methods;
     #: same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32828, 1288),
+    #: 2026-11-19, rebased onto dev a6df4d8d48: 32823 -> 33527 lines,
+    #: 1288 -> 1314 methods (polish-1b's own +704 lines, +26 methods; its
+    #: Task 9 lines in the Media bodies and ``_save_library_media_edit_
+    #: from_form`` moved with them to the media controller; same owner
+    #: decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33527, 1314),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
