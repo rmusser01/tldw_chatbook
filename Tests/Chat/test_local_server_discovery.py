@@ -5110,6 +5110,7 @@ def _ciphertext(value):
         ({"api_key": "enc"}, None, None),
         ({"credential_source": "none"}, None, None),
         ({"credential_source": "stored"}, None, None),
+        ({"credential_source": "environment"}, None, None),
     ],
     ids=[
         "no-decision",
@@ -5118,6 +5119,7 @@ def _ciphertext(value):
         "slot-key-encrypted",
         "none",
         "stored-without-a-key",
+        "environment-unset",
     ],
 )
 def test_custom_2_reads_its_legacy_key_only_without_a_credential_decision(
@@ -5128,7 +5130,11 @@ def test_custom_2_reads_its_legacy_key_only_without_a_credential_decision(
     when the slot records no credential decision, never over an explicit one,
     the slot's own key or its variable. TASK-41710: the loader copies it into
     the slot, so a slot key that is still ciphertext keeps it out (readiness
-    says "still encrypted"; the handler used to send the legacy key)."""
+    says "still encrypted"; the handler used to send the legacy key). Only a
+    copy names ``custom_2`` for a Settings save to write: under an
+    "environment" choice with its variable unset the send is keyless either
+    way, so the loader's own record is what shows the choice held (review
+    r17rd-rev1)."""
     if slot.get("api_key") == "enc":
         slot = {"api_key": _ciphertext("slot-key-0000")}
     config_mod, posts, auth = _custom_2_scratch_world(
@@ -5152,6 +5158,12 @@ def test_custom_2_reads_its_legacy_key_only_without_a_credential_decision(
 
     assert posts == [_CUSTOM_2_POST]
     assert auth == [sent]
+    settings = config_mod.load_settings()
+    copied = sent == "Bearer legacy-key-0000"
+    assert (
+        settings["legacy_api_key_providers"],
+        settings["api_settings"]["custom_2"].get("api_key") == "legacy-key-0000",
+    ) == ((("custom_2",) if copied else ()), copied)
 
 
 @pytest.mark.parametrize("legacy", [None, "legacy-key-0000"], ids=["alone", "with-a-legacy-key"])

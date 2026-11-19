@@ -434,8 +434,9 @@ The older
 `[API] custom_openai2_api_key` is read as Custom 2's saved key while Custom 2
 has no saved key choice, no key of its own and an unset env var: the
 **API key** row reads **saved in config**, and Console, Dreams and import
-analysis all send it. A save with Custom 2 chosen copies it into
-`[api_settings.custom_2]`. A key of its own that is still encrypted keeps the
+analysis all send it. Saving a change of provider, model or endpoint with
+Custom 2 chosen copies it into `[api_settings.custom_2]`; a save of other rows
+alone copies nothing. A key of its own that is still encrypted keeps the
 older key out: Custom 2 is not ready, because its saved key is still encrypted,
 until you enter the master password or re-enter the key.
 

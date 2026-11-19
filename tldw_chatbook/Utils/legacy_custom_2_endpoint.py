@@ -82,6 +82,8 @@ def bridge_legacy_custom_2_api_key(
     slot = api_settings.setdefault("custom_2", {}) if key else None
     if not isinstance(slot, dict):
         return
+    # The recorded sources are Chat.provider_readiness._PERSISTED_CREDENTIAL_SOURCES,
+    # the source of truth; spelled out here because Utils sits below Chat.
     source = slot.get("credential_source")
     own, named = slot.get("api_key"), slot.get("api_key_env_var")
     if (

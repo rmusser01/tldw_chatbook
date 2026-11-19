@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 06:57
-updated_date: '2026-11-19 15:25'
+updated_date: '2026-11-19 16:34'
 labels:
 - follow-up
 - providers
@@ -50,6 +50,12 @@ Checked at base c176f553b3: `load_settings` copies nine providers' legacy `[API]
 Docs: `Docs/Architecture/llm-providers.md` (Credential precedence row), `Docs/User_Guide/settings.md` (the tenth legacy key; Custom 2's key paragraph).
 
 Files: `tldw_chatbook/Utils/legacy_custom_2_endpoint.py`, `tldw_chatbook/config.py`, `tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/LLM_Calls/test_custom_openai_credential_resolution.py`, the two docs.
+
+**Review r17rd-rev1 (three fixes):**
+- Minor 1: the User Guide said any save with Custom 2 chosen copies the legacy key; only a connection save does (`category_panels.py` `connection_dirty`, then `build_provider_setup_mutation(keep_stored_credential=True)`). Reworded to match the nine-key paragraph: a change of provider, model or endpoint copies it, a save of other rows alone copies nothing.
+- Minor 2: under `credential_source = "environment"` with its variable unset the send is keyless whether or not the bridge copies, so no auth assertion caught dropping `"environment"` from the bridge's set. `test_custom_2_reads_its_legacy_key_only_without_a_credential_decision` gains `[environment-unset]` and, for every case, asserts the loader's own record (`legacy_api_key_providers`, and whether the slot holds the legacy key). Red with `"environment"` temporarily removed from the set (`(('custom_2',), True) == ((), False)`), green restored; the other six cases are unchanged controls.
+- Recommendation: the bridge's hand-written `{"none", "stored", "environment"}` now names `Chat.provider_readiness._PERSISTED_CREDENTIAL_SOURCES` as its source of truth (imported by name it would be an upward Utils -> Chat import).
+- Runs (wrapper, `-n 4`, load 40-44): the three new tests, 10 passed; `./scripts/preflight.sh`, all checks passed.
 
 Not changed, proposed as a follow-up: the nine-provider bridge still copies a legacy key over a still-encrypted `api_settings.<provider>.api_key` (its modern check treats ciphertext as absent), so readiness reports Ready with the older key instead of "still encrypted".
 
