@@ -4,7 +4,7 @@ title: "The legacy API key bridge copies a legacy key over a still-encrypted slo
 status: To Do
 assignee: []
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-19 19:39
+updated_date: 2026-11-19 19:54
 labels:
 - follow-up
 - providers
@@ -25,5 +25,6 @@ Found by TASK-41709 (round 17). For the nine bridged providers, `config._normali
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 A still-encrypted slot key is never overwritten by the legacy key, and readiness says the key is still encrypted
-- [ ] #2 Tests cover each bridged provider's encrypted-slot case, red before the fix
+- [ ] #2 For an encrypted slot, the bridge returns no legacy key to the legacy `<provider>_api` dict either, so the provider's own send path and readiness agree (as TASK-41710's Custom 2 rule does)
+- [ ] #3 Tests cover each bridged provider's encrypted-slot case for both readiness and the send path, red before the fix
 <!-- AC:END -->

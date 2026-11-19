@@ -4,7 +4,7 @@ title: "Migrate provider base URLs that an earlier version saved with /v1 wrongl
 status: To Do
 assignee: []
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-19 19:39
+updated_date: 2026-11-19 19:54
 labels:
 - follow-up
 - providers
@@ -14,6 +14,7 @@ references:
 - tldw_chatbook/Provider_Contract/provider_endpoint_contract.py
 - tldw_chatbook/config.py
 - Docs/User_Guide/settings.md
+- Docs/Architecture/llm-providers.md
 dependencies: []
 ---
 
@@ -25,8 +26,9 @@ Found by TASK-41704 (round 17). Before TASK-41704, Settings appended `/v1` to a 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each known-broken shape TASK-41704's old rule produced is rewritten to the provider's documented base when config loads, and the rewrite is saved once
-- [ ] #2 A value that is not one of those shapes, including any gateway or custom base, is never rewritten
+- [ ] #1 On the provider's own host only, these saved shapes are rewritten to the documented base when config loads, and the rewrite is saved once: Google `…/v1beta/v1` to `…/v1beta`; Cohere `https://api.cohere.com/v1` to the bare host; Groq, OpenRouter and QwenCloud `<own bare host>/v1` to `/openai/v1`, `/api/v1` and `/compatible-mode/v1`
+- [ ] #2 A value that is not one of those shapes is never rewritten, including OpenAI's correct `<host>/v1`, any foreign or gateway host, and any custom base
 - [ ] #3 The rewrite is logged without the URL's credentials or query, and the notes list the shapes covered
 - [ ] #4 Tests cover each shape and a non-matching control, red before the change
+- [ ] #5 `Docs/User_Guide/settings.md` (the paragraph that says such values stay as they are) and `Docs/Architecture/llm-providers.md` ("it is not rewritten") describe the migration
 <!-- AC:END -->

@@ -4,13 +4,13 @@ title: "Containers other than Library canvases drop a queued button press when t
 status: To Do
 assignee: []
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-19 19:39
+updated_date: 2026-11-19 19:54
 labels:
 - follow-up
 - ui
 priority: low
 references:
-- tldw_chatbook/UI/Library_Modules/library_canvas_sync.py
+- tldw_chatbook/Widgets/Library/library_canvas_sync.py
 dependencies: []
 ---
 
@@ -23,4 +23,5 @@ Found by TASK-41703 (round 17). Textual removes a recompose's old children top d
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The notes list which other recomposing containers can hold a queued press, and each one keeps it or is shown unable to
+- [ ] #2 Each container that can hold one has a pilot test that holds a press across its recompose, red before the fix
 <!-- AC:END -->

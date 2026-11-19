@@ -29,6 +29,8 @@ Earlier reports agree:
 - The 2026-11-12 Phase 3 verification saw the rag_projection CancelledError on dev too.
 
 Why it matters: a cancellation during TTS cleanup is reported as a shutdown failure. In the app, that may turn an ordinary exit into an error. In tests, every covering run has to subtract these failures by hand.
+
+Round-17 sighting (2026-11-19, filing review r17fl-rev1): a pairwise scan finds `tts_service.close()` with no `await tts_service.wait_closed()` in these Backup_Recovery child scripts, the cause TASK-41717 fixed for the startup-handoff children: test_console_video_lifetime (~163), test_generated_media_capture (~87), test_recovered_media_relocation (~275), test_temporary_media_capture (~406, ~606), test_inventory_unused_owners (~191), test_runtime_producer_settlement (~349), test_runtime_owner_capture (~90, ~243), test_native_multivolume (~650), test_generated_media_lifetimes (~63, ~190), test_runtime_complete_capture (~157) and test_rag_projection_capture (~99). Not yet run to confirm each prints the traceback.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
