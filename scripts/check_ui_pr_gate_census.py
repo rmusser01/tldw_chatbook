@@ -1153,6 +1153,14 @@ MINIMUM_FILES = 2249
 # tail. The floor is the measured entry count.
 # TASK-41564: retain both wrapper-host native retirement and retry-fence guards.
 MINIMUM_FILES = 2260
+# TASK-36952.3 lane PR (2026-11-18): append the media body-move series' 147
+# green guard entries (146 node ids and one whole file) at the tail. The
+# floor is the measured entry count.
+MINIMUM_FILES = 2407
+# TASK-36952.3 lane PR review r1 (2026-11-18): append the series' 5 green
+# retargets in files the slices' lane notes missed. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2412
 
 
 def read_census(path: Path) -> list[str]:
