@@ -915,24 +915,26 @@ def _runtime_function(tree: ast.Module, name: str) -> ast.FunctionDef:
 def test_every_continuation_error_exit_passes_a_distinct_code() -> None:
     """A copy-pasted code would make two exits indistinguishable in the log.
 
-    Every ``continuation_error(...)`` call in ``run_agent_loop`` passes either
-    its own string literal or the result of ``_first_final_continuation_problem``
-    (whose return literals are themselves distinct). Nothing else may name an
-    exit, so a new call site must bring a new code.
+    Every ``_continuation_error(state, ...)`` call in the runtime module passes
+    either its own string literal or the result of
+    ``_first_final_continuation_problem`` (whose return literals are themselves
+    distinct). Nothing else may name an exit, so a new call site must bring a
+    new code. Dev's TASK-36950.2 moved the loop body out of ``run_agent_loop``
+    into module-level phase functions, so the whole module is scanned.
     """
     tree = ast.parse(_RUNTIME.read_text(encoding="utf-8"))
-    loop = _runtime_function(tree, "run_agent_loop")
     literals: list[str] = []
     shape_sites = 0
-    for node in ast.walk(loop):
+    for node in ast.walk(tree):
         if not (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id == "continuation_error"
+            and node.func.id == "_continuation_error"
         ):
             continue
-        assert len(node.args) == 1 and not node.keywords, ast.unparse(node)
-        (argument,) = node.args
+        assert len(node.args) == 2 and not node.keywords, ast.unparse(node)
+        state, argument = node.args
+        assert isinstance(state, ast.Name) and state.id == "state", ast.unparse(node)
         if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
             literals.append(argument.value)
         else:
