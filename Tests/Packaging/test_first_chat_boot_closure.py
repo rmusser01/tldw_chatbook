@@ -22,6 +22,13 @@ file pins, because each was deferred rather than paid for with a raise:
    writer (``record_window``, on the send path) still interprets it, so no
    import moves onto a render path.
 
+   Rebased 2026-11-19 onto dev ``a6df4d8d48``: dev's TASK-40300
+   (``40a1ca25ae``) readiness now checks every provider's endpoint at compose
+   (``endpoint_refusal -> resolve_provider_endpoint -> _route_owning_presets``),
+   so the setup facts are resident at first paint on dev itself and
+   ``sys.modules`` can no longer tell this edge apart. The readiness case
+   therefore counts the ledger's endpoint interpretations instead.
+
 Behaviour at first use is covered where it lives:
 ``Tests/Chat/test_rate_limit_reads_as_rate_limit.py`` (the handlers' retry and
 429 reason) and ``Tests/Chat/test_first_chat_readiness.py`` (a window answers
@@ -115,17 +122,12 @@ print("FIRST_CHAT_APP_CLOSURE_OK")
 
 
 _READINESS_SNIPPET = """
-import sys
-
 from tldw_chatbook.Chat import console_session_settings as session_settings
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SEND_OUTCOMES,
     ConsoleSessionSettings,
     build_console_settings_readiness,
 )
-
-FACTS = "tldw_chatbook.Provider_Contract.provider_setup_facts"
-assert FACTS not in sys.modules, "importing readiness already loads the setup facts"
 
 asked = []
 _real_window_for = CONSOLE_SEND_OUTCOMES.window_for
@@ -136,13 +138,22 @@ def _counting_window_for(*args, **kwargs):
     return _real_window_for(*args, **kwargs)
 
 
+interpreted = []
+_real_window_endpoint = session_settings._window_endpoint
+
+
+def _counting_window_endpoint(provider, endpoint):
+    interpreted.append(endpoint)
+    return _real_window_endpoint(provider, endpoint)
+
+
 CONSOLE_SEND_OUTCOMES.window_for = _counting_window_for
+session_settings._window_endpoint = _counting_window_endpoint
 
 # What the Console header computes at first paint for the census's profile (a
-# configured cloud key) with an empty observed-window ledger. A local server
-# is deliberately not asserted here: its readiness resolves the send endpoint
-# itself (``_send_endpoint -> effective_provider_endpoint``), which reads the
-# setup facts' route suffixes by design.
+# configured cloud key) with an empty observed-window ledger. Dev's TASK-40300
+# endpoint check loads the setup facts here on its own, so the guarded edge is
+# counted rather than read from sys.modules.
 build_console_settings_readiness(
     ConsoleSessionSettings(provider="openai", model="gpt-4o", max_tokens=4096),
     app_config={"api_settings": {"openai": {"api_key": "sk-closure-test"}}},
@@ -152,10 +163,10 @@ build_console_settings_readiness(
 # Anti-vacuity: readiness did consult the ledger with an endpoint, so the
 # assertion below exercises the guarded edge.
 assert any(len(call) >= 3 and call[2] for call in asked), asked
-assert FACTS not in sys.modules, (
-    "readiness with an empty window ledger interpreted the endpoint and loaded "
-    "the provider setup facts at first paint -- look for a record before "
-    "calling _window_endpoint (ConsoleSendOutcomes.window_for)."
+assert interpreted == [], (
+    "readiness with an empty window ledger interpreted the endpoint at first "
+    "paint -- look for a record before calling _window_endpoint "
+    "(ConsoleSendOutcomes.window_for). Interpreted: " + repr(interpreted)
 )
 
 # The writer still interprets the endpoint, and a recorded window still
@@ -163,11 +174,13 @@ assert FACTS not in sys.modules, (
 CONSOLE_SEND_OUTCOMES.record_window(
     "llama_cpp", "qwen-small", 4096, True, endpoint="http://127.0.0.1:9099"
 )
-assert FACTS in sys.modules
+assert interpreted == ["http://127.0.0.1:9099"], interpreted
+interpreted.clear()
 assert _real_window_for("llama_cpp", "qwen-small", "http://127.0.0.1:9099/") == (
     4096,
     True,
 )
+assert interpreted == ["http://127.0.0.1:9099/"], interpreted
 assert _real_window_for("llama_cpp", "qwen-small", "http://127.0.0.1:9431") is None
 assert _real_window_for("llama_cpp", "qwen-small") == (4096, True)
 
@@ -192,6 +205,11 @@ def test_readiness_with_no_recorded_window_leaves_setup_facts_unloaded(
     tmp_path: Path,
 ) -> None:
     """First-paint readiness does not interpret an endpoint it cannot use.
+
+    Since dev's TASK-40300 the setup facts are loaded at first paint by
+    readiness's own endpoint check, so this counts the ledger's endpoint
+    interpretations (none with an empty ledger) instead of reading
+    ``sys.modules``.
 
     Args:
         tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.

@@ -203,7 +203,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: dev 26b2e677dd 1039, this branch 1042 (+3). Its other three new residents
 #: (`LLM_Calls.chat_transport_retry`, `LLM_Calls.provider_reason`,
 #: `Provider_Contract.provider_setup_facts`) were deferred; see
-#: ABSENT_AT_READY_MODULES.
+#: ABSENT_AT_READY_MODULES. Rebased 2026-11-19 onto dev a6df4d8d48: dev
+#: measures 1039 and this branch 1042, the same three residents (+3), so the
+#: limit stays dev's 1040 + 3. Dev's TASK-40300 readiness now loads
+#: `Provider_Contract.provider_setup_facts` at first paint itself (below).
 MAX_TLDW_MODULES_AT_UI_READY = 1043
 
 #: Modules a thread other than the UI loop imports during boot, so whether
@@ -405,11 +408,14 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Chat.console_trace_regex_worker",
     # PR #3517 CI (TASK-34100.2, ADR-097): a send's transport retry and a
     # 429's provider reason are send-time work (Tests/Packaging/
-    # test_first_chat_boot_closure.py), and readiness interprets an endpoint
-    # only when a window was recorded, which never happens before a send.
+    # test_first_chat_boot_closure.py). `Provider_Contract.provider_setup_facts`
+    # left this list on the 2026-11-19 rebase onto dev a6df4d8d48: dev's
+    # TASK-40300 (40a1ca25ae) readiness checks every provider's endpoint at
+    # compose (`endpoint_refusal -> _route_owning_presets`), so it is resident
+    # at ready on dev itself. The branch's window ledger still interprets an
+    # endpoint only when a window was recorded (test_first_chat_readiness.py).
     "tldw_chatbook.LLM_Calls.chat_transport_retry",
     "tldw_chatbook.LLM_Calls.provider_reason",
-    "tldw_chatbook.Provider_Contract.provider_setup_facts",
 )
 
 #: Anti-vacuity: if these are not resident, the boot did not actually mount
