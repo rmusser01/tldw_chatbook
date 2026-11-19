@@ -232,9 +232,10 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #:   only, 99 -> 94: app_served, Canvas.compilation, Canvas.profiles,
 #:   Canvas.runtime_assets and Workspaces.worktree_activity. A booted Console
 #:   already holds all five, so the live warm-up does not change.
-#: - #3533 (395d2e8b91, 59365c0a36) unlisted served_relay_publisher, which is
-#:   served mode only, and Guardian.settings, which startup already holds.
-#:   The census reads 90 on dev 8be7babc14 and on this branch. This branch
+#: - #3533 (395d2e8b91, 59365c0a36) removed four, 94 -> 90: it unlisted
+#:   served_relay_publisher (served mode only) and Guardian.settings (which
+#:   startup already holds), and each took its package, ``Web_Server`` and
+#:   ``Guardian``, out of the census. It reads 90 on dev 8be7babc14 and here. This branch
 #:   also unlisted textual_serve, a third-party step listed only for the
 #:   relay publisher.
 #: The limit drops 94 -> 90 (ADR-097's tightening convention). This row was
@@ -242,9 +243,9 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: left to be used up silently, which is how the collision happened. When
 #: #3571 unlists scope_evidence, the limit should drop again, to 89, and the
 #: owner's "Accept until #3571" closes.
-#: Live, measured before the rebase onto 8be7babc14 from a warm boot after a
-#: 3 s settle and the screen-route walk (where the real warm-up starts), the
-#: native warm-up loads 78 modules
+#: Live, measured from a warm boot after a 3 s settle and the screen-route
+#: walk (where the real warm-up starts), the native warm-up loads 78 modules
+#: (3 of 3 runs on this branch and on dev 8be7babc14, review r16cs-rb)
 #: (80 on ffdf0c5472, which is dev d0486978dd plus round-16 waves 1 and 2
 #: without this branch). The last in-budget trees, a94c4aec67 and
 #: 5d1fc43130, load 77, so this is one live module more. That module is the
