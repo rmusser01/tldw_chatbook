@@ -916,7 +916,9 @@ _BUDGETS: dict[str, int] = {
     # its engine choice to first_run_speech_engine.py; the keyboard-retention
     # and engine-chosen additions (+15 under the 2026-10-04 expand-limits
     # ruling on the branch) are inside this figure.
-    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1713,
+    # 2026-11-19, TASK-34100.13 rebase onto dev a6df4d8d48: 1,713 -> 1,712,
+    # the exact measurement (the unused Vertical import was dropped).
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1712,
     # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
     # first_run_voice_omnivoice.py and its Advanced fields to
     # first_run_voice_pickers.compose_voice_advanced while the step gained
