@@ -357,6 +357,7 @@ def test_final_prepared_owner_positive_remainder_does_not_consume_claim(
                     registry=registry,
                     chat_call=adapter.chat_call,
                     prepare_provider_continuation_request=True,
+                    child_continuation_owner_key=CONTINUATION_OWNER_KEY,
                 )
                 invoke = agent._make_call_model(
                     config,

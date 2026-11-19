@@ -2261,9 +2261,13 @@ def _prepare_native_reply(
             else None
         ),
         expand_provider_continuation=expand_provider_continuation,
-        prepare_provider_continuation_request=bool(
-            continuation_target is not None
-            and callable(getattr(self._gateway, "prepare_chat_request", None))
+        # TASK-41651: a child on a continuation endpoint needs both even when
+        # the primary's has none (a primary without a target has no groups).
+        prepare_provider_continuation_request=callable(
+            getattr(self._gateway, "prepare_chat_request", None)
+        ),
+        child_continuation_owner_key=(
+            continuation_owner_key or native_host.CONTINUATION_OWNER_KEY
         ),
         # PR3a-1 Task 1: every fleet child gets its own model-call
         # lifeline, entered on the child's own thread and torn down

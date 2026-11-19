@@ -971,7 +971,11 @@ _BUDGETS: dict[str, int] = {
     # retention and immediate return in the tool-call wait.
     # 2026-11-17, TASK-41312 review: the consent decision moved to
     # project_instruction_runtime.consent_decision; 7686 -> 7680.
-    "tldw_chatbook/Agents/agent_service.py": 7680,
+    # 2026-11-18, TASK-41651: a spawned child's native continuation is
+    # ephemeral, owned by its run, and kept off the host's persistence and
+    # trace custody; 7680 -> 7696 (+16, incl. the child owner key and its
+    # constructor check).
+    "tldw_chatbook/Agents/agent_service.py": 7696,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at

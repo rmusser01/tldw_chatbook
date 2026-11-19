@@ -912,6 +912,7 @@ def test_agent_service_forwards_current_checkpoint_as_one_owner_group(tmp_path) 
         registry=registry,
         chat_call=chat_call,
         prepare_provider_continuation_request=True,
+        child_continuation_owner_key="_owner",
     )
     call_model = service._make_call_model(
         AgentConfig(model="kimi-k3", system_prompt="system", native_tools=True),

@@ -1,5 +1,8 @@
 """TASK-41310: Capture On around a native ``spawn_subagent`` call.
 
+TASK-41651 adds the child's own native tool round (Capture On and Off) and
+TASK-41652 the chat's prompt mix-ins.
+
 The real ``ConsoleChatController``, ``ConsoleChatStore``, agent bridge,
 provider gateway and ``ConsoleTraceBoundaryFactory`` run over real SQLite.
 Only the HTTP socket is a double. It answers in the OpenAI streaming shape:
@@ -36,6 +39,7 @@ ENDPOINT = {
     "models": [MODEL],
 }
 DRAFT = "Delegate a task, then finish."
+MIXIN = "MIXIN-BODY: answer as a pirate."
 
 
 def _sse(delta: dict, finish: str) -> bytes:
@@ -52,6 +56,50 @@ def _sse(delta: dict, finish: str) -> bytes:
     return (body + "data: [DONE]\n\n").encode()
 
 
+async def _enable_mixin(tmp_path, monkeypatch, store, controller, session):
+    """Enable one Before mix-in on the chat (as the prompt mix-in journeys do)."""
+    from tldw_chatbook.Chat.console_prompt_mixin_service import (
+        ConsolePromptMixinService,
+    )
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinSourceRef
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+    from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+        LocalPromptService,
+        PromptScopeService,
+    )
+
+    prompts = PromptsDatabase(tmp_path / "prompts.sqlite", client_id="spawntrace")
+    scope = PromptScopeService(
+        local_service=LocalPromptService(prompts), server_service=None
+    )
+    service = ConsolePromptMixinService(
+        store=store, prompt_scope_service=scope, persistence=store.persistence
+    )
+    monkeypatch.setattr(controller, "prompt_mixin_service", lambda: service)
+    record = await scope.save_prompt(
+        mode="local",
+        name="Pirate",
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition={
+            "kind": "text_mixin",
+            "schema_version": 3,
+            "body": MIXIN,
+            "placement": "before",
+        },
+    )
+    await service.enable_reference(
+        session.id,
+        source=MixinSourceRef(
+            scope.mixin_source_identity(mode="local")[0], "local", record["uuid"]
+        ),
+        target_incarnation_id=store._sessions[session.id].incarnation_id,
+        expected_revision=0,
+    )
+    return prompts
+
+
 async def _spawn_turn(
     tmp_path,
     monkeypatch,
@@ -61,8 +109,14 @@ async def _spawn_turn(
     tamper_parent=False,
     tasks=None,
     tamper_child_route=False,
+    child_native=False,
+    capture="capture_on",
+    mixin=False,
+    fenced_spawn=False,
+    parent_openai=False,
 ) -> SimpleNamespace:
-    """Send one Capture-On turn whose model spawns a child; return the facts."""
+    """Send one turn (Capture On unless ``capture`` says otherwise) whose model
+    spawns a child; return the facts."""
     import httpx
     import urllib3
 
@@ -80,6 +134,7 @@ async def _spawn_turn(
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     facts = SimpleNamespace(wire=[], refusals=[], boundary_errors=[], tools=[])
+    facts.applied, facts.persisted, facts.sent = [], [], []
     # The child re-resolves the inherited custom endpoint from app config,
     # which conftest redirects into the test root; refuse outside it.
     assert config.get_cli_config_path().is_relative_to(
@@ -90,7 +145,7 @@ async def _spawn_turn(
     original_preparation = console_chat_controller.ConsoleTurnPreparation
 
     def capture_on(**kwargs):
-        kwargs["capture_mode"] = ConsoleTraceCaptureMode.CAPTURE_ON
+        kwargs["capture_mode"] = ConsoleTraceCaptureMode(capture)
         return original_preparation(**kwargs)
 
     monkeypatch.setattr(console_chat_controller, "ConsoleTurnPreparation", capture_on)
@@ -169,6 +224,35 @@ async def _spawn_turn(
             ConsoleAgentTraceRequestFactory, "_turn_revision_id", drifting_turn
         )
     monkeypatch.setattr(ConsoleTraceBoundaryFactory, "__call__", boundary)
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine
+
+    original_apply = hosted_provider_engine._apply_continuations
+
+    def applied(record, messages, checkpoints, resolution):
+        # The continuation checkpoints each actor's request carried, as
+        # (state, call ids).
+        kind = getattr(current_run_actor(), "kind", None)
+        facts.applied.append(
+            (
+                kind,
+                [
+                    (each.state, tuple(c.call_id for r in each.rounds for c in r.calls))
+                    for each in checkpoints
+                ],
+            )
+        )
+        return original_apply(record, messages, checkpoints, resolution)
+
+    monkeypatch.setattr(hosted_provider_engine, "_apply_continuations", applied)
+    original_persist = ConsoleChatStore.persist_provider_continuation_event
+
+    def persisted(store, event, **kwargs):
+        facts.persisted.append(event.context.agent_kind)
+        return original_persist(store, event, **kwargs)
+
+    monkeypatch.setattr(
+        ConsoleChatStore, "persist_provider_continuation_event", persisted
+    )
 
     async def metadata(transport, request):
         assert request.method == "GET" and request.url.path == "/v1/models"
@@ -188,6 +272,7 @@ async def _spawn_turn(
         kind = getattr(current_run_actor(), "kind", None)
         roles = [message["role"] for message in request["messages"]]
         facts.wire.append((kind, roles))
+        facts.sent.append((kind, request["messages"]))
         facts.tools.append(
             (
                 kind,
@@ -197,7 +282,12 @@ async def _spawn_turn(
                 ],
             )
         )
-        if kind == "primary" and "tool" not in roles:
+        if fenced_spawn and kind == "primary" and len(roles) == 2:
+            from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
+
+            call = json.dumps({"name": "spawn_subagent", "arguments": {"task": task}})
+            body = _sse({"content": f"{FENCE_OPEN}\n{call}\n```"}, "stop")
+        elif kind == "primary" and "tool" not in roles and not fenced_spawn:
             calls = [
                 {
                     "index": index,
@@ -205,16 +295,29 @@ async def _spawn_turn(
                     "type": "function",
                     "function": {
                         "name": "spawn_subagent",
-                        "arguments": json.dumps({"task": each}),
+                        "arguments": json.dumps(
+                            {
+                                "task": each,
+                                **({"agent": "worker"} if parent_openai else {}),
+                            }
+                        ),
                     },
                 }
                 for index, each in enumerate(tasks or (task,))
             ]
             body = _sse({"tool_calls": calls}, "tool_calls")
+        elif child_native and kind != "primary" and "tool" not in roles:
+            # The child's own native tool round (a provider continuation).
+            call = {
+                "index": 0,
+                "id": "call_child_1",
+                "type": "function",
+                "function": {"name": "get_current_datetime", "arguments": "{}"},
+            }
+            body = _sse({"tool_calls": [call]}, "tool_calls")
         elif child_tool and kind != "primary" and len(roles) == 2:
             # A fenced call: the child's own tool round without a provider
-            # continuation (native child rounds on this endpoint fail before
-            # any trace, Capture Off too; see the task notes).
+            # continuation (the native round is test_child_native_tool_round_*).
             from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 
             call = json.dumps({"name": "get_current_datetime", "arguments": {}})
@@ -233,9 +336,19 @@ async def _spawn_turn(
         raise AssertionError("network prohibited")
 
     chat = CharactersRAGDB(str(tmp_path / "chat.db"), client_id="spawntrace")
+    app_config = {"custom_endpoints": {"spawntrace": ENDPOINT}}
+    if parent_openai:
+        # A parent on an endpoint without a continuation protocol (legacy
+        # OpenAI handler) whose child is routed to the custom endpoint.
+        app_config["api_settings"] = {
+            "openai": {
+                "api_key_env_var": "OPENAI_API_KEY",
+                "api_base_url": ENDPOINT["base_url"],
+            }
+        }
     gateway = ConsoleProviderGateway(
-        config_provider=lambda: {"custom_endpoints": {"spawntrace": ENDPOINT}},
-        environ={},
+        config_provider=lambda: app_config,
+        environ={"OPENAI_API_KEY": "test-spawntrace-key"} if parent_openai else {},
         trace_call_boundary_factory=ConsoleTraceBoundaryFactory(chat),
     )
     store = ConsoleChatStore(persistence=ChatPersistenceService(chat))
@@ -243,14 +356,27 @@ async def _spawn_turn(
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        provider="custom-ep:spawntrace",
+        provider="openai" if parent_openai else "custom-ep:spawntrace",
         model=MODEL,
         agent_bridge=ConsoleAgentBridge(
             agent_runs_db=runs, store=store, provider_gateway=gateway
         ),
         agent_runtime_enabled=True,
     )
+    if parent_openai:
+        from tldw_chatbook.Agents.agent_models import AgentDefinition
+
+        runs.create_agent_definition(
+            AgentDefinition(
+                name="worker",
+                instructions="Do the task.",
+                provider="custom-ep:spawntrace",
+                model=MODEL,
+            )
+        )
     session = store.ensure_session()
+    if mixin:
+        prompts = await _enable_mixin(tmp_path, monkeypatch, store, controller, session)
     assert not network_guard.is_allowed()
     try:
         with (
@@ -271,6 +397,13 @@ async def _spawn_turn(
                 ) and all(status != "running" for _, status in facts.runs):
                     break
                 await asyncio.sleep(0.05)
+        facts.child_errors = [
+            step.get("summary")
+            for row in runs.list_runs(session.persisted_conversation_id)
+            if row["agent_kind"] == "subagent"
+            for step in (runs.get_run(row["id"]) or {}).get("steps") or ()
+            if step.get("kind") == "error"
+        ]
         facts.calls = [
             tuple(row)
             for row in chat.get_connection().execute(
@@ -311,6 +444,8 @@ async def _spawn_turn(
             "custom_endpoints", "spawntrace", old_endpoint
         )
         runs.close()
+        if mixin:
+            prompts.close_connection()
         await gateway.aclose()
         chat.close_connection()
 
@@ -426,3 +561,128 @@ async def test_a_child_route_naming_another_turn_is_refused_before_dispatch(
     why = str(vars(facts))
     assert [kind for kind, _ in facts.wire].count("subagent") == 0, why
     assert not any(status == "done" for kind, status in facts.runs if kind == "subagent"), why
+
+
+@pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
+async def test_child_native_tool_round_completes(tmp_path, monkeypatch, capture):
+    """TASK-41651: a child's own native tool call (a provider continuation)
+    completes its round, Capture On and Off."""
+    facts = await _spawn_turn(
+        tmp_path, monkeypatch, "Say child done.", child_native=True, capture=capture
+    )
+    why = str(vars(facts))
+    child_wire = [roles for kind, roles in facts.wire if kind == "subagent"]
+    assert child_wire == [
+        ["system", "user"],
+        ["system", "user", "assistant", "tool"],
+    ], why
+    assert ("subagent", "done") in facts.runs and facts.child_errors == [], why
+    assert facts.boundary_errors == [] and facts.refusals == [], why
+    # The round's continuation reaches the provider, not dropped, and stays
+    # the child's: the host's persistence (and trace custody) never sees it.
+    assert facts.persisted and set(facts.persisted) == {"primary"}, why
+    assert [states for kind, states in facts.applied if kind == "subagent"] == [
+        [],
+        [("active", ("call_child_1",))],
+    ], why
+    # The primary's requests carry only its own checkpoint, never the child's.
+    assert ("primary", [("active", ("call_spawn_1",))]) in facts.applied, why
+    assert all(
+        ids == ("call_spawn_1",)
+        for kind, states in facts.applied
+        if kind == "primary"
+        for _, ids in states
+    ), why
+    if capture == "capture_on":
+        child = [call[4:] for call in facts.owned_calls if not call[0]]
+        assert child == [("agent_first", "complete"), ("tool_loop", "complete")], why
+
+
+@pytest.mark.parametrize("fenced_spawn", [False, True], ids=["native", "fenced"])
+@pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
+async def test_a_spawned_child_never_gets_the_chats_mix_ins(
+    tmp_path, monkeypatch, capture, fenced_spawn
+):
+    """TASK-41652 / ADR-286 rules 5-6: a mix-in composes only the user's current
+    message, reused through the parent's tool continuations; a spawned child's
+    requests (a machine-authored task) never carry it."""
+    facts = await _spawn_turn(
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        mixin=True,
+        capture=capture,
+        fenced_spawn=fenced_spawn,
+    )
+    why = str(vars(facts))
+    assert facts.boundary_errors == [] and facts.refusals == [], why
+    assert ("subagent", "done") in facts.runs, why
+    composed = MIXIN + "\n\n" + DRAFT
+    primary = [messages for kind, messages in facts.sent if kind == "primary"]
+    assert len(primary) == 2, why
+    for messages in primary:
+        users = [m["content"] for m in messages if m["role"] == "user"]
+        assert users[0] == composed and MIXIN not in json.dumps(users[1:]), why
+    child = [messages for kind, messages in facts.sent if kind == "subagent"]
+    assert child and MIXIN not in json.dumps(child), why
+
+
+@pytest.mark.parametrize("capture", ["capture_on", "capture_off"])
+async def test_child_native_round_when_the_parent_endpoint_has_no_continuations(
+    tmp_path, monkeypatch, capture
+):
+    """TASK-41651: the parent's endpoint has no continuation protocol, so the
+    adapter has no owner key; a child routed to an endpoint that has one still
+    completes its native round."""
+    facts = await _spawn_turn(
+        tmp_path,
+        monkeypatch,
+        "Say child done.",
+        child_native=True,
+        capture=capture,
+        parent_openai=True,
+    )
+    why = str(vars(facts))
+    child_wire = [roles for kind, roles in facts.wire if kind == "subagent"]
+    assert child_wire == [
+        ["system", "user"],
+        ["system", "user", "assistant", "tool"],
+    ], why
+    assert ("subagent", "done") in facts.runs and facts.child_errors == [], why
+    assert facts.boundary_errors == [] and facts.refusals == [], why
+    assert [states for kind, states in facts.applied if kind == "subagent"] == [
+        [],
+        [("active", ("call_child_1",))],
+    ], why
+    # The primary's requests carry only its own checkpoint, never the child's.
+    assert all(
+        ids == ("call_spawn_1",)
+        for kind, states in facts.applied
+        if kind == "primary"
+        for _, ids in states
+    ), why
+    assert set(facts.persisted) <= {"primary"}, why
+    if capture == "capture_on":
+        child = [call[4:] for call in facts.owned_calls if not call[0]]
+        assert child == [("agent_first", "complete"), ("tool_loop", "complete")], why
+
+
+async def test_a_service_that_prepares_continuations_needs_a_child_owner_key(tmp_path):
+    """TASK-41651: without the key a child's native round would only refuse
+    later ("Active provider continuation requires an owner"), so refuse now."""
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+
+    runs = AgentRunsDB(tmp_path / "runs.db", client_id="spawntrace")
+    try:
+        with pytest.raises(ValueError, match="child_continuation_owner_key"):
+            AgentService(
+                db=runs,
+                registry=ToolCatalogRegistry(),
+                chat_call=lambda **_: {},
+                prepare_provider_continuation_request=True,
+            )
+        # A host that prepares nothing needs no key.
+        AgentService(db=runs, registry=ToolCatalogRegistry(), chat_call=lambda **_: {})
+    finally:
+        runs.close()

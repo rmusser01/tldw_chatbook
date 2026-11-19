@@ -296,12 +296,15 @@ def chat_call_impl(
         stream_kwargs = {"tools": tools} if tools is not None else {}
         prepare_request = getattr(self._gateway, "prepare_chat_request", None)
         call_groups = continuation_groups
+        # A child marks its own continuation with the canonical key when the
+        # primary's run has none (TASK-41651).
+        owner_key = self._continuation_owner_key or (
+            bridge.CONTINUATION_OWNER_KEY if is_subagent else None
+        )
         incoming_owners = [group.owner_message_id for group in call_groups]
         if len(set(incoming_owners)) != len(incoming_owners):
             raise ValueError("Continuation owner IDs must be unique.")
-        message_owners = [
-            row.get(self._continuation_owner_key) for row in transport_messages
-        ]
+        message_owners = [row.get(owner_key) for row in transport_messages]
         if any(message_owners.count(owner) != 1 for owner in incoming_owners):
             raise ValueError(
                 "Every continuation group must attach to one request owner."
@@ -332,13 +335,13 @@ def chat_call_impl(
                 if (owner := row.get(self._continuation_owner_key)) in by_owner
             )
         if call_groups:
-            if call_continuation_target is None or not self._continuation_owner_key:
+            if call_continuation_target is None or not owner_key:
                 raise ValueError("Provider continuation request is not pinned.")
             owner_ids = {group.owner_message_id for group in call_groups}
             rewritten_messages: list[dict[str, Any]] = []
             for message in transport_messages:
                 row = dict(message)
-                owner_id = row.get(self._continuation_owner_key)
+                owner_id = row.get(owner_key)
                 if type(owner_id) is str and owner_id in owner_ids:
                     row[bridge.CONTINUATION_OWNER_KEY] = owner_id
                 # The pop drops the run's TEMPORARY owner key after its
@@ -351,12 +354,12 @@ def chat_call_impl(
                 # group must attach to one request owner" (TASK-19642.7,
                 # red for the Kimi/Z.ai tool-error continuation since
                 # 798d9c28bf).
-                if self._continuation_owner_key != bridge.CONTINUATION_OWNER_KEY and (
+                if owner_key != bridge.CONTINUATION_OWNER_KEY and (
                     is_subagent
                     or not self._thinking_sidecar
                     or self._thinking_owner_key != self._continuation_owner_key
                 ):
-                    row.pop(self._continuation_owner_key, None)
+                    row.pop(owner_key, None)
                 rewritten_messages.append(row)
             semantic_messages = rewritten_messages
         if self._trace_request_factory is not None:
