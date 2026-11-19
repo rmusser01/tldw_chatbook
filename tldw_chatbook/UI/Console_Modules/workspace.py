@@ -7181,8 +7181,7 @@ class ConsoleWorkspaceController:
             )
         )
         self._sync_persisted_console_browser_rows(
-            self._console_browser_projection_query(),
-            current_conversation_id=self._current_console_conversation_id(),
+            self._console_browser_projection_query()
         )
         renew_subagent_counts = getattr(self, "_renew_subagent_counts_fn", None)
         if renew_subagent_counts is not None:
