@@ -63,6 +63,9 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # TASK-41643 review (queue_prompt admission downstream of the received route
 # decided by own_methods; _CONSOLE_RECEIVED_QUEUE_METHOD and the unread
 # _CONSOLE_PROMPT_QUEUE_DISPATCH deleted) removed 4: __func__ 1, __code__ 3.
+# TASK-41643 delta review added one __func__ read (composer_run_controls: the
+# registered turn-context provider must wrap a plain function before the bound
+# method comparison runs a foreign ``__eq__``); it refuses, it does not grant.
 # Lower a row when you remove sites.
 PINS = {
     # caller frames, coroutine/generator implementation
@@ -82,7 +85,7 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 131,
+    "__func__": 132,
     "__code__": 362,
     "__defaults__": 190,
     "__kwdefaults__": 283,

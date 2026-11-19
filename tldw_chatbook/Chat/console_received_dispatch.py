@@ -429,11 +429,19 @@ async def _run_received_intent_bound(runtime, record, source):
             "expected_revision": intent.queue_revision,
             "configuration": configuration,
         }
-        if not own_methods(controller, ("queue_prompt",)):
+        from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+        def queue_source_is_stock():
+            # An exact type: a subclass may define its own queue_prompt.
+            return type(controller) is ConsoleChatController and own_methods(
+                controller, ("queue_prompt",)
+            )
+
+        if not queue_source_is_stock():
             raise RecoveryRequired("console_snapshot_owner_changed")
 
         def before_admission():
-            if not own_methods(controller, ("queue_prompt",)):
+            if not queue_source_is_stock():
                 raise RecoveryRequired("console_snapshot_owner_changed")
             require_received_source(runtime, record, source)
 

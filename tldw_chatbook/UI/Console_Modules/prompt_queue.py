@@ -1362,12 +1362,19 @@ class ConsolePromptQueueUIController:
             def queue_kwargs():
                 if _captured_inputs is None:
                     return {}
+                from tldw_chatbook.Chat.console_chat_controller import (
+                    ConsoleChatController,
+                )
                 from tldw_chatbook.Chat.console_received_dispatch import own_methods
 
                 def before_admission():
                     require_pressed_current()
                     # ADR-356 rule 4 (TASK-41643): no code identity.
-                    if not own_methods(controller, ("queue_prompt",)):
+                    if type(
+                        controller
+                    ) is not ConsoleChatController or not own_methods(
+                        controller, ("queue_prompt",)
+                    ):
                         raise RuntimeError("Pressed Console queue source changed.")
 
                 before_admission()

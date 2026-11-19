@@ -113,6 +113,23 @@ async def test_preparing_defining_sources_decline_changed_callbacks(
             assert controls.preparing_poll_record(screen) is None
         assert controls.preparing_poll_record(screen) is record
         qualified.append(("_turn_context_provider", "foreign_object"))
+
+        class ForeignCallable(ForeignProvider):
+            def __call__(self, *args, **kwargs):
+                raise AssertionError("ran a foreign turn-context provider")
+
+        # TASK-41643 delta review: a ``MethodType`` around a foreign callable is
+        # still a bound method, but its ``__func__`` is not a plain function, so
+        # it declines before the bound-method comparison runs that ``__eq__``.
+        with monkeypatch.context() as changed:
+            changed.setattr(
+                case.controller,
+                "_turn_context_provider",
+                MethodType(ForeignCallable(), screen._session),
+            )
+            assert controls.preparing_poll_record(screen) is None
+        assert controls.preparing_poll_record(screen) is record
+        qualified.append(("_turn_context_provider", "foreign_bound_callable"))
         record_property("qualified_current_source_mutations", qualified)
         assert case.provider_calls == []
         assert case.composer.draft_text() == case.draft

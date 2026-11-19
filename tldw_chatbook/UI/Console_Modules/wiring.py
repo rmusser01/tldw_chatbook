@@ -422,6 +422,11 @@ def receive_console_visible_intent(
     from .turn_admission import console_live_runtime_enabled, policy_producers_current
 
     owner = screen._session
+    # This route computes what the screen's selectors would and never calls
+    # them, so a subclass (which may override them) declines, before any
+    # screen method runs.
+    if type(screen) is not ChatScreen:
+        return None
     runtime = screen._console_runtime()
     with runtime._first_send_source_scope():
         store, controller = runtime._chat_store, runtime._chat_controller
@@ -431,9 +436,6 @@ def receive_console_visible_intent(
             or controller is None
             or composer is None
             or type(owner) is not ConsoleSessionController
-            # This route computes what the screen's selectors would and never
-            # calls them, so a subclass (which may override them) declines.
-            or type(screen) is not ChatScreen
         ):
             return None
         if _captured_inputs is None and stash is not None:

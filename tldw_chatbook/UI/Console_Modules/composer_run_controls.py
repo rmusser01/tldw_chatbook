@@ -1308,7 +1308,7 @@ def poll_source_is_current(self, captured: dict | None) -> bool:
 
 def preparing_poll_record(self):
     """Select only a sole, unchanged stock manual receipt for display work."""
-    from types import MethodType
+    from types import FunctionType, MethodType
 
     from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
     from tldw_chatbook.Chat.console_configuration_preparation import (
@@ -1407,6 +1407,9 @@ def preparing_poll_record(self):
     context_provider = controller._turn_context_provider
     if context_provider is not None and (
         type(context_provider) is not MethodType
+        # ``MethodType`` accepts any callable and ``!=`` compares ``__func__``
+        # with its ``__eq__``, so a foreign callable must decline first.
+        or type(context_provider.__func__) is not FunctionType
         or context_provider != self._session._build_console_turn_execution_context
     ):
         return None

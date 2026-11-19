@@ -476,6 +476,8 @@ async def test_received_queue_success_projects_committed_draft_through_owner_set
     assert registry.snapshot(session.id).total_count == 1
     assert store.session_draft(session.id) == ""
     assert projections == [("settled", session.id)]
+
+
 async def test_wrapped_class_queue_prompt_queues_the_received_turn_like_stock(
     received_workspace, monkeypatch
 ):
@@ -530,6 +532,56 @@ async def test_wrapped_class_queue_prompt_queues_the_received_turn_like_stock(
     assert result.applied
     assert calls == [intent.inputs.draft]
     assert registry.snapshot(session.id).total_count == before.total_count + 1
+
+
+async def test_subclassed_controller_queue_prompt_is_refused_for_the_received_turn(
+    received_workspace, monkeypatch
+):
+    """TASK-41643 delta review: ``own_methods`` refuses instance overrides only,
+    so the exact controller type is checked too (ADR-356 rule 4)."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    case = received_workspace
+    runtime, store, session, controller = (
+        case.runtime, case.store, case.session, case.controller
+    )
+    calls = []
+
+    async def own_queue_prompt(self, *args, **kwargs):
+        calls.append(kwargs)
+        raise AssertionError("a subclass's queue_prompt received the admission")
+
+    monkeypatch.setattr(
+        controller,
+        "__class__",
+        type("SubController", (ConsoleChatController,), {"queue_prompt": own_queue_prompt}),
+    )
+    store.set_session_draft(session.id, "captured queue input")
+    registry = controller.prompt_queue_registry
+    before = registry.begin_chain(
+        session.id,
+        context_epoch=store.conversation_context_epoch(session.id),
+        expected_revision=registry.snapshot(session.id).revision,
+    ).snapshot
+
+    class View:
+        def console_view_hooks(self):
+            return {}
+
+        def _project_console_received_input(self, session_id, **kwargs):
+            pass
+
+        def _project_console_saved_input(self, session_id, **kwargs):
+            pass
+
+    runtime.attach_view(View())
+    intent = _stock_intent(case, queue_revision=before.revision)
+    intent = replace(intent, _pressed_inputs=intent.inputs)
+    runtime.accept_received_intent(intent)
+    result = await _outcome(runtime._turn_custody[intent.turn_id])
+
+    assert isinstance(result, RecoveryRequired), result
+    assert calls == []
 
 
 async def test_mixin_change_during_original_configuration_worker_refuses_draft(
