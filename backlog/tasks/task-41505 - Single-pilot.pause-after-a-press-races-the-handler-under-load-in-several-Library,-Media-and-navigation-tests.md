@@ -1,10 +1,10 @@
 ---
 id: TASK-41505
 title: "Single pilot.pause after a press races the handler under load in several Library, Media and navigation tests"
-status: In Progress
+status: Done
 assignee:
 - '@claude'
-updated_date: '2026-11-18 08:36'
+updated_date: 2026-11-18 20:54
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -34,8 +34,8 @@ Each of these waits one `pilot.pause()` after `Button.press` (or after a flag) a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each listed test waits on its observable condition (a state predicate with a bounded deadline), not on a fixed pause count
-- [ ] #2 Each passes 10 of 10 at `-n 4` with the load recorded in the Implementation Notes
+- [x] #1 Each listed test waits on its observable condition (a state predicate with a bounded deadline), not on a fixed pause count
+- [x] #2 Each passes 10 of 10 at `-n 4` with the load recorded in the Implementation Notes
 - [x] #3 `test_actual_handler_review_wake_waits_for_pinned_capacity_and_finishes` has its cause identified, as timing or as a defect
 - [x] #4 `Tests/Workspaces/test_native_confirmed_undo.py` passes 10 of 10 at `-n 4`, with the cause of each of its two failure shapes named
 <!-- AC:END -->
@@ -116,3 +116,5 @@ Each of these waits one `pilot.pause()` after `Button.press` (or after a flag) a
 **Files.** `Tests/UI/test_library_collections_characterization.py`, `Tests/UI/test_library_media_render_fixes.py`, `Tests/UI/test_library_media_reader_flow.py`, `Tests/Library/test_library_ingest_runner.py`, `Tests/Chat/test_console_review_wake_transport.py`, `Tests/Chat/test_console_code_review_continuation.py`, `Tests/Chat/test_console_multi_model_review_journey.py`, `Tests/Workspaces/test_native_confirmed_undo.py`.
 
 - The two `test_screen_navigation.py` nodes were fixed under TASK-41506 (fu/r16-nav). `test_navigation_keypress_during_splash_is_safely_ignored` waits for the splash to take focus, under a 120 s splash that only the key closes, and then for startup with `_settle`: red at base with a 1.6 s delay injected before the press (`splash must still be active at press time`), green after. `test_boot_with_mcp_default_tab_lands_on_settings_tools_hub` boots without the splash and waits for the initial screen, then up to 30 s for the hub: red at base with a 14 s delay injected into the hub load (`assert not ...is_loading`), green after. Each passed 10 of 10 at `-n 4`, load 11-15.
+
+**Closed (round-16 coordinator, 2026-11-18).** The two `test_screen_navigation.py` nodes landed with TASK-41506 (fu/r16-nav, stacked below this commit), each 10 of 10 at `-n 4` at load 11-15 as recorded above, so AC#1 and AC#2 now hold for every listed node.
