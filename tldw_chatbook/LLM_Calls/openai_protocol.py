@@ -128,7 +128,8 @@ def _responses_stream_to_chat_sse(response, *, model: str):
                 yield f"data: {payload_text}\n\n"
     except _owner.requests.exceptions.RequestException as exc:
         _owner.logger.opt(exception=True).error(
-            "OpenAI Responses: stream connection error: %s", exc
+            "OpenAI Responses: stream connection error (error_type={})",
+            type(exc).__name__,
         )
         yield (
             "data: "

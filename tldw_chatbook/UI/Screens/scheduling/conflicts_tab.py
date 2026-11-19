@@ -306,7 +306,7 @@ class ConflictsTab(Vertical):
         try:
             result = self.sync_engine.resolve_conflict(conflict_id, resolution)
         except Exception:
-            logger.exception("Failed to resolve conflict %s", conflict_id)
+            logger.exception("Failed to resolve conflict {}", conflict_id)
             return
         if not result:
             return

@@ -6112,7 +6112,7 @@ async def test_console_model_resolution_failure_logs_provider_context(
     assert models == {"openai": ["gpt-4.1"]}
     assert logged == [
         (
-            "Unable to resolve Console runtime-discovered models for provider=%s model=%s",
+            "Unable to resolve Console runtime-discovered models for provider={} model={}",
             ("openai", "gpt-5"),
             {},
         )

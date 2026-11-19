@@ -1487,7 +1487,7 @@ class TestProviderRequestPayloads:
         monkeypatch.setattr(
             LLM_API_Calls.logger,
             "warning",
-            lambda message, *args, **kwargs: warnings.append(str(message) % args),
+            lambda message, *args, **kwargs: warnings.append(str(message).format(*args)),
         )
         monkeypatch.setattr(
             LLM_API_Calls,

@@ -83,7 +83,8 @@ def safe_render(template_str: str, data: dict[str, Any]) -> str:
         tmpl = _SANDBOX.from_string(template_str)
         return tmpl.render(**data)
     except Exception as exc:
-        logger.error("Template render error %s", exc)
+        # The type only: a render error's text can quote the template's own text.
+        logger.error("Template render error (error_type={})", type(exc).__name__)
         return template_str  # fail closed: return raw
 
 

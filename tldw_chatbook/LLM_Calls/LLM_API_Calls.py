@@ -339,7 +339,7 @@ def _anthropic_thinking_config(
     if effort == "off":
         if thinking_budget_tokens is not None:
             logger.warning(
-                "Anthropic: ignoring fixed thinking budget for model %s with thinking off",
+                "Anthropic: ignoring fixed thinking budget for model {} with thinking off",
                 model,
             )
         # How OFF must be expressed is a per-family capability (TASK-18800):
@@ -351,7 +351,7 @@ def _anthropic_thinking_config(
             if not anthropic_model_rejects_disabled_thinking(model):
                 return {"type": "disabled"}, None, max_tokens
             logger.warning(
-                "Anthropic: thinking cannot be turned off on always-on model %s; "
+                "Anthropic: thinking cannot be turned off on always-on model {}; "
                 "omitting the thinking parameter (adaptive thinking still runs)",
                 model,
             )
@@ -361,7 +361,7 @@ def _anthropic_thinking_config(
     if is_sonnet_5:
         if thinking_budget_tokens is not None:
             logger.warning(
-                "Anthropic: ignoring fixed thinking budget for Claude Sonnet 5 model %s",
+                "Anthropic: ignoring fixed thinking budget for Claude Sonnet 5 model {}",
                 model,
             )
         if effort in _ANTHROPIC_SONNET_5_EFFORTS:
@@ -372,7 +372,7 @@ def _anthropic_thinking_config(
             return {"type": "adaptive"}, {"effort": effort}, max_tokens
         if budget is not None:
             logger.warning(
-                "Anthropic: ignoring fixed thinking budget for adaptive-thinking model %s",
+                "Anthropic: ignoring fixed thinking budget for adaptive-thinking model {}",
                 model,
             )
         return None, None, max_tokens
@@ -385,7 +385,7 @@ def _anthropic_thinking_config(
     if final_budget >= final_max_tokens:
         final_max_tokens = final_budget + 1024
         logger.warning(
-            "Anthropic: increased max_tokens to %s so thinking budget %s has output room.",
+            "Anthropic: increased max_tokens to {} so thinking budget {} has output room.",
             final_max_tokens,
             final_budget,
         )
@@ -1858,7 +1858,7 @@ def chat_with_anthropic(
     elif any(value is not None for value in (temp, current_top_p, current_top_k)):
         if model_rejects_sampling:
             logger.warning(
-                "Anthropic: omitting temperature/top_p/top_k because model %s "
+                "Anthropic: omitting temperature/top_p/top_k because model {} "
                 "rejects sampling parameters.",
                 current_model,
             )

@@ -125,7 +125,7 @@ def _make_path_update_callback(
                     f"Error setting path for {input_widget_id}.", severity="error"
                 )
         else:
-            logger.info("File/Directory selection cancelled for #%s.", input_widget_id)
+            logger.info("File/Directory selection cancelled for #{}.", input_widget_id)
 
     return _callback
 
