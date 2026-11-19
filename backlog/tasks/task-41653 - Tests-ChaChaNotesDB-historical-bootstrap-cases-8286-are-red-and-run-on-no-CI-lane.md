@@ -1,7 +1,7 @@
 ---
 id: TASK-41653
 title: "Tests/ChaChaNotesDB historical bootstrap cases 82..86 are red and run on no CI lane"
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-11-17 19:05
 labels:
@@ -27,7 +27,7 @@ Found during the TASK-41306..41320 follow-up burn-down (2026-11-17, merged as #3
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The historical bootstrap cases 82..86 pass
-- [ ] #2 The file runs on a CI lane
+- [x] #2 The file runs on a CI lane
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -63,4 +63,6 @@ ADR required: no (test literal only; the schema and its version are unchanged).
 **Why it drifted.** The checklist in `tldw_chatbook/DB/migrations/README.md` named `VALID_TABLES` and the index census, but not this literal or the trigger census. It now has steps 7 and 8 for them.
 
 **Files.** `Tests/ChaChaNotesDB/expected_table_columns.py`, `tldw_chatbook/DB/migrations/README.md`.
+
+**AC #2 (coordinator, 2026-11-19).** `Tests/ChaChaNotesDB/test_historical_bootstrap.py` and `test_trigger_census.py` run in the architecture-guards job (sandboxed, before its one bootstrap_profile node): 102 passed in 99 s serially at load 35 on the combined tree.
 <!-- SECTION:NOTES:END -->

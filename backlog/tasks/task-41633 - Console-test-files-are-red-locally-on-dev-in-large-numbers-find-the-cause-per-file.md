@@ -1,7 +1,7 @@
 ---
 id: TASK-41633
 title: "Console test files are red locally on dev in large numbers; find the cause per file"
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-11-17 19:05
 labels:
@@ -48,7 +48,7 @@ Found during the TASK-41306..41320 follow-up burn-down (2026-11-17, merged as #3
 <!-- AC:BEGIN -->
 - [x] #1 Each listed file has a recorded cause in this task's notes: the marker trap, test drift, or a product defect
 - [x] #2 Files red only behind the config-sandbox trap pass with the `bootstrap_profile` marker
-- [ ] #3 Every other cause is fixed here or filed as its own task with the failing node ids
+- [x] #3 Every other cause is fixed here or filed as its own task with the failing node ids
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -115,4 +115,6 @@ They passed in earlier runs and as pairs. They are listed for filing as a flaky-
 **Lanes.** No lane file was edited. The new module markers make three census node ids in `test_console_session_settings.py` `bootstrap_profile`. They still pass `scripts/check_ui_pr_gate_census.py`. Coordinator decision (2026-11-18): they stay in the UI census, which already holds 192 bootstrap files; replaying two shard tails on head and base showed no poisoning. None of the ten files is newly green as a whole except `test_console_right_rail.py` (37 passed at `-n 4` in 188 s at load 86).
 
 Files: `Tests/UI/test_console_internals_decomposition.py`, `Tests/UI/test_console_native_transcript.py`, `Tests/UI/test_console_session_settings.py`, `Tests/UI/test_console_right_rail.py`, `Tests/UI/test_console_rail_reconciliation.py`, `Tests/UI/test_console_workbench_contract.py`, `Tests/UI/test_console_scope_row.py` (marker; TASK-41632's file, 40 trap reds, 1 left), `Tests/Chat/test_change_turn_tracking.py`, `backlog/docs/lessons-testing-evidence.md`.
+
+**AC #3 (coordinator, 2026-11-19).** Every cause not fixed here is filed with its failing node ids: send preparation refusals TASK-41958 (F1); MCP snapshot files appended to TASK-36161 (F2); Inspector order and workbench TASK-41959 (F3, F10); internals decomposition TASK-41960 (F4, F12); native transcript TASK-41961 (F5); session settings TASK-41962 (F6, F11); change-tracking margin, scope row and tree baseline TASK-41963 (F7-F9). Laned in the burn-down's lanes commit: turn attention, transcript context projection and workspace tree (UI census); right rail, rail reconciliation and change-turn tracking (admission-4).
 <!-- SECTION:NOTES:END -->
