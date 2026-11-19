@@ -780,12 +780,18 @@ async def test_a_goal_iteration_from_a_cold_console_builds_the_skill_trust_it_ca
         _skills_scope_service=scope,
         ensure_local_skill_trust_service=real.ensure_local_skill_trust_service,
     )
-    goal, _store, _session, _controller, coordinator, gateway, calls = build_goal_rig(
+    goal, _store, session, controller, coordinator, gateway, calls = build_goal_rig(
         stores, monkeypatch, app=app
     )
     local = scope.local_service
     assert vars(real)["_local_skill_trust_service"] is None, "precondition: cold"
     assert vars(local)["_trust_service"] is None, "precondition: cold"
+    # Precondition: this rig's synchronous capture is the one that refuses cold.
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    with pytest.raises(RecoveryRequired, match="console_capture_source_not_ready"):
+        controller.resolve_runtime_turn_configuration_snapshot(session.id)
+    assert vars(local)["_trust_service"] is None, "precondition: still cold"
     submit, raised = coordinator._runtime_submitter, []
 
     async def recorded(*args, **kwargs):

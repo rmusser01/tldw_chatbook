@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 20:31
-updated_date: 2026-11-19 16:13
+updated_date: 2026-11-19 16:48
 labels:
 - follow-up
 - console
@@ -46,3 +46,5 @@ Found by TASK-41507 (round 16). `ConsoleRuntime._submit_goal_iteration` captures
 **Runs.** The covering run is the one in TASK-41900's notes (goal dispatch, goal authority, light-surface goal runs, goal controls, send start window, at base and head): the only difference in these files is this test, red at base and green at head; the goal reds there (authority 6, controls 2) fail the same at base. `Tests/Architecture/test_module_size_ratchet.py`: the `console_runtime.py` row rises 7078 -> 7082, the change's own lines, with a dated note (owner rule). Preflight passed.
 
 Files: `tldw_chatbook/Chat/console_runtime.py`, `Tests/Chat/test_console_goal_dispatch.py`, `Tests/Architecture/test_module_size_ratchet.py`.
+
+**Review r17cn-rev1 (fix round 1).** The test now first proves its rig refuses cold: before dispatch, `controller.resolve_runtime_turn_configuration_snapshot(session.id)` raises `console_capture_source_not_ready` and leaves the trust slot empty. At base the test still fails past that precondition, at the submitter's recorded `RecoveryRequired('console_capture_source_not_ready')`.

@@ -364,9 +364,10 @@ async def test_inspector_keeps_the_unbound_reason_when_the_kill_switch_is_on(tmp
 
     Turning the switch off would not bring MCP back while the store cannot be
     used, so the row names the cause that stays. Nothing may show the switch
-    instead: a mount-time read is a UI-thread disk read, and a Send never
-    reads it for an unbound store (the preparation drops MCP first), so no
-    published state carries it.
+    instead: a mount-time read is a UI-thread disk read, and the row's reason
+    comes from the store's binding, which wins over any kill-switch read a
+    Send makes (with the agent runtime on, its tools read the switch;
+    TASK-41900).
     """
     app = _build_console_send_test_app(user_data_dir=tmp_path)
     app.unified_mcp_service.set_kill_switch(True)

@@ -492,20 +492,40 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
 
             composer.load_draft("second message")
             send.press()
-            for _ in range(20):  # the Send is pressed and waits on the save
-                await pilot.pause(0.05)
-            assert notices == []
-            release.set()
-            for _ in range(200):
-                if len(gateway.sent_messages) == 2:
+            # Hold the save open long enough for a Send that does not wait to
+            # reach the provider: with the save's fence opened (temporary),
+            # it got there 2.0-2.5 s after the press at load 20.
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if len(gateway.sent_messages) > 1 or notices:
                     break
                 await pilot.pause(0.05)
+            assert notices == []
+            assert len(gateway.sent_messages) == 1, "the Send did not wait"
+            release.set()
             store = console._ensure_console_chat_store()
-            replies = [
-                m.content
-                for m in store.messages_for_session(store.active_session_id)
-                if m.role.value == "assistant"
-            ]
+
+            def replies() -> list[str]:
+                return [
+                    m.content
+                    for m in store.messages_for_session(store.active_session_id)
+                    if m.role.value == "assistant" and m.status == "complete"
+                ]
+
+            for _ in range(200):  # the second reply is saved
+                if len(replies()) == 2:
+                    break
+                await pilot.pause(0.05)
+            saved = replies()
+            # Its terminal receipt is seen on screen before the app closes;
+            # left unseen in this shared profile's database, a later app
+            # opens with "A Console turn completed while hidden."
+            marks = runtime._console_local_marks_service()
+            for _ in range(200):
+                if not marks.list_console_unseen_marks():
+                    break
+                await pilot.pause(0.05)
+            assert marks.list_console_unseen_marks() == ()
     finally:
         release.set()
 
@@ -514,7 +534,7 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
         "first message",
         "second message",
     ]
-    assert replies == ["accepted", "accepted"]
+    assert saved == ["accepted", "accepted"]
     assert app.app_config["console"]["onboarding"]["first_send_completed"] is True
 
 

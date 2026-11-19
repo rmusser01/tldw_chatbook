@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 20:31
-updated_date: 2026-11-19 16:13
+updated_date: 2026-11-19 16:48
 labels:
 - follow-up
 - console
@@ -70,3 +70,5 @@ So TASK-41308's "non-default data folder" is bound when it is configured, and un
 Files: `tldw_chatbook/Agents/native_source_storage.py`, `Tests/UI/test_console_send_without_mcp_store.py`, `backlog/docs/lessons-testing-evidence.md`. No User Guide change: `console/agent-runs-and-tools.md` already says a Send with an unusable MCP settings file carries no MCP tools, which is now true with the agent runtime on too.
 
 **Lane.** `Tests/UI/test_console_send_without_mcp_store.py` is already a whole UI census entry. Serially with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`) at load 41-48: 20 passed in 184 s (TASK-41308 recorded 98 s at load 15). The six new nodes took 41 s of it: the three agent-runtime sends 11-14 s each, the three in-process cases about 1.3 s each.
+
+**Review r17cn-rev1 (fix round 1).** The docstring of `test_inspector_keeps_the_unbound_reason_when_the_kill_switch_is_on` said a Send never reads the kill switch for an unbound store; with the agent runtime on, its tools now do. It now says the row's reason comes from the store's binding, which wins over any kill-switch read a Send makes.
