@@ -158,8 +158,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +24 (the
     # one-time Full agent tools upgrade's boot-worker starter and body, which
     # hands the module the app's services explicitly, per the app-lookup
-    # census).
-    "tldw_chatbook/app.py": 5711,
+    # census); re-measured 2026-11-19 after the rebase onto dev a6df4d8d48:
+    # dev's 5,711 plus 24, exact measurement 5,735.
+    "tldw_chatbook/app.py": 5735,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -672,9 +673,10 @@ _BUDGETS: dict[str, int] = {
     # UI/Settings_Modules/workspace_archive.py (-3): 35,020.
     # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +1 (the
     # carried #3295 review fix: the Canvas switch's help says plain chat
-    # needs Full agent tools); re-measured after the rebase onto dev 26b2e677dd:
-    # dev's 35,023 plus 1, exact measurement 35,024.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 34993,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
+    # needs Full agent tools); re-measured 2026-11-19 after the rebase onto dev
+    # a6df4d8d48: the file measures 34,978 on dev, plus 1, exact measurement
+    # 34,979 (dev's row was 34,993).
+    "tldw_chatbook/UI/Screens/settings_screen.py": 34979,  # 2026-11-05: +27, a save that writes a koboldcpp endpoint off /api/v1/generate is refused (TASK-36516, owner waiver); 2026-11-06: +74, the stale model, endpoint and provider echo checks (TASK-38975, +7) and one pane at a time at 70 columns and below, with "/" showing the rail (TASK-38953, +67) (owner waiver); 2026-11-10: +36 (exact measurement), a focus the user moves during a same-category pane rebuild or before a landing's deferred focus is kept (TASK-39169) (owner waiver); 2026-11-10: +17 (exact measurement), review r13p-rev1: Textual's focus reset is told from a user's move, and a removed control lands on its rail row (TASK-39169) (owner waiver); 2026-11-10: +5 (exact measurement), review r13p-rev2: a region removes inside its batch and a pane-opener origin counts (TASK-39169) (owner waiver); 2026-11-12, restack onto dev e0186fa10a: dev's 35,852 (+1) plus round 13's +59, measured (owner waiver)
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -974,6 +976,8 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +19, the
     # one-line writer takes [tools] written as root-level dotted keys
     # (pre-merge review 2026-11-12): 8963 -> 8982, exact measurement.
+    # Re-measured 2026-11-19 after the rebase onto dev a6df4d8d48: dev's
+    # 8,837 plus the branch's +145, exact measurement 8,982.
     "tldw_chatbook/config.py": 8982,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
@@ -998,7 +1002,11 @@ _BUDGETS: dict[str, int] = {
     # ephemeral, owned by its run, and kept off the host's persistence and
     # trace custody; 7680 -> 7696 (+16, incl. the child owner key and its
     # constructor check).
-    "tldw_chatbook/Agents/agent_service.py": 7696,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +2 (the
+    # carried #3295 review fix: a light plan never reaches the compact
+    # find/load fallback); re-measured 2026-11-19 after the rebase onto dev
+    # a6df4d8d48: dev's 7,696 plus 2, exact measurement 7,698.
+    "tldw_chatbook/Agents/agent_service.py": 7698,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     # TASK-36513, 2026-11-03 (size waiver per the burn-down brief: re-pin at
@@ -1304,7 +1312,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-12, restack onto dev e0186fa10a (owner size waiver): dev's
     # 4,030 plus TASK-40132's +5 (the plugin registry owner), measured.
     # owner decision 2026-10-04 (expand limits): TASK-34100.5.3.2 +6 (the
-    # light-surface upgrade's read-only runs-database owner, inventory C100).
+    # light-surface upgrade's read-only runs-database owner, inventory C104;
+    # C100 before dev minted C100-C103); re-measured 2026-11-19 after the
+    # rebase onto dev a6df4d8d48: dev's 4,035 plus 6, exact measurement 4,041.
     "tldw_chatbook/DB/private_sqlite.py": 4041,
 }
 
