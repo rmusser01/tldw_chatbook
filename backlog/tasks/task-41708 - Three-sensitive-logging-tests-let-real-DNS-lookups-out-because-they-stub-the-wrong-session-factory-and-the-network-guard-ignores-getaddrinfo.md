@@ -1,10 +1,11 @@
 ---
 id: TASK-41708
 title: "Three sensitive-logging tests let real DNS lookups out because they stub the wrong session factory and the network guard ignores getaddrinfo"
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+- '@claude'
 created_date: 2026-11-18 06:57
-updated_date: 2026-11-18 06:57
+updated_date: 2026-11-19 14:46
 labels:
 - follow-up
 - tests
@@ -28,3 +29,11 @@ Found by the TASK-41522 implementer and confirmed by its review (round 16). `cha
 - [ ] #2 The network guard refuses a DNS lookup of a non-loopback name during tests, and a test shows it red before the change
 - [ ] #3 No test in the suite needs a real DNS lookup to pass, including TASK-32907's two TTS nodes, or each one that does is listed in the notes with why
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. `Tests/network_guard.py`: guard the forward lookups (`socket.getaddrinfo`, `gethostbyname`, `gethostbyname_ex`). A name that is not `None`, empty, `localhost` or a numeric IP literal is refused unless the test is `allow_network`/`live`. The refusal is recorded like a blocked connect, and its error is also a `socket.gaierror`, so callers take their resolver-failure path.
+2. `Tests/test_network_guard.py`: pin the refusal with the C resolver (`_socket.getaddrinfo`) replaced by a recorder, so the red run before the guard change reaches no real resolver.
+3. Under the new guard, show the three sensitive-logging tests red with the lookups blocked, then stub `create_owned_default_session` too and show them green.
+4. Run the suite under the guard and fix, or list with a reason, every test the guard fails for a lookup (TASK-32907's TTS nodes included).
+

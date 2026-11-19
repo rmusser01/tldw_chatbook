@@ -11,6 +11,7 @@ explicit opt-in works.
 
 from __future__ import annotations
 
+import _socket
 import socket
 import sys
 import threading
@@ -579,3 +580,47 @@ def test_concurrent_denials_keep_each_attempt_with_its_own_thread_name(
     provenance = dict(zip((address for _call, address in attempts), threads))
     assert provenance["192.0.2.8:80"] == main_name
     assert provenance["192.0.2.9:443"] == "guard-provenance-race"
+
+
+# --- DNS lookups (TASK-41708) ------------------------------------------------
+#
+# A blocked connect still let the lookup before it out: three sensitive-logging
+# tests resolved `api.openai.test`, `pinned.example.test` and `api.openai.com`
+# for real before their connect was refused. Each test below swaps the C
+# resolver for a recorder, so no run of it, guarded or not, reaches a real one.
+
+
+def _record_resolver(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    reached: list[object] = []
+    monkeypatch.setattr(
+        _socket, "getaddrinfo", lambda host, *_a, **_k: reached.append(host) or []
+    )
+    return reached
+
+
+def test_a_dns_lookup_of_a_remote_name_is_refused_before_the_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached = _record_resolver(monkeypatch)
+
+    with pytest.raises(socket.gaierror) as excinfo:
+        socket.getaddrinfo("api.openai.test", 443)
+
+    assert isinstance(excinfo.value, network_guard.BlockedNetworkAccess)
+    assert reached == []
+    assert _drain_expecting() == (("socket.getaddrinfo", "api.openai.test:443"),)
+
+
+def test_local_and_numeric_lookups_and_opted_in_tests_reach_the_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached = _record_resolver(monkeypatch)
+    local = (None, "", "localhost", "LocalHost.", b"localhost", "127.0.0.1", "::1")
+    numeric_remote = ("192.0.2.1", "2001:db8::1", "fe80::1%lo0")
+    for host in local + numeric_remote:
+        socket.getaddrinfo(host, 80)
+    network_guard.set_mode(network_guard.NetworkMode.ALLOW_ALL)
+    socket.getaddrinfo("example.test", 80)
+
+    assert reached == [*local, *numeric_remote, "example.test"]
+    assert network_guard.blocked_attempts() == ()
