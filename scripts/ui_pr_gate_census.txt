@@ -3558,8 +3558,9 @@ Tests/UI/test_settings_workspaces_category.py::test_change_review_restart_requir
 Tests/UI/test_screen_navigation.py::test_rag_panel_refreshers_mount_nothing_once_the_app_is_exiting
 Tests/UI/test_screen_navigation.py::test_library_completions_after_the_exit_fence_skip_the_empty_stack
 # TASK-41715 review r17ls-rev2 (2026-11-19): two _focus_library_list_entry
-# nodes red since 29a03afb5a (BaseAppScreen.set_focus refuses their detached
-# fake rows); now stubbed like their gated sibling. 2 passed in 3.2 s serially
-# with the lane's flags (load ~10).
+# nodes red since August (91e0a16cd9, 04e29673a2 route entry focus through
+# set_focus, which their fake rows cannot take; 29a03afb5a only changed the
+# error to its is_attached read); now stubbed like their gated sibling.
+# 2 passed in 3.2 s serially with the lane's flags (load ~10).
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_prefers_still_checked_row_in_select_mode
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_checked_row_preference_is_media_only
