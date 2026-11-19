@@ -53,7 +53,23 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # character_context.py's existing one; none decides authority (ADR-356 rule 4).
 # TASK-41644 (2026-11-18, Console configuration preparation) removed six:
 # __func__ 4, __code__ 1, __globals__ 1.
+# TASK-41643 (Console received route decided from registrations and
+# per-instance overrides) removed 18: __func__ 5, __code__ 10, __defaults__ 1,
+# __kwdefaults__ 2.
+# TASK-41642 (Console skill mount discovery and its trust preparation decided
+# from the app's registrations; the skill source capsules deleted) removed 109:
+# __func__ 8, __code__ 14, __defaults__ 11, __kwdefaults__ 20, __closure__ 21,
+# cell_contents 9, __globals__ 17, __wrapped__ 9.
+# TASK-41643 review (queue_prompt admission downstream of the received route
+# decided by own_methods; _CONSOLE_RECEIVED_QUEUE_METHOD and the unread
+# _CONSOLE_PROMPT_QUEUE_DISPATCH deleted) removed 4: __func__ 1, __code__ 3.
+# TASK-41643 delta review added one __func__ read (composer_run_controls: the
+# registered turn-context provider must wrap a plain function before the bound
+# method comparison runs a foreign ``__eq__``); it refuses, it does not grant.
 # Lower a row when you remove sites.
+# Integration of the TASK-41630..41655 burn-down (2026-11-19): TASK-41644's
+# removals (__func__ 4, __code__ 1, __globals__ 1) and TASK-41642/41643's,
+# re-measured together on the combined tree.
 PINS = {
     # caller frames, coroutine/generator implementation
     "_getframe": 14,
@@ -72,14 +88,14 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 141,
-    "__code__": 388,
-    "__defaults__": 202,
-    "__kwdefaults__": 305,
-    "__closure__": 238,
-    "cell_contents": 126,
-    "__globals__": 208,
-    "__wrapped__": 206,
+    "__func__": 128,
+    "__code__": 361,
+    "__defaults__": 190,
+    "__kwdefaults__": 283,
+    "__closure__": 217,
+    "cell_contents": 117,
+    "__globals__": 191,
+    "__wrapped__": 197,
 }
 
 

@@ -65,48 +65,6 @@ def _read_app_disabled_builtin_skills(app: object) -> frozenset[str]:
     return _source_wiring._disabled_builtin_skills(getattr(app, "app_config", None))
 
 
-def _console_skill_source_current(metadata, source):
-    """Reuse the existing finite source capsule checker for this stock route."""
-    if type(source) is not tuple or len(source) != 6:
-        return False
-    from importlib.machinery import ModuleSpec
-
-    namespace, path, spec, origin, bindings, records = source
-    if type(namespace) is not dict or type(path) is not str or type(origin) is not str:  # exact stock metadata; no custom dispatch
-        return False
-    if (
-        type(spec) is not ModuleSpec
-        or type(spec.origin) is not str  # exact stock metadata; no custom dispatch
-        or type(namespace.get("__name__")) is not str  # exact stock metadata; no custom dispatch
-        or type(namespace.get("__file__")) is not str  # exact stock metadata; no custom dispatch
-        or namespace.get("__file__") != path
-        or spec.origin != origin
-        or path != origin
-    ):
-        return False
-    if type(bindings) is not tuple or type(records) is not tuple:
-        return False
-    # Reject foreign names/containers before the existing checker hashes keys.
-    for row in bindings:
-        if type(row) is not tuple or len(row) != 3 or type(row[1]) is not str:  # exact stock metadata; no custom dispatch
-            return False
-        if type(row[0]) is not dict and type(row[0]) is not _source_wiring._SkillMappingProxyType:  # exact stock metadata; no custom dispatch
-            return False
-    for row in records:
-        if type(row) is not tuple or len(row) != 11 or type(row[1]) is not str:  # exact stock metadata; no custom dispatch
-            return False
-        if type(row[0]) is not dict and type(row[0]) is not _source_wiring._SkillMappingProxyType:  # exact stock metadata; no custom dispatch
-            return False
-        if type(row[2]) is not _source_wiring._SkillFunctionType:
-            return False
-        defaults = row[2].__kwdefaults__
-        if defaults is not None and (
-            type(defaults) is not dict or any(type(key) is not str for key in defaults)  # exact stock metadata; no custom dispatch
-        ):
-            return False
-    return metadata._source_current(source)
-
-
 def _capture_console_skill_trust_source(app, service):
     """Capture resident service sources without a UI scheduling dependency.
 
@@ -387,12 +345,15 @@ def _capture_console_skill_trust_source(app, service):
     )
 
 
-def _capture_console_skill_trust_preparation(
-    app, service, owner_current, controller_source
-):
-    """Add the original skill-discovery App-worker scheduling contract."""
+def _capture_console_skill_trust_preparation(app, service, owner_current):
+    """Add the original skill-discovery App-worker scheduling contract.
+
+    ADR-356 rule 4: the trust source (the app's registrations and slots) and
+    the app's worker-manager slots decide; ``workers``, ``app`` and
+    ``run_worker`` must not be overridden on this app object, and their class
+    methods are not compared, so a wrapped one qualifies like the stock one.
+    """
     _source_wiring = globals()["_source_wiring"]
-    import inspect
     import sys
 
     source = _source_wiring._capture_console_skill_trust_source(app, service)
@@ -405,8 +366,6 @@ def _capture_console_skill_trust_preparation(
     ):
         return None
     metadata = sys.modules.get("tldw_chatbook.Widgets.compact_model_bar")
-    if not _source_wiring._console_skill_source_current(metadata, controller_source):
-        return None
     manager = app_fields.get("_workers")
     manager_fields = metadata._plain_fields(
         manager, _source_wiring._SkillWorkerManager, ("_app", "_workers")
@@ -415,16 +374,10 @@ def _capture_console_skill_trust_preparation(
         return None
     manager_workers = manager_fields.get("_workers")
 
-    def source_current():
-        return source.source_current() and _source_wiring._console_skill_source_current(
-            metadata, controller_source
-        )
-
     def current(expected_trust=None):
         try:
             return (
                 source.current()
-                and source_current()
                 and owner_current() is True
                 # TASK-38948: App.run_async installs the stock eager factory,
                 # so requiring None refused every real run, and the cold trust
@@ -446,15 +399,8 @@ def _capture_console_skill_trust_preparation(
                 and not any(
                     name in manager_fields for name in ("_new_worker", "add_worker")
                 )
-                and "workers" not in app_fields
-                and "app" not in app_fields
-                and inspect.getattr_static(type(app), "workers", None)
-                is _source_wiring._CONSOLE_SKILL_WORKERS
-                and inspect.getattr_static(type(app), "app", None) is _source_wiring._CONSOLE_SKILL_APP
-                and _source_wiring._CONSOLE_SKILL_APP_GET(app) is app
-                and "run_worker" not in app_fields
-                and inspect.getattr_static(type(app), "run_worker", None)
-                is _source_wiring._CONSOLE_SKILL_RUN_WORKER
+                and not any(name in app_fields for name in ("workers", "app", "run_worker"))
+                and app.app is app
             )
         except (AttributeError, TypeError, ValueError):
             return False
@@ -463,7 +409,7 @@ def _capture_console_skill_trust_preparation(
         return None
     return (
         app,
-        source_current,
+        source.source_current,
         current,
         (manager, manager_fields, source.loop, source.runtime_reads),
     )
@@ -486,8 +432,7 @@ async def _prepare_console_skill_trust_service(captured):
         _read_observers=(custody[3],),
     )
     try:
-        worker = _source_wiring._CONSOLE_SKILL_RUN_WORKER(
-            app,
+        worker = app.run_worker(
             preparation,
             group="console-skill-trust-setup",
             exclusive=False,
@@ -515,7 +460,7 @@ async def _prepare_console_skill_trust_service(captured):
     ):
         raise RuntimeError("console_skill_trust_worker_changed")
     try:
-        value = await _source_wiring._CONSOLE_SKILL_WAIT(worker)
+        value = await worker.wait()
     except WorkerCancelled:
         error = vars(worker).get("_error")
         if isinstance(error, _source_wiring.asyncio.CancelledError):
@@ -539,264 +484,24 @@ async def _prepare_console_skill_trust_service(captured):
 
 
 def _install_skill_source(_source_wiring):
-    from textual.app import App as _SkillAppBase
-    vars(_source_wiring).update({'_SkillAppBase': _SkillAppBase})
-    from textual.dom import DOMNode as _SkillMessagePump
-    vars(_source_wiring).update({'_SkillMessagePump': _SkillMessagePump})
-    from textual.message_pump import MessagePump as _SkillAppAccessor
-    vars(_source_wiring).update({'_SkillAppAccessor': _SkillAppAccessor})
     from textual.worker_manager import WorkerManager as _SkillWorkerManager
-    vars(_source_wiring).update({'_SkillWorkerManager': _SkillWorkerManager})
 
-    _CONSOLE_SKILL_RUN_WORKER = _SkillMessagePump.run_worker
-    vars(_source_wiring).update({'_CONSOLE_SKILL_RUN_WORKER': _CONSOLE_SKILL_RUN_WORKER})
-    _CONSOLE_SKILL_WAIT = _source_wiring.Worker.wait
-    vars(_source_wiring).update({'_CONSOLE_SKILL_WAIT': _CONSOLE_SKILL_WAIT})
-    _CONSOLE_SKILL_WORKERS = _SkillAppBase.__dict__["workers"]
-    vars(_source_wiring).update({'_CONSOLE_SKILL_WORKERS': _CONSOLE_SKILL_WORKERS})
-    _CONSOLE_SKILL_WORKERS_GET = _CONSOLE_SKILL_WORKERS.fget
-    vars(_source_wiring).update({'_CONSOLE_SKILL_WORKERS_GET': _CONSOLE_SKILL_WORKERS_GET})
-    _CONSOLE_SKILL_APP = _SkillAppAccessor.__dict__["app"]
-    vars(_source_wiring).update({'_CONSOLE_SKILL_APP': _CONSOLE_SKILL_APP})
-    _CONSOLE_SKILL_APP_GET = _CONSOLE_SKILL_APP.fget
-    vars(_source_wiring).update({'_CONSOLE_SKILL_APP_GET': _CONSOLE_SKILL_APP_GET})
-    _CONSOLE_SKILL_NEW_WORKER = _SkillWorkerManager._new_worker
-    vars(_source_wiring).update({'_CONSOLE_SKILL_NEW_WORKER': _CONSOLE_SKILL_NEW_WORKER})
-    _CONSOLE_SKILL_ADD_WORKER = _SkillWorkerManager.add_worker
-    vars(_source_wiring).update({'_CONSOLE_SKILL_ADD_WORKER': _CONSOLE_SKILL_ADD_WORKER})
-    _CONSOLE_SKILL_START_WORKER = _source_wiring.Worker._start
-    vars(_source_wiring).update({'_CONSOLE_SKILL_START_WORKER': _CONSOLE_SKILL_START_WORKER})
-    _CONSOLE_SKILL_SCOPE_SLOTS = (
-        "get_context",
-        "_call",
-        "_enforce_policy",
-        "_require_service",
-        "_normalize_mode",
-        "_normalize_response",
-        "_maybe_await",
-        "_source_action_id",
-        "_normalize_item",
-        "_with_record_id",
-    )
-    vars(_source_wiring).update({'_CONSOLE_SKILL_SCOPE_SLOTS': _CONSOLE_SKILL_SCOPE_SLOTS})
-    _CONSOLE_SKILL_LOCAL_SLOTS = ("get_context", "trust_service")
-    vars(_source_wiring).update({'_CONSOLE_SKILL_LOCAL_SLOTS': _CONSOLE_SKILL_LOCAL_SLOTS})
-
-
-    # Definition-time originals for stock Console trust preparation only.
-    from types import (
-        FunctionType as _SkillFunctionType,
-    )
-    vars(_source_wiring).update({'_SkillFunctionType': _SkillFunctionType})
-    from types import (
-        MappingProxyType as _SkillMappingProxyType,
-    )
-    vars(_source_wiring).update({'_SkillMappingProxyType': _SkillMappingProxyType})
-
-    _CONSOLE_SKILL_FUNCTIONS = {
-        "_build_local_skill_trust_service": _source_wiring._skill_wiring.SkillServiceWiringMixin.__dict__[
-            "_build_local_skill_trust_service"
-        ],
-        "_build_local_skills_stack": _source_wiring._skill_wiring.SkillServiceWiringMixin.__dict__[
-            "_build_local_skills_stack"
-        ],
-        "ensure_local_skill_trust_service": _source_wiring._skill_wiring.SkillServiceWiringMixin.__dict__[
-            "ensure_local_skill_trust_service"
-        ],
-        "local_skill_trust_service": _source_wiring.ServiceWiringMixin.__dict__[
-            "local_skill_trust_service"
-        ].fget,
-        "local_skills_service": _source_wiring.ServiceWiringMixin.__dict__["local_skills_service"].fget,
-        "skills_scope_service": _source_wiring.ServiceWiringMixin.__dict__["skills_scope_service"].fget,
-        "_console_skill_source_current": _source_wiring._console_skill_source_current,
-        "_capture_console_skill_trust_source": _source_wiring._capture_console_skill_trust_source,
-        "_capture_console_skill_trust_preparation": _source_wiring._capture_console_skill_trust_preparation,
-        "_prepare_console_skill_trust_service": _source_wiring._prepare_console_skill_trust_service,
-        "_CONSOLE_SKILL_RUN_WORKER": _CONSOLE_SKILL_RUN_WORKER,
-        "_CONSOLE_SKILL_WAIT": _CONSOLE_SKILL_WAIT,
-        "_CONSOLE_SKILL_WORKERS_GET": _CONSOLE_SKILL_WORKERS_GET,
-        "_CONSOLE_SKILL_APP_GET": _CONSOLE_SKILL_APP_GET,
-        "_CONSOLE_SKILL_NEW_WORKER": _CONSOLE_SKILL_NEW_WORKER,
-        "_CONSOLE_SKILL_ADD_WORKER": _CONSOLE_SKILL_ADD_WORKER,
-        "_CONSOLE_SKILL_START_WORKER": _CONSOLE_SKILL_START_WORKER,
-    }
-    vars(_source_wiring).update({'_CONSOLE_SKILL_FUNCTIONS': _CONSOLE_SKILL_FUNCTIONS})
-    _CONSOLE_SKILL_CONTEXT_SOURCE = (
-        vars(_source_wiring),
-        _source_wiring.__file__,
-        _source_wiring.__spec__,
-        getattr(_source_wiring.__spec__, "origin", None),
-        (
-            (vars(_source_wiring), "ServiceWiringMixin", _source_wiring.ServiceWiringMixin),
-            (vars(_source_wiring), "_CONSOLE_SKILL_FUNCTIONS", _CONSOLE_SKILL_FUNCTIONS),
-            (
-                _source_wiring._skill_wiring.SkillServiceWiringMixin.__dict__,
-                "_build_local_skill_trust_service",
-                _source_wiring._skill_wiring.SkillServiceWiringMixin.__dict__["_build_local_skill_trust_service"],
-            ),
-            (
-                _source_wiring._skill_wiring.SkillServiceWiringMixin.__dict__,
-                "_build_local_skills_stack",
-                _source_wiring._skill_wiring.SkillServiceWiringMixin.__dict__["_build_local_skills_stack"],
-            ),
-            (
-                _source_wiring._skill_wiring.SkillServiceWiringMixin.__dict__,
-                "ensure_local_skill_trust_service",
-                _source_wiring._skill_wiring.SkillServiceWiringMixin.__dict__["ensure_local_skill_trust_service"],
-            ),
-            (
-                _source_wiring.ServiceWiringMixin.__dict__,
-                "local_skill_trust_service",
-                _source_wiring.ServiceWiringMixin.__dict__["local_skill_trust_service"],
-            ),
-            (
-                _source_wiring.ServiceWiringMixin.__dict__,
-                "local_skills_service",
-                _source_wiring.ServiceWiringMixin.__dict__["local_skills_service"],
-            ),
-            (
-                _source_wiring.ServiceWiringMixin.__dict__,
-                "skills_scope_service",
-                _source_wiring.ServiceWiringMixin.__dict__["skills_scope_service"],
-            ),
-            (vars(_source_wiring), "_ConsoleSkillTrustSource", _source_wiring._ConsoleSkillTrustSource),
-            (
-                vars(_source_wiring),
-                "_capture_console_skill_trust_source",
-                _source_wiring._capture_console_skill_trust_source,
-            ),
-            (vars(_source_wiring), "_console_skill_source_current", _source_wiring._console_skill_source_current),
-            (
-                vars(_source_wiring),
-                "_capture_console_skill_trust_preparation",
-                _source_wiring._capture_console_skill_trust_preparation,
-            ),
-            (
-                vars(_source_wiring),
-                "_prepare_console_skill_trust_service",
-                _source_wiring._prepare_console_skill_trust_service,
-            ),
-            (vars(_source_wiring), "_CONSOLE_SKILL_RUN_WORKER", _CONSOLE_SKILL_RUN_WORKER),
-            (vars(_source_wiring), "_CONSOLE_SKILL_WAIT", _CONSOLE_SKILL_WAIT),
-            (vars(_source_wiring), "_CONSOLE_SKILL_WORKERS_GET", _CONSOLE_SKILL_WORKERS_GET),
-            (vars(_source_wiring), "_CONSOLE_SKILL_APP_GET", _CONSOLE_SKILL_APP_GET),
-            (vars(_source_wiring), "_CONSOLE_SKILL_NEW_WORKER", _CONSOLE_SKILL_NEW_WORKER),
-            (vars(_source_wiring), "_CONSOLE_SKILL_ADD_WORKER", _CONSOLE_SKILL_ADD_WORKER),
-            (vars(_source_wiring), "_CONSOLE_SKILL_START_WORKER", _CONSOLE_SKILL_START_WORKER),
-            (vars(_source_wiring), "get_user_data_dir", _source_wiring.get_user_data_dir),
-            (vars(_source_wiring), "LocalSkillsService", _source_wiring.LocalSkillsService),
-            (vars(_source_wiring), "SkillsScopeService", _source_wiring.SkillsScopeService),
-            (vars(_source_wiring), "Worker", _source_wiring.Worker),
-            (vars(_source_wiring), "_CONSOLE_SKILL_SCOPE_SLOTS", _CONSOLE_SKILL_SCOPE_SLOTS),
-            (vars(_source_wiring), "_CONSOLE_SKILL_LOCAL_SLOTS", _CONSOLE_SKILL_LOCAL_SLOTS),
-            (vars(_source_wiring), "_SkillWorkerManager", _SkillWorkerManager),
-            (vars(_source_wiring), "_CONSOLE_SKILL_WORKERS", _CONSOLE_SKILL_WORKERS),
-            (vars(_source_wiring), "_CONSOLE_SKILL_APP", _CONSOLE_SKILL_APP),
-            (_SkillAppBase.__dict__, "workers", _SkillAppBase.__dict__["workers"]),
-            (_SkillAppAccessor.__dict__, "app", _SkillAppAccessor.__dict__["app"]),
-            (
-                _CONSOLE_SKILL_APP_GET.__globals__,
-                "active_app",
-                _CONSOLE_SKILL_APP_GET.__globals__["active_app"],
-            ),
-            (_CONSOLE_SKILL_NEW_WORKER.__globals__, "Worker", _source_wiring.Worker),
-            (
-                _SkillWorkerManager.__dict__,
-                "_new_worker",
-                _SkillWorkerManager.__dict__["_new_worker"],
-            ),
-            (
-                _SkillWorkerManager.__dict__,
-                "add_worker",
-                _SkillWorkerManager.__dict__["add_worker"],
-            ),
-            (_source_wiring.Worker.__dict__, "_start", _source_wiring.Worker.__dict__["_start"]),
-            (_source_wiring.Worker.__dict__, "wait", _source_wiring.Worker.__dict__["wait"]),
-            (
-                _SkillMessagePump.__dict__,
-                "run_worker",
-                _SkillMessagePump.__dict__["run_worker"],
-            ),
-        ),
-        tuple(
-            (
-                _CONSOLE_SKILL_FUNCTIONS,
-                _skill_name,
-                _skill_function,
-                _skill_function.__code__,
-                _skill_function.__globals__,
-                _skill_function.__defaults__,
-                _skill_function.__kwdefaults__,
-                tuple((_skill_function.__kwdefaults__ or {}).items()),
-                _skill_function.__closure__,
-                tuple(
-                    (cell, cell.cell_contents) for cell in _skill_function.__closure__ or ()
-                ),
-                vars(_skill_function).get("__wrapped__"),
-            )
-            for _skill_name, _skill_function in _CONSOLE_SKILL_FUNCTIONS.items()
-            if type(_skill_function) is _SkillFunctionType
-        ),
-    )
-    vars(_source_wiring).update({'_CONSOLE_SKILL_CONTEXT_SOURCE': _CONSOLE_SKILL_CONTEXT_SOURCE})
-
-    _CONSOLE_SKILL_WIRING_SOURCE = _CONSOLE_SKILL_CONTEXT_SOURCE
-    vars(_source_wiring).update({'_CONSOLE_SKILL_WIRING_SOURCE': _CONSOLE_SKILL_WIRING_SOURCE})
-    _CONSOLE_SKILL_ENTRY = (
-        _source_wiring._capture_console_skill_trust_preparation,
-        _source_wiring._prepare_console_skill_trust_service,
-    )
-    vars(_source_wiring).update({'_CONSOLE_SKILL_ENTRY': _CONSOLE_SKILL_ENTRY})
-    _CONSOLE_SKILL_CONTEXT_SOURCE = (
-        *_CONSOLE_SKILL_CONTEXT_SOURCE[:4],
-        _CONSOLE_SKILL_CONTEXT_SOURCE[4]
-        + (
-            (vars(_source_wiring), "_CONSOLE_SKILL_ENTRY", _CONSOLE_SKILL_ENTRY),
-        ),
-        _CONSOLE_SKILL_CONTEXT_SOURCE[5],
-    )
-    vars(_source_wiring).update({'_CONSOLE_SKILL_CONTEXT_SOURCE': _CONSOLE_SKILL_CONTEXT_SOURCE})
-    _CONSOLE_SKILL_WIRING_SOURCE = _CONSOLE_SKILL_CONTEXT_SOURCE
-    vars(_source_wiring).update({'_CONSOLE_SKILL_WIRING_SOURCE': _CONSOLE_SKILL_WIRING_SOURCE})
-    _helper_namespace = globals()
-    _helper_names = ('_console_skill_source_current', '_capture_console_skill_trust_source', '_capture_console_skill_trust_preparation', '_prepare_console_skill_trust_service')
-    _helper_bindings = tuple((_helper_namespace, name, _helper_namespace[name]) for name in _helper_names) + ((_helper_namespace, '_source_wiring', _source_wiring), (_helper_namespace, '__package__', __package__), (vars(_source_wiring), '_skill_wiring', _source_wiring._skill_wiring))
-    _helper_bindings += tuple((_helper_namespace, name, _helper_namespace[name]) for name in ("SkillServiceWiringMixin",))
-    _helper_records = tuple((
-        _helper_namespace, name, function, function.__code__,
-        function.__globals__, function.__defaults__, function.__kwdefaults__,
-        tuple((function.__kwdefaults__ or {}).items()), function.__closure__,
-        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
-        vars(function).get("__wrapped__"),
-    ) for name in _helper_names if type(function := _helper_namespace[name]) is _SkillFunctionType)
-    _class_names = ('_build_local_skill_trust_service', '_build_local_skills_stack', 'ensure_local_skill_trust_service')
-    _class_bindings = tuple((SkillServiceWiringMixin.__dict__, name, SkillServiceWiringMixin.__dict__[name]) for name in _class_names)
-    _class_records = tuple((SkillServiceWiringMixin.__dict__, name, function, function.__code__, function.__globals__, function.__defaults__, function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()), function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()), vars(function).get("__wrapped__")) for name in _class_names if type(function := SkillServiceWiringMixin.__dict__[name]) is _SkillFunctionType)
-    _CONSOLE_SKILL_HELPER_SOURCE = (_helper_namespace, __file__, __spec__, getattr(__spec__, "origin", None), _helper_bindings + _class_bindings, _helper_records + _class_records)
-    vars(_source_wiring).update({'_CONSOLE_SKILL_HELPER_SOURCE': _CONSOLE_SKILL_HELPER_SOURCE})
     vars(_source_wiring).update({
-        '_CONSOLE_SKILL_ADD_WORKER': _CONSOLE_SKILL_ADD_WORKER,
-        '_CONSOLE_SKILL_APP': _CONSOLE_SKILL_APP,
-        '_CONSOLE_SKILL_APP_GET': _CONSOLE_SKILL_APP_GET,
-        '_CONSOLE_SKILL_CONTEXT_SOURCE': _CONSOLE_SKILL_CONTEXT_SOURCE,
-        '_CONSOLE_SKILL_ENTRY': _CONSOLE_SKILL_ENTRY,
-        '_CONSOLE_SKILL_FUNCTIONS': _CONSOLE_SKILL_FUNCTIONS,
-        '_CONSOLE_SKILL_LOCAL_SLOTS': _CONSOLE_SKILL_LOCAL_SLOTS,
-        '_CONSOLE_SKILL_NEW_WORKER': _CONSOLE_SKILL_NEW_WORKER,
-        '_CONSOLE_SKILL_RUN_WORKER': _CONSOLE_SKILL_RUN_WORKER,
-        '_CONSOLE_SKILL_SCOPE_SLOTS': _CONSOLE_SKILL_SCOPE_SLOTS,
-        '_CONSOLE_SKILL_START_WORKER': _CONSOLE_SKILL_START_WORKER,
-        '_CONSOLE_SKILL_WAIT': _CONSOLE_SKILL_WAIT,
-        '_CONSOLE_SKILL_WIRING_SOURCE': _CONSOLE_SKILL_WIRING_SOURCE,
-        '_CONSOLE_SKILL_WORKERS': _CONSOLE_SKILL_WORKERS,
-        '_CONSOLE_SKILL_WORKERS_GET': _CONSOLE_SKILL_WORKERS_GET,
-        '_SkillAppAccessor': _SkillAppAccessor,
-        '_SkillAppBase': _SkillAppBase,
-        '_SkillFunctionType': _SkillFunctionType,
-        '_SkillMappingProxyType': _SkillMappingProxyType,
-        '_SkillMessagePump': _SkillMessagePump,
-        '_SkillWorkerManager': _SkillWorkerManager,
-        '_CONSOLE_SKILL_HELPER_SOURCE': _CONSOLE_SKILL_HELPER_SOURCE,
+        "_SkillWorkerManager": _SkillWorkerManager,
+        # Skill methods the trust source refuses to see overridden per instance.
+        "_CONSOLE_SKILL_SCOPE_SLOTS": (
+            "get_context",
+            "_call",
+            "_enforce_policy",
+            "_require_service",
+            "_normalize_mode",
+            "_normalize_response",
+            "_maybe_await",
+            "_source_action_id",
+            "_normalize_item",
+            "_with_record_id",
+        ),
+        "_CONSOLE_SKILL_LOCAL_SLOTS": ("get_context", "trust_service"),
     })
 
 

@@ -394,6 +394,7 @@ def receive_console_visible_intent(
     from collections.abc import Mapping
     from tldw_chatbook import config
     from tldw_chatbook.Chat.console_chat_controller import (
+        ConsoleChatController,
         build_console_provider_selection_from_settings,
         coerce_bool_setting,
         coerce_int_setting,
@@ -407,23 +408,25 @@ def receive_console_visible_intent(
     )
     from tldw_chatbook.Chat.console_received_intent import ConsoleReceivedTurnIntent
     from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
-    from .session import (
-        ConsoleSessionController,
-        _CONSOLE_TURN_CONTEXT_BUILDER,
-        _console_global_user_display_name,
-    )
+    from .session import ConsoleSessionController, _console_global_user_display_name
     from ..Screens.settings_library_rag_defaults import load_direct_library_tools
     from ..Navigation.pending_handoff_store import HandoffChannel
     from ..Screens.chat_screen import (
+        ChatScreen,
         _CONSOLE_RECEIVED_SCREEN_SELECTORS,
-        _CONSOLE_RECEIVED_RAG_READERS,
         _stock_received_rag_sources,
         _stock_received_rag_top_k,
     )
+    from tldw_chatbook.Chat.console_received_dispatch import own_methods
 
     from .turn_admission import console_live_runtime_enabled, policy_producers_current
 
     owner = screen._session
+    # This route computes what the screen's selectors would and never calls
+    # them, so a subclass (which may override them) declines, before any
+    # screen method runs.
+    if type(screen) is not ChatScreen:
+        return None
     runtime = screen._console_runtime()
     with runtime._first_send_source_scope():
         store, controller = runtime._chat_store, runtime._chat_controller
@@ -487,31 +490,27 @@ def receive_console_visible_intent(
             for target, name, original in callbacks
         ):
             return None
-        for name, function, code in _CONSOLE_RECEIVED_SCREEN_SELECTORS:
-            method = getattr(screen, name, None)
-            if (
-                not isinstance(method, MethodType)
-                or method.__self__ is not screen
-                or method.__func__ is not function
-                or function.__code__ is not code
-            ):
-                return None
-        builder = owner._build_console_turn_execution_context
-        if (
-            not isinstance(builder, MethodType)
-            or builder.__func__ is not _CONSOLE_TURN_CONTEXT_BUILDER
+        # ADR-356 rule 4: this route computes what these selectors would, so a
+        # per-instance override sends the draft down the ordinary dispatch.
+        # A wrapped class method answers like the stock one and qualifies.
+        if not own_methods(screen, _CONSOLE_RECEIVED_SCREEN_SELECTORS) or not own_methods(
+            owner, ("_build_console_turn_execution_context",)
         ):
             return None
         if not policy_producers_current():
             return None
+        # The adapter check above holds these slots to what this screen's
+        # wiring registered; the registration must also name this session
+        # (a swapped-in copy was never registered).
         scratch = owner._scratch_snapshot_provider
-        function, code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
         if (
             type(scratch) is not partial
-            or scratch.func is not function
-            or function.__code__ is not code
             or scratch.args != (screen,)
             or scratch.keywords
+            or not any(
+                target is owner and name == "_scratch_snapshot_provider" and original is scratch
+                for target, name, original in callbacks
+            )
         ):
             return None
         rag_source = owner._rag_source_types_accessor
@@ -525,12 +524,6 @@ def receive_console_visible_intent(
             return None
         from ..Screens import chat_screen as screen_module
 
-        if any(
-            getattr(screen_module, function.__name__, None) is not function
-            or function.__code__ is not code
-            for function, code in _CONSOLE_RECEIVED_RAG_READERS
-        ):
-            return None
         config_identity = config.current_config_identity()
         resident = getattr(screen.app_instance, "app_config", None)
         raw = (
@@ -575,15 +568,11 @@ def receive_console_visible_intent(
         queue_revision = (
             queue.revision if activity.accepted_live_turn or queue.total_count else None
         )
-        if queue_revision is not None:
-            from tldw_chatbook.Chat.console_chat_controller import (
-                _CONSOLE_RECEIVED_QUEUE_METHOD,
-            )
-            from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
-
-            function, code = _CONSOLE_RECEIVED_QUEUE_METHOD
-            if not stock_native_methods(controller, (("queue_prompt", function, code),)):
-                return None
+        if queue_revision is not None and (
+            type(controller) is not ConsoleChatController
+            or not own_methods(controller, ("queue_prompt",))
+        ):
+            return None
         section = raw.get("console", {})
         section = section if isinstance(section, Mapping) else {}
         defaults = raw.get("chat_defaults", {})

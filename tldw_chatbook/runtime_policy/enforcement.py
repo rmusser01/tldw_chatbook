@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from inspect import getattr_static
-from typing import Any, Callable
+from typing import Callable
 
 from .engine import PolicyEngine
 from .registry import CAPABILITY_REGISTRY
@@ -21,12 +21,6 @@ class ServicePolicyEnforcer:
     ) -> None:
         self._state_provider = state_provider
         self._engine = engine or PolicyEngine(CAPABILITY_REGISTRY)
-
-    @classmethod
-    def from_runtime_policy_context(cls, context: Any) -> "ServicePolicyEnforcer":
-        return cls(
-            state_provider=lambda: context.state,
-        )
 
     def current_state(self) -> RuntimeSourceState | None:
         state = self._state_provider()

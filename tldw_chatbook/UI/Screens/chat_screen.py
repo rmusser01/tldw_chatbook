@@ -24535,28 +24535,22 @@ def _lazy_summarize_preview_modal():
     return ConsoleSummarizePreviewModal
 
 
-_CONSOLE_RECEIVED_SCREEN_SELECTORS = tuple(
-    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
-    for name in (
-        "_build_console_provider_selection",
-        "_build_console_provider_selection_uncached",
-        "_build_console_provider_selection_from_settings",
-        "_provider_readiness_app_config",
-        "_console_send_blocked_reason",
-        "_console_send_gate",
-        "_console_setup_blocked_reason",
-    )
+# The received route computes what these would; an instance override of one
+# sends the draft down the ordinary dispatch (ADR-356 rule 4: no code identity).
+_CONSOLE_RECEIVED_SCREEN_SELECTORS = (
+    "_build_console_provider_selection",
+    "_build_console_provider_selection_uncached",
+    "_build_console_provider_selection_from_settings",
+    "_provider_readiness_app_config",
+    "_console_send_blocked_reason",
+    "_console_send_gate",
+    "_console_setup_blocked_reason",
 )
 _CONSOLE_RAG_DEPTH_READERS = (
     (_stock_received_rag_top_k, _stock_received_rag_top_k.__code__),
     (_console_library_rag_profile_top_k, _console_library_rag_profile_top_k.__code__),
 )
 _CONSOLE_RAG_DEPTH_DELEGATE = library_rag_profile_top_k, library_rag_profile_top_k.__code__
-_CONSOLE_RECEIVED_RAG_READERS = (
-    (_stock_received_rag_sources, _stock_received_rag_sources.__code__),
-    (_console_library_rag_source_scope, _console_library_rag_source_scope.__code__),
-    *_CONSOLE_RAG_DEPTH_READERS,
-)
 
 
 # Capture the defining callbacks before the first optional pending display.
@@ -24566,4 +24560,4 @@ run_controls.bind_preparing_screen_sources(ChatScreen)
 
 
 # Complete the finite discovery binding after the real view definition.
-skill_controller.bind_console_skill_discovery(ChatScreen, build_console_controllers)
+skill_controller.bind_console_skill_discovery(ChatScreen)

@@ -74,6 +74,25 @@ def stock_native_methods(owner: Any, originals: tuple) -> bool:
     )
 
 
+def own_methods(owner: Any, names: tuple[str, ...]) -> bool:
+    """True when each name is ``owner``'s class method, not an instance override.
+
+    ADR-356 rule 4: the owner's current state decides, not code identity, so a
+    wrapped class method qualifies like the stock one, and a callback put on
+    this one object (a foreign override) declines. An object without an
+    instance dict cannot hold an override.
+    """
+    fields = getattr(owner, "__dict__", None)
+    if type(fields) is not dict:
+        fields = {}
+    return all(
+        name not in fields
+        and isinstance(method := getattr(owner, name, None), MethodType)
+        and method.__self__ is owner
+        for name in names
+    )
+
+
 def preparation_native_runner(
     controller: Any, session_id: str | None = None, *, require_current=None
 ):
@@ -402,27 +421,27 @@ async def _run_received_intent_bound(runtime, record, source):
         )
 
     if intent.queue_revision is not None:
-        from .console_chat_controller import _CONSOLE_RECEIVED_QUEUE_METHOD
-
-        function, code = _CONSOLE_RECEIVED_QUEUE_METHOD
+        # ADR-356 rule 4 (TASK-41643): a wrapped class method is stock; an
+        # override on this controller is refused before it is called.
         method = controller.queue_prompt
         kwargs = {
             "text": intent.inputs.draft,
             "expected_revision": intent.queue_revision,
             "configuration": configuration,
         }
-        if not (
-            isinstance(method, MethodType)
-            and method.__self__ is controller
-            and method.__func__ is function
-            and function.__code__ is code
-        ):
+        from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+        def queue_source_is_stock():
+            # An exact type: a subclass may define its own queue_prompt.
+            return type(controller) is ConsoleChatController and own_methods(
+                controller, ("queue_prompt",)
+            )
+
+        if not queue_source_is_stock():
             raise RecoveryRequired("console_snapshot_owner_changed")
 
         def before_admission():
-            if not stock_native_methods(
-                controller, (("queue_prompt", function, code),)
-            ):
+            if not queue_source_is_stock():
                 raise RecoveryRequired("console_snapshot_owner_changed")
             require_received_source(runtime, record, source)
 

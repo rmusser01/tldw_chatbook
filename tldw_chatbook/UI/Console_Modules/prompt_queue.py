@@ -1363,18 +1363,17 @@ class ConsolePromptQueueUIController:
                 if _captured_inputs is None:
                     return {}
                 from tldw_chatbook.Chat.console_chat_controller import (
-                    _CONSOLE_RECEIVED_QUEUE_METHOD,
+                    ConsoleChatController,
                 )
-                from tldw_chatbook.Chat.console_received_dispatch import (
-                    stock_native_methods,
-                )
-
-                function, code = _CONSOLE_RECEIVED_QUEUE_METHOD
+                from tldw_chatbook.Chat.console_received_dispatch import own_methods
 
                 def before_admission():
                     require_pressed_current()
-                    if not stock_native_methods(
-                        controller, (("queue_prompt", function, code),)
+                    # ADR-356 rule 4 (TASK-41643): no code identity.
+                    if type(
+                        controller
+                    ) is not ConsoleChatController or not own_methods(
+                        controller, ("queue_prompt",)
                     ):
                         raise RuntimeError("Pressed Console queue source changed.")
 
@@ -1651,8 +1650,3 @@ def _preparation_refusal_detail(error: RuntimeError | ValueError) -> str:
     ):
         return "Chat or settings changed while preparing Send. Your draft was kept; send again."
     return str(error) or "Console runtime refused this turn."
-
-
-_CONSOLE_PROMPT_QUEUE_DISPATCH = (
-    ConsolePromptQueueUIController.dispatch, ConsolePromptQueueUIController.dispatch.__code__
-)

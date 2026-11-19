@@ -412,11 +412,11 @@ async def test_stock_received_image_refused_enter_preserves_custody(
     from textual.widgets import Static
     from Tests.UI.test_console_send_strip_codes import _image
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-    from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+    from tldw_chatbook.Chat.console_received_dispatch import own_methods
     from tldw_chatbook.UI.Screens.chat_screen import _CONSOLE_RECEIVED_SCREEN_SELECTORS
 
     async with _received_console_case(monkeypatch, f"image-refused-{route}") as case:
-        assert stock_native_methods(case.console, _CONSOLE_RECEIVED_SCREEN_SELECTORS)
+        assert own_methods(case.console, _CONSOLE_RECEIVED_SCREEN_SELECTORS)
         image = _image()
         assert case.store.add_pending_attachment(case.session.id, image)
         refusal = case.console._console_attachment_blocked_reason()

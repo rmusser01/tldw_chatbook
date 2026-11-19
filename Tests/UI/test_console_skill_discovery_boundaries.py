@@ -16,25 +16,22 @@ pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("changed_source", ("wiring", "helper", "prepared"))
+@pytest.mark.parametrize("changed_source", ("owner", "prepared"))
 async def test_preparation_return_refusal_precedes_get_context(
     monkeypatch, record_property, changed_source
 ):
+    # TASK-41642 (ADR-356 rule 4): the wiring/helper source capsules are gone;
+    # the discovery owner (its view, app and runtime registrations) and the
+    # preparation's own source decide after the preparation returns.
     from tldw_chatbook.UI.Console_Modules import skill
 
     events = []
     completed = False
-    wiring_source, helper_source, controller_source = object(), object(), object()
     source_reads = []
 
     def current():
-        return True
-
-    def source_current(source):
-        assert source is wiring_source or source is helper_source
-        role = "wiring" if source is wiring_source else "helper"
-        source_reads.append((role, completed))
-        return not (completed and changed_source == role)
+        source_reads.append(("owner", completed))
+        return not (completed and changed_source == "owner")
 
     def prepared_current():
         source_reads.append(("prepared", completed))
@@ -48,11 +45,10 @@ async def test_preparation_return_refusal_precedes_get_context(
     app = SimpleNamespace(skills_scope_service=service)
     prepared = (app, prepared_current)
 
-    def capture(actual_app, actual_service, actual_current, actual_source):
+    def capture(actual_app, actual_service, actual_current):
         assert actual_app is app
         assert actual_service is service
         assert actual_current is current
-        assert actual_source is controller_source
         events.append(("capture",))
         return prepared
 
@@ -75,20 +71,16 @@ async def test_preparation_return_refusal_precedes_get_context(
         set_task_resume_state=lambda _state: None,
         current_chat_controller=lambda: None,
     )
-    metadata = SimpleNamespace(_source_current=source_current)
     wiring = ModuleType("tldw_chatbook.app_service_wiring")
-    wiring._CONSOLE_SKILL_WIRING_SOURCE = wiring_source
-    wiring._CONSOLE_SKILL_HELPER_SOURCE = helper_source
     wiring._capture_console_skill_trust_preparation = capture
     wiring._prepare_console_skill_trust_service = prepare
-    wiring._CONSOLE_SKILL_ENTRY = (capture, prepare)
     original_capture = skill._capture_console_skill_discovery
     original_wiring_present = "tldw_chatbook.app_service_wiring" in sys.modules
     original_wiring = sys.modules.get("tldw_chatbook.app_service_wiring")
 
     def capture_controller(actual_controller):
         assert actual_controller is controller
-        return current, controller_source, metadata
+        return current
 
     result = None
     escaped = None
@@ -118,56 +110,37 @@ async def test_preparation_return_refusal_precedes_get_context(
     assert result == {}
 
 
-def test_second_binding_does_not_replace_original_discovery_witness(
+def test_second_binding_does_not_replace_the_bound_discovery_view(
     monkeypatch, record_property
 ):
-    from tldw_chatbook.UI.Console_Modules import skill, wiring
+    # TASK-41642 (ADR-356 rule 4): binding records no code, only the view type
+    # and the context classes, and the first binding still wins. A popup
+    # override on one view is refused at capture (the subprocess control in
+    # test_console_skill_discovery_wrapped_collaborators.py, instance_view_popup).
+    from tldw_chatbook.UI.Console_Modules import skill
     from tldw_chatbook.UI.Screens import chat_screen
-    from tldw_chatbook.Widgets import compact_model_bar
 
     view_type = chat_screen.ChatScreen
-    source = skill._DISCOVERY_SOURCE
     bound_view = skill._DISCOVERY_VIEW
-    original_popup = vars(view_type)["_sync_console_command_popup"]
+    bound_classes = skill._CONTEXT_CLASSES
     assert bound_view is view_type
-    assert type(source) is tuple and len(source) == 6
-    assert compact_model_bar._source_current(source) is True
-    popup_rows = tuple(row for row in source[5] if row[1] == "_sync_console_command_popup")
-    assert len(popup_rows) == 1
-    assert popup_rows[0][2] is original_popup
-    assert popup_rows[0][0]["_sync_console_command_popup"] is original_popup
-    calls = []
+    assert type(bound_classes) is tuple and len(bound_classes) == 5
 
-    def customized_popup(self):
-        calls.append(self)
+    class OtherView(view_type):
+        pass
 
     with monkeypatch.context() as patch:
-        # Register TEST undo for the known R1 side effect. Product code must not
-        # reset or replace the first witness to make this control pass.
-        patch.setattr(skill, "_DISCOVERY_SOURCE", source)
+        # Register TEST undo in case product code wrongly rebinds.
         patch.setattr(skill, "_DISCOVERY_VIEW", bound_view)
-        patch.setattr(view_type, "_sync_console_command_popup", customized_popup)
-        assert compact_model_bar._source_current(source) is False
-        skill.bind_console_skill_discovery(view_type, wiring.build_console_controllers)
-        rebound_source = skill._DISCOVERY_SOURCE
+        patch.setattr(skill, "_CONTEXT_CLASSES", bound_classes)
+        skill.bind_console_skill_discovery(OtherView)
         rebound_view = skill._DISCOVERY_VIEW
-        original_still_refuses = compact_model_bar._source_current(source)
-        rebound_current = compact_model_bar._source_current(rebound_source)
+        rebound_classes = skill._CONTEXT_CLASSES
 
-    # Both the popup slot and R1's replaced capsule are restored before RED.
-    assert vars(view_type)["_sync_console_command_popup"] is original_popup
-    assert skill._DISCOVERY_SOURCE is source
     assert skill._DISCOVERY_VIEW is bound_view
-    assert compact_model_bar._source_current(source) is True
-    record_property("same_original_witness", rebound_source is source)
-    record_property("original_witness_current_while_customized", original_still_refuses)
-    record_property("rebound_witness_current_while_customized", rebound_current)
-    record_property("popup_calls", len(calls))
-    assert calls == []
-    assert original_still_refuses is False
+    record_property("same_bound_view", rebound_view is bound_view)
     assert rebound_view is bound_view
-    assert rebound_source is source
-    assert rebound_current is False
+    assert rebound_classes is bound_classes
 
 
 @pytest.mark.asyncio
@@ -180,16 +153,10 @@ async def test_discovery_preparation_preserves_original_ui_error_policy(
     events = []
     ordinary_error = LookupError("controlled-preparation-failure")
     cancellation = asyncio.CancelledError("controlled-preparation-cancellation")
-    wiring_source, helper_source, controller_source = object(), object(), object()
 
     def current():
         events.append("current")
         return policy_case != "initial_stale"
-
-    def source_current(source):
-        assert source is wiring_source or source is helper_source
-        events.append("source_current")
-        return True
 
     def prepared_current():
         events.append("prepared_current")
@@ -204,9 +171,9 @@ async def test_discovery_preparation_preserves_original_ui_error_policy(
     service = app.skills_scope_service
     prepared = (app, prepared_current)
 
-    def capture(actual_app, actual_service, actual_current, actual_source):
+    def capture(actual_app, actual_service, actual_current):
         assert actual_app is app and actual_service is service
-        assert actual_current is current and actual_source is controller_source
+        assert actual_current is current
         events.append("capture")
         return prepared
 
@@ -230,13 +197,9 @@ async def test_discovery_preparation_preserves_original_ui_error_policy(
         set_task_resume_state=lambda _state: None,
         current_chat_controller=lambda: None,
     )
-    metadata = SimpleNamespace(_source_current=source_current)
     wiring = ModuleType("tldw_chatbook.app_service_wiring")
-    wiring._CONSOLE_SKILL_WIRING_SOURCE = wiring_source
-    wiring._CONSOLE_SKILL_HELPER_SOURCE = helper_source
     wiring._capture_console_skill_trust_preparation = capture
     wiring._prepare_console_skill_trust_service = prepare
-    wiring._CONSOLE_SKILL_ENTRY = (capture, prepare)
     original_capture = skill._capture_console_skill_discovery
     original_wiring_present = "tldw_chatbook.app_service_wiring" in sys.modules
     original_wiring = sys.modules.get("tldw_chatbook.app_service_wiring")
@@ -244,7 +207,7 @@ async def test_discovery_preparation_preserves_original_ui_error_policy(
     def capture_controller(actual_controller):
         assert actual_controller is controller
         events.append("capture_controller")
-        return current, controller_source, metadata
+        return current
 
     warning_errors = []
 

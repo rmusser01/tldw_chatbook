@@ -10,8 +10,7 @@ from . import app_collections_wiring as _collections_wiring
 
 from .app_skill_wiring import (
     _disabled_builtin_skills,  # noqa: F401 - retained original importing/patch slot
-    _read_app_disabled_builtin_skills,
-    _console_skill_source_current,  # noqa: F401 - retained original importing/patch slot
+    _read_app_disabled_builtin_skills,  # noqa: F401 - read by _build_local_skills_stack through this module
     _capture_console_skill_trust_source,  # noqa: F401 - retained original importing/patch slot
     _capture_console_skill_trust_preparation,  # noqa: F401 - retained original importing/patch slot
     _prepare_console_skill_trust_service,  # noqa: F401 - retained original importing/patch slot
@@ -380,12 +379,6 @@ def _read_app_raw_cli_permitted(app: object) -> bool:
         return False
     console = config.get("console")
     return isinstance(console, Mapping) and console.get("raw_cli_permitted") is True
-
-
-_STOCK_DISABLED_BUILTINS_READER = (
-    _read_app_disabled_builtin_skills,
-    _read_app_disabled_builtin_skills.__code__,
-)
 
 
 def _build_terminal_backend() -> "TerminalBackend":
