@@ -95,6 +95,11 @@ INHERITED = {
         "Tests/UI/test_console_hook_review_send_freeze.py::test_allow_all_resumes_the_captured_send_exactly_once",
         # TASK-41319: a wrapped skill collaborator's Send (follow-ups burn-down lanes, 2026-11-18).
         "Tests/Chat/test_console_send_wrapped_skill_collaborators.py",
+        # TASK-41642/41643: wrapped collaborators on the received route and in skill
+        # discovery, and a subclassed controller's queue (2026-11-19).
+        "Tests/UI/test_console_received_route_wrapped_collaborators.py",
+        "Tests/UI/test_console_skill_discovery_wrapped_collaborators.py",
+        "Tests/UI/test_console_queue_subclass_controller.py",
         # Round 16 (TASK-41508, TASK-41511): trace files and the capture file.
         "Tests/Chat/test_console_project_instruction_traces.py",
         "Tests/Chat/test_console_trace_failed_tool_run.py",
