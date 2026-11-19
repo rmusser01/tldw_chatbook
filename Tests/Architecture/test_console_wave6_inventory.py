@@ -248,7 +248,9 @@ WAVE6_GROUPS = {
                 "_refresh_console_effective_scope_and_sync",
                 "_warm_console_effective_scope_cache_if_stale",
                 "_read_console_retrieval_scope",
-                "_write_console_retrieval_scope",
+                # TASK-34100.16.1 pre-merge review: Save's write and read-back
+                # share one finite worker (was _write_console_retrieval_scope).
+                "_write_and_read_back_console_retrieval_scope",
                 "_console_scope_picker_listers",
                 "_apply_console_retrieval_scope_save",
                 "_console_rag_source_status",
