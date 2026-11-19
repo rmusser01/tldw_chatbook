@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 05:33
-updated_date: 2026-11-19 17:24
+updated_date: 2026-11-19 17:44
 labels:
 - follow-up
 - providers
@@ -34,6 +34,7 @@ Confirmed to predate TASK-41522 and TASK-41700 (review r16cu-rev2, identical at 
 - [x] #2 Project-instruction keys for values saved before the fix still resolve, or are migrated, with a test
 - [x] #3 Tests pin Google, Cohere and one gateway base, red before the fix
 - [x] #4 The User Guide's known-gap sentence about the `/v1` append is removed
+- [x] #5 Typing a cloud provider's own bare host (the registry default's host) saves its documented base
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -70,3 +71,10 @@ Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_ch
 - Typed forms (bare host, host with `/`, each prefix of the documented path with and without `/`, the default, `/chat/completions`, a gateway, `http://localhost:4000`) compared for every cloud key with c176f553b3's sources: the only differences left are the intended ones (no-`v1` gateway paths and Google's `/v1beta` saved as typed, Cohere's bare hosts and DeepSeek's own bare host saved bare, an own-host `/chat/completions` paste now reading as the documented base).
 - Docs: the User Guide sentence now says the provider's own documented address and a gateway's are saved as typed, an own-host prefix of the documented path is completed (Groq's example), and any other bare host gets `/v1` except under Cohere; `llm-providers.md` likewise.
 - Reruns: `test_local_server_discovery.py`, `test_provider_endpoint_contract.py` and the other contract callers outside Tests/UI, the QwenCloud, hosted-chat, DeepSeek, Groq/OpenRouter, Moonshot, Z.ai, Anthropic and custom-credential adapter files, and `test_settings_provider_save_scope.py` (26 files, `-n 4`, load 17-22): 2788 passed. `Tests/CI` 1811 passed. Preflight passed.
+
+**Review r17cu-rev2 round (2026-11-19).** AC#5 added at the coordinator's request (an engineering call taken in this PR, reopening the round-1 follow-up): a cloud provider's own bare host (`https://api.groq.com`, `https://openrouter.ai`, `https://dashscope-intl.aliyuncs.com`) saved `<host>/v1`, which is never their working base; engine presets already complete a bare own host to the documented path.
+- AC#5: the own-host prefix rule (round r17cu-rev1) now covers the empty path, so the provider's own bare host (with or without `/`) reads as its documented base: the relaxed cloud branch also takes an empty path on the own host, and `_engine_preset_resolution` completes it (form stays `origin`). Groq `https://api.groq.com` saves `.../openai/v1`, OpenRouter `https://openrouter.ai` `.../api/v1`, QwenCloud `https://dashscope-intl.aliyuncs.com` `.../compatible-mode/v1`, Google `https://generativelanguage.googleapis.com` `.../v1beta` (its adapter then posts `.../v1beta/models/m:generateContent`, pinned).
+- Tests: rows for those four bare own hosts in `test_a_cloud_base_without_v1_saves_a_base_its_adapter_posts_under`, red at c89fc148eb (4 of 6 nodes: each saved `<host>/v1`), green after.
+- Probe over every cloud key (bare own host with and without `/`, `http://localhost:4000`, `https://gw.corp`, the default), against c89fc148eb: only the Google, Groq, OpenRouter and QwenCloud bare own hosts changed; OpenAI, Anthropic, Mistral, `mistralai`, Moonshot and Hugging Face still save `<host>/v1`, Cohere and DeepSeek stay bare on their own hosts, Z.ai is unchanged, and foreign bare hosts are unchanged (`/v1`, bare under Cohere). Stored values keep their identity: `canonical_connection_identity` of `v1`-last values (`<host>/v1`, the `/v1` defaults, `https://gw.corp/v1`, `<host>/v1beta/v1`) is identical to c176f553b3's for every cloud key, since a `v1`-last path never reaches this branch.
+- M-3: `llm-providers.md` and the User Guide now say the bare own host is completed to the documented path, and that `/v1` (bare under Cohere) applies on any other host.
+- Reruns (load 18-24): the same 26 contract, adapter, discovery and save-scope files, 2788 passed; `Tests/CI` 1811 passed; preflight passed.

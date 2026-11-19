@@ -4659,8 +4659,9 @@ def test_a_gateway_path_keeps_every_host_and_shape_refusal():
 #: Settings saves for it, and where the adapter posts once it has. The
 #: provider's own documented base and a gateway's save as typed; a strict
 #: prefix of the documented path on the provider's own host saves as that path
-#: (review r17cu-rev1 I-1); a bare host saves bare only for Cohere, and for
-#: DeepSeek on its own host (r17cu-rev1 M-1).
+#: (review r17cu-rev1 I-1), and so does its own bare host (r17cu-rev2); a
+#: bare host saves bare only for Cohere, and for DeepSeek on its own host
+#: (r17cu-rev1 M-1).
 _NO_V1_BASES = {
     "google-api_base_url": (
         (
@@ -4697,23 +4698,26 @@ _NO_V1_BASES = {
     **{
         case: tuple(
             (typed, saved, f"{saved}{route}")
-            for typed in (prefix, f"{prefix}/")
+            for typed in (prefix, f"{prefix}/", host)
         )
-        for case, prefix, saved, route in (
+        for case, host, prefix, saved, route in (
             (
                 "groq-api_base_url",
+                "https://api.groq.com",
                 "https://api.groq.com/openai",
                 "https://api.groq.com/openai/v1",
                 "/chat/completions",
             ),
             (
                 "openrouter-api_base_url",
+                "https://openrouter.ai",
                 "https://openrouter.ai/api",
                 "https://openrouter.ai/api/v1",
                 "/chat/completions",
             ),
             (
                 "qwencloud-api_base_url",
+                "https://dashscope-intl.aliyuncs.com",
                 "https://dashscope-intl.aliyuncs.com/compatible-mode",
                 "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
                 "/responses",
@@ -4721,6 +4725,15 @@ _NO_V1_BASES = {
         )
     },
 }
+#: Review r17cu-rev2 (TASK-41704 AC#5): Google's own bare host saves its
+#: documented ``/v1beta``, not ``/v1``.
+_NO_V1_BASES["google-api_base_url"] += (
+    (
+        "https://generativelanguage.googleapis.com",
+        "https://generativelanguage.googleapis.com/v1beta",
+        "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+    ),
+)
 
 
 @pytest.mark.parametrize(

@@ -358,7 +358,9 @@ def _resolve_provider_endpoint(
         cloud
         and suffix is not None
         and suffix[1] == "origin"
-        and (segments or bare_base)
+        # Review r17cu-rev2: the provider's own bare host is completed to its
+        # documented base (Groq's /openai/v1), not given /v1.
+        and (segments or bare_base or documented is not None)
     ):
         # TASK-40300, owner decision 2026-11-13: an OpenAI-compatible custom
         # endpoint's path is its API base even when its v1 is not the last
@@ -531,8 +533,10 @@ def _engine_preset_resolution(
         bare_host_base: A bare host is the base itself (TASK-41704: Cohere,
             DeepSeek on its own host).
         documented_path: The provider's documented path when ``host`` is
-            its own; a prefix of it reads as that path (review r17cu-rev1
-            I-1: Groq's ``https://api.groq.com/openai`` is ``/openai/v1``).
+            its own; a prefix of it, the bare host included, reads as that
+            path (reviews r17cu-rev1 I-1 and r17cu-rev2: Groq's
+            ``https://api.groq.com/openai`` and ``https://api.groq.com`` are
+            ``/openai/v1``).
 
     Returns:
         The resolution whose chat URL is ``<base>/chat/completions``.
@@ -545,6 +549,8 @@ def _engine_preset_resolution(
     if provider_key == "cloudflare" and segments[-2:-1] == ("accounts",):
         segments = (*segments, *_CLOUDFLARE_ACCOUNT_ROUTE)
     if documented_path is not None and segments == documented_path[: len(segments)]:
+        if not segments:
+            form = "origin"
         segments = documented_path
     if not segments:
         form = "origin"
