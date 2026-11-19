@@ -130,8 +130,8 @@ class WorkflowsScreen(BaseAppScreen):
         # pump -- the trap personas_screen documents ("awaiting here ...
         # the app stopped responding") -- so first navigation to Workflows
         # froze the TUI until the load finished. One exclusive worker owns
-        # the sequence; every step after an await re-checks mounting, and
-        # the render callbacks already guard on is_mounted.
+        # the sequence; every step after an await re-checks
+        # `_controls_live`, and so do the render callbacks.
         self.run_worker(
             self._load_authoring_after_mount(),
             group="workflows-mount-load",
@@ -142,13 +142,13 @@ class WorkflowsScreen(BaseAppScreen):
     async def _load_authoring_after_mount(self):
         if self.controller is None:
             await self._initialize_authoring()
-        if self.controller is None or not self.is_mounted:
+        if self.controller is None or not self._controls_live():
             return
         self._recovery_was_locked = self.controller.drafts.editing_locked
         self._release = self.controller.drafts.subscribe(self._owner_changed)
         try:
             await self.controller.load(self._saved_selection())
-            if not self.is_mounted:
+            if not self._controls_live():
                 return
             self.controller.section = self.state_data.get("section", "overview")
             self._workflow_views = self.state_data.get("workflow_views", {})
@@ -160,8 +160,17 @@ class WorkflowsScreen(BaseAppScreen):
             self.call_after_refresh(self._show_status)
         self.call_after_refresh(self._layout_panes)
         session = getattr(self.app_instance, "_workflow_session", None)
-        if session is not None:
+        if session is not None and self._controls_live():
             await self._attach_session(session)
+
+    def _controls_live(self):
+        # TASK-41501: `is_mounted` never turns False again. A screen being
+        # removed reads `_pruning` from the start, and every node reads
+        # detached once the app's exit fence is set (when `recompose` also
+        # returns without building the authoring panes). Its workers run
+        # until its own Unmount, after its children are gone, and its
+        # `call_after_refresh` callbacks run on whichever screen is current.
+        return self.is_mounted and self.is_attached and not self._pruning
 
     async def _initialize_authoring(self):
         ensure = getattr(self.app_instance, "ensure_workflow_authoring", None)
@@ -339,7 +348,7 @@ class WorkflowsScreen(BaseAppScreen):
 
     def _show_status(self):
         if (
-            not self.is_mounted
+            not self._controls_live()
             or self.controller is None
             or not self.query("#workflow-draft-status")
         ):
@@ -473,7 +482,7 @@ class WorkflowsScreen(BaseAppScreen):
 
     async def _render_authoring(self, *, rebuild=True, focus=False):
         controller = self.controller
-        if controller is None or not self.is_mounted:
+        if controller is None or not self._controls_live():
             return
         self._notice = ""
         if rebuild:
@@ -524,7 +533,7 @@ class WorkflowsScreen(BaseAppScreen):
 
     async def _show_library(self):
         controller = self.controller
-        if self.is_mounted:
+        if self._controls_live():
             self.query_one(WorkflowLibrary).show_rows(
                 controller.library_rows,
                 offset=controller.library_offset,
@@ -552,7 +561,7 @@ class WorkflowsScreen(BaseAppScreen):
             self._show_status()
 
     def _layout_panes(self):
-        if not self.is_mounted or self.controller is None:
+        if not self._controls_live() or self.controller is None:
             return
         self.set_class(self.size.height < 30, "workflow-short")
         visible = visible_pane_ids(self.query_one("#workflow-panes").content_size.width)

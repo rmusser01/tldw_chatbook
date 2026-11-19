@@ -3508,3 +3508,16 @@ Tests/UI/test_library_prompts_canvas.py::test_type_filter_survives_its_canvas_be
 # first measure, and a hard delete refused as stale reloads the capture.
 Tests/UI/test_library_collection_reader_journeys.py::test_a_pane_toggle_sent_before_the_shell_is_measured_lands_once_it_is
 Tests/UI/test_library_collection_reader_journeys.py::test_a_hard_delete_refused_as_stale_reloads_so_the_next_confirm_deletes
+# TASK-41501, TASK-41506 (2026-11-18): the navigation storm and FIFO nodes, the
+# two that pin late Workflows/Schedules updates after removal and after the
+# exit fence, and two route nodes left off lane (2.7-7.3 s each serially, load
+# 14-21). TASK-41502 lanes the two Prompts route nodes.
+Tests/UI/test_screen_navigation.py::test_rapid_tab_switch_storm_leaves_no_zombie_widgets
+Tests/UI/test_screen_navigation.py::test_overlapping_navigate_requests_complete_in_fifo_order
+Tests/UI/test_screen_navigation.py::test_workflows_and_schedules_updates_after_removal_touch_no_controls
+Tests/UI/test_screen_navigation.py::test_workflows_load_after_the_exit_fence_posts_no_status
+Tests/UI/test_screen_navigation.py::test_search_route_lands_on_library_rag_canvas
+Tests/UI/test_screen_navigation.py::test_legacy_alias_explicit_context_merges_default_under_caller_keys
+# TASK-41501 review r16nv-rev1 (2026-11-18): late Workflows/Schedules updates
+# inside a screen's removal window (4.9-5.3 s serially, load 16-19).
+Tests/UI/test_screen_navigation.py::test_workflows_and_schedules_updates_during_removal_touch_no_controls

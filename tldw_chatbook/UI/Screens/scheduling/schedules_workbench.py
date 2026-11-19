@@ -828,9 +828,17 @@ class SchedulesWorkbench(BaseAppScreen):
             source="schedules", shortcuts=self.SCHEDULES_SHORTCUTS
         )
 
+    def _controls_live(self) -> bool:
+        # TASK-41501: a screen being removed (`_pruning`) or an exiting app
+        # (detached) runs its workers until its own Unmount, after its
+        # children are gone, and one removed before it composed still mounts.
+        return self.is_attached and not self._pruning
+
     def on_mount(self) -> None:
         # No super().on_mount(): the dispatcher already invokes
         # BaseAppScreen.on_mount separately for this Mount event.
+        if not self._controls_live():
+            return  # removed before it composed: start no timers or workers
         self._sync_responsive_workbench()
         self._register_footer_shortcuts()
         self._refresh_owner_select()
@@ -1487,6 +1495,8 @@ class SchedulesWorkbench(BaseAppScreen):
         single frame straddle a bucket boundary); injectable for
         deterministic tests.
         """
+        if not self._controls_live():  # `load_tasks` has kept its rows
+            return
         render_now = now if now is not None else datetime.now(timezone.utc)
         # Fix wave F2: before anything re-feeds the panes, close a pushed
         # overlay whose row is no longer in `_all_rows` -- otherwise the
@@ -1632,6 +1642,8 @@ class SchedulesWorkbench(BaseAppScreen):
         availability flag) pass ``None`` and reach every instance, as
         before.
         """
+        if not self._controls_live():
+            return []
         panes: list[Any] = [self.query_one(pane_id, pane_type)]
         pushed = self._pushed_detail
         if (
@@ -4584,6 +4596,8 @@ class SchedulesWorkbench(BaseAppScreen):
         )  # type: ignore[arg-type]
 
     def _refresh_owner_select(self) -> None:
+        if not self._controls_live():
+            return
         status = self.query_one("#scheduling-sync-status", SyncStatusWidget)
         service = self._service()
         if service is None:
