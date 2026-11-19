@@ -725,7 +725,9 @@ def _projection_request(value, path):
 def _projection_result(value, path):
     from .console_execution_projection_result import validate_projection_payload
 
-    validate_projection_payload(_detach(value, path, 2, set(), thaw=True))
+    body = _detach(value, path, 2, set(), thaw=True)
+    validate_projection_payload(body)
+    return body
 
 
 def _decision_head_result(value, path):
@@ -1263,7 +1265,7 @@ def _validate_message(identity, kind, operation, payload):
         )
     if check is None:
         _reject("message", "unsupported reply kind or operation")
-    check(payload, "payload")
+    checked = check(payload, "payload")
     if (
         kind == "applied"
         and operation in {"ReadProjection", "ReadDecisionHead", "ReadRunHistory"}
@@ -1292,6 +1294,8 @@ def _validate_message(identity, kind, operation, payload):
         _reject(
             "payload.result.confirmation_request_id", "request does not match identity"
         )
+    if kind == "applied" and operation == "ReadProjection":
+        return checked
 
 
 @dataclass(frozen=True, slots=True)
@@ -1315,8 +1319,11 @@ def encode_message(message: ConsoleWireMessage) -> dict[str, JSONValue]:
     if type(message) is not ConsoleWireMessage:
         _reject("message", "expected ConsoleWireMessage")
     _check_identity(message.identity)
-    payload = _detach(message.payload, "payload", 2, set(), thaw=True)
-    _validate_message(
+    # Full projection validation already detaches the entire graph to check
+    # row, readiness and workspace relationships. Export that same fresh copy.
+    projection = message.kind == "applied" and message.operation == "ReadProjection"
+    payload = None if projection else _detach(message.payload, "payload", 2, set(), thaw=True)
+    checked = _validate_message(
         message.identity, message.kind, message.operation, message.payload
     )
     return {
@@ -1326,7 +1333,7 @@ def encode_message(message: ConsoleWireMessage) -> dict[str, JSONValue]:
         },
         "kind": message.kind,
         "operation": message.operation,
-        "payload": payload,
+        "payload": checked if projection else payload,
     }
 
 

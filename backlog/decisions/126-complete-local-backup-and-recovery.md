@@ -2409,3 +2409,18 @@ including with identical bytes and write time, requires another guarded load.
 The original README exposed the failure when its rail save published a new
 configuration and writer admission reloaded it a second time. That second load
 revoked the runtime's configuration source immediately after turn acceptance.
+
+ChaChaNotes can share a service-owned connection within a command. One
+Windows trace settlement spent 37.65 ms opening and checking the database,
+19.14 ms in the transaction and 7.02 ms closing it. Reuse must preserve the
+logical client ID on every command, the original connection configuration
+and the original commit, rollback and retirement boundaries. An independent
+instance must still be able to replace the file after the caller's last
+connection closes. On Windows an idle SQLite handle can prevent that
+replacement. Unless the service can prove an existing pin for the full
+lifetime, it closes its connection on the owning thread before returning
+the command receipt. An unproven close
+keeps intake fenced. Request credentials and native continuation custody
+stay with their original owner. Where either is required inside the
+transaction, the writer can grant exclusive access to that named operation
+under the same process, file and retirement checks as an AgentRuns grant.

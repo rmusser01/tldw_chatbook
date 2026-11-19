@@ -100,6 +100,51 @@ def test_readiness_clock_update_publishes_no_unchanged_inspector_or_history_data
     assert expand_projection_delta(delta, poll(), base) == changed
 
 
+def test_transcript_reference_does_not_copy_the_discarded_full_history(monkeypatch):
+    from tldw_chatbook.Chat import console_execution_protocol as codec
+
+    body = projection_payload(message_count=32)
+    first = full(body, "first", 4)
+    base = DisplayPublication("ui", 1, first)
+    body["messages"] = None
+    second = full(body, "second", 8)
+    delta = poll_response(second, poll(), base)
+    previous = first.payload
+    visited = []
+    detach = codec._detach
+
+    def observe(value, *args, **kwargs):
+        if value is previous["messages"]:
+            visited.append(value)
+        return detach(value, *args, **kwargs)
+
+    monkeypatch.setattr(codec, "_detach", observe)
+    assert expand_projection_delta(delta, poll(), base) == second
+    assert not visited
+
+
+def test_encoding_checks_and_exports_one_disposable_full_projection(monkeypatch):
+    from tldw_chatbook.Chat import console_execution_protocol as codec
+
+    message = full(projection_payload(), "first", 4)
+    copies = []
+    detach = codec._detach
+
+    def observe(value, *args, **kwargs):
+        result = detach(value, *args, **kwargs)
+        if value is message.payload and kwargs.get("thaw"):
+            copies.append(result)
+        return result
+
+    monkeypatch.setattr(codec, "_detach", observe)
+    encoded = encode_message(message)
+    assert len(copies) == 1 and copies[0] is encoded["payload"]
+    encoded["payload"]["session_view"]["active_session_id"] = "different"
+    assert message.payload["session_view"]["active_session_id"] == message.identity.session_id
+    with pytest.raises(ConsoleProtocolError):
+        decode_message(encoded)
+
+
 def test_new_visit_reads_the_entire_transcript_even_if_revision_matches():
     from tldw_chatbook.Chat.console_control_dispatch import ReadProjection
     from tldw_chatbook.Chat.console_execution_projection_result import decode_projection_payload

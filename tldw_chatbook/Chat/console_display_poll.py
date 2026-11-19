@@ -135,17 +135,21 @@ def expand_projection_delta(
         or any(delta.payload[k] != poll[k] for k in ("after", "attachment_id", "visit"))
     ):
         raise ConsoleProtocolError("display_poll_base_changed")
-    body = _thaw(previous.message.payload)
+    previous_body = previous.message.payload
+    fields = delta.payload["fields"]
+    sections = delta.payload["sections"]
     if (
-        not delta.payload["fields"].keys() <= body.keys() or "session_view" not in body
-        or not delta.payload["sections"].keys() <= body["session_view"].keys()
+        not fields.keys() <= previous_body.keys() or "session_view" not in previous_body
+        or not sections.keys() <= previous_body["session_view"].keys()
     ):
         raise ConsoleProtocolError("display_poll_shape_changed")
-    body.update(_thaw(delta.payload["fields"]))
-    body["session_view"].update(_thaw(delta.payload["sections"]))
+    # Choose the surviving branches before traversing them. In particular, the
+    # first reference after a full transcript must not copy its discarded rows.
+    view = {**previous_body["session_view"], **sections}
     if "readiness" in delta.payload:
-        readiness = body["session_view"].get("readiness")
+        readiness = view.get("readiness")
         if readiness is None or not delta.payload["readiness"].keys() <= readiness.keys():
             raise ConsoleProtocolError("display_poll_readiness_shape_changed")
-        readiness.update(_thaw(delta.payload["readiness"]))
-    return ConsoleWireMessage(delta.identity, "applied", "ReadProjection", body)
+        view["readiness"] = MappingProxyType({**readiness, **delta.payload["readiness"]})
+    body = MappingProxyType({**previous_body, **fields, "session_view": MappingProxyType(view)})
+    return ConsoleWireMessage(delta.identity, "applied", "ReadProjection", _thaw(body))
