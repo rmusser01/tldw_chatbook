@@ -4636,8 +4636,12 @@ def test_a_gateway_path_keeps_every_host_and_shape_refusal():
         routes = () if provider == "zai" else _GATEWAY_ROUTE_SHAPES
         if provider == "qwencloud":
             # TASK-41722, rewritten on purpose: QwenCloud's adapter strips its
-            # own /responses and sends, so the contract reads the base too.
-            routes = tuple(route for route in routes if not route.endswith("/responses"))
+            # own /responses and sends, so the contract reads the base too;
+            # only one (review r17cu-rev1 M-2).
+            routes = (
+                *(route for route in routes if not route.endswith("/responses")),
+                "http://127.0.0.1:8000/v1/acct/gw/openai/responses/responses",
+            )
         native = _NATIVE_ROUTE_SHAPES.get(provider, ())
         for endpoint in _GATEWAY_REFUSED_SHAPES:
             assert endpoint_refusal(provider, endpoint), (provider, endpoint)
@@ -4651,27 +4655,71 @@ def test_a_gateway_path_keeps_every_host_and_shape_refusal():
 
 # --- TASK-41704/41727/41722: cloud bases whose path has no v1 -----------------
 
-#: Per cloud dispatch case: a base whose path has no ``v1`` (the provider's own
-#: documented base, or a gateway's), and where the adapter posts once Settings
-#: has saved it.
+#: Per cloud dispatch case: a base typed with no ``v1`` in its path, what
+#: Settings saves for it, and where the adapter posts once it has. The
+#: provider's own documented base and a gateway's save as typed; a strict
+#: prefix of the documented path on the provider's own host saves as that path
+#: (review r17cu-rev1 I-1); a bare host saves bare only for Cohere, and for
+#: DeepSeek on its own host (r17cu-rev1 M-1).
 _NO_V1_BASES = {
     "google-api_base_url": (
         (
+            "https://generativelanguage.googleapis.com/v1beta",
             "https://generativelanguage.googleapis.com/v1beta",
             "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
         ),
         (
             "https://litellm.corp/gemini/v1beta",
+            "https://litellm.corp/gemini/v1beta",
             "https://litellm.corp/gemini/v1beta/models/m:generateContent",
         ),
     ),
     "cohere-api_base_url": (
-        ("https://api.cohere.com", "https://api.cohere.com/v2/chat"),
-        ("https://litellm.corp/cohere", "https://litellm.corp/cohere/v2/chat"),
+        ("https://api.cohere.com", "https://api.cohere.com", "https://api.cohere.com/v2/chat"),
+        (
+            "https://litellm.corp/cohere",
+            "https://litellm.corp/cohere",
+            "https://litellm.corp/cohere/v2/chat",
+        ),
     ),
     "deepseek-api_base_url": (
-        ("https://api.deepseek.com", "https://api.deepseek.com/chat/completions"),
+        (
+            "https://api.deepseek.com",
+            "https://api.deepseek.com",
+            "https://api.deepseek.com/chat/completions",
+        ),
+        (
+            "http://localhost:4000",
+            "http://localhost:4000/v1",
+            "http://localhost:4000/v1/chat/completions",
+        ),
     ),
+    **{
+        case: tuple(
+            (typed, saved, f"{saved}{route}")
+            for typed in (prefix, f"{prefix}/")
+        )
+        for case, prefix, saved, route in (
+            (
+                "groq-api_base_url",
+                "https://api.groq.com/openai",
+                "https://api.groq.com/openai/v1",
+                "/chat/completions",
+            ),
+            (
+                "openrouter-api_base_url",
+                "https://openrouter.ai/api",
+                "https://openrouter.ai/api/v1",
+                "/chat/completions",
+            ),
+            (
+                "qwencloud-api_base_url",
+                "https://dashscope-intl.aliyuncs.com/compatible-mode",
+                "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                "/responses",
+            ),
+        )
+    },
 }
 
 
@@ -4684,19 +4732,22 @@ _NO_V1_BASES = {
     ],
     ids=[case for case in _CLOUD_IDS if case in _NO_V1_BASES],
 )
-def test_a_cloud_base_without_v1_saves_unchanged_and_posts_there(
+def test_a_cloud_base_without_v1_saves_a_base_its_adapter_posts_under(
     dispatch, table, key, extra, case, monkeypatch
 ):
     """TASK-41704: the contract read a cloud path with no ``v1`` as an origin
     and appended ``/v1``, so **s** saved Google's own ``.../v1beta`` as
     ``.../v1beta/v1`` and Cohere's ``https://api.cohere.com`` as ``.../v1``,
     which their adapters then posted under (404s). Each saves as typed, and
-    the adapter posts to its own route on it."""
+    the adapter posts to its own route on it. Review r17cu-rev1: an own-host
+    prefix such as Groq's ``/openai`` still saves the documented path (it saved
+    ``/openai`` and posted ``/openai/chat/completions``), and a bare host under
+    DeepSeek's key that is not DeepSeek's still gets ``/v1``."""
     from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
 
-    for base, posted in _NO_V1_BASES[case]:
-        saved = persisted_endpoint_for_key(dispatch, "api_base_url", base)
-        assert saved == base, (case, saved)
+    for typed, expected, posted in _NO_V1_BASES[case]:
+        saved = persisted_endpoint_for_key(dispatch, "api_base_url", typed)
+        assert saved == expected, (case, typed, saved)
         sent = _cloud_world(monkeypatch, _cloud_config(table, key, extra, saved))
 
         try:
@@ -4706,7 +4757,7 @@ def test_a_cloud_base_without_v1_saves_unchanged_and_posts_there(
         else:
             caught = None
 
-        assert sent == [posted], (base, repr(caught))
+        assert sent == [posted], (typed, repr(caught))
 
 
 #: What a Settings save wrote for those bases before TASK-41704, and the

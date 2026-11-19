@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 06:57
-updated_date: 2026-11-19 16:57
+updated_date: 2026-11-19 17:24
 labels:
 - follow-up
 - providers
@@ -44,3 +44,7 @@ Rewritten on purpose: `test_a_gateway_path_keeps_every_host_and_shape_refusal` a
 **Covering run** (150 files: every test file that calls the endpoint contract, the Settings setup persistence or card, the Cohere/Google/QwenCloud adapters or names their URLs; `-n 4`, load 19-67): 663 failed / 9832 passed / 1 error. Re-run of the 663 failing ids with this change's two source files reverted to c176f553b3 (same command): 658 fail the same way (the known `RecoveryRequired: raw_source_selection_changed` family: 289 in `test_console_native_chat_flow.py`, 87 in `test_console_session_settings.py`, the Cohere/Google native-tools files, the plain Settings UI files), and the error is `test_sensitive_llm_logging.py::test_auxiliary_pins_default_openai_endpoint_before_config_changes`, red at base too. The 5 that passed at base in that batch, run alone with the same serial command: 2 fail at head and at base alike (`test_google_native_tools.py::test_list_content_with_tool_calls_keeps_text_parts`, RecoveryRequired; `test_console_session_settings.py::test_settings_active_compaction_close_anyway_keeps_provider_work_running_and_reopens_fresh`), 3 pass at both (order-dependent). `Tests/Chat/test_local_server_discovery.py` whole file 1046 passed; save-scope, connect-key-rows and the QwenCloud contract/adapter files 193 passed; `Tests/CI` 1811 passed; architecture size and identity ratchets (serial) 323 passed; `Tests/lint/ruff_gate.py` OK (the 2 ruff findings left in the test file are at base); preflight passed. Neither source module has a size-ratchet row.
 
 Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `Tests/Chat/test_local_server_discovery.py`, `Docs/User_Guide/settings.md`, `Docs/Architecture/llm-providers.md`.
+
+**Review r17cu-rev1 round (2026-11-19).**
+- M-2: the rewritten TASK-41700 row left the boundary unpinned. `test_a_gateway_path_keeps_every_host_and_shape_refusal` now asserts QwenCloud refuses `http://127.0.0.1:8000/v1/acct/gw/openai/responses/responses` with `ENDPOINT_ROUTE_REFUSAL`: the contract strips one `/responses`, as the adapter does. Red under a temporary edit that stripped every trailing `/responses` (a `while` for the `if`): the refusal was "" (accepted); green after reverting it.
+- I-1 (TASK-41704) also covers QwenCloud's own-host `https://dashscope-intl.aliyuncs.com/compatible-mode`, which saves as `.../compatible-mode/v1` again.

@@ -95,15 +95,11 @@ _CLOUD_BASE_KEYS = frozenset(
     for key, record in RECORDS_BY_KEY.items()
     if record.classification == "cloud" and not record.engine_driven
 )
-#: TASK-41704: Cohere's and DeepSeek's documented bases are bare hosts, and
-#: their adapters append the whole route (``/v2/chat``, ``/chat/completions``),
-#: so a bare host is their base, not ``<host>/v1``.
-_BARE_HOST_CLOUD_KEYS = frozenset(
-    key
-    for key in _CLOUD_BASE_KEYS
-    if RECORDS_BY_KEY[key].default_base_url
-    and not urlsplit(RECORDS_BY_KEY[key].default_base_url).path.strip("/")
-)
+#: TASK-41704: Cohere's adapter appends its whole versioned route
+#: (``/v2/chat``), so a bare host is its base on any host, not ``<host>/v1``.
+#: DeepSeek's bare host is its base only on its own host (review r17cu-rev1
+#: M-1: an OpenAI-compatible proxy under its key may serve only ``/v1``).
+_BARE_BASE_ANY_HOST_KEYS = frozenset({"cohere"})
 
 
 #: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
@@ -353,6 +349,8 @@ def _resolve_provider_endpoint(
         # Only from a plain root: an API suffix before the route is ambiguous.
         suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
     cloud = provider_key in _CLOUD_BASE_KEYS
+    documented = _documented_own_path(provider_key, canonical_host) if cloud else None
+    bare_base = provider_key in _BARE_BASE_ANY_HOST_KEYS or documented == ()
     if (suffix is None and (provider_key == "custom_hosted" or cloud)) or (
         # TASK-41704: nor is a cloud path with no v1 an origin to append /v1
         # to (Google's own .../v1beta was saved as .../v1beta/v1); and a
@@ -360,7 +358,7 @@ def _resolve_provider_endpoint(
         cloud
         and suffix is not None
         and suffix[1] == "origin"
-        and (segments or provider_key in _BARE_HOST_CLOUD_KEYS)
+        and (segments or bare_base)
     ):
         # TASK-40300, owner decision 2026-11-13: an OpenAI-compatible custom
         # endpoint's path is its API base even when its v1 is not the last
@@ -378,7 +376,8 @@ def _resolve_provider_endpoint(
             netloc,
             canonical_host,
             segments,
-            bare_host_base=provider_key in _BARE_HOST_CLOUD_KEYS,
+            bare_host_base=bare_base,
+            documented_path=documented,
         )
     if suffix is None:
         return _invalid_resolution(
@@ -445,6 +444,23 @@ def endpoint_refusal(
     return errors[0] if errors else ""
 
 
+def _documented_own_path(provider_key: str, host: str) -> tuple[str, ...] | None:
+    """A cloud provider's documented path segments when ``host`` is its own.
+
+    Args:
+        provider_key: A first-party cloud provider's key.
+        host: The canonical host typed.
+
+    Returns:
+        The segments of the registry default's path (``()`` for a bare
+        documented host), or None for any other host.
+    """
+    default = urlsplit(RECORDS_BY_KEY[provider_key].default_base_url or "")
+    if default.hostname != host:
+        return None
+    return tuple(segment for segment in default.path.split("/") if segment)
+
+
 def _names_a_native_route(provider_key: str, segments: tuple[str, ...]) -> bool:
     """Whether a path ends in a native cloud adapter's own route.
 
@@ -492,6 +508,7 @@ def _engine_preset_resolution(
     segments: tuple[str, ...],
     *,
     bare_host_base: bool = False,
+    documented_path: tuple[str, ...] | None = None,
 ) -> ProviderEndpointResolution:
     """Resolve an engine preset's endpoint around its own API base.
 
@@ -512,7 +529,10 @@ def _engine_preset_resolution(
         host: Canonical host name.
         segments: Canonical, validated path segments.
         bare_host_base: A bare host is the base itself (TASK-41704: Cohere,
-            DeepSeek).
+            DeepSeek on its own host).
+        documented_path: The provider's documented path when ``host`` is
+            its own; a prefix of it reads as that path (review r17cu-rev1
+            I-1: Groq's ``https://api.groq.com/openai`` is ``/openai/v1``).
 
     Returns:
         The resolution whose chat URL is ``<base>/chat/completions``.
@@ -524,6 +544,8 @@ def _engine_preset_resolution(
         segments, form = segments[:-1], "models_url"
     if provider_key == "cloudflare" and segments[-2:-1] == ("accounts",):
         segments = (*segments, *_CLOUDFLARE_ACCOUNT_ROUTE)
+    if documented_path is not None and segments == documented_path[: len(segments)]:
+        segments = documented_path
     if not segments:
         form = "origin"
         default = urlsplit(preset.default_base_url or "")
