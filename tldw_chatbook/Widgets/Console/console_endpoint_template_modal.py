@@ -1,4 +1,4 @@
-"""Console "New endpoint from template" creation modal (ADR-146, Task 6).
+"""Console "New endpoint from template" creation modal (ADR-343, Task 6).
 
 A small creation flow for ``[custom_endpoints.<slug>]`` entries: pick a
 template (blank OpenAI-compatible, a built-in provider, or an existing
@@ -16,7 +16,6 @@ from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
-from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -46,13 +45,17 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     validate_entry,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.sampling_params import params_to_dict, params_to_tuple
+from tldw_chatbook.Provider_Contract.sampling_params import (
+    params_to_dict,
+    params_to_tuple,
+    parse_params_text,
+)
 from tldw_chatbook.config import (
     AtomicConfigSnapshot,
     apply_settings_mutation_to_cli_config,
 )
+from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
-from tldw_chatbook.Widgets.settings_agents_panel import parse_params_text
 
 MODAL_ID = "console-endpoint-template-modal"
 TEMPLATE_PICKER_ID = "endpoint-template-picker"
@@ -66,7 +69,7 @@ CANCEL_BUTTON_ID = "endpoint-template-cancel"
 ERROR_STATIC_ID = "endpoint-template-error"
 
 BLANK_TEMPLATE_LABEL = "OpenAI-compatible (blank)"
-#: The three execution families a registry entry can run as (ADR-146);
+#: The three execution families a registry entry can run as (ADR-343);
 #: values are the exact registry family strings ``validate_entry`` accepts.
 FAMILY_SELECT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("llama.cpp", "llama_cpp"),
@@ -477,7 +480,7 @@ class ConsoleEndpointTemplateModal(SafeModalDismissMixin, ModalScreen[str | None
     def compose(self) -> ComposeResult:
         """Build the template picker, prefilled form, and actions."""
         # Lazy import: this module is imported (module-level) by
-        # console_settings_modal for the EndpointCreated wiring, so importing
+        # console_settings_modal for New endpoint…, so importing
         # ConsoleSettingsInput eagerly would cycle. By compose time that
         # module is fully loaded.
         from tldw_chatbook.Widgets.Console.console_settings_modal import (

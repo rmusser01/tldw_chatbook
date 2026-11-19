@@ -5,7 +5,7 @@ Date: 2026-08-26
 Related Tasks: [TASK-18926 - Raw CLI executor and Console user command](../tasks/task-18926%20-%20Raw-CLI-executor-and-Console-user-command.md), TASK-22509, TASK-22510, TASK-22512
 Design: [Raw and virtual CLI design](../../Docs/superpowers/specs/2026-08-26-raw-and-virtual-cli-design.md)
 Persistent terminal phase: [ADR-099](099-persistent-terminal-session-runtime-boundary.md)
-Partially supersedes: [ADR-033](033-local-agent-process-execution-boundary.md), only its rejection of raw shell execution
+Partially supersedes: [ADR-302](302-local-agent-process-execution-boundary.md), only its rejection of raw shell execution
 
 ## Decision
 
@@ -62,9 +62,26 @@ not register. This requires no database migration.
 The future persistent PTY/ConPTY terminal is a separate backlog task. It is not
 part of this decision's first implementation phase.
 
+### Model workspace deletion guard (TASK-40281)
+
+Before approval and again before dispatch, model shell requests check every
+local folder binding of the chat's owning workspace. The executor checks the
+dispatched binding snapshot against the shell invocation it will launch.
+Recognizable deletion of a bound root, recursive deletion of an ancestor, and
+whole-root selections are refused before launch. A one-use approval or a
+session grant cannot override a refusal. A binding lookup or inspection failure
+that prevents the check also refuses the request. User-authored commands keep
+their existing authority.
+
+This guard recognizes a bounded set of literal Bash/sh, PowerShell, and cmd
+commands. Arbitrary scripts, dynamic expressions, external tools, and SSH
+bindings are outside its coverage. The check uses a prelaunch snapshot of the
+bindings and filesystem. Concurrent changes can race it, and the raw shell
+still runs with host authority under this ADR.
+
 ## Context
 
-ADR-033 chose a virtual CLI and rejected raw shell execution because a claim of
+ADR-302 chose a virtual CLI and rejected raw shell execution because a claim of
 workspace confinement based only on `cwd` would be false, and a portable OS
 sandbox is a separate project. That reasoning remains correct. The product
 decision has changed: Chatbook should offer an advanced, unmistakably dangerous
@@ -75,7 +92,7 @@ The repository already owns most of the required seams:
 
 - `Agents/tool_catalog.py` and `Agents/local_tool_provider.py` provide model-tool
   registration and invocation;
-- ADR-032's permission store and approval cards provide fail-closed consent;
+- ADR-300's permission store and approval cards provide fail-closed consent;
 - `STT/executor_process_tree.py` provides proven POSIX process-group and Windows
   Job Object admission patterns;
 - Console TOOL markers and AgentRunsDB provide durable local operational traces;
@@ -89,7 +106,7 @@ subsystem or a second permission store.
 
 | Option | Why rejected |
 | --- | --- |
-| Preserve ADR-033's virtual-only decision | Does not meet the approved advanced-user requirement for a real host shell. |
+| Preserve ADR-302's virtual-only decision | Does not meet the approved advanced-user requirement for a real host shell. |
 | Claim raw commands are confined because they start in the workspace | False: a shell can use absolute paths, change directory, access the network, and launch arbitrary processes. |
 | Require an OS sandbox for raw CLI v1 | Produces a different capability from the intentionally requested host-authority escape hatch and creates a large cross-platform sandbox project. |
 | Separate `bash_exec`, `powershell_exec`, and `cmd_exec` tools | Duplicates schemas, permissions, lifecycle code, and UI while one fixed shell selector is sufficient. |
@@ -132,3 +149,50 @@ subsystem or a second permission store.
   and mutating-command acceptance tests.
 - The persistent terminal phase requires its own ADR check because PTY ownership
   and retained session state are new runtime boundaries.
+
+### Direct-user native RawCLI custody (Task 8D2)
+
+Trusted Console submission captures original app/runtime/store/session/invocation before scratch allocation or worker enqueue. It admits one manual non-child OPAQUE owner and one tool operation, then binds only the actual local_command run. Temporary/nonpersistable refusal and exact draft/attachment restoration remain. Original source loss refuses, never reselecting another runtime, profile, DB or scratch root.
+
+Local-command row and terminal step writes are required. Successful native writes or exact original row/status/canonical-step readback establish settlement; False, a prior terminal status or finalized latch alone does not. Partial create/initial-step failure observes the same preselected run identity and required error outcome. No new retry/replay producer exists. RunLogWriter stays best effort. Unobservable required outcomes retain original storage, worker and activity custody.
+
+Qualified direct/model/Task7 execution joins actual containment and existing admission/queue-relay helper returns using the same already-reserved operation and captured storage sources. Model handoff comes from exact catalog/concrete provider/original runtime and actual worker operation, never names or IDs alone. Standalone/unqualified execution remains bounded and reports cleanup-unproven when helper return is absent. Returned cleanup proof and required-output sealing follow helper proof. Original synchronous host acceptance or source-validated discard and operation.finish return precede root/claim retirement.
+
+Disposal seals admission before capacity close and scratch tombstone, retaining original storage/scratch leases until real drain despite repeated cancellation. Costs are coarse OPAQUE contention, source/DB readback checks, a small private RawCLI handoff, and potentially indefinite native worker/storage/disposal retention when process/helper/required-write proof is unavailable. No second executor, queue, journal, permission grant, model/child owner or public workflow entry is introduced.
+
+## Unproven-cleanup amendment (TASK-40716, 2026-11-13)
+
+This supersedes the "retaining original storage/scratch leases until real drain despite repeated cancellation" and "potentially indefinite native worker/storage/disposal retention" costs for unproven cleanup. Custody of the resource does not change; disposal no longer waits for it.
+
+**Owner decision, 2026-11-13 ([TASK-40716](../tasks/task-40716%20-%20An-unproven-tool-cleanup-parks-a-worker-forever-refusing-later-tool-calls-and-holding-a-tool-slot.md)).**
+- When a tool operation's cleanup cannot be proven, its run ends at once with a reason that names the unproven cleanup. This applies to every run, not only goal runs. The resource stays held and is never reused.
+- The run has already ended by then. An explicit user abandon releases only the tool-worker slot. The resource, its storage leases and any activity claim stay held until restart (ADR-155).
+- The abandon action sits on the run's terminal card: the run's reply, which the explanation naming the unproven cleanup follows.
+- At app exit, disposal records retained items and stops waiting for them.
+
+**Implementation note (not an owner decision).**
+- `OwnedOperation.retain_unproven` records the retention on the runtime's capacity.
+- A worker that still holds the original scopes waits on that record on a daemon thread until restart (no proof path exists yet; `UnprovenRetention.prove` would end the wait early, but no production code calls it). `UnprovenRetention.hold` never unwinds custody it has entered: on a joined thread it logs an error and still holds.
+- Raw CLI user commands, Undo, @git reference expansion and the Console's startup SSH instruction read run their custody on a daemon worker, so no joined pool thread ever holds. Undo also marks its owner unproven.
+- In an ordinary Console turn, @git references and the startup SSH instruction read borrow the turn's owner, so the turn's next tool reservation is refused as cleanup-unproven. That ends the agent run at its first tool call ("the cleanup of native Git could not be proven"), or, when the turn reserves a tool slot while composing its agent request (MCP), stops the turn before the run starts.
+- A retention that arrives after a timeout, cancel or per-call abandon ends the run at its next tool call.
+- A custody-bearing (SSH or Raw CLI) call never holds a run thread: with no timeout it still runs on a daemon tool worker, and a definitive-after-start one is refused before it starts.
+- A workflow run held only by unproven cleanups (each of its tool workers is retained or has returned) does not stop exit. `ConsoleRuntime.dispose` closes every other owner and then reports `workflow_original_shutdown_unresolved`, and the app's exit runs its remaining owners before re-raising, logging any further failure it does not raise. A cancellation requested meanwhile is still re-raised, chained to the retained runs. A run whose custody is still live keeps stopping disposal before capacity closes.
+- A goal iteration that ends on it is uncertain, so it needs recovery.
+- The Release row follows the run's retained records, not how the run ended, and releases every slot the run still holds. A closed and reopened conversation finds it again by the card's persisted id.
+
+## Release outside a run's card amendment (TASK-41307, 2026-11-17)
+
+This extends the TASK-40716 decision that the abandon action sits on the run's terminal card. The card keeps it; it is no longer the only place.
+
+**Owner decision, 2026-11-17 ([TASK-41307](../tasks/task-41307%20-%20Unproven-cleanup-records-outside-an-agent-runs-reply-have-no-Release-button-so-their-tool-slot-stays-held-until-restart.md)).**
+- One Console-wide "Held tool slots" list releases every retained record. It sits behind a status-line segment that shows only while an unreleased record exists, and it includes run records that also have a card, so it shows every held slot. Sub-agent records are released only there.
+- A turn that stops before its run exists shows the cleanup-unproven explanation naming the tool instead of the "Response recovery failed" prompt, with Release directly under it.
+- A Raw CLI command's "Cleanup: Unproven" row carries Release too.
+- Release still returns only the tool-worker slot. The resource, its storage leases and any activity claim stay held until restart.
+
+**Implementation note (not an owner decision).**
+- A record is keyed by its run, else by its owner's execution. Undo, Change Review jobs with their own owner, an @git reference outside an ordinary turn and a pre-run stop are never bound to a run; a Change Review snapshot job that borrows an ordinary turn's owner carries that turn's run id. A transcript row can carry several keys, so a retried reply keeps its pre-run record's Release.
+- The list reads the runtime's capacity, not the agent bridge's, which is allocated only once an agent turn runs; a session that only ran Raw CLI or Undo still lists its records.
+- `CleanupUnprovenRefused` carries its retention, so the accepted-turn failure handler and the Raw CLI command can point Release at it. A pre-run stop keeps the accepted turn's dispatch recovery; only its copy changes, and it is set just before that recovery is restored, so an early return leaves none behind.
+- The segment refreshes on the Console's sync, after a card's Release and when the list closes. A Change Review job retained in the background between syncs shows at the next one.

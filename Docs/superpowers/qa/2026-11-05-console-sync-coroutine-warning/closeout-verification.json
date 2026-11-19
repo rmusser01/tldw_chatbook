@@ -1,0 +1,38 @@
+{
+  "captured_utc": "2026-11-05T16:07:58.477248+00:00",
+  "reviewed_code_head": "98e80353153e9042c8e0030da9755a55c003806b",
+  "spec": "Approved",
+  "quality": "Approved",
+  "remaining_product_findings": {
+    "critical": 0,
+    "important": 0,
+    "minor": 0
+  },
+  "review_initial_sha256": "5c7c16e881a9b8d1d1d905b7e549560af72d30387fc43f002d72c91e0d96b5fb",
+  "review_final_sha256": "c49341fe4b281b42dc3767b3fa27cdd4e0472d1c461d8db1d96621aacbbe00b5",
+  "source_qualified_final_runs": [
+    {
+      "name": "final-controls",
+      "source_count": 13,
+      "duration_seconds": 25.08884795801714,
+      "exit": 0
+    },
+    {
+      "name": "final-public",
+      "source_count": 13,
+      "duration_seconds": 8.369001584127545,
+      "exit": 0
+    }
+  ],
+  "evidence_zip_sha256": "5ad363c58a1b1f3f3ff6247ee0ab4eaa442731bce0b202f577610a97cb6f42ec",
+  "all81_archived_bodies_exact": true,
+  "all9_rulings_exact": true,
+  "task_done_all3_AC_checked": true,
+  "original279_identities_unchanged": true,
+  "original_staged61_sha256": "c5fcb00eab4ea09c49d1797567cbd4cc9f0eb9bb8d99cc2355f764638aaa7248",
+  "current_navigation_links_resolve": 26,
+  "metadata_diff_check_exit": 0,
+  "CV1": "Old14 invocation launch epoch remains unproven.",
+  "CV2": "Older interrupted/profile/fixture adverse invocations remain failed and qualified.",
+  "scope": "Local same-worktree warning fix; no full suite/provider replay or broad green claim. Post-ledger actions are authorized mechanical status/archival/Git/cleanup."
+}

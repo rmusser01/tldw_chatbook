@@ -64,6 +64,8 @@ EXTRACTED_MODULES = (
     "app_navigation",
     "app_command_providers",
     "app_feature_glue",
+    "app_startup",
+    "app_served",
 )
 
 #: Rule 2 exemptions: (test file, name) -> why a bare app-module patch is right.
@@ -420,6 +422,7 @@ def test_shared_patch_helper_leaves_a_lazy_module_unloaded(
     assert "tldw_chatbook.app_speech" not in sys.modules
 
 
+@pytest.mark.bootstrap_profile
 def test_source_derived_bindings_match_runtime_globals() -> None:
     """``module_scope_names`` agrees with what each module really binds."""
     import importlib

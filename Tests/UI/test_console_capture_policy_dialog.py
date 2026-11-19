@@ -120,9 +120,7 @@ async def test_trace_privacy_global_scope_requires_explicit_values() -> None:
         await pilot.click("#trace-privacy-scope-global")
         await pilot.pause()
 
-        assert dialog.query_one(
-            "#trace-privacy-capture-inherit", RadioButton
-        ).disabled
+        assert dialog.query_one("#trace-privacy-capture-inherit", RadioButton).disabled
         assert dialog.query_one("#trace-privacy-pii-inherit", RadioButton).disabled
 
 
@@ -235,7 +233,9 @@ class _PolicyHost:
 
 
 @pytest.mark.asyncio
-async def test_apply_mutates_only_selected_scope_and_next_full_skips_confirmation() -> None:
+async def test_apply_mutates_only_selected_scope_and_next_full_skips_confirmation() -> (
+    None
+):
     host = _PolicyHost(_snapshot())
     app = _Harness()
     async with app.run_test() as pilot:
@@ -252,7 +252,9 @@ async def test_apply_mutates_only_selected_scope_and_next_full_skips_confirmatio
         dialog._confirm = confirm
         result = await dialog.apply(CaptureScope.NEXT_SEND, CaptureDetail.FULL)
 
-        assert result is not None and result.status is CapturePolicyMutationStatus.APPLIED
+        assert (
+            result is not None and result.status is CapturePolicyMutationStatus.APPLIED
+        )
         assert host.calls == [("next", CaptureDetail.FULL)]
         assert confirmations == 0
 
@@ -334,7 +336,9 @@ async def test_masked_global_full_still_requires_distinct_acknowledgement() -> N
 
 
 @pytest.mark.asyncio
-async def test_turning_off_dormant_global_full_never_opens_enable_acknowledgement() -> None:
+async def test_turning_off_dormant_global_full_never_opens_enable_acknowledgement() -> (
+    None
+):
     host = _PolicyHost(
         _snapshot(
             conversation_detail=CaptureDetail.SAFE,
@@ -410,7 +414,9 @@ async def test_off_preview_resolves_dormant_one_shot_precedence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_off_safe_edit_previews_selected_dormant_resolution_without_mutation() -> None:
+async def test_off_safe_edit_previews_selected_dormant_resolution_without_mutation() -> (
+    None
+):
     host = _PolicyHost(
         _snapshot(
             enabled=False,
@@ -470,7 +476,9 @@ async def test_off_blocks_full_scope_edits_and_shows_dormant_precedence() -> Non
 
 
 @pytest.mark.asyncio
-async def test_off_allows_safe_edit_and_resume_warns_once_for_dormant_conversation_full() -> None:
+async def test_off_allows_safe_edit_and_resume_warns_once_for_dormant_conversation_full() -> (
+    None
+):
     host = _PolicyHost(
         _snapshot(
             enabled=False,
@@ -541,7 +549,9 @@ async def test_stale_and_partial_success_results_use_literal_status() -> None:
             "cache_refresh_degraded",
         )
         dialog._consume_mutation(degraded)
-        assert dialog.status_text == "Saved and active — settings cache refresh degraded"
+        assert (
+            dialog.status_text == "Saved and active — settings cache refresh degraded"
+        )
 
 
 @pytest.mark.asyncio
@@ -710,7 +720,9 @@ async def test_committed_purge_survives_post_commit_refresh_failure() -> None:
                     )(),
                 },
             )(),
-            "purge_full_captures": lambda _self, _session, _revision: host.bindings().purge_full(_revision),
+            "purge_full_captures": lambda _self, _session, _revision: (
+                host.bindings().purge_full(_revision)
+            ),
             "capture_revision": lambda _self, _session: 5,
             "capture_policy_snapshot": lambda _self, _session: host.snapshot,
             "capture_purge_availability": lambda _self, _session: (
@@ -747,7 +759,9 @@ async def _async_true() -> bool:
 
 
 @pytest.mark.asyncio
-async def test_compact_dialog_keeps_status_and_fixed_actions_visible_and_escape_restores_focus() -> None:
+async def test_compact_dialog_keeps_status_and_fixed_actions_visible_and_escape_restores_focus() -> (
+    None
+):
     host = _PolicyHost(_snapshot(queued_consumer=True))
     app = _Harness()
     async with app.run_test(size=(80, 24)) as pilot:

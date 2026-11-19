@@ -548,7 +548,7 @@ class LibraryMediaBrowseController:
         Reader (or by the bulk Analyze run) left its own row unmarked until
         something re-paged the list. The caller supplies the value from that
         same projection, re-read for this ONE id after the write
-        (``LibraryScreen._reproject_library_media_analysis_row``); nothing
+        (``LibraryMediaController._reproject_library_media_analysis_row``); nothing
         here derives it, and nothing runs on the page path.
 
         Freshness is deliberately untouched: this is not a page change, it

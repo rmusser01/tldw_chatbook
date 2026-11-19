@@ -5,7 +5,7 @@ import json
 import pytest
 
 from tldw_chatbook.Chat.provider_continuation import ContinuationValidationError
-from tldw_chatbook.Chat.assistant_generation_state import AssistantGenerationState
+from tldw_chatbook.DB.assistant_generation_state import AssistantGenerationState
 from tldw_chatbook.Sync_Interop.crypto import decrypt_sync_payload, generate_dataset_key
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash

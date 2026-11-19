@@ -1,0 +1,37 @@
+{
+  "review_base": "c2333548d8",
+  "fix_commits": [
+    "41e0e33c53",
+    "90f9f51fba"
+  ],
+  "new_regression_cases": 14,
+  "checks": {
+    "region_generation_pair_review": {
+      "passed": 68,
+      "seconds": 198.94
+    },
+    "manual_console_recovery": {
+      "passed": 108,
+      "seconds": 158.01
+    },
+    "probe": {
+      "passed": 10,
+      "seconds": 0.41
+    },
+    "css_tokens": {
+      "passed": 13,
+      "seconds": 62.26
+    },
+    "fresh_installed_and_native_restore": {
+      "passed": 2,
+      "seconds": 91.15
+    }
+  },
+  "live_image_requests": 0,
+  "live_adapter_qualified": false,
+  "full_suite_run": false,
+  "limits": [
+    "Mixed UI/ProductionApp collection hit raw_source_selection_changed; isolated groups pass without guard changes.",
+    "Initial native child timed out; fixtures now await actual character/visual-identity workers and rendered confirm focus. Final full journeys pass with original timeouts."
+  ]
+}

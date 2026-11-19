@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request",
+    "Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision",
+    "--basetemp=/private/tmp/console-finalfix-final-green-01a0fa6c"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 52.04206418991089,
+  "output": "....                                                                     [100%]\n============================= slowest 25 durations =============================\n18.55s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]\n11.79s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]\n10.42s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]\n1.32s setup    Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request\n\n(8 durations < 1s hidden.)\n4 passed in 46.79s\n"
+}

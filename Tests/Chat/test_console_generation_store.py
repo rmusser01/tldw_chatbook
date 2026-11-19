@@ -441,6 +441,7 @@ def test_persist_generation_message_rejects_null_bytes(store_with_session):
 
 
 @pytest.mark.integration
+@pytest.mark.bootstrap_profile
 def test_generation_message_reload_round_trip_keeps_variant_and_hydrates_metadata(
     tmp_path,
 ):

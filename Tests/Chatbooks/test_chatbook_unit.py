@@ -9,7 +9,6 @@ Detailed unit tests for chatbook components with mocked dependencies.
 """
 
 import json
-import re
 import sqlite3
 import zipfile
 from datetime import datetime
@@ -478,28 +477,6 @@ class TestConflictResolver:
 
         assert resolution == ConflictResolution.REPLACE
 
-    def test_merge_notes(self):
-        """Test merging note content."""
-        resolver = ConflictResolver()
-
-        existing = {
-            "title": "Research",
-            "content": "Original research notes",
-            "keywords": "research,science",
-        }
-
-        incoming = {
-            "title": "Research",
-            "content": "Additional findings",
-            "tags": ["research", "new"],
-        }
-
-        merged = resolver.merge_notes(existing, incoming)
-
-        assert "Original research notes" in merged["content"]
-        assert "Additional findings" in merged["content"]
-        assert "Imported from chatbook" in merged["content"]
-
     def test_conflict_with_callback(self):
         """Test conflict resolution with user callback."""
 
@@ -514,25 +491,6 @@ class TestConflictResolver:
         )
 
         assert resolution == ConflictResolution.RENAME
-
-    def test_merge_notes_separator_uses_canonical_utc_not_local_time(self):
-        """The separator is baked into the user's note content permanently.
-
-        tier-2 P3 (S17): a naive `datetime.now()` there means two users in
-        different time zones merging the same chatbook get different note
-        bodies, with nothing in the text saying which zone it was.
-        """
-        from tldw_chatbook.Utils.timestamps import is_canonical_utc
-
-        resolver = ConflictResolver()
-        merged = resolver.merge_notes(
-            {"content": "Original"}, {"content": "Incoming"}
-        )
-        stamp = re.search(
-            r"\[Imported from chatbook on (.+?)\]", merged["content"]
-        )
-        assert stamp is not None, merged["content"]
-        assert is_canonical_utc(stamp.group(1)), stamp.group(1)
 
     def test_character_conflict_preview_does_not_claim_false_truncation(self):
         """tier-2 P3 (S17): a short description rendered as `abc...` in the

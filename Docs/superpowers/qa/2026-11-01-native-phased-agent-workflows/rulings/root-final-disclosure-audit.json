@@ -1,0 +1,41 @@
+{
+  "captured_utc": "2026-11-05T06:45:29.802985+00:00",
+  "root_full_report_read": true,
+  "report_bytes": 24424,
+  "report_sha256": "36558399126f6246ef878a9b59e6d06533939a3d7e5e43d4e2bc68576ed8ae41",
+  "report_read_slices": [
+    [
+      0,
+      19000
+    ],
+    [
+      19000,
+      null
+    ]
+  ],
+  "frozen_source_sha256": "22f52b8e22845eace2d0b3230966f0a88ce512eee26235fbcbc53601e700748d",
+  "frozen_source_bytes": 1094090,
+  "frozen_source_lines": 3292,
+  "current_ledger_unchanged_after_cutoff": true,
+  "final_records": 707,
+  "literal_rulings": 434,
+  "nonindependent_contexts": 273,
+  "new_literal": 26,
+  "new_context": 50,
+  "all707_rendered_body_hashes": true,
+  "old631_raw_entry_objects_and141_raw_metadata_values_preserved": true,
+  "old_draft_report_prefixes_exact": true,
+  "all178_postcut_lines_classified_and76_nonempty_retained": true,
+  "all_new_actual_cost_spans_exact": true,
+  "final_map_sha256": "513bd781eb6c817bf091aaf55ccde32a06e18be1608aaefa6d78d151740bf6de",
+  "archive_index_sha256": "7dde30d540a30812b055d4e8e7e0046f7b729f066a3c2e2fce05d97cd786b94a",
+  "archive_source_records": 233,
+  "unique_full_bodies": 205,
+  "readable_body_bytes": 12201559,
+  "all_old134_raw_objects_lookups_metadata_preserved": true,
+  "all233_source_destination_fullbytes_hashes_dual_lookups_verified": true,
+  "complete_wrapper_exact_full_draft_suffix": true,
+  "current_navigation_local_links_resolve": 276,
+  "both_zip_and_manifest_bytes_unchanged_from_independent_rebuild_audit": true,
+  "scope": "final chronology/archival bytes and navigation only; not another native/code/test gate; M1/5unpinned/65560gap/12earlydrivers/platform/source/static/adverse evidence limits retained; postcut mechanical status/Git/cleanup authorized separately"
+}

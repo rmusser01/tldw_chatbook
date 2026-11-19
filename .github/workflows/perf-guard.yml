@@ -15,29 +15,98 @@ on:
     branches: [dev]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
-      - 'tldw_chatbook/**.py'
-      - 'tldw_chatbook/css/**'
+      # TASK-38684: the whole package, not only its .py and css. The job
+      # installs editable, so the app reads its migrations, Config_Files
+      # and assets straight from this checkout.
+      - 'tldw_chatbook/**'
       - 'Tests/Performance/**'
+      - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job
       # installs from pyproject.toml -- a dependency bump (e.g. the pinned
       # Textual version) or a change to those tests must not merge without
       # this guard's verdict (Qodo finding on PR #1827).
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
+      # The speculative-voice gates the voice step below imports.
+      - 'Packaging/speculative_voice_*.py'
+      # TASK-36529: the helpers, conftests and package inits the steps load.
+      # Tests/CI/test_ci_queue_pressure_contract.py derives them from the
+      # steps' imports and fails while one is missing here or below.
+      - 'Tests/__init__.py'
+      - 'Tests/conftest.py'
+      - 'Tests/network_guard.py'
+      - 'Tests/private_profile.py'
+      - 'Tests/real_profile_guard.py'
+      - 'Tests/Backup_Recovery/config_test_support.py'
+      - 'Tests/fixtures/__init__.py'
+      - 'Tests/fixtures/required_doubles.py'
+      - 'Tests/Packaging/test_app_import_diet_closure.py'
+      - 'Tests/Plugins/__init__.py'
+      - 'Tests/Plugins/platform_support.py'
+      - 'Tests/UI/__init__.py'
+      - 'Tests/UI/console_controller_stubs.py'
+      - 'Tests/UI/css_cache.py'
+      - 'Tests/Utils/__init__.py'
+      # TASK-36511.3: the compact-setup gates' child runner and its imports.
+      - 'Tests/windows_private_fixture_runner.py'
+      - 'Tests/Backup_Recovery/restart_observation.py'
+      - 'Tests/Backup_Recovery/test_home_citation_retirement.py'
+      - 'Tests/Chat/__init__.py'
+      - 'Tests/Chat/test_citation_artifact_ownership.py'
+      - 'Tests/Chat/test_citation_legacy_migration.py'
+      - 'Tests/Chat/test_citation_payload_lifecycle.py'
+      - 'Tests/Chat/test_citation_trace_repository.py'
+      # The plugin fixture test_app_import_weight.py copies, and the second
+      # in-tree package the app imports (TASK-36529 review).
+      - 'Tests/Plugins/fixtures/native/**'
+      - 'packages/tldw_profile_core/src/**'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
   push:
     branches: [dev, main]
     paths:
-      - 'tldw_chatbook/**.py'
-      - 'tldw_chatbook/css/**'
+      - 'tldw_chatbook/**'
       - 'Tests/Performance/**'
+      - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job
       # installs from pyproject.toml -- a dependency bump (e.g. the pinned
       # Textual version) or a change to those tests must not merge without
       # this guard's verdict (Qodo finding on PR #1827).
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
+      # The speculative-voice gates the voice step below imports.
+      - 'Packaging/speculative_voice_*.py'
+      # TASK-36529: the helpers the steps load (see pull_request).
+      - 'Tests/__init__.py'
+      - 'Tests/conftest.py'
+      - 'Tests/network_guard.py'
+      - 'Tests/private_profile.py'
+      - 'Tests/real_profile_guard.py'
+      - 'Tests/Backup_Recovery/config_test_support.py'
+      - 'Tests/fixtures/__init__.py'
+      - 'Tests/fixtures/required_doubles.py'
+      - 'Tests/Packaging/test_app_import_diet_closure.py'
+      - 'Tests/Plugins/__init__.py'
+      - 'Tests/Plugins/platform_support.py'
+      - 'Tests/UI/__init__.py'
+      - 'Tests/UI/console_controller_stubs.py'
+      - 'Tests/UI/css_cache.py'
+      - 'Tests/Utils/__init__.py'
+      # TASK-36511.3: the compact-setup gates' child runner and its imports.
+      - 'Tests/windows_private_fixture_runner.py'
+      - 'Tests/Backup_Recovery/restart_observation.py'
+      - 'Tests/Backup_Recovery/test_home_citation_retirement.py'
+      - 'Tests/Chat/__init__.py'
+      - 'Tests/Chat/test_citation_artifact_ownership.py'
+      - 'Tests/Chat/test_citation_legacy_migration.py'
+      - 'Tests/Chat/test_citation_payload_lifecycle.py'
+      - 'Tests/Chat/test_citation_trace_repository.py'
+      # The plugin fixture test_app_import_weight.py copies, and the second
+      # in-tree package the app imports (TASK-36529 review).
+      - 'Tests/Plugins/fixtures/native/**'
+      - 'packages/tldw_profile_core/src/**'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
+  # For manual runs; the merge queue approves the held pull_request run instead (ADR-218 amendment 2026-10-06).
+  workflow_dispatch:
 
 # One run per workflow per ref (obsolete runs must not queue up competing
 # for scarce runners).
@@ -49,7 +118,13 @@ jobs:
   ui-latency-guardrails:
     name: UI latency guardrails
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # TASK-36511.3: 20, not 15 (owner-approved). CI, measured: the 40 green
+    # runs before the gates had a median of 618 s and a max of 883 s, and
+    # TASK-38703's idle-loop fix took the latency step from a 179 s median to
+    # 85-117 s. Local, scaled: the compact-setup gates take 115-132 s
+    # locally, about 240-280 s on CI at its ~2.1x. Estimate: a median of
+    # about 800 s and a max of about 1060-1100 s, 100-140 s under this limit.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -63,6 +138,17 @@ jobs:
         run: |
           pytest Tests/Performance/test_ui_latency_guardrails.py \
             Tests/Utils/test_ui_responsiveness_stall_persist.py \
+            -v --timeout=300
+
+      # TASK-33620.15.3 (2026-10-20): ADR-198's GC policy and its idle heap
+      # re-freeze. The leak-bound tests (the real collector and real Textual
+      # widgets, each with a negative control) ran only in the full-tree runs,
+      # so a PR that broke the compaction bound would merge with every PR
+      # check green. About 15 s together.
+      - name: Run GC policy and idle re-freeze tests
+        run: |
+          pytest Tests/Performance/test_gc_policy.py \
+            Tests/Performance/test_gc_idle_refreeze.py \
             -v --timeout=300
 
       # task-24461: the ADR-097 boot budgets ran ONLY in the slow full suite,
@@ -89,6 +175,7 @@ jobs:
       - name: Run boot budget ratchets
         run: |
           pytest Tests/Performance/test_app_import_weight.py \
+            Tests/Packaging/test_console_rename_import_closure.py \
             Tests/Performance/test_ui_ready_module_census.py \
             Tests/Performance/test_boot_worker_census.py \
             Tests/Performance/test_textual_css_fastpath.py \
@@ -96,13 +183,58 @@ jobs:
             Tests/Performance/test_screen_preimport_payload_budget.py \
             -v --timeout=300
 
+      # TASK-36390: these ran in no PR lane and went red on dev unseen. The
+      # tab-publication controls compile ChatScreen's own method bodies; the
+      # voice latency gate runs on a synthetic clock; the locator inventory
+      # pins the voice-pair reconciler's schema census. About 4 s together.
+      # The completed-pair history node is a strict xfail until TASK-36510:
+      # eight message-locator columns have no leading index, so promotion
+      # scans them. Its XPASS fails this step, so the fix removes the marker.
+      # The compact-setup gates run in the last step (TASK-36511.3).
+      - name: Run Console tab-publication and voice gates
+        run: |
+          pytest Tests/Performance/test_console_tab_sync_source_ownership.py \
+            Tests/Performance/test_speculative_voice_latency.py \
+            -v --timeout=300
+
+      # TASK-36390: typing must not snapshot the transcript (TASK-24300) or
+      # cost more in a long chat. Both are call counts, not wall clock.
+      # TASK-36529 added the last two (45-55 s on CI): no full sync or history
+      # rows in long-chat typing, and no provider re-derivation per key.
+      - name: Run Console keystroke work census
+        run: |
+          pytest "Tests/Performance/test_console_keystroke_work_census.py::test_typing_never_snapshots_the_transcript" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_keystroke_work_does_not_scale_with_transcript_length" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_typing_census_excludes_elapsed_draft_pause_work" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_settled_400_message_typing_traverses_no_history" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_typing_does_not_rebuild_the_provider_derivation" \
+            -v --timeout=300
+
       # The Console storage-unit ratchet joined with TASK-33260 after review
       # on #2888: without it here, a per-call admission or a per-connection
       # SQLite helper merges with every perf guard green -- the failure the
-      # ratchet exists to catch. On this Linux runner it gates the admission
-      # and helper counts; its os.open ceilings are macOS measurements. Same
-      # rule as above: never remove it from here.
+      # ratchet exists to catch. Same rule as above: never remove it from
+      # here. TASK-33643: every run prints its measured census (pass or
+      # fail), the record Linux os.open ceilings are pinned from.
       - name: Run Console storage-unit ratchet
+        env:
+          TLDW_STORAGE_UNIT_CENSUS_LOG: ${{ runner.temp }}/storage-unit-census.jsonl
         run: |
+          status=0
           pytest "Tests/Performance/test_console_keystroke_work_census.py::test_console_storage_units_stay_within_their_ratchets" \
+            -v --timeout=300 || status=$?
+          echo "::group::Console storage-unit census"
+          cat "$TLDW_STORAGE_UNIT_CENSUS_LOG" 2>/dev/null || echo "(no census written)"
+          echo "::endgroup::"
+          exit "$status"
+
+      # TASK-36511.3: the compact-setup gates hold a compact config read and
+      # require the UI loop to answer a probe within 100 ms meanwhile.
+      # Last on purpose: a wall-clock gate, so a flake here must not skip
+      # the census steps above (Tests/CI pins this). 17 nodes, about 115-132 s
+      # locally, about 240-280 s on CI.
+      - name: Run Console compact-setup gates
+        run: |
+          pytest Tests/Performance/test_compact_setup_ownership.py \
+            Tests/Performance/test_compact_model_original_checked_read.py \
             -v --timeout=300

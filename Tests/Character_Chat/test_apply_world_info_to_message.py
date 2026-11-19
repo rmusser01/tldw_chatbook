@@ -33,21 +33,33 @@ def test_injects_matched_conversation_book(wb_db):
 
 def test_no_match_returns_unchanged(wb_db):
     _attach_book(wb_db, "conv-2", "dragon", "Dragons breathe fire.")
-    assert apply_world_info_to_message(wb_db, "conv-2", None, "hello there", []) == "hello there"
+    assert (
+        apply_world_info_to_message(wb_db, "conv-2", None, "hello there", [])
+        == "hello there"
+    )
 
 
 def test_no_conversation_returns_unchanged(wb_db):
-    assert apply_world_info_to_message(wb_db, None, None, "a dragon appears", []) == "a dragon appears"
+    assert (
+        apply_world_info_to_message(wb_db, None, None, "a dragon appears", [])
+        == "a dragon appears"
+    )
 
 
 def test_no_books_returns_unchanged(wb_db):
     wb_db.add_conversation({"id": "conv-3", "title": "Empty"})
-    assert apply_world_info_to_message(wb_db, "conv-3", None, "a dragon appears", []) == "a dragon appears"
+    assert (
+        apply_world_info_to_message(wb_db, "conv-3", None, "a dragon appears", [])
+        == "a dragon appears"
+    )
 
 
 def test_db_error_returns_unchanged():
     # A bogus db object: the helper must swallow the error and return the text.
-    assert apply_world_info_to_message(object(), "conv-x", None, "a dragon appears", []) == "a dragon appears"
+    assert (
+        apply_world_info_to_message(object(), "conv-x", None, "a dragon appears", [])
+        == "a dragon appears"
+    )
 
 
 def test_non_string_message_returned_as_is(wb_db):

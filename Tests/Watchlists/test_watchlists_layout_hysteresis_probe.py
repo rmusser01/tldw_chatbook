@@ -99,12 +99,8 @@ async def test_one_cell_resize_oscillation_at_the_boundary_causes_no_churn():
 
         with _RegionBuildCounter() as builds:
             for _ in range(5):
-                await _resize_to(
-                    screen, pilot, width_box, READ_BOUNDARY_WIDTH - 1
-                )
-                await _resize_to(
-                    screen, pilot, width_box, READ_BOUNDARY_WIDTH
-                )
+                await _resize_to(screen, pilot, width_box, READ_BOUNDARY_WIDTH - 1)
+                await _resize_to(screen, pilot, width_box, READ_BOUNDARY_WIDTH)
 
             # The first 154 collapses the rail; every later +/-1 step must
             # be absorbed: NO region body is ever rebuilt during the
@@ -122,10 +118,8 @@ async def test_one_cell_resize_oscillation_at_the_boundary_causes_no_churn():
         # Convergence: clearing the boundary by the hysteresis width is a
         # real expand and must still work (hysteresis never sticks a pane).
         with _RegionBuildCounter() as reopen_builds:
-            await _resize_to(
-                screen, pilot, width_box, READ_BOUNDARY_WIDTH + 4
+            await _resize_to(screen, pilot, width_box, READ_BOUNDARY_WIDTH + 4)
+            assert workbench._mounted_region_body(Region.RIGHT_RAIL) is not None, (
+                "clearing the boundary by the hysteresis width must re-expand"
             )
-            assert (
-                workbench._mounted_region_body(Region.RIGHT_RAIL) is not None
-            ), "clearing the boundary by the hysteresis width must re-expand"
             assert reopen_builds.regions == [Region.RIGHT_RAIL]

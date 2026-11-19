@@ -1,0 +1,17 @@
+........................................................................ [ 21%]
+........................................................................ [ 43%]
+..........................................................F............. [ 64%]
+........................................................................ [ 86%]
+..............................................                           [100%]
+=================================== FAILURES ===================================
+_ test_mixin_type_filter_empty_result_is_no_matches_and_scope_restore_keeps_type _
+Tests/Library/test_library_prompts_state.py:3112: in test_mixin_type_filter_empty_result_is_no_matches_and_scope_restore_keeps_type
+    scope = PromptBrowseScope(artifact_type="mixin")
+            ^^^^^^^^^^^^^^^^^
+E   NameError: name 'PromptBrowseScope' is not defined
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Library/test_library_prompts_state.py::test_mixin_type_filter_empty_result_is_no_matches_and_scope_restore_keeps_type
+1 failed, 333 passed in 8.63s

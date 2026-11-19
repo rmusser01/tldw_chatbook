@@ -75,6 +75,8 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 )
 from Tests.UI.app_factory import attach_chachanotes_db
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class _ComposerApp(App[None]):
     def compose(self) -> ComposeResult:
@@ -1666,11 +1668,18 @@ async def test_create_note_writes_a_real_note(tmp_path):
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 
     db = CharactersRAGDB(str(tmp_path / "chachanotes.sqlite"), "note_e2e")
+    local_notes = NotesInteropService(tmp_path, "note_e2e", global_db_to_use=db)
     try:
         async with make_console_pilot() as pilot:
             screen = pilot.app.screen
+            screen.app_instance.notes_scope_service = NotesScopeService(
+                local_notes, None
+            )
+            screen.app_instance.notes_user_id = "note_e2e"
             store = ConsoleChatStore(persistence=ChatPersistenceService(db))
             screen._console_chat_store = store
             controller = screen._ensure_console_chat_controller()
@@ -1696,6 +1705,7 @@ async def test_create_note_writes_a_real_note(tmp_path):
             assert quote in note["content"]
             assert "— Console selection," in note["content"]
     finally:
+        local_notes.close_all_user_connections()
         db.close()
 
 

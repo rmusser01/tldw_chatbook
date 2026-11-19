@@ -1,0 +1,599 @@
+{
+  "old_base": "3efe8476cebf70eceafa605d1abed76a4aad4e0e",
+  "old_head": "f73ab0247974114c13f53d6569484b9a81c76a07",
+  "new_base": "38c9d2edcf10bc69d0d7597514fa319db7e4ccd2",
+  "all_other_branch_blobs_conserved": [
+    {
+      "path": "Docs/Architecture/evals.md",
+      "blob": "f18eba5e29db3fea4333b6e15f91d81b625e8db3"
+    },
+    {
+      "path": "Docs/Architecture/library-shell.md",
+      "blob": "1d605055ea7030e179bac098f88f94d2d6372ef8"
+    },
+    {
+      "path": "Docs/Architecture/research-workspace.md",
+      "blob": "d11ce921491d8b2200321ab1b6c8be9ff14807f1"
+    },
+    {
+      "path": "Docs/superpowers/plans/2026-10-28-textual-37266-37268.md",
+      "blob": "09f70d5c8b6bc0e8b8b9d170e0cc1eeb59aecaaa"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283.md",
+      "blob": "4e0d26c01c2e75c9b2cca7ec535df46c434a113c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/README.md",
+      "blob": "c10f147a2c10cc406531b88b3608743455101db4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/archived-receipts.json",
+      "blob": "d6686de8f3fc385f700c429ec57e9283e0caa50d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/book-reference.json",
+      "blob": "fc646c8ade3027d4ea213e8a6898686eb8cf160a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/baseline-pins.json",
+      "blob": "9d9973e0e866cfe7ad3d65ced185fbd2e7b07854"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-0.xml.gz",
+      "blob": "6a8cc5e2182c3e89778acd317be5afb8fa828f06"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-1.xml.gz",
+      "blob": "06310d46b0070bb8a0ea3b1cb93ff849a84023f3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-2.xml.gz",
+      "blob": "fbc03d90732736f741aee6dcbc01463066e3ca4f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-3.xml.gz",
+      "blob": "98a8d395bc2007666d6ab3810929536bc1e23c94"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/child-4.xml.gz",
+      "blob": "c39c51e9babff034fe102ca30abfe77fdfb8205f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/conftest.py.txt",
+      "blob": "e52d729d9a048c5051f0547cddf65291be6b5c61"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/departure-identity.json",
+      "blob": "0e31266d546acc389c9e997f26d6ef010cc1cabe"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/departure-observation.json",
+      "blob": "b09a4be49f4a304f04f3a626f2e5d9341d30b308"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/departure-pending-identity.json",
+      "blob": "b9ba8143dbab10bbc29d93afb418b8dd0c2db928"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/departure-pending-observation.json",
+      "blob": "4f414b3cbc2015045d584b9835706b6578b907d1"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/during-refresh-identity.json",
+      "blob": "89d12f4ec9f62c287b8829f0da47500e310d3399"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/during-refresh-observation.json",
+      "blob": "437d1d707a43c1d2ab14c6d476d313184ab9ff8a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/later-input-identity.json",
+      "blob": "216240e2ecd8c6b407617604022ba2f51fffd078"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/later-input-observation.json",
+      "blob": "8366f388fc775ca3f88fd6db94e02a7fdad239be"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/ordinary-identity.json",
+      "blob": "83a3b124d1d4c2b24e61890521dfec53672ef57f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/ordinary-observation.json",
+      "blob": "6a249ccbd7e1c3a721c1ff634dcabf2a10fd41fd"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/parent.xml.gz",
+      "blob": "ba292138fce461f02d289889251279879e985e72"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/report.md",
+      "blob": "7babc1b7b4079c02804a0ec765d3bbad3378b5b6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/character-bench/test_character_save_publication.py.txt",
+      "blob": "ef35c1d200c39a1c0b1ad8c76479d12888046d0c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/evidence.json",
+      "blob": "85c39ece7552e84da2da2207ec4b542a6d7eea85"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/final-filing-check.json",
+      "blob": "6f341d08715755fec1e1f0c1e5bfc5be054e4635"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/manifest.json",
+      "blob": "3cd1c8290d41824e540f52419182e301d23426d6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/merge-and-ci.json",
+      "blob": "a0d2fe1e8389496c1ee27f933127ad85df350954"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/conftest.py.txt",
+      "blob": "65d0fd271eb8a69fd4f2c0a76dcb7d23a34221b6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/0-result.xml.gz",
+      "blob": "2aacf390dd7d80162d563a075f55e08b8999b117"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/1-pytest.xml.gz",
+      "blob": "f23413ef0aa371548cb30d51ad308ed79a5c34dd"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/2-pytest.xml.gz",
+      "blob": "d49705603d4d635d2ec357eff000e17416442cc2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/command.json",
+      "blob": "bec50d6eb360941bc1c63819a1dc6e778e24740d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-01/verification.json",
+      "blob": "a216af7b153ee18abf70b22f9c332612250e4139"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/0-result.xml.gz",
+      "blob": "57dc6ad1e5c7cf132222c258ba09d760ef60c1b7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/1-pytest.xml.gz",
+      "blob": "901011b51490e38a06b4fbb949e4ccebf7fcc54e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/2-pytest.xml.gz",
+      "blob": "fc909cb24d1924e9a6791161034b972ee052d9d5"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/command.json",
+      "blob": "c95cdadc97e9a04ca9fe7162c3b36c32da31add0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/executed-source.py.txt",
+      "blob": "eb4eee4de2d40848b74ce44c290bf12859dee6ff"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/excluded-02/verification.json",
+      "blob": "a7bc5b22ce734f467f4a343d17e3b32de3b80807"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/0-result.xml.gz",
+      "blob": "58e3777e0e2794b0ddd4d965e84f861d308a4bfc"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/1-pytest.xml.gz",
+      "blob": "587253a89826b0ffe41d1279d5f000e05e50ec61"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/2-pytest.xml.gz",
+      "blob": "0894eb1b153dd44705d3d4288c86979a261b4a04"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/command.json",
+      "blob": "0a4f9035c9b85a1449cf4f7003343442f28c7ddd"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/held-observation.json",
+      "blob": "08d85202685085c44b6d092c32f760e0d763ec23"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/ordinary-observation.json",
+      "blob": "8208f1b2a17913473151044d27c51bb7f8fb54f7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/qualified/verification.json",
+      "blob": "92ff3996cadaf7579c15d2a659c54964eb990af0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/report.md",
+      "blob": "6bdb2f0778e88afe392716b6e5aeed1a4d6554ef"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/notes/test_note_export.py.txt",
+      "blob": "d28af9bf9a16142aaf01d260107e0e14ebb18318"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/ownership.json",
+      "blob": "fafaa226b9a1ff5e2421f1c9ff9c58e567160978"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/premerge-review.md",
+      "blob": "a679feaf3589361f10674f9ebf6240e65a092974"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/publication-review.md",
+      "blob": "88326902027dc8e746de38a788966d4e9e0aaadf"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/publication-verification.json",
+      "blob": "1cbc5fe22985dcf0bbc5fa3d3043598d5b913125"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/child-0.xml.gz",
+      "blob": "ef149f08d729f8484603543238af36e2b54140e9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/child-1.xml.gz",
+      "blob": "8e8266e9e7d295c33ca3559b6fa58fef3609b1bd"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/child-2.xml.gz",
+      "blob": "406c6f280b61e444cfc9fe865f0d0b412f5cc3ab"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/result.xml.gz",
+      "blob": "fbb4a644942adf85782adbc1c1ba3e4ba02d69d7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt1/test_runs_observation.py.txt",
+      "blob": "1979d1627fa2cae80ac313f7e55d0210be6eade9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/child-0.xml.gz",
+      "blob": "9b762682477331a648727ddb1bbbbdbfb476782d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/child-1.xml.gz",
+      "blob": "4fc43725c005e27142d4c35a4a99e063732a08a9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/child-2.xml.gz",
+      "blob": "78d8763dff0bfd2b1e10cf23db0682b94c72f31f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/command.json",
+      "blob": "e4b7d5cc9576193c674a611890b9c7e2d813c5ff"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/held_selection.json",
+      "blob": "1b43217d488c9d96ae2c2344c026af8d5f7038c9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/held_selection.svg.gz",
+      "blob": "7a04aeac8e910501daa1423cdee25f03d14aafd7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/held_source.json",
+      "blob": "77c8cbca986738e0ad640061d4d13f275a0d4ab4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/held_source.svg.gz",
+      "blob": "3db050f7c56b53513d1d3dc39e794334645b37b2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/ordinary.json",
+      "blob": "fa46e3aa633455410b7c7e60d93b6e5c4003bdc9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/ordinary.svg.gz",
+      "blob": "e4cdc5f01264f7a2b308f80cb9d3b7183049bd0d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/result.xml.gz",
+      "blob": "e253cdc036dec49ff6b03571bbfae236b4025806"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/test_runs_observation.py.txt",
+      "blob": "e647627ca37cfe7ec00d2aa636722e5721cb2bdf"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/attempt2/verification.json",
+      "blob": "3bd94ecce700aec3a4f74a0e4ffa92b8aa74816c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/conftest.py.txt",
+      "blob": "119278f3ad9d66d99edfc15d38806c9262dab9bc"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/held_selection.json",
+      "blob": "1b43217d488c9d96ae2c2344c026af8d5f7038c9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/held_source.json",
+      "blob": "77c8cbca986738e0ad640061d4d13f275a0d4ab4"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/ordinary.json",
+      "blob": "fa46e3aa633455410b7c7e60d93b6e5c4003bdc9"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/report.md",
+      "blob": "dbd0053671d3c1fb10a8b6ede992d034ecf29a96"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/source-pins-after.json",
+      "blob": "98cae6f5508b8d4d41d9bf54697b896dea2cb635"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/research/test_runs_observation.py.txt",
+      "blob": "e647627ca37cfe7ec00d2aa636722e5721cb2bdf"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/run-targeted-external-profile.py.txt",
+      "blob": "b62406acff32bee74f56a59adefa4ba6d41e9476"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/source-pins.json",
+      "blob": "680122034da7dcc8ffd254bed65c089916ba848d"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-book-after-pr3283/task-creation.json",
+      "blob": "3420ec14f3f50c9ef80c04c96d0c1765ea2052bb"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md",
+      "blob": "83be9f7be15bab8f77cd3ca9561e2da8323eb9dc"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/artifact-followup-ownership.json",
+      "blob": "25657fa297ecb4c179c064e515ac23ca4cd18f37"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/backlog-closure.json",
+      "blob": "7b94397ed39daeabb6d863a00d20261665deef84"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/capacity-replay.json",
+      "blob": "87df2abc24aabe2391870535338d66efcee1222a"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave-report.md",
+      "blob": "541b7f53b13f74391b54903aaa0325b722f1b0b6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave-review.md",
+      "blob": "7e16bfaa54b1f0430f6a8cb8bfc8e7ee9489ce1e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave.json",
+      "blob": "629ba1f74a53f18b4a4c525368bc14e07b031f9c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/ci-fix-wave.tar.gz",
+      "blob": "1bfed337f647be62f2d8e969d2054b814ca42d5f"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/failed-metadata-head.json",
+      "blob": "8314bff18d5b8ecf940c7b1fa5ebebcfe72f9cfd"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/media-filter-investigation.md",
+      "blob": "b3fa83bb6e24e9591e4e5ba1f861b76c5da4c886"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/media-typing-ownership.json",
+      "blob": "3285a641f58464d57211a1b785f3625826cc9605"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/native-investigations.json",
+      "blob": "249aebe53d124427a6b9d8ffd65c8b02d3e7aad6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/native-investigations.tar.gz",
+      "blob": "53937f4cfbea0441205edbab90eb97c94a75b048"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/note-open-investigation.md",
+      "blob": "2d4a9850a413a7f6fa7c53203289689b734f02c3"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/ci-repairs/root-integration.json",
+      "blob": "8e69a2baae02f6e69bdb81796ba1134f8e27ba60"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/decision-ledger.md",
+      "blob": "2bde5345c2f0bf809271c893aab675ffe209aeda"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/diagnostic-inventory.json",
+      "blob": "9197cbd7066487302e16c4b1c1d5a4b4875e7fd7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/final-review-index.json",
+      "blob": "72c89c593070812474b20224e40587cc5af1d68c"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/final-review.md",
+      "blob": "e68a36e71a41c08b1020d3ff5ecca031a2091bad"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/hosted-source-head.json",
+      "blob": "35829f553cfde3c79944ed07858ec55672595b46"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/integration-local-evidence.json",
+      "blob": "93dc1d519c08b67445f035e83c513b41717367e2"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/integration-local-receipts.tar.gz",
+      "blob": "29e853264423d2ea87c92d0e677915d5792c3d80"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/parameter-id-collection.json",
+      "blob": "4d65e412a53b1fb61845999dd7e68067b02b15f6"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-fix1-review.md",
+      "blob": "f81aed8ab5c9c6f78e0edfd82040df8791e5b9cc"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-implementation-report.md",
+      "blob": "4d00bf1598f37fb9ce4ce19d5eeebb6f4e89cea7"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-local-evidence.json",
+      "blob": "f9ad59fc38e5424309a2349d0b6e331e244c0388"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-local-receipts.tar.gz",
+      "blob": "509f794d16be329ed0fbfbc457d6191ece08ead8"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task1-review.md",
+      "blob": "8331204ac2434150c81d39a26c6fa56a75783fba"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-implementation-report.md",
+      "blob": "ea54f4b14b50303437b9496ce82dd262d5913811"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-local-evidence.json",
+      "blob": "3cabef6fa2a1b4b1ded17b66f10871f070e31447"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-local-receipts.tar.gz",
+      "blob": "51ba258acce38af69dad7450d006742ddde3aee0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task2-review.md",
+      "blob": "c8b5b3b9e8e4198586e96c68ea4650a23cdf0bb0"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-implementation-report.md",
+      "blob": "92b2e904b1a218a3641abbae3aea8552c47aab32"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-local-evidence.json",
+      "blob": "7f9d8ac5865867d1d5c3eae39deab3c4e1d93f8e"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-local-receipts.tar.gz",
+      "blob": "6372d8553039a6feef7d90fe090325516d50cd89"
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-28-textual-followups-implementation/task3-review.md",
+      "blob": "49d1da86009aadfc6bc88faea1c80010b95edf9a"
+    },
+    {
+      "path": "Tests/CI/test_derived_artifacts_workflow.py",
+      "blob": "86aa5682b4cb2f17d169735eaba37d06f4b923a3"
+    },
+    {
+      "path": "Tests/CI/test_ui_lane_shard_replay.py",
+      "blob": "20a2d569c753dd77e56a7c27976d817261ea73b7"
+    },
+    {
+      "path": "Tests/CI/test_ui_pr_gate_census_checker.py",
+      "blob": "15cb087eb3d3d35ceadbfc70398292d622ea2370"
+    },
+    {
+      "path": "Tests/Library/test_library_file_export.py",
+      "blob": "eb50ff65c4e1a6a66d24f2b281e71978cc33244c"
+    },
+    {
+      "path": "Tests/UI/library_note_links_support.py",
+      "blob": "8c03b5806bba30b0458e8968aef23f56ede4b411"
+    },
+    {
+      "path": "Tests/UI/test_evals_character_bench_save_publication.py",
+      "blob": "890f69e772ee2bce9be9b410f6e7ba6270f6901b"
+    },
+    {
+      "path": "Tests/UI/test_library_media_reader_controls_in_list_view.py",
+      "blob": "d4f5e4288d510cc2c916372c164bb49fc09de9c4"
+    },
+    {
+      "path": "Tests/UI/test_library_note_export_responsiveness.py",
+      "blob": "c85464b9c2565106880e8cdbf884f3a8f5e3d322"
+    },
+    {
+      "path": "Tests/UI/test_library_note_links_picker_and_preview.py",
+      "blob": "6c0d816180b86b8607558b27ac50d832ea02bcca"
+    },
+    {
+      "path": "Tests/UI/test_library_shell.py",
+      "blob": "a8526d7424268aba65cc8dadff8c0c1feddaa2e9"
+    },
+    {
+      "path": "Tests/UI/test_research_run_refresh_publication.py",
+      "blob": "2a9a94ad538d5b8473b3a46bebc57fab4252b00f"
+    },
+    {
+      "path": "backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md",
+      "blob": "e10de507538ad3d0c4ce14385056ab66dec4a897"
+    },
+    {
+      "path": "backlog/docs/lessons-backlog-hygiene.md",
+      "blob": "548d97aee3b282be0c4f8ee2a97e108b9b312f93"
+    },
+    {
+      "path": "backlog/tasks/task-34000.11 - Library-Notes-links-picker-backlinks-for-typed-Title-in-app-Preview-link-activation.md",
+      "blob": "b54f5c9a097cb8e666f34f9574439ff5bdae8d58"
+    },
+    {
+      "path": "backlog/tasks/task-34000.18 - Library-Media-Read-later-trash-and-Edit-metadata-act-on-the-item-opened-by-link-not-row-1.md",
+      "blob": "6b019cdb461d196e5b658b26f1e54999c43ab154"
+    },
+    {
+      "path": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "blob": "63986c8f12365f01992a46e851f055d108a89d89"
+    },
+    {
+      "path": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "blob": "2767604329a1e64df34fa995fdbad62073c8e493"
+    },
+    {
+      "path": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "blob": "650c698b5d9a0bd79a45bb80490d142154d08a59"
+    },
+    {
+      "path": "backlog/tasks/task-37330 - Restore-Research-Runs-artifact-loading-through-the-real-scope-contract.md",
+      "blob": "dd8501e0aea1f42a8fe8d8da06373e9655eb52fa"
+    },
+    {
+      "path": "backlog/tasks/task-37360 - Preserve-Media-filter-typing-and-editing-context-across-browse-publication.md",
+      "blob": "1a11d343cbf001a6289efa1ff7856ebc19439414"
+    },
+    {
+      "path": "scripts/ui_lane_shard_replay.py",
+      "blob": "ee380281b64f7de0c493ed6f51a318145e78e335"
+    },
+    {
+      "path": "tldw_chatbook/UI/Evals/character_bench_editor.py",
+      "blob": "48cce291901ba531dded6921d63f4ff9d88da85f"
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_file_export.py",
+      "blob": "ef33e680ac3b36fb1c14d05ae4c89346fa4d6db8"
+    },
+    {
+      "path": "tldw_chatbook/UI/Research_Window.py",
+      "blob": "8a4bf7af3e31eb1872120c87f5903cb01db12a54"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/evals_screen.py",
+      "blob": "c8cd752697fc3d65db8723ed8eb8704a5f7ca00b"
+    }
+  ],
+  "shared_paths": [
+    ".github/workflows/derived-artifacts.yml",
+    "Docs/security/production-diagnostic-inventory.json",
+    "Tests/CI/test_ci_queue_pressure_contract.py",
+    "backlog/docs/lessons-testing-evidence.md",
+    "scripts/check_ui_pr_gate_census.py",
+    "scripts/ui_pr_gate_census.txt"
+  ]
+}

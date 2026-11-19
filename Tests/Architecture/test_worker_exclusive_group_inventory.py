@@ -62,8 +62,10 @@ pins the decorator form.
 TASK-19870 extends the same ownership rule to mutation-triggered refreshes in
 Schedules and Watchlists. Awaiting a raw loader inside a mutation worker
 bypasses the loader's exclusive group, so the two affected modules are scanned
-for ``await self.<raw loader>(...)`` and the eleven known mutation owners are
-pinned to exactly one call to their group-dispatch helper.
+for ``await self.<raw loader>(...)`` and the known mutation owners (eleven
+at TASK-19870, twelve since TASK-38990) are pinned to exactly one call to their
+group-dispatch helper. The helpers' own grouped worker bodies are the dispatch
+and are exempt (TASK-38990, ``_exclusive_helper_scopes``).
 """
 
 from __future__ import annotations
@@ -162,6 +164,9 @@ MUTATION_REFRESH_HELPER_INVENTORY: dict[str, str] = {
     "_cast_script": "_request_briefings_refresh",
     f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
     "_synthesize_audio": "_request_briefings_refresh",
+    # TASK-38990: the coordinated Generate path's follower.
+    f"{WATCHLISTS_COLLECTIONS_PATH}::WatchlistsCollectionsScreen."
+    "_follow_coordinated_briefing": "_request_briefings_refresh",
 }
 
 
@@ -251,6 +256,51 @@ def _forbidden_inline_loader_awaits(
     return violations
 
 
+def _exclusive_helper_scopes(
+    tree: ast.Module, owners: dict[int, str], helpers: set[str]
+) -> set[str]:
+    """Return the qualified names of the worker bodies that ARE the dispatch.
+
+    TASK-38990: a helper may wrap its loader in a nested worker body (to pass
+    arguments, or to act after the load) and schedule that body with
+    ``self.run_worker(<body>, exclusive=True, group=<name>)``. The raw await
+    in that body runs inside the exclusive group, so it is the dispatch, not a
+    bypass. Only the body named by that call's first argument (``_load`` or
+    ``refresh()``) qualifies, and only in an inventoried helper that schedules
+    into exactly one literal group: a sibling body scheduled without the group,
+    or into another one, is still a bypass (review r10a-rev1).
+    """
+    groups_by_helper: dict[str, dict[str, set[str]]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _self_call_name(node) != "run_worker":
+            continue
+        owner = owners.get(node.lineno, "<module>")
+        if owner.rsplit(".", 1)[-1] not in helpers:
+            continue
+        exclusive = _keyword(node, "exclusive")
+        group = _keyword(node, "group")
+        body = node.args[0] if node.args else _keyword(node, "work")
+        if isinstance(body, ast.Call):
+            body = body.func
+        if (
+            isinstance(exclusive, ast.Constant)
+            and exclusive.value is True
+            and isinstance(group, ast.Constant)
+            and isinstance(group.value, str)
+            and group.value not in ("", "default")
+            and isinstance(body, ast.Name)
+        ):
+            groups = groups_by_helper.setdefault(owner, {})
+            groups.setdefault(group.value, set()).add(body.id)
+    return {
+        f"{owner}.{name}"
+        for owner, groups in groups_by_helper.items()
+        if len(groups) == 1
+        for names in groups.values()
+        for name in names
+    }
+
+
 def _mutation_refresh_violations_in_tree(
     tree: ast.Module,
     *,
@@ -267,9 +317,16 @@ def _mutation_refresh_violations_in_tree(
     owners = _owner_index(tree)
     issues: dict[str, list[str]] = {}
     helper_counts = dict.fromkeys(owner_helpers, 0)
+    dispatch_scopes = _exclusive_helper_scopes(
+        tree, owners, set(owner_helpers.values())
+    )
 
     for lineno, loader in _forbidden_inline_loader_awaits(tree, forbidden_loaders):
         owner = owners.get(lineno, "<module>")
+        if any(
+            owner == scope or owner.startswith(scope + ".") for scope in dispatch_scopes
+        ):
+            continue
         issues.setdefault(owner, []).append(
             f"await self.{loader}(...) is forbidden; dispatch through "
             "the loader-group refresh helper"
@@ -829,3 +886,198 @@ def test_duplicate_refresh_helper_is_flagged() -> None:
         "expected exactly one self._request_tasks_refresh(...) call; found 2"
         in violations["ScratchScreen._mutate"]
     )
+
+
+def test_raw_loader_in_an_exclusive_helper_body_is_the_dispatch() -> None:
+    """TASK-38990: the helper's own grouped worker body may await the loader."""
+    tree = ast.parse(
+        "class ScratchScreen:\n"
+        "    def _request_tasks_refresh(self):\n"
+        "        async def _load():\n"
+        "            await self.load_tasks(refresh_definitions=False)\n"
+        "        self.run_worker(_load, exclusive=True, group='scratch-load')\n"
+        "    def _mutate(self):\n"
+        "        self._request_tasks_refresh()\n"
+    )
+
+    assert not _mutation_refresh_violations_in_tree(
+        tree,
+        forbidden_loaders={"load_tasks"},
+        owner_helpers={"ScratchScreen._mutate": "_request_tasks_refresh"},
+    )
+
+
+def test_raw_loader_in_an_ungrouped_or_uninventoried_body_is_flagged() -> None:
+    """The exemption needs an inventoried helper AND a named exclusive group."""
+    for helper, schedule in (
+        ("_request_tasks_refresh", "self.run_worker(_load, exclusive=True)"),
+        ("_request_tasks_refresh", "self.run_worker(_load, group='scratch-load')"),
+        ("_other_refresh", "self.run_worker(_load, exclusive=True, group='g')"),
+    ):
+        tree = ast.parse(
+            "class ScratchScreen:\n"
+            f"    def {helper}(self):\n"
+            "        async def _load():\n"
+            "            await self.load_tasks()\n"
+            f"        {schedule}\n"
+        )
+
+        violations = _mutation_refresh_violations_in_tree(
+            tree,
+            forbidden_loaders={"load_tasks"},
+            owner_helpers={"ScratchScreen._mutate": "_request_tasks_refresh"},
+        )
+
+        assert "await self.load_tasks(...) is forbidden" in violations.get(
+            f"ScratchScreen.{helper}._load", ""
+        ), (helper, schedule)
+
+    # Review r10a-rev1: a properly grouped body exempts only itself, never a
+    # sibling scheduled without the group or into an unrelated one.
+    for sibling_schedule in (
+        "self.run_worker(_bypass())",
+        "self.run_worker(_bypass(), exclusive=True, group='unrelated')",
+    ):
+        tree = ast.parse(
+            "class ScratchScreen:\n"
+            "    def _request_tasks_refresh(self):\n"
+            "        async def _load():\n"
+            "            await self.load_tasks()\n"
+            "        self.run_worker(_load, exclusive=True, group='scratch-load')\n"
+            "        async def _bypass():\n"
+            "            await self.load_tasks()\n"
+            f"        {sibling_schedule}\n"
+        )
+
+        violations = _mutation_refresh_violations_in_tree(
+            tree,
+            forbidden_loaders={"load_tasks"},
+            owner_helpers={"ScratchScreen._mutate": "_request_tasks_refresh"},
+        )
+
+        assert "await self.load_tasks(...) is forbidden" in violations.get(
+            "ScratchScreen._request_tasks_refresh._bypass", ""
+        ), sibling_schedule
+
+
+# TASK-39146: a worker parked on a bare ``await app.push_screen(...,
+# wait_for_dismiss=True)`` cancels the dialog's result future when it is
+# cancelled (shutdown, or the exclusive restart this module is about), so the
+# dialog's later close raises ``InvalidStateError`` and leaves it on the stack.
+# ``App.push_screen_wait`` awaits the same future through ``asyncio.shield``.
+# Review r12p-rev1: any ``push_screen`` that asks for that future counts, not
+# only one awaited directly (a stored future awaited later, ``wait_for``,
+# a ``**`` splat), unless it is the direct argument of ``asyncio.shield``.
+
+
+#: Sites that keep the dismiss future unshielded on purpose, keyed
+#: ``"<path>::<owning function>"``, each with the reason it is safe.
+UNSHIELDED_DISMISS_WAIT_ALLOWLIST: dict[str, str] = {
+    "tldw_chatbook/Widgets/confirmation_dialog.py::await_quit_prompt": (
+        "Waits with asyncio.wait, which never cancels the future it waits on, "
+        "and polls whether the prompt left the stack (TASK-33622.10)."
+    ),
+}
+
+
+def _waits_for_dismiss(call: ast.Call) -> bool:
+    """Whether ``call`` may pass a non-False ``wait_for_dismiss``."""
+    if any(isinstance(arg, ast.Starred) for arg in call.args):
+        return True  # An unprovable ``*`` splat fails closed too.
+    wait = _keyword(call, "wait_for_dismiss")
+    if wait is None and len(call.args) >= 3:
+        wait = call.args[2]
+    for keyword in call.keywords:
+        if keyword.arg is not None:
+            continue
+        if not isinstance(keyword.value, ast.Dict):
+            return True  # An unprovable ``**`` splat fails closed.
+        for key, value in zip(keyword.value.keys, keyword.value.values):
+            if key is None:
+                return True
+            if isinstance(key, ast.Constant) and key.value == "wait_for_dismiss":
+                wait = value
+    return wait is not None and not (
+        isinstance(wait, ast.Constant) and wait.value is False
+    )
+
+
+def _unshielded_dismiss_waits(tree: ast.AST) -> list[int]:
+    """Lines of ``push_screen`` calls that ask for an unshielded dismiss future."""
+    shielded = {
+        id(node.args[0])
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _call_name(node) == "shield" and node.args
+    }
+    return sorted(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and _call_name(node) == "push_screen"
+        and id(node) not in shielded
+        and _waits_for_dismiss(node)
+    )
+
+
+def _unshielded_dismiss_wait_sites() -> dict[str, list[str]]:
+    """Every flagged site in the package, grouped by ``path::owner``."""
+    sites: dict[str, list[str]] = {}
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "push_screen" not in source:
+            continue
+        tree = ast.parse(source)
+        lines = _unshielded_dismiss_waits(tree)
+        if not lines:
+            continue
+        relative = path.relative_to(PACKAGE_ROOT.parent)
+        owners = _owner_index(tree)
+        for line in lines:
+            key = f"{relative}::{owners.get(line, '<module>')}"
+            sites.setdefault(key, []).append(f"{relative}:{line}")
+    return sites
+
+
+def test_no_unshielded_dismiss_waits() -> None:
+    """No code asks for a dialog's result future without a shield."""
+    sites = _unshielded_dismiss_wait_sites()
+    flagged = [
+        line
+        for key, lines in sites.items()
+        if key not in UNSHIELDED_DISMISS_WAIT_ALLOWLIST
+        for line in lines
+    ]
+    assert not flagged, (
+        "push_screen(..., wait_for_dismiss=True) hands back a future that is "
+        "cancelled with whoever awaits it, and the dialog's later close then "
+        "raises InvalidStateError and stays on the stack. Use `await "
+        "app.push_screen_wait(screen)`, which shields it, or add the site to "
+        "UNSHIELDED_DISMISS_WAIT_ALLOWLIST with the reason:\n" + "\n".join(flagged)
+    )
+    stale = sorted(set(UNSHIELDED_DISMISS_WAIT_ALLOWLIST) - set(sites))
+    assert not stale, f"Stale UNSHIELDED_DISMISS_WAIT_ALLOWLIST entries: {stale}"
+
+
+def test_unshielded_dismiss_wait_forms_are_flagged() -> None:
+    """Every way to ask for the future is flagged unless asyncio.shield wraps it."""
+    tree = ast.parse(
+        "async def f(app, s, cb, flag, opts, args):\n"
+        "    await app.push_screen(s, wait_for_dismiss=True)\n"
+        "    await self.app.push_screen(\n"
+        "        s,\n"
+        "        wait_for_dismiss=flag,\n"
+        "    )\n"
+        "    await app.push_screen(s, cb, True)\n"
+        "    fut = app.push_screen(s, wait_for_dismiss=True)\n"
+        "    await fut\n"
+        "    await asyncio.wait_for(app.push_screen(s, wait_for_dismiss=True), 5)\n"
+        "    await app.push_screen(s, **{'wait_for_dismiss': True})\n"
+        "    await app.push_screen(s, **opts)\n"
+        "    await app.push_screen(*args)\n"
+        "    await app.push_screen_wait(s)\n"
+        "    await asyncio.shield(app.push_screen(s, wait_for_dismiss=True))\n"
+        "    await app.push_screen(s)\n"
+        "    await app.push_screen(s, wait_for_dismiss=False)\n"
+        "    await app.push_screen(s, **{'wait_for_dismiss': False})\n"
+    )
+    assert _unshielded_dismiss_waits(tree) == [2, 3, 7, 8, 10, 11, 12, 13]

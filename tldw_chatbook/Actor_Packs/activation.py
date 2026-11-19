@@ -42,6 +42,14 @@ from .persona_coordinator import (
 from .repository import ActorPackRepository, ActorPackRepositoryError
 
 
+# A capture or restore holds profile storage, or it needs recovery first.
+_STORAGE_UNAVAILABLE = "actor_pack_import_storage_unavailable"
+# The categories a pause's refused store reads arrive as.
+_PAUSE_MASKED = frozenset(
+    {"actor_pack_import_review_stale", "actor_pack_import_activation_failed"}
+)
+
+
 class ActorPackActivationError(ValueError):
     """One fixed, path-free activation failure."""
 
@@ -138,6 +146,52 @@ class ActorPackActivationService:
         ):
             raise ActorPackActivationError("actor_pack_import_action_invalid")
         self._raise_if_cancelled(cancel_requested)
+        # TASK-40304: hold ordinary storage admission on both trees this
+        # activation publishes into, from before its first write through its
+        # commit or file cleanup. A capture's or restore's pause then refuses a
+        # new activation, and its drain waits for one already inside (ADR-126).
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        profile = self.importer._profile_root
+        try:
+            with storage.acquire_storage(
+                profile / "visual_identities" / "actor_packs" / review.content_digest,
+                related_paths=(profile / "actor_packs" / review.content_digest,),
+            ):
+                result = self._activate_admitted(review, action, cancel_requested)
+        except RecoveryRequired:
+            raise ActorPackActivationError(_STORAGE_UNAVAILABLE) from None
+        except ActorPackActivationError as exc:
+            if exc.category not in _PAUSE_MASKED or not storage.local_pause_active():
+                raise
+            # A pause that began mid-activation refuses its store reads, which
+            # surface as a stale review or a failed activation; name the cause.
+            raise ActorPackActivationError(
+                _STORAGE_UNAVAILABLE, cleanup_pending=exc.cleanup_pending
+            ) from None
+        try:
+            self.importer.cleanup_review(review)
+        except ActorPackImportError:
+            return ActorPackActivationResult(
+                result.actor_kind,
+                result.local_actor_id,
+                result.portable_uuid,
+                cleanup_pending=True,
+                sections=result.sections,
+            )
+        return result
+
+    def _activate_admitted(
+        self,
+        review: ActorPackImportReview,
+        action: str,
+        cancel_requested: Callable[[], bool],
+    ) -> ActorPackActivationResult:
+        """Publish and commit, removing this attempt's own files on failure."""
+
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
         published: list[_PublishedFile] = []
         try:
             material = self.importer._activation_material(review)
@@ -173,11 +227,11 @@ class ActorPackActivationService:
                 exc.category, cleanup_pending=_cleanup_published(published)
             ) from None
         except PersonaActorPackCoordinatorError as exc:
-            category = (
-                "actor_pack_import_cancelled"
-                if exc.category == "actor_pack_creation_cancelled"
-                else "actor_pack_import_activation_failed"
-            )
+            category = {
+                "actor_pack_creation_cancelled": "actor_pack_import_cancelled",
+                # TASK-41114: an interrupted import's intent blocks creation.
+                "actor_pack_creation_blocked": "actor_pack_import_creation_blocked",
+            }.get(exc.category, "actor_pack_import_activation_failed")
             raise ActorPackActivationError(
                 category, cleanup_pending=_cleanup_published(published)
             ) from None
@@ -186,16 +240,18 @@ class ActorPackActivationService:
                 "actor_pack_import_activation_failed",
                 cleanup_pending=_cleanup_published(published),
             ) from None
-        try:
-            self.importer.cleanup_review(review)
-        except ActorPackImportError:
-            return ActorPackActivationResult(
-                result.actor_kind,
-                result.local_actor_id,
-                result.portable_uuid,
-                cleanup_pending=True,
-                sections=result.sections,
-            )
+        except RecoveryRequired:
+            raise ActorPackActivationError(
+                _STORAGE_UNAVAILABLE, cleanup_pending=_cleanup_published(published)
+            ) from None
+        except Exception:
+            # Every failure reaching here precedes the commit: the character
+            # transaction rolled back, and create_persona never raises after
+            # its commit. Remove this attempt's files before the lease closes.
+            raise ActorPackActivationError(
+                "actor_pack_import_activation_failed",
+                cleanup_pending=_cleanup_published(published),
+            ) from None
         return result
 
     def _activate_character(
@@ -211,6 +267,7 @@ class ActorPackActivationService:
         prepared = self._prepare_character_sections(
             review, sections, cancel_requested, published
         )
+        self.importer.revalidate_review(review)
         if action == "update_existing":
             if (
                 review._matched_local_actor_id is None
@@ -221,7 +278,7 @@ class ActorPackActivationService:
             fields["image"] = portrait
             with self.db.transaction(immediate=True) as cursor:
                 self._raise_if_cancelled(cancel_requested)
-                self.importer.revalidate_review(review)
+                self.importer._revalidate_review_authority(review)
                 self.db._update_character_card_in_transaction(
                     cursor,
                     character_id,
@@ -245,7 +302,7 @@ class ActorPackActivationService:
         fields["image"] = portrait
         with self.db.transaction(immediate=True) as cursor:
             self._raise_if_cancelled(cancel_requested)
-            self.importer.revalidate_review(review)
+            self.importer._revalidate_review_authority(review)
             if action == "create_copy":
                 fields["name"] = self._copy_character_name(cursor, str(fields["name"]))
             character_id = self.db._insert_character_card_in_transaction(
@@ -680,7 +737,7 @@ class ActorPackActivationService:
         alternate_actor_authorities: tuple[tuple[int, str], ...] = (),
     ) -> bool:
         try:
-            self.importer.revalidate_review(
+            self.importer._revalidate_review_authority(
                 review,
                 alternate_actor_authorities=alternate_actor_authorities,
             )

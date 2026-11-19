@@ -124,9 +124,7 @@ def test_parallel_children_reload_with_precise_spawn_causes_and_safe_tasks(
     reopened = AgentRunsDB(db_path, client_id="lineage-reload")
     reloaded = reopened.list_runs("trace-lineage", include_superseded=True)
     assert {
-        row["spawn_event_id"]
-        for row in reloaded
-        if row["agent_kind"] == "subagent"
+        row["spawn_event_id"] for row in reloaded if row["agent_kind"] == "subagent"
     } == spawn_events
 
     agent_steps = [
@@ -248,10 +246,7 @@ def test_fleet_create_capture_failure_chains_to_actual_diagnostic(
         if (
             not failed
             and is_child
-            and any(
-                step["kind"] == failed_kind
-                for _index, step in indexed_steps
-            )
+            and any(step["kind"] == failed_kind for _index, step in indexed_steps)
         ):
             failed = True
             raise RuntimeError("simulated fleet lifecycle failure")
@@ -354,9 +349,7 @@ def test_fleet_spawn_capture_failure_uses_durable_diagnostic_as_child_cause(
         step for step in child["steps"] if step["kind"] == "agent_run_reserved"
     )
     assert reserved["parent_event_id"] == diagnostic_id
-    event_ids = {
-        f"agent-run:{row['id']}" for row in rows
-    } | {
+    event_ids = {f"agent-run:{row['id']}" for row in rows} | {
         f"agent-step:{row['id']}:{step['index']}"
         for row in rows
         for step in row["steps"]
@@ -364,7 +357,9 @@ def test_fleet_spawn_capture_failure_uses_durable_diagnostic_as_child_cause(
     for row in rows:
         for step in row["steps"]:
             assert step["parent_event_id"] in event_ids
-            assert step["source_event_id"] is None or step["source_event_id"] in event_ids
+            assert (
+                step["source_event_id"] is None or step["source_event_id"] in event_ids
+            )
     reopened.close()
 
 
@@ -389,9 +384,7 @@ def test_failed_child_and_completed_primary_project_after_reload(db):
     )
     assert outcome.status == RUN_DONE
     child = next(
-        row
-        for row in db.list_runs("trace-failure")
-        if row["agent_kind"] == "subagent"
+        row for row in db.list_runs("trace-failure") if row["agent_kind"] == "subagent"
     )
     assert child["status"] == RUN_ERROR
 
@@ -442,9 +435,7 @@ def test_failed_child_and_completed_primary_project_after_reload(db):
         "agent_run_failed",
     ]
     child_records = {
-        record.kind: record
-        for record in records
-        if record.run_id == child["id"]
+        record.kind: record for record in records if record.run_id == child["id"]
     }
     service_error = child_records["error"]
     model_error = child_records["model_error"]

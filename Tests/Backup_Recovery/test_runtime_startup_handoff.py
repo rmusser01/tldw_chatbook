@@ -53,8 +53,38 @@ async def main():
             assert (await owner.list_tts_history())['total'] == 1
             with __import__('pytest').raises(RuntimeError, match='audio_history_paused_for_maintenance'):
                 await owner.create_audio_speech({'input':'during capture'})
+        if sys.argv[2] == 'attention':
+            # TASK-41117: hold a Console attention preparation read open on its
+            # worker thread, mid-open, across the local pause, as load did.
+            from tldw_chatbook.DB import private_sqlite
+            prepare = private_sqlite.prepare_in_helper
+            opening, opened = threading.Event(), threading.Event()
+            def held_prepare(*args, **kwargs):
+                if threading.current_thread() is not threading.main_thread() and not opening.is_set():
+                    opening.set()
+                    assert opened.wait(30)
+                return prepare(*args, **kwargs)
+            private_sqlite.prepare_in_helper = held_prepare
+            app.console_runtime.request_console_attention_refresh()
+            for _ in range(3000):
+                if opening.is_set(): break
+                await asyncio.sleep(.01)
+            assert opening.is_set(), 'attention read never reached its open'
         runtime.retire_local_caches()
-        assert runtime.pause.drain(time.monotonic()+1)
+        if sys.argv[2] == 'attention':
+            opened.set()
+        # Drain as monitor_app does (runtime_maintenance.py): retire_local_caches
+        # keeps this thread's cache of a store while another thread still has an
+        # operation on it, so revisit the caches until the drain holds, within
+        # monitor_app's own 30 s budget. A single blocking drain(+1) failed
+        # whenever a Console attention read was in flight at the pause
+        # (TASK-41117).
+        from tldw_chatbook.Backup_Recovery.participants import retire_current_thread_caches
+        drained_by = time.monotonic() + 30
+        while not runtime.pause.drain(time.monotonic()):
+            assert time.monotonic() < drained_by, 'native resources did not settle'
+            await asyncio.sleep(.01)
+            retire_current_thread_caches(runtime.pause)
         startup = next(iter(storage._startups.values()))
         holder = storage._holds[startup._key]
         with __import__('pytest').raises(RecoveryRequired, match='participant_runtime_coverage_incomplete'):
@@ -116,7 +146,7 @@ print('retired and reopened')
 """
 
 
-@pytest.mark.parametrize("outcome", ["resume", "cancel", "audio"])
+@pytest.mark.parametrize("outcome", ["resume", "cancel", "audio", "attention"])
 def test_actual_app_startup_returns_before_ordinary_admission(tmp_path, outcome):
     _run(tmp_path, "startup", outcome, script=_SCRIPT)
 

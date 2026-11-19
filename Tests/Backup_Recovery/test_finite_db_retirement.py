@@ -259,3 +259,24 @@ async def test_conversation_reassignment_does_not_redirect_worker_cleanup(tmp_pa
         release.set()
         await asyncio.gather(task, return_exceptions=True)
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offload", ["owned_notes", "owned_runs", "owned_workspaces"], indirect=True)
+async def test_owned_callback_remains_admitted_after_last_repository_read(offload):
+    db, call, read = offload
+    observed = []
+
+    def body():
+        result = read()
+        with storage._lock:
+            observed.append(any(
+                operation.thread is threading.current_thread()
+                and operation.participant.repository() is db
+                for operation in storage._operations
+            ))
+        return result
+
+    await call(body)
+    assert observed == [True], "the complete callback must own admission"
+    assert not worker_leases(db)

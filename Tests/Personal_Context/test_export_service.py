@@ -26,7 +26,6 @@ from tldw_chatbook.Personal_Context.service import (
     RecordMutation,
 )
 
-
 NOW = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
 
 
@@ -211,8 +210,12 @@ def test_export_snapshot_is_one_sqlite_read_generation(
     mutation_finished = threading.Event()
     original_decrypt = service._repository._decrypt_row
 
-    def pause_after_manifest(row):
-        plaintext = original_decrypt(row)
+    def pause_after_manifest(row, *, consumer_id, connection=None):
+        if row["object_type"] == "manifest":
+            assert consumer_id == "repository.read_export_snapshot"
+        plaintext = original_decrypt(
+            row, consumer_id=consumer_id, connection=connection
+        )
         if row["object_type"] == "manifest" and not snapshot_started.is_set():
             snapshot_started.set()
             assert mutation_finished.wait(5)
@@ -395,7 +398,7 @@ def test_malformed_recovery_and_symlink_destination_fail_closed(
     target.write_bytes(b"unchanged")
     destination = tmp_path / "linked.tldw-profile-recovery"
     destination.symlink_to(target)
-    with pytest.raises(Exception):
+    with pytest.raises(PersonalContextExportError):
         service.export_recovery(
             RecoveryExportRequest(destination=destination, passphrase="passphrase")
         )

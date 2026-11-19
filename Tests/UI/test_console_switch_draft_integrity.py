@@ -14,6 +14,9 @@ the swap then runs exactly as a later sync pass would.
 import pytest
 from textual.events import Key
 
+from Tests.UI.console_fixture_ownership import (
+    owned_console_apps as owned_console_apps,  # noqa: PLC0414 - pytest fixture export
+)
 from Tests.UI.test_console_native_chat_flow import _select_llamacpp_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -62,7 +65,7 @@ async def test_console_switch_carries_settle_window_typing_to_new_session():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         store, session_a, session_b_id, composer = await _settle_window_swap(
             console, pilot, type_during_window="typed in window"
@@ -85,7 +88,7 @@ async def test_console_switch_without_typing_swaps_drafts_exactly_as_before():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         store, session_a, session_b_id, composer = await _settle_window_swap(
             console, pilot, type_during_window=""
@@ -105,7 +108,7 @@ async def test_raw_refusal_during_switch_settle_preserves_both_session_drafts():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         store = console._ensure_console_chat_store()
         session_a = store.ensure_session(title="Chat A")

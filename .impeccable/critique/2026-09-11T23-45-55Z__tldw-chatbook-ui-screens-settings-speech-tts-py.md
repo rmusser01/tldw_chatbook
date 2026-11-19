@@ -30,7 +30,7 @@ slug: tldw-chatbook-ui-screens-settings-speech-tts-py
 
 ## Design Specificity Verdict
 
-Hyper-specific to this product — saturated with Chatbook-only constructs (Speech Lab, Studio preferences, Guided setup, Fresh/Stale/Unverified/Missing choice states, credential provenance rungs, Owner IDs). The specificity is almost entirely about internal architecture (ownership, revisions, provenance) rather than the user's task ("make my chat read aloud"). It reads as an ADR-039 ownership contract rendered as a form: honest to the architect, bureaucratic to the operator.
+Hyper-specific to this product — saturated with Chatbook-only constructs (Speech Lab, Studio preferences, Guided setup, Fresh/Stale/Unverified/Missing choice states, credential provenance rungs, Owner IDs). The specificity is almost entirely about internal architecture (ownership, revisions, provenance) rather than the user's task ("make my chat read aloud"). It reads as an ADR-304 ownership contract rendered as a form: honest to the architect, bureaucratic to the operator.
 
 Deterministic scan: detector inapplicable to Python TUI sources (no markup) — clean by vacuity, exit 0 both target and directory.
 

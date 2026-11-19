@@ -1,0 +1,20 @@
+{
+  "status": "GREEN",
+  "qualified": false,
+  "product_samples": 0,
+  "results": {
+    "actual_Root009_disabled_accepted_feedback_passes": true,
+    "wrong_nonce_and_round_refuse": true,
+    "one_changed_actual_RGBA_pixel_refuses": true,
+    "caller_hash_cannot_replace_new_pixel_proof": true,
+    "validation_hard1_qualification_requires_exact_Root_flags": true,
+    "finite_caps_and_fixed_denominator_no_replacement": true,
+    "two_new_generation_bound_matching_frames_required": true,
+    "earliest_Down_primary_and_separate_Up_queue_interval": true,
+    "actual_header_palette_full16_and_transitional026_not_terminal_reference": true,
+    "synthetic_terminal_contract_refuses_wrongrun_session_generation_and_active_UI": true,
+    "qualification_requires_frozen_source_and_runtime_byte_binding": true
+  },
+  "error": null,
+  "scope": "Actual retained RGBA + finite pure metadata/clock controls only; no product imports, App, Win32, GUI, external/service/model traffic or performance pass."
+}

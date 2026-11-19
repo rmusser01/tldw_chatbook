@@ -47,12 +47,14 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsReadStatus,
 )
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from Tests.private_profile import private_profile_test
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
     wait_for_signal,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -86,6 +88,8 @@ from tldw_chatbook.Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _noop(*args, **kwargs):
@@ -124,7 +128,7 @@ class _AsyncWorkerScreen(_NoMountScreen):
     """Run controller-owned workers without mounting a Textual app."""
 
     def run_worker(self, coroutine, **kwargs):
-        task = asyncio.create_task(coroutine)
+        task = asyncio.create_task(coroutine() if callable(coroutine) else coroutine)
         self.workers.append((task, kwargs))
         return task
 
@@ -151,6 +155,7 @@ def _workspace_controller(
         current_conversation_id_accessor=_noop,
         native_session_rows_accessor=_noop,
         capture_draft_switch_snapshot=_noop,
+        bind_composer_after_switch=_noop,
         sync_chat_core_state=_noop,
         sync_native_console_chat_ui=_noop,
         sync_temporary_chip=_noop,
@@ -2308,8 +2313,7 @@ async def test_ordinary_refresh_supersedes_cleared_named_search_owner() -> None:
         workspace_id=DEFAULT_WORKSPACE_ID,
     )
 
-    async def ordinary_rows(_query, current_conversation_id=None):
-        del current_conversation_id
+    async def ordinary_rows(_query):
         return [default_row], 1, ""
 
     controller._persisted_console_browser_rows = ordinary_rows
@@ -2409,8 +2413,7 @@ async def test_complete_default_snapshot_supersedes_named_observation_without_mo
         workspace_id=DEFAULT_WORKSPACE_ID,
     )
 
-    async def ordinary_rows(_query, current_conversation_id=None):
-        del current_conversation_id
+    async def ordinary_rows(_query):
         return [default_row], 1, ""
 
     controller._persisted_console_browser_rows = ordinary_rows
@@ -2902,6 +2905,53 @@ def test_workspace_state_build_never_lists_persisted_conversations_inline():
 
 
 @pytest.mark.asyncio
+async def test_active_selection_keeps_one_pending_saved_page_and_reselects_rows():
+    calls: list[dict[str, object]] = []
+
+    async def list_conversations(**kwargs):
+        calls.append(kwargs)
+        items = (
+            [
+                {"id": "first", "title": "First saved"},
+                {"id": "second", "title": "Second saved"},
+            ]
+            if kwargs["scope_type"] == "global"
+            else []
+        )
+        return {"items": items, "total": len(items)}
+
+    screen = _NoMountScreen()
+    controller = _workspace_controller(
+        screen=screen,
+        app_instance=SimpleNamespace(
+            chat_conversation_scope_service=SimpleNamespace(
+                list_conversations=list_conversations, local_service=None
+            )
+        ),
+    )
+
+    def selected(conversation_id):
+        state = controller._with_console_conversation_browser_state(
+            _workspace_state(), current_conversation_id=conversation_id
+        )
+        return [
+            row.conversation_id
+            for section in state.conversation_browser.sections
+            for row in section.rows
+            if row.selected
+        ]
+
+    assert selected("first") == selected("second") == []
+    assert len(screen.workers) == 1
+    refresh, _options = screen.workers[0]
+    await refresh()
+    assert selected("second") == ["second"]
+    assert selected("first") == ["first"]
+    assert len(screen.workers) == 1
+    assert [call["scope_type"] for call in calls] == ["global", "workspace"]
+
+
+@pytest.mark.asyncio
 async def test_workspace_persisted_cache_refresh_awaits_async_provider():
     calls: list[dict[str, object]] = []
 
@@ -2960,14 +3010,13 @@ async def test_persisted_cache_refresh_before_complete_owner_move_is_stale() -> 
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def stale_rows(_query, current_conversation_id=None):
-        del current_conversation_id
+    async def stale_rows(_query):
         started.set()
         await release.wait()
         return [old_owner], 1, ""
 
     controller._persisted_console_browser_rows = stale_rows
-    refresh_key = ("", None, controller._console_persisted_rows_cache_token)
+    refresh_key = ("", controller._console_persisted_rows_cache_token)
     controller._console_persisted_rows_refresh_key = refresh_key
     task = asyncio.create_task(
         controller._refresh_console_persisted_rows_cache(refresh_key=refresh_key)
@@ -3483,7 +3532,8 @@ def _conversation_tree_payload(
 
 
 @pytest.mark.asyncio
-async def test_search_debounce_mirrors_query_and_bumps_token_and_timer():
+@private_profile_test
+async def test_search_debounce_mirrors_query_and_bumps_token_and_timer(request):
     """Typing into the rail search mirrors into workspace state and arms a timer."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -3511,7 +3561,10 @@ async def test_search_debounce_mirrors_query_and_bumps_token_and_timer():
 
 
 @pytest.mark.asyncio
-async def test_search_debounce_empty_query_clears_state_and_cancels_the_old_search():
+@private_profile_test
+async def test_search_debounce_empty_query_clears_state_and_cancels_the_old_search(
+    request,
+):
     """Emptying the search box clears the query and abandons the old search.
 
     TASK-15454 renamed this from `..._clears_state_synchronously` and dropped
@@ -3564,7 +3617,8 @@ async def test_search_debounce_empty_query_clears_state_and_cancels_the_old_sear
 
 
 @pytest.mark.asyncio
-async def test_search_refresh_populates_rows_from_scope_service():
+@private_profile_test
+async def test_search_refresh_populates_rows_from_scope_service(request):
     """The canonical grouped-browser refresh fills rows from the scope service."""
     app = _build_test_app()
     app.chat_conversation_scope_service = SimpleNamespace(
@@ -3600,7 +3654,8 @@ async def test_search_refresh_populates_rows_from_scope_service():
 
 
 @pytest.mark.asyncio
-async def test_search_refresh_ignores_stale_token():
+@private_profile_test
+async def test_search_refresh_ignores_stale_token(request):
     """A refresh whose token no longer matches current state is a no-op.
 
     Simulates a slow in-flight refresh (token N-1) that lands after a newer
@@ -3961,24 +4016,24 @@ async def test_fresh_screen_already_active_resume_performs_final_presentation_sy
         role=ConsoleMessageRole.USER,
         content="Already-active transcript",
     )
-    screen = ChatScreen(app)
-    screen.apply_navigation_context(
-        {
-            CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: (
-                target.persisted_conversation_id
-            )
-        }
-    )
-    final_focus = asyncio.Event()
-    original_focus = screen._workspace._focus_composer_if_needed_fn
-
-    def record_final_focus(*, force: bool = False) -> None:
-        original_focus(force=force)
-        final_focus.set()
-
-    screen._workspace._focus_composer_if_needed_fn = record_final_focus
-
     async with app.run_test(size=(160, 48)) as pilot:
+        # The real initial screen must claim its view before this fresh visit.
+        screen = ChatScreen(app)
+        screen.apply_navigation_context(
+            {
+                CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: (
+                    target.persisted_conversation_id
+                )
+            }
+        )
+        final_focus = asyncio.Event()
+        original_focus = screen._workspace._focus_composer_if_needed_fn
+
+        def record_final_focus(*, force: bool = False) -> None:
+            original_focus(force=force)
+            final_focus.set()
+
+        screen._workspace._focus_composer_if_needed_fn = record_final_focus
         await app.push_screen(screen)
         app._initial_screen_pushed = True
         await wait_for_signal(
@@ -4375,7 +4430,9 @@ def _mounted_section_budgets(console):
 
 
 @pytest.mark.asyncio
-async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(tmp_path):
+async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(
+    tmp_path, request
+):
     """Mounted integration: measure -> accessor wiring -> caps -> resize.
 
     The pure budget/row-limit math and the controller seam are unit-tested
@@ -4401,6 +4458,7 @@ async def test_rail_height_drives_adaptive_cap_through_the_mounted_ui(tmp_path):
             scope_type="global",
         )
     app = _build_test_app()
+    request.getfixturevalue("owned_console_apps")(app.console_runtime, chat_db)
     # Same injection seam `test_console_native_chat_flow.py` uses: replace
     # the scope service so the controller's persisted-rows path reads the
     # tmp DB backed conversations above.
@@ -4563,24 +4621,22 @@ def test_console_appearance_map_caches_within_ttl_and_refetches_new_ids():
     assert len(service.calls) == 2
 
 
-@pytest.mark.parametrize(
-    "requested_key", [("", None), ("new search", None), ("", "other-chat")]
-)
-def test_expired_browser_cache_retains_only_matching_rows_during_refresh(requested_key):
+@pytest.mark.parametrize("query", ["", "new search"])
+def test_expired_browser_cache_retains_only_matching_rows_during_refresh(query):
     screen = _NoMountScreen()
     controller = _workspace_controller(screen=screen)
     cached = ([_rich_row()], 1, "")
     controller._console_persisted_rows_cache = cached
-    controller._console_persisted_rows_cache_key = ("", None)
+    controller._console_persisted_rows_cache_key = ""
     controller._console_persisted_rows_cache_at = 0.0
 
     for _ in range(3):
-        result = controller._sync_persisted_console_browser_rows(*requested_key)
-        assert result == (cached if requested_key == ("", None) else ([], None, ""))
+        result = controller._sync_persisted_console_browser_rows(query)
+        assert result == (cached if not query else ([], None, ""))
     assert len(screen.workers) == 1
 
     controller._invalidate_console_persisted_rows_cache()
-    assert controller._sync_persisted_console_browser_rows(*requested_key) == (
+    assert controller._sync_persisted_console_browser_rows(query) == (
         [],
         None,
         "",
@@ -4768,7 +4824,7 @@ async def test_persisted_character_rows_leave_the_built_flat_state():
     # The state build reads the TTL cache, so prime it exactly like the
     # refresh worker does, then build the full projection.
     controller._console_persisted_rows_cache = (rows, total, "")
-    controller._console_persisted_rows_cache_key = ("", None)
+    controller._console_persisted_rows_cache_key = ""
     controller._console_persisted_rows_cache_at = time.monotonic()
     state = controller._with_console_conversation_browser_state(
         _minimal_workspace_context_state()
@@ -4814,3 +4870,70 @@ def test_native_character_session_rows_carry_character_identity():
     assert by_key["native:s1"].character_label == "Detective Vale"
     assert by_key["native:s2"].character_id is None
     assert by_key["native:s2"].character_label == ""
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "names,deleted_fallback,expected_labels,expected_reads",
+    [
+        (
+            (" Session Amber ", "Session Indigo"),
+            False,
+            ["Session Amber", "Session Indigo"],
+            0,
+        ),
+        (("Session Amber", None), False, ["Session Amber", "Card Indigo"], 1),
+        (("", "  "), False, ["Card Amber", "Card Indigo"], 2),
+        (("Session Amber", None), True, ["Session Amber", ""], 1),
+    ],
+    ids=["named", "fallback", "blank", "deleted-fallback"],
+)
+def test_native_rows_query_cards_only_for_missing_session_names(
+    tmp_path, names, deleted_fallback, expected_labels, expected_reads
+):
+    """Native authoritative labels must not pay an unused guarded card read."""
+    from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "native-labels.sqlite", "native-labels-test")
+    try:
+        amber_id = db.add_character_card({"name": "Card Amber"})
+        indigo_id = db.add_character_card({"name": "Card Indigo"})
+        assert amber_id is not None and indigo_id is not None
+        if deleted_fallback:
+            assert db.delete_character_card(indigo_id)
+        store = ConsoleChatStore()
+        for session_id, card_id, name in zip(
+            ("amber", "indigo"), (amber_id, indigo_id), names, strict=True
+        ):
+            store.create_session(
+                session_id=session_id,
+                workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+                assistant_kind="character",
+                assistant_id=str(card_id),
+                character_id=card_id,
+                character_name=name,
+            )
+        controller = _workspace_controller(
+            app_instance=SimpleNamespace(chachanotes_db=db),
+            current_chat_store_accessor=lambda: store,
+        )
+        statements = []
+        connection = db.get_connection()
+        connection.set_trace_callback(statements.append)
+        try:
+            rows = controller._native_console_browser_rows()
+        finally:
+            connection.set_trace_callback(None)
+
+        assert [row.character_label for row in rows] == expected_labels
+        assert [row.native_session_id for row in rows] == ["amber", "indigo"]
+        assert [row.character_id for row in rows] == [str(amber_id), str(indigo_id)]
+        card_reads = [
+            sql for sql in statements if "FROM CHARACTER_CARDS " in sql.upper()
+        ]
+        assert len(card_reads) == expected_reads
+    finally:
+        with db.quiesce_connections(timeout_seconds=5):
+            pass
+        assert db.registered_connection_count() == 0

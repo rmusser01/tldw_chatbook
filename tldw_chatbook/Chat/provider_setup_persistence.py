@@ -20,19 +20,23 @@ from weakref import ReferenceType, ref
 
 from ..config import (
     DEFAULT_CONFIG_FROM_TOML,
+    SHIPPED_SAMPLE_MODEL_IDS,
     AtomicConfigSnapshot,
     ConfigMutationResult,
     apply_settings_mutation_to_cli_config,
     is_valid_provider_api_key,
+    normalize_provider_config_key,
 )
 from ..provider_registry import ALL_RECORDS
-from .provider_endpoint_contract import (
+from ..Provider_Contract.provider_endpoint_contract import (
     canonical_connection_identity,
     resolve_provider_endpoint,
 )
 from .provider_test_evidence import CredentialSource, ProviderDraftIdentity
 
-_MAX_MODEL_CHARS = 120
+#: The longest model id the provider save writes. Settings names it where an
+#: id is typed (TASK-35712), so the two cannot disagree.
+MAX_MODEL_ID_CHARS = 120
 _MAX_SECRET_CHARS = 8192
 _MAX_CONFIG_PROVIDERS = 256
 _MAX_IDENTITY_COUNTER = 2**63 - 1
@@ -40,6 +44,8 @@ _MAX_MUTATION_SECTIONS = 3
 _MAX_MUTATION_KEYS = 16
 _MAX_COMBINED_MUTATION_SECTIONS = 8
 _MAX_COMBINED_MUTATION_KEYS = 32
+#: TASK-34100.6 AC#6: at most one environment record per supported provider.
+_MAX_ENVIRONMENT_RECORDS = 64
 _UNSAFE_TEXT_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _ENV_VAR_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
 _SECTION_NAME_PATTERN = re.compile(r"[A-Za-z0-9_. -]{1,192}")
@@ -56,6 +62,9 @@ _API_BASE_ENDPOINT_KEYS = frozenset({"api_base_url", "api_base", "base_url"})
 _ROOT_ENDPOINT_PROVIDER_KEYS = frozenset({"llama_cpp", "local_llamacpp"})
 _ROUTING_SETTING_KEYS = (
     *_ENDPOINT_KEY_PRECEDENCE,
+    # TASK-41145: MLX-LM's endpoint.
+    "host",
+    "port",
     "auth_source",
     "api_endpoint",
     "router_base_url",
@@ -81,6 +90,8 @@ class _ProviderOwnership:
 
 _API_URL_PROVIDER_KEYS = frozenset(
     {
+        "strata",
+        "polystrata",
         "aphrodite",
         "custom",
         "custom_2",
@@ -103,6 +114,8 @@ _API_URL_PROVIDER_KEYS = frozenset(
 )
 _CANONICAL_PROVIDER_KEYS = frozenset(
     {
+        "strata",
+        "polystrata",
         "anthropic",
         "aphrodite",
         "cohere",
@@ -208,6 +221,118 @@ def _ownership_for(provider: object) -> _ProviderOwnership:
         "api_url" if provider_key in _API_URL_PROVIDER_KEYS else "api_base_url"
     )
     return _ProviderOwnership(provider_key, config_section, endpoint_key)
+
+
+#: TASK-41145 (owner decision 2026-11-16, "Settings edits host/port"):
+#: ``chat_with_mlx_lm`` builds ``http://<host>:<port>/v1`` from its table and
+#: never reads ``api_url``, so Settings, first-run setup and Make default
+#: read and write ``host`` and ``port`` for it. A saved ``api_url`` is
+#: ignored, as it always was by the send.
+MLX_HOST_PORT_PROVIDER_KEYS = frozenset({"local_mlx_lm", "mlx_lm"})
+MLX_HTTPS_REFUSAL = (
+    "MLX-LM is saved as a host and port and reached over http://, so an "
+    "https:// address cannot be saved for it."
+)
+MLX_PATH_REFUSAL = (
+    "MLX-LM is saved as a host and port and always serves /v1, so an address "
+    "with another path cannot be saved for it."
+)
+
+
+def mlx_endpoint_refusal(endpoint: str) -> str:
+    """Why an MLX-LM endpoint cannot be saved as a host and port, or "".
+
+    Args:
+        endpoint: The endpoint as typed.
+
+    Returns:
+        The endpoint contract's reason first (it refuses user info, a query,
+        ``127.1``...), then https, then a path other than ``/v1``.
+    """
+    from ..Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+        read_schemeless_loopback,
+    )
+
+    if refusal := endpoint_refusal("local_mlx_lm", endpoint):
+        return refusal
+    parsed = urlsplit(read_schemeless_loopback(endpoint.strip()))
+    if parsed.scheme.lower() != "http":
+        return MLX_HTTPS_REFUSAL
+    if parsed.path.rstrip("/") not in {"", "/v1"}:
+        return MLX_PATH_REFUSAL
+    return ""
+
+
+def host_port_refusal(provider: object, endpoint: str) -> str:
+    """``mlx_endpoint_refusal`` for an MLX-LM endpoint as typed, else "".
+
+    Args:
+        provider: The provider key or alias the endpoint is typed for.
+        endpoint: The endpoint as typed; blank is never refused here.
+
+    Returns:
+        The refusal copy, or "" for another provider or a blank endpoint.
+    """
+    if provider not in MLX_HOST_PORT_PROVIDER_KEYS or not str(endpoint or "").strip():
+        return ""
+    return mlx_endpoint_refusal(endpoint)
+
+
+def typed_endpoint_refusal(provider: object, endpoint: str) -> str:
+    """What Save refuses beyond the contract, for an endpoint as typed.
+
+    KoboldCpp's native-route rule (TASK-38964), then MLX-LM's host-and-port
+    rule (TASK-41145).
+
+    Args:
+        provider: The provider key.
+        endpoint: The endpoint as typed.
+
+    Returns:
+        The refusal copy, or "".
+    """
+    from ..Provider_Contract.provider_endpoint_contract import koboldcpp_route_refusal
+
+    return koboldcpp_route_refusal(provider, endpoint) or host_port_refusal(
+        provider, endpoint
+    )
+
+
+def mlx_saved_endpoint(provider_settings: Mapping[str, object]) -> str:
+    """The URL MLX-LM's saved host and port make, as its adapter builds it.
+
+    Args:
+        provider_settings: The ``[api_settings.local_mlx_lm]`` table.
+
+    Returns:
+        ``http://<host>:<port>/v1``, 127.0.0.1:8080 where either is unset.
+    """
+    from .console_provider_endpoints import mlx_endpoint
+
+    return mlx_endpoint(provider_settings)
+
+
+def mlx_host_port(endpoint: str) -> dict[str, object]:
+    """The ``host`` and ``port`` an MLX-LM endpoint is saved as.
+
+    Args:
+        endpoint: The endpoint as typed.
+
+    Returns:
+        ``{"host": ..., "port": ...}``; an IPv6 host keeps its brackets, as
+        the adapter puts the host in its URL verbatim.
+
+    Raises:
+        ValueError: With ``mlx_endpoint_refusal``'s copy.
+    """
+    from ..Provider_Contract.provider_endpoint_contract import read_schemeless_loopback
+
+    if refusal := mlx_endpoint_refusal(endpoint):
+        raise ValueError(refusal)
+    parsed = urlsplit(read_schemeless_loopback(endpoint.strip()))
+    host = parsed.hostname or ""
+    return {"host": f"[{host}]" if ":" in host else host, "port": parsed.port or 80}
 
 
 def canonical_provider_key(provider: object) -> str:
@@ -705,6 +830,15 @@ class ProviderSetupMutation:
     section_values: Mapping[str, Mapping[str, object]]
     delete_keys: Mapping[str, tuple[str, ...]]
     semantic_identity: ProviderDraftIdentity | None
+    #: TASK-34100.6 AC#6 (coverage-08): other providers whose key comes from an
+    #: exported variable, each ``{"api_key_env_var": NAME}`` -- the variable's
+    #: name, never its value, and no ``credential_source`` (review v3r1, R1-04:
+    #: an api_key added to config.toml later still outranks the variable).
+    #: Written in the same atomic write as the commit, and dropped (never the
+    #: commit) when a concurrent write made one stale.
+    environment_records: Mapping[str, Mapping[str, object]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def __post_init__(self) -> None:
         _validate_provider_setup_mutation(
@@ -720,7 +854,8 @@ class ProviderSetupMutation:
         return (
             "ProviderSetupMutation("
             f"section_keys={set_keys!r}, delete_keys={dict(self.delete_keys)!r}, "
-            f"semantic_identity={self.semantic_identity!r})"
+            f"semantic_identity={self.semantic_identity!r}, "
+            f"environment_records={tuple(self.environment_records)!r})"
         )
 
 
@@ -783,10 +918,24 @@ def project_provider_setup_expected_state(
 def resolve_remembered_provider_model(
     app_config: object,
     provider: object,
+    *,
+    skip_samples: bool = False,
 ) -> str | None:
-    """Resolve a provider's remembered model without cross-provider borrowing."""
+    """Resolve a provider's remembered model without cross-provider borrowing.
+
+    Args:
+        app_config: The configuration to read.
+        provider: The provider whose model is wanted.
+        skip_samples: Treat a template sample id
+            (``SHIPPED_SAMPLE_MODEL_IDS``) as no remembered model. Only
+            Settings' default choice passes it (TASK-35010); sends keep the
+            table's model.
+    """
 
     ownership = _ownership_for(provider)
+    if skip_samples:
+        model = resolve_remembered_provider_model(app_config, provider)
+        return None if model in SHIPPED_SAMPLE_MODEL_IDS else model
     if not isinstance(app_config, Mapping):
         return None
     chat_defaults = app_config.get("chat_defaults")
@@ -813,6 +962,8 @@ def build_provider_setup_mutation(
     *,
     preserve_credentials: bool = False,
     keep_stored_credential: bool = False,
+    record_environment_credentials: bool = False,
+    environ: Mapping[str, str] | None = None,
 ) -> ProviderSetupMutation:
     """Build one provider-owned sparse mutation without performing I/O.
 
@@ -823,7 +974,13 @@ def build_provider_setup_mutation(
             for an unchanged Anthropic subscription selection only.
         keep_stored_credential: For a "stored" draft with no new value, leave
             the existing stored key in place verbatim (neither re-set nor
-            revalidated); it must still resolve as a usable key.
+            revalidated); it must still resolve as a usable key. One key is
+            written: a key the loader copied from legacy ``[API]``, which
+            the provider's table on disk does not hold (TASK-33001.15).
+        record_environment_credentials: Also record every other provider whose
+            key comes from an exported variable (first-run setup, TASK-34100.6
+            AC#6); see ``environment_credential_records``.
+        environ: The environment those records read (the process's by default).
     """
 
     if type(draft) is not ProviderSetupDraft:
@@ -864,13 +1021,21 @@ def build_provider_setup_mutation(
     semantic_identity: ProviderDraftIdentity | None = None
 
     endpoint = draft.endpoint.strip()
-    if endpoint:
-        resolution = resolve_provider_endpoint(ownership.provider_key, endpoint)
-        persisted_endpoint = _persisted_endpoint_for_owner(
-            ownership.provider_key,
-            endpoint_key,
-            resolution.persisted_endpoint,
-            resolution.chat_url,
+    if ownership.provider_key in MLX_HOST_PORT_PROVIDER_KEYS:
+        # TASK-41145: MLX-LM's endpoint is its host and port; ``api_url``
+        # stays as it is (ignored by the send, as before).
+        if endpoint:
+            provider_values.update(mlx_host_port(endpoint))
+            section_values["provider_setup.confirmed"] = {ownership.provider_key: True}
+            connection_identity = canonical_connection_identity(
+                ownership.provider_key, mlx_saved_endpoint(provider_values)
+            )
+        else:
+            deletes[provider_section] = ["host", "port"]
+            deletes["provider_setup.confirmed"] = [ownership.provider_key]
+    elif endpoint:
+        persisted_endpoint = persisted_endpoint_for_key(
+            ownership.provider_key, endpoint_key, endpoint
         )
         if persisted_endpoint is None:
             raise ValueError("Endpoint is invalid.")
@@ -908,6 +1073,19 @@ def build_provider_setup_mutation(
             # a key the resolver accepts never fails a model-only save.
             if not is_valid_provider_api_key(existing_value):
                 raise ValueError("Credential setup is invalid.")
+            # TASK-33001.15: a key the loader copied from legacy `[API]` is
+            # not in this table on disk. Left unwritten, "stored" named a
+            # key the table lacked once the env var was exported: readiness
+            # found none while requests spent the env key. A key the setup
+            # validator would refuse stays unwritten, as before.
+            legacy_tables = app_config.get("legacy_api_key_providers")
+            legacy_key = _existing_credential_value(existing_value)
+            if (
+                legacy_key is not None
+                and isinstance(legacy_tables, (tuple, list))
+                and provider_section.removeprefix("api_settings.") in legacy_tables
+            ):
+                provider_values[stored_key] = legacy_key
         else:
             stored_value = credential_value or _existing_credential_value(
                 existing_value
@@ -952,13 +1130,144 @@ def build_provider_setup_mutation(
             if keys
         }
     )
+    if type(record_environment_credentials) is not bool:
+        raise ValueError("Environment credential recording is invalid.")
     mutation = ProviderSetupMutation(
         section_values=frozen_sections,
         delete_keys=frozen_deletes,
         semantic_identity=semantic_identity,
+        environment_records=(
+            environment_credential_records(
+                app_config, exclude_provider=ownership.provider_key, environ=environ
+            )
+            if record_environment_credentials
+            else MappingProxyType({})
+        ),
     )
     _mark_provider_setup_mutation_issued(mutation)
     return mutation
+
+
+def environment_credential_records(
+    app_config: object,
+    *,
+    exclude_provider: str,
+    environ: Mapping[str, str] | None = None,
+) -> Mapping[str, Mapping[str, object]]:
+    """Every other provider whose key comes from an exported variable.
+
+    TASK-34100.6 AC#6 (review coverage-08): setup commits one default
+    provider; each other provider whose key is exported is recorded by the
+    variable's name (``api_key_env_var``), with no secret written. Review
+    v3r1, R1-04: the record no longer fixes ``credential_source =
+    "environment"``. That pinned the variable for good, so an ``api_key`` the
+    user later added to config.toml was ignored without a word, against the
+    rule that an explicit api_key outranks the exported variable. Naming the
+    variable keeps the precedence the user already had. A provider is
+    recorded only when nothing in config decides it already: no
+    ``credential_source`` and no saved key. Legacy aliases are skipped
+    (their canonical row is recorded).
+
+    Args:
+        app_config: The configuration the commit is built from.
+        exclude_provider: The provider the commit itself configures.
+        environ: The environment to read (the process environment by default).
+
+    Returns:
+        ``{"api_settings.<section>": {"api_key_env_var": NAME}}``, read-only,
+        using each provider's configured section spelling and variable name.
+    """
+    from tldw_chatbook.Provider_Contract.provider_setup_facts import provider_setup_facts
+
+    if not isinstance(app_config, Mapping):
+        app_config = {}
+    environ = os.environ if environ is None else environ
+    excluded = _ownership_for(exclude_provider).provider_key
+    records: dict[str, Mapping[str, object]] = {}
+    for provider_key in sorted(_CANONICAL_PROVIDER_KEYS - {excluded}):
+        facts = provider_setup_facts(provider_key)
+        if facts.legacy or not facts.env_var:
+            continue
+        ownership = _ownership_for(provider_key)
+        section = _undecided_provider_section(app_config, ownership)
+        if section is None:
+            continue
+        environment_key = ownership.credential_keys[1]
+        env_var = (
+            _existing_environment_name(
+                _provider_settings(app_config, ownership).get(environment_key)
+            )
+            or facts.env_var
+        )
+        if not is_valid_provider_api_key(environ.get(env_var)):
+            continue
+        records[section] = MappingProxyType({environment_key: env_var})
+        if len(records) >= _MAX_ENVIRONMENT_RECORDS:
+            break
+    return MappingProxyType(records)
+
+
+def _undecided_provider_section(
+    app_config: Mapping[object, object], ownership: _ProviderOwnership
+) -> str | None:
+    """The provider's section when config decides nothing about its key."""
+    from .provider_readiness import configured_provider_credential_source
+
+    try:
+        section = f"api_settings.{_configured_section_key(app_config, ownership)}"
+    except ValueError:
+        return None
+    settings = _provider_settings(app_config, ownership)
+    if configured_provider_credential_source(settings) is not None:
+        return None
+    if _existing_credential_value(settings.get(ownership.credential_keys[0])):
+        return None
+    return section
+
+
+def _environment_records_apply(
+    app_config: Mapping[object, object],
+    records: Mapping[str, Mapping[str, object]],
+) -> bool:
+    """Whether every record still targets an undecided provider's own section."""
+    for section in records:
+        ownership = _ownership_for(section.removeprefix("api_settings."))
+        if _undecided_provider_section(app_config, ownership) != section:
+            return False
+    return True
+
+
+def _validate_environment_records(
+    records: object, ownership: _ProviderOwnership
+) -> None:
+    error = ValueError("Provider setup environment records are invalid.")
+    if type(records) is not _MAPPING_PROXY_TYPE or len(records) > (
+        _MAX_ENVIRONMENT_RECORDS
+    ):
+        raise error
+    owners: set[str] = set()
+    for section, values in records.items():
+        if (
+            type(section) is not str
+            or not section.startswith("api_settings.")
+            or _SECTION_NAME_PATTERN.fullmatch(section) is None
+        ):
+            raise error
+        try:
+            owner = _ownership_for(section.removeprefix("api_settings."))
+        except ValueError as exc:
+            raise error from exc
+        if owner.provider_key == ownership.provider_key or owner.provider_key in owners:
+            raise error
+        owners.add(owner.provider_key)
+        environment_key = owner.credential_keys[1]
+        if (
+            type(values) is not _MAPPING_PROXY_TYPE
+            or set(values) != {environment_key}  # never a source (review R1-04)
+            or _existing_environment_name(values[environment_key])
+            != values[environment_key]
+        ):
+            raise error
 
 
 def provider_setup_draft_identity(
@@ -1077,7 +1386,7 @@ def persist_provider_settings_atomic(
     """Validate and persist one combined provider Settings mutation."""
 
     ownership = _ownership_for(provider)
-    if type(model) is not str or (model and _safe_model(model) != model):
+    if type(model) is not str or (model and not is_writable_model_id(model)):
         raise ValueError("Provider settings model is invalid.")
     _validate_combined_provider_settings_mutation(
         setup_mutation,
@@ -1086,33 +1395,47 @@ def persist_provider_settings_atomic(
         section_values,
         delete_keys,
     )
+    records = (
+        setup_mutation.environment_records if setup_mutation is not None else {}
+    )
+
+    def write(
+        values: Mapping[str, Mapping[str, object]],
+        locked: Callable[[AtomicConfigSnapshot], bool] | None,
+    ) -> object:
+        options: dict[str, object] = {"delete_keys": delete_keys}
+        if mutation_precondition is not None:
+            options["mutation_precondition"] = mutation_precondition
+        if locked is not None:
+            options["locked_snapshot_precondition"] = locked
+        return apply_settings_mutation_to_cli_config(values, **options)
+
     try:
-        if mutation_precondition is None and locked_snapshot_precondition is None:
-            result = apply_settings_mutation_to_cli_config(
-                section_values,
-                delete_keys=delete_keys,
-            )
-        elif locked_snapshot_precondition is None:
-            result = apply_settings_mutation_to_cli_config(
-                section_values,
-                delete_keys=delete_keys,
-                mutation_precondition=mutation_precondition,
-            )
-        elif mutation_precondition is None:
-            result = apply_settings_mutation_to_cli_config(
-                section_values,
-                delete_keys=delete_keys,
-                locked_snapshot_precondition=locked_snapshot_precondition,
-            )
-        else:
-            result = apply_settings_mutation_to_cli_config(
-                section_values,
-                delete_keys=delete_keys,
-                mutation_precondition=mutation_precondition,
-                locked_snapshot_precondition=locked_snapshot_precondition,
-            )
+        if records:
+            # TASK-34100.6 AC#6: the records ride the commit's one atomic write;
+            # one that a concurrent write made stale is dropped, never the commit.
+            stale: list[bool] = []
+
+            def records_still_apply(snapshot: AtomicConfigSnapshot) -> bool:
+                if locked_snapshot_precondition is not None and (
+                    locked_snapshot_precondition(snapshot) is not True
+                ):
+                    return False
+                if not _environment_records_apply(snapshot.values, records):
+                    stale.append(True)
+                    return False
+                return True
+
+            result = write({**section_values, **records}, records_still_apply)
+            if not stale:
+                return _typed_mutation_result(result)
+        result = write(section_values, locked_snapshot_precondition)
     except Exception:  # noqa: BLE001 - persistence must fail closed on writer errors.
         return ConfigMutationResult(False, False, "before_replace")
+    return _typed_mutation_result(result)
+
+
+def _typed_mutation_result(result: object) -> ConfigMutationResult:
     if type(result) is not ConfigMutationResult:
         return ConfigMutationResult(False, False, "before_replace")
     return result
@@ -1340,6 +1663,40 @@ def _persisted_endpoint_for_owner(
     return chat_url
 
 
+def persisted_endpoint_for_key(
+    provider_key: str, endpoint_key: str, endpoint: str
+) -> str | None:
+    """The value **s** writes under ``endpoint_key`` for a typed endpoint.
+
+    TASK-39042: Console's Save endpoint & use model wrote the typed value
+    (``localhost:8080``, with no scheme); it writes this, as **s** does.
+
+    Args:
+        provider_key: The endpoint contract's provider key.
+        endpoint_key: The config key the endpoint is written under.
+        endpoint: The endpoint as typed.
+
+    Returns:
+        The value to write, or ``None`` when the contract refuses it.
+    """
+    resolution = resolve_provider_endpoint(provider_key, endpoint)
+    return _persisted_endpoint_for_owner(
+        provider_key, endpoint_key, resolution.persisted_endpoint, resolution.chat_url
+    )
+
+
+def api_base_from_chat_url(chat_url: str | None) -> str | None:
+    """The ``api_base_url`` a chat URL is saved as (``<base>/chat/completions``).
+
+    Args:
+        chat_url: A resolved chat-completions URL.
+
+    Returns:
+        The base it is saved as, or ``None`` when it doesn't end in the route.
+    """
+    return _api_base_from_chat_url(chat_url)
+
+
 def _api_base_from_chat_url(chat_url: str | None) -> str | None:
     if type(chat_url) is not str:
         return None
@@ -1511,6 +1868,8 @@ def _validate_combined_provider_settings_mutation(
             allowed_extra_keys = {"model_defaults"}
             if ownership.provider_key == "qwencloud":
                 allowed_extra_keys.add("api_mode")
+            if ownership.provider_key == "anthropic":
+                allowed_extra_keys.add("auth_source")
             if not extra_keys.issubset(allowed_extra_keys):
                 if setup_mutation is None:
                     raise connection_error
@@ -1524,11 +1883,31 @@ def _validate_combined_provider_settings_mutation(
                 "chat_completions",
             }:
                 raise error
+            if "auth_source" in extra_keys:
+                # Lazy: the credential module must stay out of the UI-ready set.
+                from ..LLM_Calls.anthropic_subscription import (
+                    AUTH_SOURCE_API_KEY,
+                    AUTH_SOURCE_SUBSCRIPTION,
+                )
+
+                if values["auth_source"] not in {
+                    AUTH_SOURCE_API_KEY,
+                    AUTH_SOURCE_SUBSCRIPTION,
+                }:
+                    raise error
         elif section == "model_capabilities.models":
             if (
                 not model
                 or extra_keys != {model}
                 or not isinstance(values[model], Mapping)
+            ):
+                raise error
+        elif section == "providers":
+            # TASK-35011: a discovered pick joins its own provider's saved
+            # list, by the check Settings' join runs before adding it.
+            list_key, models = next(iter(values.items()))
+            if len(values) != 1 or not saved_model_list_admits(
+                list_key, models, model, ownership.provider_key
             ):
                 raise error
         elif extra_keys:
@@ -1601,6 +1980,7 @@ def _validate_provider_setup_mutation(
         section_values = mutation.section_values
         delete_keys = mutation.delete_keys
         semantic_identity = mutation.semantic_identity
+        environment_records = mutation.environment_records
     except Exception as exc:
         raise error from exc
     if require_issued and not _provider_setup_mutation_is_issued(mutation):
@@ -1629,7 +2009,8 @@ def _validate_provider_setup_mutation(
             if (
                 type(key) is not str
                 or _CONFIG_KEY_PATTERN.fullmatch(key) is None
-                or type(value) not in {str, bool}
+                # TASK-41145: MLX-LM's port is the one integer written.
+                or not (type(value) in {str, bool} or (key == "port" and type(value) is int))
             ):
                 raise error
     for section, keys in delete_keys.items():
@@ -1686,6 +2067,7 @@ def _validate_provider_setup_mutation(
         raise error from exc
     if section_ownership.provider_key != ownership.provider_key:
         raise error
+    _validate_environment_records(environment_records, ownership)
 
     allowed_sections = {
         provider_section,
@@ -1699,11 +2081,14 @@ def _validate_provider_setup_mutation(
     provider_values = section_values.get(provider_section)
     if type(provider_values) is not _MAPPING_PROXY_TYPE:
         raise error
+    # TASK-41145: MLX-LM's endpoint is its host and port, set or cleared together.
+    mlx = ownership.provider_key in MLX_HOST_PORT_PROVIDER_KEYS
+    endpoint_keys = ("host", "port") if mlx else _ENDPOINT_KEY_PRECEDENCE
     allowed_provider_keys = {
         ownership.model_key,
         "credential_source",
         *ownership.credential_keys,
-        *_ENDPOINT_KEY_PRECEDENCE,
+        *endpoint_keys,
     }
     if not set(provider_values).issubset(allowed_provider_keys):
         raise error
@@ -1724,17 +2109,19 @@ def _validate_provider_setup_mutation(
     }:
         raise error
     if not set(provider_deletes).issubset(
-        {*ownership.credential_keys, *_ENDPOINT_KEY_PRECEDENCE}
+        {*ownership.credential_keys, *endpoint_keys}
     ):
         raise error
 
-    set_endpoint_keys = [
-        key for key in _ENDPOINT_KEY_PRECEDENCE if key in provider_values
-    ]
-    deleted_endpoint_keys = [
-        key for key in _ENDPOINT_KEY_PRECEDENCE if key in provider_deletes
-    ]
-    if len(set_endpoint_keys) + len(deleted_endpoint_keys) != 1:
+    set_endpoint_keys = [key for key in endpoint_keys if key in provider_values]
+    deleted_endpoint_keys = [key for key in endpoint_keys if key in provider_deletes]
+    if mlx:
+        if sorted((tuple(set_endpoint_keys), tuple(deleted_endpoint_keys))) != [
+            (),
+            ("host", "port"),
+        ]:
+            raise error
+    elif len(set_endpoint_keys) + len(deleted_endpoint_keys) != 1:
         raise error
 
     stored_key, environment_key = ownership.credential_keys
@@ -1790,7 +2177,11 @@ def _validate_provider_setup_mutation(
             raise identity_error
         if not _provider_draft_identity_is_valid(semantic_identity):
             raise identity_error
-        endpoint_value = provider_values[set_endpoint_keys[0]]
+        endpoint_value = (
+            mlx_saved_endpoint(provider_values)
+            if mlx
+            else provider_values[set_endpoint_keys[0]]
+        )
         if type(endpoint_value) is not str:
             raise error
         connection_identity = canonical_connection_identity(
@@ -1833,13 +2224,45 @@ def _configured_section_key(
     return ownership.config_section
 
 
+def saved_model_list_admits(
+    list_key: object, models: object, model: str, owner: str
+) -> bool:
+    """Say whether a combined save may write ``models`` under ``list_key``.
+
+    The one check the combined validator and Settings' join both run
+    (TASK-35011), so a list Settings adds is one the save accepts, and a
+    list it may not write leaves the default to save alone.
+
+    Args:
+        list_key: The ``[providers]`` key to write: a config key that
+            normalizes to ``owner`` (the owner by ``provider_config_key``,
+            since ``_ownership_for`` cannot spell the template's Custom_2).
+        models: The saved list to write: it holds ``model``, and every id
+            passes the safe-model check.
+        model: The model the save makes the default.
+        owner: The save's canonical provider key.
+
+    Returns:
+        True when the combined save's validator admits the list.
+    """
+    return (
+        bool(model)
+        and type(list_key) is str
+        and _CONFIG_KEY_PATTERN.fullmatch(list_key) is not None
+        and normalize_provider_config_key(list_key) == owner
+        and type(models) is list
+        and model in models
+        and all(_safe_model(item) is not None for item in models)
+    )
+
+
 def _safe_model(value: object) -> str | None:
     if type(value) is not str:
         return None
     model = value.strip()
     if (
         not model
-        or len(model) > _MAX_MODEL_CHARS
+        or len(model) > MAX_MODEL_ID_CHARS
         or not model.isprintable()
         or any(
             unicode_category(character) in _UNSAFE_TEXT_CATEGORIES
@@ -1848,6 +2271,17 @@ def _safe_model(value: object) -> str | None:
     ):
         return None
     return model
+
+
+def is_writable_model_id(model: str) -> bool:
+    """Whether the combined provider save writes ``model`` exactly as given.
+
+    The one model-id check: ``persist_provider_settings_atomic`` refuses an id
+    that fails it, and Settings refuses the same id as it is typed
+    (TASK-35712). It fails an empty or padded id, one over
+    ``MAX_MODEL_ID_CHARS``, and text that is not printable on one line.
+    """
+    return _safe_model(model) == model
 
 
 def _validate_credential_value(value: str) -> None:

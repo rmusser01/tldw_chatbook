@@ -108,4 +108,10 @@ Re-verified: preflight exit 0; Tests/Docs 19 passed / 2 failed (21 collected) (t
 
 
 **Explicitly unverified (fix round 4, stated rather than asserted).** (1) `scoped + AST` is proven on ONE claim, not as a general mechanism: it behaves correctly in both directions for `Export…`/`Export` on the twelve `library_notes*` modules, but it has not been run against any other claim or page, and that twelve-module glob is my choice rather than a derived page-to-module binding — which is what task-32589 AC#8 actually asks for. (2) Wall time for a scoped+AST gate over all of Docs/User_Guide/ is unmeasured (task-32589 AC#6); the present raw script already takes ~40 s on a large page. (3) The seven `Export…` Button-label sites were classified by reading their `Button(...)` call, not by driving those surfaces — the two library canvases are corroborated by this sweep's captures; Meetings, Artifacts and the Console inspector are source-only.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library.md`: Get started captures `wave4-caps/docs-sweep/docs-01-empty-rail-235x52:8-10` (the rail) and `docs-01:11` ("Find it needs something to search — Import a file first.").
+- `Docs/User_Guide/library/notes.md`: Read off the source rather than walked: the receipts cap (20) and row shape, the tree and Trash page sizes (20), the backlink display cap (50), the eight template rows, the 2,000,000-character note cap, Ctrl+3, Ctrl+S in the file picker, and the import pager's "Previous page unavailable — this is the first page". Capture `docs-07-preview-tab-footers-235x52`.
+- `Docs/User_Guide/library/file-notes.md`: Not re-walked live: the Git chapter was corrected against the widget's own compose (`library_file_notes_git_panel.py:1271-1289`), not a capture.
+- `Docs/User_Guide/console.md`: Corrected from the source (`Chat/console_onboarding_state.py:101-153`), not from a capture: no Console profile with a local server running was driven, so the third button was not seen.
 <!-- SECTION:NOTES:END -->

@@ -201,12 +201,18 @@ def test_list_reminder_tasks_armable_only_excludes_dormant_transfer_states(
     (the workbench display) still returns dormant rows -- unaffected."""
     now = _utc(2026, 7, 20, 12, 0)
     armed_id = db.create_reminder_task(
-        owner_id="local", title="Armed", schedule_kind="one_time",
-        next_run_at=now, enabled=True,
+        owner_id="local",
+        title="Armed",
+        schedule_kind="one_time",
+        next_run_at=now,
+        enabled=True,
     )
     dormant_id = db.create_reminder_task(
-        owner_id="local", title="Dormant", schedule_kind="one_time",
-        next_run_at=now, enabled=True,
+        owner_id="local",
+        title="Dormant",
+        schedule_kind="one_time",
+        next_run_at=now,
+        enabled=True,
     )
     db.update_reminder_task(dormant_id, transfer_state=dormant_state)
 
@@ -224,8 +230,11 @@ def test_list_reminder_tasks_armable_only_arms_non_dormant_transfer_states(
 ) -> None:
     now = _utc(2026, 7, 20, 12, 0)
     task_id = db.create_reminder_task(
-        owner_id="local", title="Queued or failed handoff", schedule_kind="one_time",
-        next_run_at=now, enabled=True,
+        owner_id="local",
+        title="Queued or failed handoff",
+        schedule_kind="one_time",
+        next_run_at=now,
+        enabled=True,
     )
     if armed_state is not None:
         db.update_reminder_task(task_id, transfer_state=armed_state)
@@ -345,12 +354,20 @@ def test_reminders_due_before_excludes_dormant_transfer_states(
     caller is the queue) -- spec §6.1 ruling 2."""
     now = _utc(2026, 7, 20, 12, 0)
     armed_id = db.create_reminder_task(
-        owner_id="local", title="Armed", schedule_kind="one_time",
-        run_at=now, next_run_at=now, enabled=True,
+        owner_id="local",
+        title="Armed",
+        schedule_kind="one_time",
+        run_at=now,
+        next_run_at=now,
+        enabled=True,
     )
     dormant_id = db.create_reminder_task(
-        owner_id="local", title="Dormant", schedule_kind="one_time",
-        run_at=now, next_run_at=now, enabled=True,
+        owner_id="local",
+        title="Dormant",
+        schedule_kind="one_time",
+        run_at=now,
+        next_run_at=now,
+        enabled=True,
     )
     db.update_reminder_task(dormant_id, transfer_state=dormant_state)
 
@@ -798,7 +815,10 @@ def test_set_transfer_state_concurrent_callers_do_not_both_succeed(tmp_path) -> 
         conn = real_get_connection(self)
 
         def _on_statement(sql):
-            if injected["done"] or "UPDATE automation_definitions SET transfer_state" not in sql:
+            if (
+                injected["done"]
+                or "UPDATE automation_definitions SET transfer_state" not in sql
+            ):
                 return
             injected["done"] = True
             # A second real connection races in right as the first call's
@@ -807,7 +827,9 @@ def test_set_transfer_state_concurrent_callers_do_not_both_succeed(tmp_path) -> 
             side_db = ScheduledTasksDB(str(db_path))
             try:
                 results["second"] = side_db.set_transfer_state(
-                    "automation_definition", def_id, "to_server_sent",
+                    "automation_definition",
+                    def_id,
+                    "to_server_sent",
                     expected=(None,),
                 )
             finally:
@@ -823,7 +845,9 @@ def test_set_transfer_state_concurrent_callers_do_not_both_succeed(tmp_path) -> 
             "automation_definition", def_id, "to_server_pending", expected=(None,)
         )
 
-    assert injected["done"], "the spy never saw the expected UPDATE -- test setup is stale"
+    assert injected["done"], (
+        "the spy never saw the expected UPDATE -- test setup is stale"
+    )
     # Exactly one of the two racing callers succeeds -- never both.
     assert results["first"] != results["second"]
 
@@ -870,9 +894,7 @@ def test_convert_row_to_server_mirror_converts_reminder_in_place_and_maps(
     task_id = db.create_reminder_task(
         owner_id="local", title="Standup", schedule_kind="one_time"
     )
-    db.set_transfer_state(
-        "reminder_task", task_id, "to_server_sent", expected=(None,)
-    )
+    db.set_transfer_state("reminder_task", task_id, "to_server_sent", expected=(None,))
 
     result = db.convert_row_to_server_mirror(
         "reminder_task", task_id, {"id": "srv-rem-1"}, "server:1"
@@ -953,9 +975,7 @@ def test_convert_row_to_server_mirror_merges_with_existing_pulled_reminder_mirro
         schedule_kind="one_time",
         created_at="2026-01-01T00:00:00+00:00",
     )
-    db.set_transfer_state(
-        "reminder_task", local_id, "to_server_sent", expected=(None,)
-    )
+    db.set_transfer_state("reminder_task", local_id, "to_server_sent", expected=(None,))
 
     result = db.convert_row_to_server_mirror(
         "reminder_task", local_id, {"id": "srv-rem-1"}, "server:1"
@@ -1347,9 +1367,13 @@ def test_bulk_apply_pulled_items_and_purge_mutations(tmp_path):
     mutation_id = pending[0]["id"]
 
     with db.transaction() as conn:
-        db._apply_pulled_reminders(conn, owner_id, [
-            {"id": "srv-1", "title": "One", "schedule_kind": "one_time"},
-        ])
+        db._apply_pulled_reminders(
+            conn,
+            owner_id,
+            [
+                {"id": "srv-1", "title": "One", "schedule_kind": "one_time"},
+            ],
+        )
         db._purge_pending_mutations(conn, owner_id, [mutation_id])
 
     rows = db.list_reminder_tasks(owner_id=owner_id)
@@ -1401,14 +1425,18 @@ def test_apply_pulled_reminders_never_clears_local_transfer_state(tmp_path):
     # Even if a server payload somehow carried transfer_state, it must
     # still lose to the local marker.
     with db.transaction() as conn:
-        db._apply_pulled_reminders(conn, owner_id, [
-            {
-                "id": "srv-1",
-                "title": "Server",
-                "schedule_kind": "one_time",
-                "transfer_state": "server_side_value",
-            },
-        ])
+        db._apply_pulled_reminders(
+            conn,
+            owner_id,
+            [
+                {
+                    "id": "srv-1",
+                    "title": "Server",
+                    "schedule_kind": "one_time",
+                    "transfer_state": "server_side_value",
+                },
+            ],
+        )
 
     row = db.get_reminder_task(local_id)
     assert row["transfer_state"] == "to_server_pending"
@@ -1439,13 +1467,21 @@ def _mk_db(tmp_path):
 def test_create_run_and_slot_dedupe(tmp_path):
     db = _mk_db(tmp_path)
     first = db.create_automation_run(
-        "local", "d1", 1, "scheduled",
-        status="running", schedule_slot="2026-09-01T09:00:00+00:00",
+        "local",
+        "d1",
+        1,
+        "scheduled",
+        status="running",
+        schedule_slot="2026-09-01T09:00:00+00:00",
     )
     assert first is not None
     duplicate = db.create_automation_run(
-        "local", "d1", 1, "scheduled",
-        status="running", schedule_slot="2026-09-01T09:00:00+00:00",
+        "local",
+        "d1",
+        1,
+        "scheduled",
+        status="running",
+        schedule_slot="2026-09-01T09:00:00+00:00",
     )
     assert duplicate is None  # deduped, not raised
     two_manuals = [
@@ -1459,7 +1495,9 @@ def test_update_and_list_runs(tmp_path):
     db = _mk_db(tmp_path)
     run_id = db.create_automation_run("local", "d1", 1, "manual", status="running")
     assert db.update_automation_run(
-        run_id, status="completed", outcome="finding",
+        run_id,
+        status="completed",
+        outcome="finding",
         run_summary={"note": "ok"},
     )
     rows = db.list_automation_runs("local", definition_id="d1")
@@ -1481,7 +1519,9 @@ def test_update_automation_run_honors_caller_supplied_updated_at(tmp_path):
     db = _mk_db(tmp_path)
     run_id = db.create_automation_run("local", "d1", 1, "manual", status="running")
     assert db.update_automation_run(
-        run_id, status="completed", updated_at=_utc(2020, 1, 1),
+        run_id,
+        status="completed",
+        updated_at=_utc(2020, 1, 1),
     )
     row = db.list_automation_runs("local", definition_id="d1")[0]
     assert row["updated_at"] == "2020-01-01T00:00:00+00:00"
@@ -1491,8 +1531,12 @@ def test_prune_keeps_newest_200_per_definition(tmp_path):
     db = _mk_db(tmp_path)
     for i in range(205):
         db.create_automation_run(
-            "local", "d1", 1, "scheduled",
-            status="completed", schedule_slot=f"slot-{i:04d}",
+            "local",
+            "d1",
+            1,
+            "scheduled",
+            status="completed",
+            schedule_slot=f"slot-{i:04d}",
         )
     rows = db.list_automation_runs("local", definition_id="d1", limit=500)
     assert len(rows) == 200
@@ -1557,14 +1601,24 @@ def test_count_automation_runs_can_scope_to_one_owner(tmp_path):
 def test_create_result_and_dedupe(tmp_path):
     db = _mk_db(tmp_path)
     rid = db.create_automation_result(
-        "local", "d1", "r1", "finding", "Title", "Summary", "key-1",
-        answer_mode="synthesized", answer={"text": "42"},
+        "local",
+        "d1",
+        "r1",
+        "finding",
+        "Title",
+        "Summary",
+        "key-1",
+        answer_mode="synthesized",
+        answer={"text": "42"},
         source_refs=[{"source": "notes", "id": "n1"}],
     )
     assert rid is not None
-    assert db.create_automation_result(
-        "local", "d1", "r2", "finding", "Again", "S", "key-1"
-    ) is None  # same (owner, dedupe_key)
+    assert (
+        db.create_automation_result(
+            "local", "d1", "r2", "finding", "Again", "S", "key-1"
+        )
+        is None
+    )  # same (owner, dedupe_key)
     row = db.list_automation_results("local")[0]
     assert row["review_state"] == "unread"
     assert row["answer"] == {"text": "42"}
@@ -1573,9 +1627,7 @@ def test_create_result_and_dedupe(tmp_path):
 
 def test_review_transitions_and_unread_count(tmp_path):
     db = _mk_db(tmp_path)
-    rid = db.create_automation_result(
-        "local", "d1", "r1", "finding", "T", "S", "k1"
-    )
+    rid = db.create_automation_result("local", "d1", "r1", "finding", "T", "S", "k1")
     db.create_automation_result("local", "d1", "r2", "failure", "F", "S", "k2")
     assert db.count_unread_results("local") == 2
     assert db.update_result_review(rid, "read", reviewed_by="local")
@@ -1610,10 +1662,14 @@ def test_update_result_review_writes_pending_mutation_in_same_transaction(tmp_pa
     pending = db.get_pending_mutations("server:1", primitive="automation_result_review")
     assert len(pending) == 1
     assert pending[0]["payload"]["server_result_id"] == "srv-1"
-    assert pending[0]["payload"]["idempotency_key"]  # generated, same as the standalone method
+    assert pending[0]["payload"][
+        "idempotency_key"
+    ]  # generated, same as the standalone method
 
 
-def test_update_result_review_pending_mutation_atomic_rollback_on_insert_failure(tmp_path):
+def test_update_result_review_pending_mutation_atomic_rollback_on_insert_failure(
+    tmp_path,
+):
     """Fault-inject a genuine DB failure in the mutation INSERT (a NULL
     owner_id violates pending_mutations' NOT NULL constraint) and confirm
     the review UPDATE in the SAME transaction rolls back with it -- the
@@ -1895,7 +1951,9 @@ def test_upsert_definitions_pending_lifecycle_mutation_recorded_mid_loop_still_b
             ],
         )
 
-    assert injected["done"], "the spy never saw the expected SELECT -- test setup is stale"
+    assert injected["done"], (
+        "the spy never saw the expected SELECT -- test setup is stale"
+    )
     assert counts == {"inserted": 0, "updated": 2}
     row_2 = db.get_automation_definition(local_id_2)
     assert row_2["lifecycle"] == "configured"  # caught despite landing mid-loop
@@ -1934,7 +1992,11 @@ def test_upsert_definitions_archived_lifecycle_mirrors_not_deletes(tmp_path):
     local_id = db.list_automation_definitions(owner_id="server:42")[0]["id"]
     db.upsert_automation_definitions_from_server(
         "server:42",
-        [_definition_item(lifecycle="archived", archived_at="2026-08-01T00:00:00+00:00")],
+        [
+            _definition_item(
+                lifecycle="archived", archived_at="2026-08-01T00:00:00+00:00"
+            )
+        ],
     )
     row = db.get_automation_definition(local_id)
     assert row["lifecycle"] == "archived"
@@ -2419,7 +2481,9 @@ def test_upsert_results_pending_review_mutation_blocks_update(tmp_path):
     assert row["review_state"] == "unread"
 
 
-def test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_update(tmp_path):
+def test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_update(
+    tmp_path,
+):
     """Qodo TOCTOU finding: the pending-mutation guard used to snapshot
     ``get_pending_mutations()`` ONCE before the write transaction even
     opened. A review recorded concurrently (the review service writes via
@@ -2475,8 +2539,13 @@ def test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_update(t
                     "INSERT INTO pending_mutations "
                     "(local_id, primitive, owner_id, payload, created_at) "
                     "VALUES (?, ?, ?, ?, ?)",
-                    (local_id_2, "automation_result_review", "server:42", "{}",
-                     "2026-09-01T00:00:00+00:00"),
+                    (
+                        local_id_2,
+                        "automation_result_review",
+                        "server:42",
+                        "{}",
+                        "2026-09-01T00:00:00+00:00",
+                    ),
                 )
                 side_conn.commit()
             finally:
@@ -2491,12 +2560,18 @@ def test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_update(t
         counts = db.upsert_automation_results_from_server(
             "server:42",
             [
-                _result_item(id="srv-res-1", review_state="read", reviewed_by="user:42"),
-                _result_item(id="srv-res-2", review_state="read", reviewed_by="user:42"),
+                _result_item(
+                    id="srv-res-1", review_state="read", reviewed_by="user:42"
+                ),
+                _result_item(
+                    id="srv-res-2", review_state="read", reviewed_by="user:42"
+                ),
             ],
         )
 
-    assert injected["done"], "the spy never saw the expected SELECT -- test setup is stale"
+    assert injected["done"], (
+        "the spy never saw the expected SELECT -- test setup is stale"
+    )
     assert counts == {"inserted": 0, "updated": 1, "skipped_dedupe": 0}
     rows_by_server_id = {
         row["server_id"]: row for row in db.list_automation_results("server:42")
@@ -2511,13 +2586,19 @@ def test_upsert_results_pending_mutation_recorded_mid_loop_still_blocks_update(t
 def test_upsert_results_dedupe_conflict_with_local_row_is_skipped(tmp_path):
     db = _mk_db(tmp_path)
     local_id = db.create_automation_result(
-        "server:42", "local-def", "local-run", "finding", "Local title",
-        "Local summary", "recurring_question:srv-def-1:2026-08-30",
+        "server:42",
+        "local-def",
+        "local-run",
+        "finding",
+        "Local title",
+        "Local summary",
+        "recurring_question:srv-def-1:2026-08-30",
     )
     assert local_id is not None
 
     counts = db.upsert_automation_results_from_server(
-        "server:42", [_result_item()]  # same dedupe_key as the local row
+        "server:42",
+        [_result_item()],  # same dedupe_key as the local row
     )
     assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 1}
     rows = db.list_automation_results("server:42")
@@ -2567,10 +2648,19 @@ def test_upsert_results_double_pull_race_falls_into_update_or_skip_not_raise(tmp
                     "title, summary, dedupe_key, review_state, answer_mode, "
                     "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
-                        "raced-in-row", "srv-res-1", "server:42", "srv-def-1",
-                        "srv-run-1", "finding", "Raced title", "Raced summary",
-                        "raced-dedupe-key", "unread", "none",
-                        "2026-08-30T09:00:00+00:00", "2026-08-30T09:00:00+00:00",
+                        "raced-in-row",
+                        "srv-res-1",
+                        "server:42",
+                        "srv-def-1",
+                        "srv-run-1",
+                        "finding",
+                        "Raced title",
+                        "Raced summary",
+                        "raced-dedupe-key",
+                        "unread",
+                        "none",
+                        "2026-08-30T09:00:00+00:00",
+                        "2026-08-30T09:00:00+00:00",
                     ),
                 )
                 side_conn.commit()
@@ -2588,7 +2678,9 @@ def test_upsert_results_double_pull_race_falls_into_update_or_skip_not_raise(tmp
             [_result_item(review_state="read", reviewed_by="user:42")],
         )
 
-    assert injected["done"], "the spy never saw the expected INSERT -- test setup is stale"
+    assert injected["done"], (
+        "the spy never saw the expected INSERT -- test setup is stale"
+    )
     # Our INSERT lost the race (IntegrityError) but recovered: no raise,
     # no dedupe_key miscount, and the review fields from our item applied
     # onto the row the race was lost to.
@@ -2636,10 +2728,19 @@ def test_upsert_results_race_winner_vanished_before_refetch_is_counted_not_dropp
                     "title, summary, dedupe_key, review_state, answer_mode, "
                     "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
-                        "raced-in-row", "srv-res-1", "server:42", "srv-def-1",
-                        "srv-run-1", "finding", "Raced title", "Raced summary",
-                        "raced-dedupe-key", "unread", "none",
-                        "2026-08-30T09:00:00+00:00", "2026-08-30T09:00:00+00:00",
+                        "raced-in-row",
+                        "srv-res-1",
+                        "server:42",
+                        "srv-def-1",
+                        "srv-run-1",
+                        "finding",
+                        "Raced title",
+                        "Raced summary",
+                        "raced-dedupe-key",
+                        "unread",
+                        "none",
+                        "2026-08-30T09:00:00+00:00",
+                        "2026-08-30T09:00:00+00:00",
                     ),
                 )
             elif (
@@ -2671,7 +2772,9 @@ def test_upsert_results_race_winner_vanished_before_refetch_is_counted_not_dropp
             [_result_item(review_state="read", reviewed_by="user:42")],
         )
 
-    assert state["step"] == 2, "the spy never saw both expected statements -- test setup is stale"
+    assert state["step"] == 2, (
+        "the spy never saw both expected statements -- test setup is stale"
+    )
     assert counts == {"inserted": 0, "updated": 0, "skipped_dedupe": 1}
     assert db.list_automation_results("server:42") == []
 
@@ -2688,7 +2791,9 @@ def test_list_automation_results_owner_none_spans_all_owners(tmp_path):
 
 def test_count_unread_results_owner_none_spans_all_owners(tmp_path):
     db = _mk_db(tmp_path)
-    rid = db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    rid = db.create_automation_result(
+        "owner-a", "d1", "r1", "finding", "A", "S", "key-a"
+    )
     db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
     assert db.count_unread_results(None) == 2
 
@@ -2723,24 +2828,30 @@ def test_list_automation_results_orders_mixed_offset_timestamps_correctly(tmp_pa
     db = _mk_db(tmp_path)
     counts_true_later = db.upsert_automation_results_from_server(
         "owner-a",
-        [_result_item(
-            id="srv-true-later", dedupe_key="key-true-later",
-            # 2026-08-30T09:00:00 UTC -- the later instant.
-            created_at="2026-08-30T09:00:00+00:00",
-            updated_at="2026-08-30T09:00:00+00:00",
-        )],
+        [
+            _result_item(
+                id="srv-true-later",
+                dedupe_key="key-true-later",
+                # 2026-08-30T09:00:00 UTC -- the later instant.
+                created_at="2026-08-30T09:00:00+00:00",
+                updated_at="2026-08-30T09:00:00+00:00",
+            )
+        ],
     )
     counts_true_earlier = db.upsert_automation_results_from_server(
         "owner-a",
-        [_result_item(
-            id="srv-true-earlier", dedupe_key="key-true-earlier",
-            # 2026-08-30T04:00:00 UTC -- genuinely EARLIER than the row
-            # above, but its raw string is lexically greater ("+05:00" >
-            # "+00:00" after identical clock digits), so string DESC
-            # would rank it first.
-            created_at="2026-08-30T09:00:00+05:00",
-            updated_at="2026-08-30T09:00:00+05:00",
-        )],
+        [
+            _result_item(
+                id="srv-true-earlier",
+                dedupe_key="key-true-earlier",
+                # 2026-08-30T04:00:00 UTC -- genuinely EARLIER than the row
+                # above, but its raw string is lexically greater ("+05:00" >
+                # "+00:00" after identical clock digits), so string DESC
+                # would rank it first.
+                created_at="2026-08-30T09:00:00+05:00",
+                updated_at="2026-08-30T09:00:00+05:00",
+            )
+        ],
     )
     assert counts_true_later == {"inserted": 1, "updated": 0, "skipped_dedupe": 0}
     assert counts_true_earlier == {"inserted": 1, "updated": 0, "skipped_dedupe": 0}
@@ -2770,21 +2881,27 @@ def test_list_automation_results_orders_z_suffix_against_plus_offset(tmp_path):
     db = _mk_db(tmp_path)
     db.upsert_automation_results_from_server(
         "owner-a",
-        [_result_item(
-            id="srv-zulu-earlier", dedupe_key="key-zulu",
-            # 23:09:06.000 UTC -- the EARLIER instant, but its raw text
-            # sorts above the row below ('Z' > '.').
-            created_at="2026-09-02T23:09:06Z",
-            updated_at="2026-09-02T23:09:06Z",
-        )],
+        [
+            _result_item(
+                id="srv-zulu-earlier",
+                dedupe_key="key-zulu",
+                # 23:09:06.000 UTC -- the EARLIER instant, but its raw text
+                # sorts above the row below ('Z' > '.').
+                created_at="2026-09-02T23:09:06Z",
+                updated_at="2026-09-02T23:09:06Z",
+            )
+        ],
     )
     db.upsert_automation_results_from_server(
         "owner-a",
-        [_result_item(
-            id="srv-offset-later", dedupe_key="key-offset",
-            created_at="2026-09-02T23:09:06.500000+00:00",
-            updated_at="2026-09-02T23:09:06.500000+00:00",
-        )],
+        [
+            _result_item(
+                id="srv-offset-later",
+                dedupe_key="key-offset",
+                created_at="2026-09-02T23:09:06.500000+00:00",
+                updated_at="2026-09-02T23:09:06.500000+00:00",
+            )
+        ],
     )
     rows = db.list_automation_results("owner-a")
     # Both formats survive the mirror verbatim -- that mix is the premise.
@@ -2820,10 +2937,14 @@ def test_list_automation_results_orders_within_one_millisecond(tmp_path):
         stamp = f"2026-09-02T23:09:06.{suffix}+00:00"
         db.upsert_automation_results_from_server(
             "owner-a",
-            [_result_item(
-                id=f"srv-{index}", dedupe_key=f"key-{index}",
-                created_at=stamp, updated_at=stamp,
-            )],
+            [
+                _result_item(
+                    id=f"srv-{index}",
+                    dedupe_key=f"key-{index}",
+                    created_at=stamp,
+                    updated_at=stamp,
+                )
+            ],
         )
 
     rows = db.list_automation_results("owner-a")
@@ -2847,7 +2968,9 @@ def test_count_automation_results_counts_every_state(tmp_path):
     counts EVERY result, not just unread ones (which is what made a
     50-row listing disagree with the badge in the first place)."""
     db = _mk_db(tmp_path)
-    rid = db.create_automation_result("owner-a", "d1", "r1", "finding", "A", "S", "key-a")
+    rid = db.create_automation_result(
+        "owner-a", "d1", "r1", "finding", "A", "S", "key-a"
+    )
     db.create_automation_result("owner-b", "d1", "r2", "finding", "B", "S", "key-b")
     db.update_result_review(rid, "read")
 
@@ -2901,8 +3024,12 @@ def test_get_pending_mutation_for_local_id_returns_newest_across_owners(tmp_path
     ascending ORDER BY returned the oldest)."""
     db = ScheduledTasksDB(tmp_path / "t.db")
     rid = "row-1"
-    db.record_pending_mutation(rid, "automation_definition", "server:a", {"transfer_errors": ["old"]})
-    db.record_pending_mutation(rid, "automation_definition", "server:b", {"transfer_errors": ["new"]})
+    db.record_pending_mutation(
+        rid, "automation_definition", "server:a", {"transfer_errors": ["old"]}
+    )
+    db.record_pending_mutation(
+        rid, "automation_definition", "server:b", {"transfer_errors": ["new"]}
+    )
     row = db.get_pending_mutation_for_local_id(rid, "automation_definition")
     assert row is not None
     assert row["owner_id"] == "server:b"
@@ -2927,37 +3054,49 @@ def test_list_automation_runs_and_results_bridge_across_transfer_identity(tmp_pa
     # (automation_runs is local-only -- see count_automation_runs's own
     # docstring -- so every run always carries the local id regardless of
     # transfer).
-    run_id = db.create_automation_run("local", local_id, 1, "manual", status="completed")
+    run_id = db.create_automation_run(
+        "local", local_id, 1, "manual", status="completed"
+    )
     assert run_id is not None
     local_result_id = db.create_automation_result(
-        "local", local_id, run_id, "finding", "Local finding", "summary", "key-local",
+        "local",
+        local_id,
+        run_id,
+        "finding",
+        "Local finding",
+        "summary",
+        "key-local",
     )
     assert local_result_id is not None
 
     # Transfer to server: local id kept, server_id linked (id answers to
     # BOTH spaces from here on).
-    assert db.adopt_server_definition_identity(
-        local_id, {"id": "srv-1", "name": "D1"}
-    ) is True
+    assert (
+        db.adopt_server_definition_identity(local_id, {"id": "srv-1", "name": "D1"})
+        is True
+    )
 
     # Post-transfer: a result mirrored from the server carries the
     # server id verbatim (`upsert_automation_results_from_server` has no
     # local id to translate it to).
     db.upsert_automation_results_from_server(
         "local",
-        [{
-            "id": "srv-res-1",
-            "definition_id": "srv-1",
-            "run_id": "srv-run-1",
-            "kind": "finding",
-            "title": "Server finding",
-            "summary": "summary",
-            "dedupe_key": "key-server",
-            "created_at": "2026-09-05T00:00:00+00:00",
-        }],
+        [
+            {
+                "id": "srv-res-1",
+                "definition_id": "srv-1",
+                "run_id": "srv-run-1",
+                "kind": "finding",
+                "title": "Server finding",
+                "summary": "summary",
+                "dedupe_key": "key-server",
+                "created_at": "2026-09-05T00:00:00+00:00",
+            }
+        ],
     )
     server_result_id = next(
-        row["id"] for row in db.list_automation_results("local")
+        row["id"]
+        for row in db.list_automation_results("local")
         if row["dedupe_key"] == "key-server"
     )
 
@@ -2988,7 +3127,13 @@ def test_list_automation_runs_and_results_never_transferred_unchanged(tmp_path):
     ]
     result_ids = [
         db.create_automation_result(
-            "local", local_id, run_ids[0], "finding", f"T{i}", "S", f"key-{i}",
+            "local",
+            local_id,
+            run_ids[0],
+            "finding",
+            f"T{i}",
+            "S",
+            f"key-{i}",
         )
         for i in range(3)
     ]
@@ -3007,14 +3152,16 @@ def test_list_automation_runs_and_results_never_transferred_unchanged(tmp_path):
 
     with closing(db._get_connection()) as conn:
         expected_run_ids = [
-            row["id"] for row in conn.execute(
+            row["id"]
+            for row in conn.execute(
                 "SELECT id FROM automation_runs WHERE owner_id = ? "
                 "AND definition_id = ? ORDER BY created_at DESC, id DESC",
                 ("local", local_id),
             ).fetchall()
         ]
         expected_result_ids = [
-            row["id"] for row in conn.execute(
+            row["id"]
+            for row in conn.execute(
                 "SELECT id FROM automation_results WHERE definition_id = ? "
                 "ORDER BY strftime('%Y-%m-%dT%H:%M:%f', created_at) DESC, "
                 "created_at DESC, id DESC",
@@ -3074,7 +3221,13 @@ def test_list_automation_runs_and_results_unknown_id_and_no_cross_bleed(tmp_path
         "local", "orphan-def", 1, "manual", status="completed"
     )
     orphan_result = db.create_automation_result(
-        "local", "orphan-def", orphan_run, "finding", "Orphan", "S", "key-orphan",
+        "local",
+        "orphan-def",
+        orphan_run,
+        "finding",
+        "Orphan",
+        "S",
+        "key-orphan",
     )
     assert [
         r["id"] for r in db.list_automation_runs("local", definition_id="orphan-def")

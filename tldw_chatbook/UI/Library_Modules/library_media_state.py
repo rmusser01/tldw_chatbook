@@ -49,6 +49,14 @@ enumeration trap" lesson:
   found in ``_selected_skill_name`` and the prompts series in
   ``_selected_prompt_id``.
 
+**TASK-36952.3.6 (2026-11-15)** added two fields when the Reader's detail,
+progress and speaker-rename bodies moved to ``LibraryMediaController``: each
+had exactly one reader among those bodies and no other owner.
+``rename_cache`` (default prefix, ``_library_media_rename_cache``) was a
+``LibraryScreen.__init__`` assignment; ``review_done_map_cache`` (bare
+prefix, ``_review_done_map_cache``) was created lazily on the screen by
+``_decorate_library_media_reviewed``. The counts below are the state PR's.
+
 ``media_state_shim_attr()`` below is the single function BOTH the screen's
 shim-generator loop and this subsystem's wiring test call to resolve a field
 name to its original attribute name, rather than each independently
@@ -227,11 +235,14 @@ from .screen_support_types import (
     _LibraryMediaSuccessfulFocusOwnership,
 )
 
-#: The single field using the bare ``_`` prefix (no "media" word in the
-#: prefix position of the original attribute name). Media has no plural
-#: variant, so this is the only exception set -- see the module docstring's
-#: two-prefix note.
-MEDIA_UNPREFIXED_STATE_FIELDS: frozenset[str] = frozenset({"selected_media_id"})
+#: The fields using the bare ``_`` prefix (no "media" word in the prefix
+#: position of the original attribute name). Media has no plural variant, so
+#: this is the only exception set -- see the module docstring's two-prefix
+#: note. ``review_done_map_cache`` joined ``selected_media_id`` in
+#: TASK-36952.3.6 (its original attribute is ``_review_done_map_cache``).
+MEDIA_UNPREFIXED_STATE_FIELDS: frozenset[str] = frozenset(
+    {"selected_media_id", "review_done_map_cache"}
+)
 
 
 def media_state_shim_attr(field_name: str) -> str:
@@ -252,6 +263,39 @@ def media_state_shim_attr(field_name: str) -> str:
     if field_name in MEDIA_UNPREFIXED_STATE_FIELDS:
         return "_" + field_name
     return "_library_media_" + field_name
+
+
+@dataclass(frozen=True)
+class LibraryMediaLinkReceipt:
+    """One "Use in Console" press's workspace link (TASK-34000.24).
+
+    Attributes:
+        workspace_id: The workspace the item was linked into -- Undo removes
+            THIS membership, never whatever is active by the time it is
+            pressed.
+        workspace_name: That workspace's display name for the receipt line.
+        item_id: The media membership id the receipt is about.
+        written: Whether THE PRESS that earned this receipt inserted the
+            membership ("Linked to …") or found it there ("Already linked
+            to …").
+        undo_offered: Whether "Undo link" renders -- true when a press in
+            this reader session wrote the membership (this one, or an
+            earlier press on the same item and workspace whose receipt a
+            later "Already linked" press replaced); never for a membership
+            the user did not add here.
+    """
+
+    workspace_id: str
+    workspace_name: str
+    item_id: str
+    written: bool
+    undo_offered: bool
+
+    @property
+    def line(self) -> str:
+        """The receipt sentence the Reader paints."""
+        prefix = "Linked to" if self.written else "Already linked to"
+        return f"{prefix} {self.workspace_name} · staged in Console"
 
 
 @dataclass
@@ -363,6 +407,14 @@ class LibraryMediaState:
     # dismissed review set -- rendered as an in-list undo receipt.
     review_dismiss_receipt: tuple[str, str, bool] | None = None
 
+    # task-31956: ``_decorate_library_media_reviewed``'s memo of the ACTIVE
+    # review set's done marks, ``(service revision, {backing_media_id:
+    # done} or None)``. TASK-36952.3.6 moved it off ``LibraryScreen``, where
+    # the decorator created it lazily; it keeps that flat name through the
+    # bare-underscore shim (``_review_done_map_cache``), so the moved body's
+    # ``getattr(self, "_review_done_map_cache", None)`` resolves here.
+    review_done_map_cache: tuple[int, dict[Any, bool] | None] | None = None
+
     # task-28007 AC#3/AC#4: the Select-mode bulk-Analyze run. One
     # in-flight flag (a second press is refused with a notice), the
     # receipt's own counts, the failed ids Retry re-runs, and the
@@ -379,6 +431,15 @@ class LibraryMediaState:
     analyze_failed_ids: tuple[str, ...] = ()
     analyze_choice: tuple[tuple[str, ...], tuple[str, ...]] | None = None
     analyze_reason_cache: str | None = None
+
+    # TASK-36952.3.6: moved off ``LibraryScreen.__init__`` with its one
+    # reader, ``_library_media_can_rename_speakers`` (shim
+    # ``_library_media_rename_cache``). Original comment:
+    # (fix I3) One-slot memo of "is the SELECTED item a renameable meeting
+    # recording": ``(media_id, answer)``. Same motivation as the reason
+    # cache above -- it is read on every media sync and costs a DB read
+    # plus a filesystem check, but can only change with the selection.
+    rename_cache: tuple[int, bool] | None = None
 
     # (fix round 1, I-3) Which surface an in-flight bulk-Analyze run
     # started from -- "media" (Select mode) or "import" (the Import
@@ -450,10 +511,35 @@ class LibraryMediaState:
     # hands back a cached Mapping cannot make a fresh open look "already
     # rendered" and strand the viewer on its loading line.
     composed_detail: Mapping[str, Any] | None = None
+    # TASK-34000.18 (fix round 2): the Reader HOLDS the list highlight -- an
+    # ORDER fact, not a scope fact. Set the moment an item is opened or
+    # selected for the Reader (open-by-link, a row select, the receipt's
+    # Open, a restored selection); released only at the user's scope-change
+    # seams (``_clear_library_media_selection_for_scope_change``: a type
+    # choice, a typed query, the filter Clear, a sort or page change), when
+    # the Reader is reset to no selection, and on the viewer exit. While held
+    # and the held item is not on the page, no row wears the cue and the
+    # selection keeps naming the Reader's item (owner Q2 (b)); a scope change
+    # AFTER the open is the list moving on (TASK-15457: row 0).
+    highlight_held_by_reader: bool = False
     editing: bool = False
+    # TASK-34000.22: the metadata form's typed values (keys ``title``,
+    # ``author``, ``url``, ``keywords``), or None while no draft stands.
+    # Seeded from the saved values when the form opens, written by the
+    # fields' ``Changed`` events, read by the viewer's compose so a Reader
+    # tab switch, More or Find rebuild keeps the typed text, and compared
+    # against the saved values by ``media_edit_form_dirty`` -- the ONE
+    # predicate every exit (Escape, Back, another row, a rail row, the nav
+    # bar, Ctrl+Q) reads. Per item: dropped when the Reader selects another
+    # item, like ``link_receipt``. Cleared on Save, Discard and every
+    # viewer reset that clears ``editing``.
+    edit_draft: dict[str, str] | None = None
     confirming_delete: bool = False
     highlights: list[dict[str, Any]] = field(default_factory=list)
     editing_analysis: bool = False
+    # TASK-34000.22: the analysis form's typed text, the same contract as
+    # ``edit_draft`` for ``editing_analysis`` (``media_analysis_dirty``).
+    analysis_draft: str | None = None
 
     # task-28006: an LLM analysis generation is in flight for the open item.
     generating_analysis: bool = False
@@ -541,3 +627,11 @@ class LibraryMediaState:
     #: (task-2223: "Open in Library" on a match landed on the twin's
     #: identity with no explanation).
     arrival_note: str = ""
+
+    #: TASK-34000.24: the workspace membership the last "Use in Console"
+    #: press linked (or found), shown in the Reader as "Linked to <name> ·
+    #: staged in Console" with an Undo for a membership THIS session wrote.
+    #: Cleared at the Reader's selection entry (per-load, like the
+    #: conversation reader's metadata) and keyed by item id so a stale
+    #: receipt can never stand beside a different item.
+    link_receipt: LibraryMediaLinkReceipt | None = None

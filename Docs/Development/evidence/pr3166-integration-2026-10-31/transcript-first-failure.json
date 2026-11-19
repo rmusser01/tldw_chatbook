@@ -1,0 +1,20 @@
+{
+  "head": "fd922602dfa9711476da79e171ce0ead93eeab97",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/UI/test_console_transcript_context_projection.py::test_original_transcript_does_not_read_unused_live_global_policy",
+    "-q",
+    "-x",
+    "--tb=short",
+    "--timeout=90",
+    "-p",
+    "no:cacheprovider"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-5005cb9c113f",
+  "exit_code": 1,
+  "seconds": 21.531000000075437
+}

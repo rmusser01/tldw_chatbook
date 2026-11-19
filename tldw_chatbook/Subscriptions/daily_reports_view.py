@@ -1,6 +1,6 @@
 """Read-only aggregation of watchlist briefings into Daily Report rows.
 
-A "Daily Report" is a briefing (ADR-079). This module is the thin derivation
+A "Daily Report" is a briefing (ADR-323). This module is the thin derivation
 layer between the `briefings` tables and the Artifacts screen's Reports slot:
 no writes, no new tables, no caching. Callers own thread discipline -- call
 from a worker thread or wrap in `asyncio.to_thread`.

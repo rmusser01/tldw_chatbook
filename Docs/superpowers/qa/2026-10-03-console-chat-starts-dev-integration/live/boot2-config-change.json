@@ -1,0 +1,10 @@
+{
+  "time": 1791060097.862868,
+  "boot1_exit_returncode": 0,
+  "boot1_app_pid": 11791,
+  "boot1_pid_absent": true,
+  "path": "/private/tmp/console-dev-live-01a0fa6c/config.toml",
+  "before_sha256": "9b0630fe2ea467b8855487a9ba0ee010987e96f26dc1f0feb63fb3b267c762a2",
+  "after_sha256": "ba7a88fede9c8710104b56613a78223046218678e0866c162a415949b20348b0",
+  "change": "agents.autowake_enabled true\u2192false"
+}

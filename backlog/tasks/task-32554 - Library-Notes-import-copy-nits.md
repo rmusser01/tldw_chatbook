@@ -58,4 +58,7 @@ Measuring that width is the part that needed a second round. The mounted `Static
 **AC#3 — the breadcrumb.** `FileSystemPickerScreen._update_breadcrumbs` rendered every segment, so a 100+ character location ran off the dialog and the crumbs naming where you ARE were the ones clipped. It now keeps root + '…' + the tail on one line — the shape `EnhancedFileDialog` already used — with each crumb's absolute path still on its tooltip and the full location still spelled out above. The enhanced picker keeps its own override: it also carries `btn.data` for its own click handler, and merging the two is a bigger change than this task.
 
 **Files.** `Library/library_note_import_state.py`, `Widgets/Library/library_note_import_canvas.py`, `Third_Party/textual_fspicker/base_dialog.py`, `Tests/UI/test_library_notes_w4_import_keyboard.py`, `Tests/Library/test_library_note_import_state.py`, `Tests/Notes/test_note_import_planner.py`, `Docs/User_Guide/library/notes.md`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/notes.md`: The lasting-sync chooser's and the sync-roots list's own `‹ Notes` buttons are pinned in `Tests/UI/test_library_notes_w4_import_keyboard.py`, not walked. Captures `wave4-caps/import-kbd/import-10` … `import-26`.
 <!-- SECTION:NOTES:END -->

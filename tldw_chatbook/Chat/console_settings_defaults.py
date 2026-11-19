@@ -30,7 +30,19 @@ from tldw_chatbook.Chat.console_settings_apply import (
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+from tldw_chatbook.Chat.provider_setup_persistence import (
+    MLX_HOST_PORT_PROVIDER_KEYS,
+    host_port_refusal,
+    mlx_host_port,
+    persisted_endpoint_for_key,
+    provider_endpoint_key,
+)
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    koboldcpp_route_refusal,
+    normalize_provider_key_for_contract,
+    resolve_provider_endpoint,
+    valid_dns_label,
+)
 
 
 _ENDPOINT_KEYS = (
@@ -972,12 +984,35 @@ def _configured_endpoint_key(
     return provider_endpoint_key(canonical_provider)
 
 
+def _endpoint_values(
+    canonical_provider: str,
+    provider_settings: Mapping[str, object],
+    endpoint: str,
+) -> dict[str, object]:
+    """What a default writes for ``endpoint``: one key, as **s** writes it.
+
+    TASK-41145 (owner decision 2026-11-16): MLX-LM's endpoint is its
+    ``host`` and ``port``, which its adapter reads; ``api_url`` is left alone.
+    """
+    if canonical_provider in MLX_HOST_PORT_PROVIDER_KEYS:
+        return mlx_host_port(endpoint)
+    endpoint_key = _configured_endpoint_key(canonical_provider, provider_settings)
+    return {
+        endpoint_key: persisted_endpoint_for_key(
+            canonical_provider
+            if normalize_provider_key_for_contract(canonical_provider)
+            else "custom",
+            endpoint_key,
+            endpoint,
+        )
+    }
+
+
 def _config_with_endpoint(
     values: Mapping[str, object],
     *,
     section_name: str,
-    endpoint_key: str,
-    endpoint_value: str,
+    endpoint_values: Mapping[str, object],
 ) -> dict[str, object]:
     """Return a detached config view with one prospective endpoint edit."""
 
@@ -990,7 +1025,7 @@ def _config_with_endpoint(
     provider_settings = (
         dict(source_provider) if isinstance(source_provider, Mapping) else {}
     )
-    provider_settings[endpoint_key] = endpoint_value
+    provider_settings.update(endpoint_values)
     api_settings[section_name] = provider_settings
     result["api_settings"] = api_settings
     return result
@@ -1027,12 +1062,15 @@ def build_console_default_readiness_preview(
         raise ValueError("Endpoint preview is not authorized")
     section_name = _raw_provider_section_name(app_config, canonical_provider)
     provider_settings = _raw_provider_settings(app_config, section_name)
-    endpoint_key = _configured_endpoint_key(canonical_provider, provider_settings)
+    typed = endpoint.value.strip()
     preview_config = _config_with_endpoint(
         app_config,
         section_name=section_name,
-        endpoint_key=endpoint_key,
-        endpoint_value=endpoint.value.strip(),
+        endpoint_values=(
+            mlx_host_port(typed)
+            if canonical_provider in MLX_HOST_PORT_PROVIDER_KEYS
+            else {_configured_endpoint_key(canonical_provider, provider_settings): typed}
+        ),
     )
     defaults = build_target_default_console_session_settings(
         preview_config,
@@ -1106,7 +1144,31 @@ def _endpoint_patch_is_authorized(
         and provider_identity_key(patch.bound_provider_config_key)
         == canonical_provider
         and parse_console_endpoint_preview(patch.value) is not None
+        and not console_default_endpoint_refusal(canonical_provider, patch.value)
     )
+
+
+def console_default_endpoint_refusal(provider: str, endpoint: str) -> str:
+    """Why a Console default may not write ``endpoint`` for ``provider``.
+
+    The endpoint contract decides, as for Settings' **s**: its first error
+    (TASK-38964 review r10e-rev4: the writer took a query, a fragment, an
+    ambiguous path or a pasted key the contract refuses), then koboldcpp's
+    native-route rule (TASK-38964). Chat settings shows the same reason
+    before it submits. A registry entry's endpoint reads as Custom's.
+
+    Args:
+        provider: Provider config key, or a registry entry's id.
+        endpoint: The endpoint the default would write.
+
+    Returns:
+        The refusal copy, or "" when the endpoint may be written.
+    """
+    key = provider if normalize_provider_key_for_contract(provider) else "custom"
+    errors = resolve_provider_endpoint(key, endpoint).errors
+    if errors:
+        return errors[0]
+    return koboldcpp_route_refusal(key, endpoint) or host_port_refusal(key, endpoint)
 
 
 def _build_locked_default_mutation(
@@ -1117,7 +1179,7 @@ def _build_locked_default_mutation(
 ) -> config_module.LiteralSettingsMutation:
     """Build one exact mutation from locked authoritative raw/effective views."""
 
-    # ADR-146 (registry seam): a registry-entry provider (``custom-ep:<slug>``
+    # ADR-343 (registry seam): a registry-entry provider (``custom-ep:<slug>``
     # id with its immutable slug preserved)
     # persists NOTHING under ``api_settings`` -- the entry itself is the
     # endpoint and model carrier under ``[custom_endpoints.<slug>]``, and an
@@ -1133,7 +1195,7 @@ def _build_locked_default_mutation(
     if registry_slug is not None and intent.action is (
         ConsoleSettingsAction.SAVE_MODEL_DEFAULT
     ):
-        # ADR-146: per-model generation defaults have no durable registry
+        # ADR-343: per-model generation defaults have no durable registry
         # destination yet (the entry carries endpoint and model list only),
         # so Save-as-model-default for a registry entry fails closed with a
         # named reason instead of persisting an empty mutation that reports
@@ -1149,10 +1211,16 @@ def _build_locked_default_mutation(
     )
     raw_provider = _raw_provider_settings(snapshot.raw_values, raw_section_name)
     patch = intent.endpoint_patch
-    endpoint_key: str | None = None
+    endpoint_values: dict[str, object] | None = None
+    endpoint_value: object = None
     readiness_config = snapshot.effective_values
     if patch is not None and registry_slug is not None:
-        # ADR-146: a registry entry's endpoint edit previews against the
+        # TASK-39042: the contract's reading, so a loopback address typed
+        # without a scheme is written with ``http://``.
+        endpoint_value = resolve_provider_endpoint(
+            "custom", patch.value
+        ).normalized_input
+        # ADR-343: a registry entry's endpoint edit previews against the
         # ENTRY's base_url (the carrier the seam resolves), not an
         # api_settings table keyed by a custom-ep id.
         import copy
@@ -1161,11 +1229,13 @@ def _build_locked_default_mutation(
         entries = dict(readiness_config.get("custom_endpoints", {}))
         if registry_slug in entries:
             entry_view = dict(entries[registry_slug])
-            entry_view["base_url"] = patch.value.strip()
+            entry_view["base_url"] = endpoint_value
             entries[registry_slug] = entry_view
             readiness_config["custom_endpoints"] = entries
     elif patch is not None:
-        endpoint_key = _configured_endpoint_key(canonical_provider, raw_provider)
+        # TASK-39042: what **s** writes, not the typed value.
+        endpoint_values = _endpoint_values(canonical_provider, raw_provider, patch.value)
+        endpoint_value = next(iter(endpoint_values.values()))
         effective_section_name = _raw_provider_section_name(
             snapshot.effective_values,
             canonical_provider,
@@ -1173,26 +1243,10 @@ def _build_locked_default_mutation(
         readiness_config = _config_with_endpoint(
             snapshot.effective_values,
             section_name=effective_section_name,
-            endpoint_key=endpoint_key,
-            endpoint_value=patch.value.strip(),
+            endpoint_values=endpoint_values,
         )
-    defaults = build_target_default_console_session_settings(
-        readiness_config,
-        canonical_provider,
-        literal_model,
-    )
-    if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
-        validation_errors = validate_console_session_settings(
-            defaults,
-            app_config=readiness_config,
-        )
-        readiness = build_console_settings_readiness(
-            defaults,
-            app_config=readiness_config,
-        )
-        if validation_errors or not readiness.native_send_supported:
-            raise ValueError("Selected provider/model is not ready for new chats")
-
+    if patch is not None and not endpoint_value:
+        raise ValueError("Endpoint is invalid.")
     # TASK-33001.2: a field the request never carries is neither written nor
     # deleted, so a value saved for it earlier stays exactly as it was.
     supported = supported_generation_fields(canonical_provider, literal_model)
@@ -1207,6 +1261,33 @@ def _build_locked_default_mutation(
         if name == "streaming" and type(value) is not bool:
             raise TypeError("Streaming default must be a strict boolean or inherit")
         profile_values[name] = value
+
+    if intent.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
+        # Validate the default this write leaves behind: the profile values it
+        # writes outrank [chat_defaults], and a cleared one falls through to
+        # it. A registry entry gets no profile write (below).
+        profile_written = registry_slug is None
+        defaults = replace(
+            build_target_default_console_session_settings(
+                readiness_config,
+                canonical_provider,
+                literal_model,
+                excluded_model_profile_fields=(
+                    frozenset(profile_deletes) if profile_written else frozenset()
+                ),
+            ),
+            **(profile_values if profile_written else {}),
+        )
+        validation_errors = validate_console_session_settings(
+            defaults,
+            app_config=readiness_config,
+        )
+        readiness = build_console_settings_readiness(
+            defaults,
+            app_config=readiness_config,
+        )
+        if validation_errors or not readiness.native_send_supported:
+            raise ValueError("Selected provider/model is not ready for new chats")
 
     profile_path = (
         "api_settings",
@@ -1233,17 +1314,15 @@ def _build_locked_default_mutation(
         }
 
     if patch is not None and registry_slug is not None:
-        # ADR-146: an endpoint edit for a registry entry updates the
+        # ADR-343: an endpoint edit for a registry entry updates the
         # entry's own base_url (the section write merges, preserving the
         # entry's other keys); never mint an api_settings table for it.
         section_values[("custom_endpoints", registry_slug)] = {
-            "base_url": patch.value.strip()
+            "base_url": endpoint_value
         }
     elif patch is not None:
-        assert endpoint_key is not None
-        section_values[("api_settings", raw_section_name)] = {
-            endpoint_key: patch.value.strip()
-        }
+        assert endpoint_values is not None
+        section_values[("api_settings", raw_section_name)] = endpoint_values
 
     return config_module.LiteralSettingsMutation(
         section_values=section_values,
@@ -1436,7 +1515,20 @@ def parse_console_endpoint_preview(value: str) -> ConsoleEndpointPreview | None:
         classification = "Remote"
     else:
         classification = "Remote/unknown"
+    if "://" not in candidate and port is None and classification != "Local":
+        return None  # TASK-39042: Console display's rule (a pasted key)
 
+    # TASK-38964 review r10e-rev3: Console display's rule. A single label
+    # other than localhost needs a port, or a path after a typed scheme, so a
+    # key pasted into the field is never shown as an authority.
+    if (
+        address is None
+        and "." not in normalized_host
+        and normalized_host != "localhost"
+        and port is None
+        and not ("://" in candidate and parsed.path.rstrip("/"))
+    ):
+        return None
     rendered_host = (
         f"[{normalized_host}]" if ":" in normalized_host else normalized_host
     )
@@ -1449,17 +1541,7 @@ def _is_valid_ascii_hostname(hostname: str) -> bool:
 
     if not hostname.isascii() or len(hostname) > 253:
         return False
-    labels = hostname.split(".")
-    return all(
-        1 <= len(label) <= 63
-        and label[0] != "-"
-        and label[-1] != "-"
-        and all(
-            character.isascii() and (character.isalnum() or character == "-")
-            for character in label
-        )
-        for label in labels
-    )
+    return all(valid_dns_label(label) for label in hostname.split("."))
 
 
 def format_console_endpoint_preview(value: str) -> str | None:

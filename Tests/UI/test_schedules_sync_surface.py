@@ -56,13 +56,13 @@ class _SyncService(MockSchedulingServiceMixin):
         ]
 
     async def sync_now(self, owner_id=None):
-        if self._outcome is not None and self._outcome.status == "ok" and (
-            self._outcome.pulled or self._outcome.pushed
+        if (
+            self._outcome is not None
+            and self._outcome.status == "ok"
+            and (self._outcome.pulled or self._outcome.pushed)
         ):
             # A real transfer records the pull timestamp, like the engine.
-            self.db.update_sync_state(
-                "local", last_pull_at="2026-08-28T12:00:00+00:00"
-            )
+            self.db.update_sync_state("local", last_pull_at="2026-08-28T12:00:00+00:00")
         return self._outcome
 
 
@@ -146,9 +146,7 @@ async def test_failed_sync_reports_failure_not_a_noop():
             (n.message, n.severity) for n in notifications
         ]
         assert "connection refused" in failure[0].message
-        assert not any(
-            "nothing to pull or push" in n.message for n in notifications
-        )
+        assert not any("nothing to pull or push" in n.message for n in notifications)
 
 
 @pytest.mark.asyncio
@@ -179,9 +177,7 @@ async def test_failed_sync_also_surfaces_phase_errors():
         failure = [n for n in notifications if "Sync failed" in n.message]
         assert failure and "connection refused" in failure[0].message
         also = [n for n in notifications if "Automation results pull" in n.message]
-        assert also, [
-            (n.message, n.severity) for n in notifications
-        ]
+        assert also, [(n.message, n.severity) for n in notifications]
         assert also[0].severity == "warning"
 
 
@@ -207,9 +203,7 @@ async def test_sync_key_agrees_with_the_collapsed_bar():
     same predicate instead of running a sync underneath it."""
     service = _SyncService(SyncOutcome("ok", pulled=1, pushed=0))
     app = _App(service)
-    app.runtime_policy = SimpleNamespace(
-        state=SimpleNamespace(active_server_id=None)
-    )
+    app.runtime_policy = SimpleNamespace(state=SimpleNamespace(active_server_id=None))
     async with app.run_test(size=(160, 48)) as pilot:
         workbench = SchedulesWorkbench(app_instance=pilot.app)
         await pilot.app.push_screen(workbench)

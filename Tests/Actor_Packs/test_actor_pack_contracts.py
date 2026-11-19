@@ -8,13 +8,13 @@ from collections.abc import Mapping
 
 import pytest
 
+from tldw_chatbook.Actor_Packs import contracts as actor_pack_contracts
 from tldw_chatbook.Actor_Packs.contracts import (
     ActorPackValidationError,
     actor_pack_content_digest,
     canonical_json_bytes,
     validate_actor_pack_document,
 )
-from tldw_chatbook.Actor_Packs import contracts as actor_pack_contracts
 
 from .conftest import (
     PORTABLE_UUID,
@@ -339,6 +339,45 @@ def test_persona_projection_strips_linked_local_portrait_id() -> None:
     )
     assert payload == decoded
     assert b"character_card_id" not in payload
+
+
+@pytest.mark.parametrize(
+    "rules", [[], [{"rule_kind": "mcp_tool", "rule_name": "fs_*", "allowed": False}]]
+)
+def test_persona_projection_preserves_policy_rules(rules) -> None:
+    payload = actor_pack_contracts.canonicalize_actor_payload(
+        "persona", PORTABLE_UUID, {"name": "Guide", "policy_rules": rules}
+    )
+    assert payload == canonical_json(
+        {
+            "schema": "tldw.actor/v1",
+            "actor_kind": "persona",
+            "portable_uuid": PORTABLE_UUID,
+            "data": {"name": "Guide", "policy_rules": rules},
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "rules",
+    [
+        {},
+        ["invalid"],
+        [{"rule_kind": "unknown", "rule_name": "*"}],
+        [{"rule_kind": "skill", "rule_name": "*", "api_key": "private"}],
+        [{"rule_kind": "mcp_tool", "rule_name": "*", "allowed": "false"}],
+        [{"rule_kind": "mcp_tool", "rule_name": "*", "max_calls_per_turn": True}],
+        [{"rule_kind": "mcp_tool", "rule_name": "*", "max_calls_per_turn": 0}],
+        [{"rule_kind": "mcp_tool", "rule_name": ""}],
+    ],
+)
+def test_persona_projection_rejects_malformed_policy_without_dropping_rules(
+    rules,
+) -> None:
+    with pytest.raises(ActorPackValidationError, match="actor_pack_actor_invalid"):
+        actor_pack_contracts.canonicalize_actor_payload(
+            "persona", PORTABLE_UUID, {"name": "Guide", "policy_rules": rules}
+        )
 
 
 @pytest.mark.parametrize(

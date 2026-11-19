@@ -4,6 +4,7 @@ title: Library focus tests stub a focus path production no longer takes
 status: To Do
 assignee: []
 created_date: '2026-08-28'
+updated_date: '2026-11-15 02:25'
 labels:
   - tests
   - library
@@ -39,3 +40,5 @@ Console decomposition ratchet (#2137)" — its diff shows `-row.focus()` / `+sel
 The extra captured callable is `LibraryScreen._sync_library_ordinary_rail_width_contract`, added to
 `compose_content` at `library_screen.py:12949` by `9de08fa193` (2026-08-26) "feat(library): bound
 ordinary rail geometry", on dev via merge `6bed8d6f59` (PR #2124).
+
+**2026-11-15 (round-14 closeout).** The fake row still fails at the round-14 stack top (c7d4a41717), now one attribute further on: two `test_screen_navigation.py` nodes raise `AttributeError: '_FakeMediaRowButton' object has no attribute 'is_attached'` at `UI/Navigation/base_app_screen.py:208` (run.sh, `-n 4`, with a scratch `bootstrap_profile` stamp so the plain file reaches its assertions). The file's other off-lane reds are TASK-41127's.

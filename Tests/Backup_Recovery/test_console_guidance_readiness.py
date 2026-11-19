@@ -2,7 +2,7 @@
 
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
-_GUIDANCE = r'''
+_GUIDANCE = r"""
 import asyncio
 import os
 from pathlib import Path
@@ -90,7 +90,9 @@ def check_display_pairs(screen):
             'api_settings.openai': {'api_key': ''}})
         return 'draft after credential removal'
     control = screen._build_console_control_state(None)
-    screen._console_composer_or_none = lambda: SimpleNamespace(draft_text=draft)
+    # TASK-33620.15.22: the Workbench reads Send's one readiness rule.
+    screen._console_composer_or_none = lambda: SimpleNamespace(
+        draft_text=draft, has_sendable_payload=lambda: bool(draft().strip()))
     derives.clear()
     actions.clear()
     try:
@@ -181,7 +183,9 @@ async def main():
                 loads.clear()
                 screen._sync_console_transcript_guidance()
                 counts.append(len(derives))
-                assert loads, 'full native-backed config acquisition must still run'
+                assert len(loads) == 1, (
+                    'native config reads in one derivation', len(loads)
+                )
                 assert events[-4:] == ['first_send', 'messages', 'surface', 'modal'], events
                 assert projections[0][1] == projections[1][1]
                 assert screen._console_derivation_memo is None
@@ -267,7 +271,7 @@ asyncio.run(main())
 phase('shutdown_complete')
 assert not blocked_attempts(), blocked_attempts()
 print('retired and reopened')
-'''
+"""
 
 
 def test_native_guidance_is_coherent_and_refreshes_after_real_settings_save(tmp_path):

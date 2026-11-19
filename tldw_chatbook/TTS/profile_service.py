@@ -139,7 +139,7 @@ _AVAILABILITY_RECOVERY: Mapping[
 #: only until its next capability preflight, so "refresh" is a real recovery;
 #: the legacy providers have no catalog to preflight (`observe_availability`
 #: skips them by design), so their "unverified" is permanent and the only
-#: honest action is the inert one -- ADR-031 forbids a control that claims a
+#: honest action is the inert one -- ADR-299 forbids a control that claims a
 #: recovery it can never perform.
 _ALLOWED_RECOVERY_ACTIONS: Mapping[
     ProfileAvailabilityState,

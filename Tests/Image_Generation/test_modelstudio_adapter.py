@@ -71,7 +71,9 @@ def test_modelstudio_sync_no_reference_image(monkeypatch):
     assert res.bytes_len > 0
 
 
-def test_modelstudio_generate_trusts_configured_private_base_host_for_returned_image(monkeypatch):
+def test_modelstudio_generate_trusts_configured_private_base_host_for_returned_image(
+    monkeypatch,
+):
     """The configured base_url may itself be a private/local dashscope-compatible
     proxy (e.g. http://192.168.1.20:8080). An image URL the API returns on that
     SAME host must be trusted through to the byte fetch (task-498: trust
@@ -87,7 +89,13 @@ def test_modelstudio_generate_trusts_configured_private_base_host_for_returned_i
         lambda method, url, **kw: {
             "output": {
                 "choices": [
-                    {"message": {"content": [{"image": "http://192.168.1.20:8080/img/output.png"}]}}
+                    {
+                        "message": {
+                            "content": [
+                                {"image": "http://192.168.1.20:8080/img/output.png"}
+                            ]
+                        }
+                    }
                 ]
             }
         },
@@ -102,9 +110,19 @@ def test_modelstudio_generate_trusts_configured_private_base_host_for_returned_i
 
     monkeypatch.setattr(m, "fetch_image_bytes", fake_fetch_image_bytes)
     req = ImageGenRequest(
-        backend="modelstudio", prompt="lotus", negative_prompt=None, width=None, height=None,
-        steps=None, cfg_scale=None, seed=None, sampler=None, model="qwen-image",
-        format="png", extra_params={"mode": "sync"}, reference_image=None,
+        backend="modelstudio",
+        prompt="lotus",
+        negative_prompt=None,
+        width=None,
+        height=None,
+        steps=None,
+        cfg_scale=None,
+        seed=None,
+        sampler=None,
+        model="qwen-image",
+        format="png",
+        extra_params={"mode": "sync"},
+        reference_image=None,
     )
     res = m.ModelStudioImageAdapter().generate(req)
     assert res.bytes_len > 0
@@ -126,7 +144,15 @@ def test_modelstudio_blocks_returned_image_url_off_the_configured_host(monkeypat
         m,
         "fetch_json",
         lambda method, url, **kw: {
-            "output": {"choices": [{"message": {"content": [{"image": "http://192.168.1.99/other.png"}]}}]}
+            "output": {
+                "choices": [
+                    {
+                        "message": {
+                            "content": [{"image": "http://192.168.1.99/other.png"}]
+                        }
+                    }
+                ]
+            }
         },
     )
 
@@ -135,9 +161,19 @@ def test_modelstudio_blocks_returned_image_url_off_the_configured_host(monkeypat
 
     monkeypatch.setattr(m, "fetch_image_bytes", _must_not_be_called)
     req = ImageGenRequest(
-        backend="modelstudio", prompt="lotus", negative_prompt=None, width=None, height=None,
-        steps=None, cfg_scale=None, seed=None, sampler=None, model="qwen-image",
-        format="png", extra_params={"mode": "sync"}, reference_image=None,
+        backend="modelstudio",
+        prompt="lotus",
+        negative_prompt=None,
+        width=None,
+        height=None,
+        steps=None,
+        cfg_scale=None,
+        seed=None,
+        sampler=None,
+        model="qwen-image",
+        format="png",
+        extra_params={"mode": "sync"},
+        reference_image=None,
     )
     with pytest.raises(ImageGenerationError):
         m.ModelStudioImageAdapter().generate(req)

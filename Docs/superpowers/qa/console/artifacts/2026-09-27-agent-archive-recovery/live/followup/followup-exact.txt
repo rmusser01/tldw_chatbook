@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settin  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Find recently archived chat...                                                                         │
+                  Context ◂  │   Find recently arch…  ✕        Chat 2         ✕    New tab     Temporary                                             │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+ Workspaces             ▾    │  │ Archive events: chat: 2026-09-28T03:12:36.412000+00:00, workspace: 2026-09-28T03:12:36.413192+00:00            │   │
+  Workspace    Default       │  │ Match basis: chat, workspace                                                                                   │   │
+   Switch   New   RAG        │  │ Saved reply for Birch itinerary conversation                                                                   │   │
+   Show Files                │  │                                                                                                                │   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │  │                                                                                                                │   │
+  ▊  Search workspaces    ▎  │  │                                                    Preview                                                     │   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │  │                                                                                                                │   │
+                             │  │                                                                                                                │   │
+                             │  │                                                                                                                │   │
+ ──────────────────────────  │  │                                                    Restore                                                     │▃  │
+ Conversations          ▾    │  │                                                                                                                │   │
+     Archive this chat       │  │                                                                                                                │   │
+      Archived chats         │  │ 2. Linden planning conversation · Atlas Research                                                               │   │
+     Search all chats…       │  │ Chat active · Workspace archived                                                                               │   │◂ Inspect
+   Find recently archived    │  │ Archive events: workspace: 2026-09-28T03:12:36.412929+00:00                                                    │   │
+   chat...                   │  │ Match basis: workspace                                                                                         │   │
+                             │  │ Saved reply for Linden planning conversation                                                                   │   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  │                                                                                                                │   │
+  ▊  Filter      ▎           │  │                                                                                                                │   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  │                                                    Preview                                                     │   │
+                             │  │                                                                                                                │   │
+  Chats                 ▾    │  │                                                                                                                │   │
+         Find         *      │  │                                                                                                                │   │
+   ▢     recently          ▇ │  │                                                    Restore                                                     │▂  │
+         archived            │  │                                                                                                                │   │
+                             │  │                                                                                                                │   │
+   ▢     Chat 2       *      │  │ 3. Maple archival notes · Default                                                                              │   │
+         open                │  │ Chat archived · Workspace active                                                                               │   │
+                             │  │ Archive events: chat: 2026-09-28T03:12:36.401000+00:00                                                         │   │
+                             │  │ Match basis: chat                                                                                              │   │
+ ▼ Character · Model · +2    │  │ Saved reply for Maple archival notes                                                                           │   │
+                             │                                            ▼ reply ready — jump to latest                                             │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent allowed     Provider: llama_cpp     Model: ../../../Working/Langu…     System Prompt: off     Assistant: General     Sou
+
+█  Composer ▾  Menu  Restore the second one.▌                                                                                    Send | $       Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

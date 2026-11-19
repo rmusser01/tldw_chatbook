@@ -102,9 +102,7 @@ class WatchlistsOperationCoordinator:
         )
         self._reconcile_tasks[receipt_id] = reconcile
         reconcile.add_done_callback(
-            lambda finished, key=receipt_id: self._consume_reconciliation(
-                key, finished
-            )
+            lambda finished, key=receipt_id: self._consume_reconciliation(key, finished)
         )
 
     @staticmethod
@@ -134,9 +132,7 @@ class WatchlistsOperationCoordinator:
 
         task.add_done_callback(consume)
 
-    async def accept_checks(
-        self, source_ids: Sequence[int]
-    ) -> list[dict[str, Any]]:
+    async def accept_checks(self, source_ids: Sequence[int]) -> list[dict[str, Any]]:
         """Accept validated checks and schedule only newly won receipts."""
         self._assert_accepting()
         receipts = await self._local_service.accept_source_checks(source_ids)
@@ -379,9 +375,7 @@ class WatchlistsOperationCoordinator:
                 terminalizers.append(terminalizer)
                 self._retain_background(terminalizer)
 
-        pending_terminalizers = {
-            task for task in terminalizers if not task.done()
-        }
+        pending_terminalizers = {task for task in terminalizers if not task.done()}
         if pending_terminalizers:
             remaining = max(0.0, deadline - loop.time())
             done, pending_terminalizers = await asyncio.wait(

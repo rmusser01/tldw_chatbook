@@ -10,11 +10,16 @@ from copy import deepcopy
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from loguru import logger
 
-from .agent_models import ToolCall
+from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY
+
+from .agent_models import (
+    PathAwareToolProvider,
+    ToolCall,
+)
 from .project_instruction_resolver import (
     InstructionPromotionSnapshot,
     InstructionPromotionSnapshotError,
@@ -37,7 +42,8 @@ __all__ = [
     "build_project_instruction_deferral_rows",
     "path_is_excluded",
 ]
-from .tool_catalog import PathAwareToolProvider, ToolCatalogRegistry
+if TYPE_CHECKING:
+    from .tool_catalog import ToolCatalogRegistry
 
 PROJECT_INSTRUCTION_ROW_KEY = "_chatbook_project_instruction_row_key"
 _PROJECT_INSTRUCTION_ORIGIN = "project_instructions"
@@ -164,7 +170,7 @@ def build_project_instruction_deferral_rows(
         {
             "role": "tool",
             "tool_call_id": call.call_id,
-            "name": call.name,
+            **({"name": call.name} if not call.call_id else {}),
             "content": _DEFERRAL_TEXT,
         }
         for call in calls
@@ -383,9 +389,8 @@ class InstructionActivationLedger:
         self, prepared: InstructionPromotionSnapshot
     ) -> PromotionSnapshotRevalidation:
         """Recompute and compare every authority-bearing snapshot field."""
-        if (
-            isinstance(self._snapshot.binding_root, RemoteRoot)
-            or isinstance(prepared.binding_root, RemoteRoot)
+        if isinstance(self._snapshot.binding_root, RemoteRoot) or isinstance(
+            prepared.binding_root, RemoteRoot
         ):
             # Remote promotion is never created (see snapshot_promotion_target)
             # and always revalidates ineligible — before any path work on
@@ -491,9 +496,7 @@ class InstructionActivationLedger:
                     if target.path is None:
                         continue
                     path = target.path.absolute()
-                    call_targets.add(
-                        path.parent if target.kind == "exact" else path
-                    )
+                    call_targets.add(path.parent if target.kind == "exact" else path)
             except Exception:  # noqa: BLE001 - untrusted provider mapping boundary
                 outside = True
                 continue
@@ -857,3 +860,28 @@ def _is_safe_relative_label(value: str) -> bool:
         and ".." not in posix.parts
         and ".." not in windows.parts
     )
+
+
+def consent_decision(confirm: Callable[[Any], object] | None, snapshot: Any) -> str:
+    """Ask the project-instruction consent callback, failing closed.
+
+    Args:
+        confirm: The run's consent callback, or None when it has none.
+        snapshot: The instruction snapshot the callback decides on.
+
+    Returns:
+        ``"proceed"``, ``"cancel"`` or ``"disable"``. A missing callback, an
+        unknown answer or a raising callback cancels; a raise is logged by
+        exception type only, never its text (TASK-41312).
+    """
+    if confirm is None:
+        return "cancel"
+    try:
+        decision = confirm(snapshot)
+    except Exception as exc:  # noqa: BLE001 - consent failures are content-free
+        logger.warning(
+            "project instruction consent failed; run cancelled (exception_type={})",
+            type(exc).__name__,
+        )
+        return "cancel"
+    return decision if decision in {"proceed", "cancel", "disable"} else "cancel"

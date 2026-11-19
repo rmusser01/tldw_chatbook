@@ -1,0 +1,13 @@
+{
+  "before_revision": "022e3e54353ada2eb5e271247144df6527df7dcb",
+  "moved_from": "tldw_chatbook/Utils/app_shutdown.py",
+  "moved_to": "tldw_chatbook/app_shutdown.py",
+  "calls": 24,
+  "identical_text_fingerprints": 23,
+  "normalized_spelling_change": {
+    "before": "f\"Cancelled {cancelled} in-flight Dreams track \" f\"check(s)\"",
+    "after": "f\"Cancelled {cancelled} in-flight Dreams track check(s)\"",
+    "qualification": "Adjacent literal concatenation normalized by formatter; identical AST, interpolated value, emitted text and level."
+  },
+  "qualification": "All24 calls preserve semantics; sink topology unchanged. Existing interpolation is not newly introduced."
+}

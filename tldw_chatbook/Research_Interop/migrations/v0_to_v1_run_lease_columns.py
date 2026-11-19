@@ -41,7 +41,5 @@ def apply(conn: sqlite3.Connection) -> None:
     }
     for column, declaration in LEASE_COLUMNS:
         if column not in existing:
-            conn.execute(
-                f"ALTER TABLE research_runs ADD COLUMN {column} {declaration}"
-            )
+            conn.execute(f"ALTER TABLE research_runs ADD COLUMN {column} {declaration}")
     conn.execute(f"PRAGMA user_version = {TARGET_VERSION}")

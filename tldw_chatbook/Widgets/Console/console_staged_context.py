@@ -14,6 +14,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Chat.citation_evidence_models import PARTIAL_EXCERPT_TITLE_SUFFIX
 from tldw_chatbook.Chat.console_display_state import ConsoleStagedContextState
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
@@ -105,8 +106,12 @@ class ConsoleStagedContextTray(RecomposeCaptureGuard, Vertical):
 
         if self.state.source_rows:
             for index, row in enumerate(self.state.source_rows):
+                # TASK-41102: the one-row button clips long titles, so a cut
+                # excerpt says Partial beside its status word, not at the end.
+                title = row.title.removesuffix(PARTIAL_EXCERPT_TITLE_SUFFIX)
+                partial = "Partial · " if title != row.title else ""
                 primary = Button(
-                    Text(f"{row.status.title()} · {row.title} · {row.source_type}"),
+                    Text(f"{row.status.title()} · {partial}{title} · {row.source_type}"),
                     id=f"console-staged-source-primary-{index}",
                     classes=(
                         "console-staged-source-primary "

@@ -29,18 +29,25 @@ content (see [Media & Conversations](media-and-conversations.md)).
 In server mode the **Export** rail row is disabled, with the tooltip
 "Export packages local content only."
 
+From another screen, press **Ctrl+P** and choose **Library: Import…** or
+**Media & Content: Import New Media** to open the same form.
+
 ## Layout tour
 
 ![Import media](../images/library/import-media.svg)
 
 **Import media**, top to bottom:
 
-- **Header** — "Import media", then a target line ("Imports run on this
-  machine." / "Imports run on the server."). When a server is available, a
-  switch button ("Import on the server" ↔ "Import on this machine")
-  follows the line.
-- **Path field** — "Path to a local file or a URL…", with "Browse…" and
-  (once something is typed) "Clear". On a fresh visit, two orientation
+- **Header** — "Import media". When a server is configured, a target line
+  follows ("Imports run on this machine." / "Imports run on the server.", or,
+  while the Library is local, "Imports run on this machine. Switch the
+  Library to server mode to import on the server."), and in server mode a
+  switch button ("Import on the server" ↔ "Import on this machine") follows
+  the line. With no server configured there is no target line.
+- **Path field** — labelled "File, folder or URL to import", with the
+  placeholder "Path to a local file or a URL…", "Browse…" and
+  (once something is typed) "Clear", which empties the field and leaves
+  the caret in it. On a fresh visit, two orientation
   lines sit below: "Import a file, a whole folder, or a URL. Supported:
   PDF documents, Word/Office documents, audio/video files, e-books,
   images, plain text files, web pages." and "Imported items are
@@ -52,7 +59,23 @@ In server mode the **Export** rail row is disabled, with the tooltip
   time), any "⚠" warnings about missing tooling, and — if some files
   can't be handled — "2 unsupported files will be skipped: …" (importing
   on the server, the same line reads "will fail", because that backend
-  records a failure row rather than skipping quietly). The pre-check does
+  records a failure row rather than skipping quietly). A path may start
+  with `~` (`~/Documents/paper.pdf` is read as your home folder's
+  `Documents/paper.pdf`). A path that cannot be found shows one line under
+  the field — "Can't find that path — check it, or use Browse… to pick a
+  file or folder." — with a "Choose a file…" button. Enter (and Start
+  import) start an import only once the pre-check for what is in the field
+  has finished; pressing Enter while "Checking…" is shown starts the import
+  when the check lands, and never when the check says the path is wrong.
+  When the check has refused what is in the field — it could not find the
+  path, or the folder is empty or holds nothing it can import — the footer
+  reads "enter check this path": Enter re-runs the check (so a file you
+  have just created or added to the folder is picked up) and imports if it
+  now passes. Leaving the Import canvas, picking a different file with
+  Browse…, or any screen that opens over the Library — F1 help, the Ctrl+P
+  palette, any dialog, and the Browse… picker even when you cancel it —
+  cancels a waiting Enter: nothing imports until you press again.
+  The pre-check does
   **not** contact a URL: it reads the address, not the site, so nothing is
   fetched while you are still typing one. A URL that turns out not to be
   fetchable is reported by the import job itself, where the failure carries
@@ -63,7 +86,8 @@ In server mode the **Export** rail row is disabled, with the tooltip
   reports one plain "The link could not be checked ahead of time. The
   import will still be attempted." A link that answers but says the page
   does not exist still reports "URL unreachable — the server says this page
-  does not exist (HTTP 404).") When the import is
+  does not exist (HTTP 404)." The check obeys your `[web_security]`
+  settings and follows no redirects.) When the import is
   aimed at the server, the missing-tooling block is replaced by a single
   quiet note ("1 local component isn't installed — that affects imports
   on this machine only; this one runs on the server."): those extras
@@ -72,6 +96,9 @@ In server mode the **Export** rail row is disabled, with the tooltip
 - **Options** — "Expand all" / "Collapse all", then one fold per detected
   content type. An untouched fold uses only its short type name; after you
   change a setting, its title becomes a concise receipt of those changes.
+  A title also leads with a value that needs fixing ("⚠ Chunk size needs
+  fixing") and names options a missing package blocks ("Audio & video —
+  13 options unavailable — needs faster-whisper installed").
   Word/Office
   documents (.doc/.docx/.odt/.rtf) get their own fold; the Plain text &
   HTML fold's Analyze/Chunk/Encoding options still apply to them as the
@@ -133,6 +160,8 @@ In server mode the **Export** rail row is disabled, with the tooltip
   walked its subfolders in — then `active` plus exact state counts
   (`1 queued · 1 done · 1 failed`) rather than adding a contradictory
   `running` synonym. Empty state: "No import jobs yet."
+  When a batch settles, one notification sums it up ("Import finished —
+  3 imported · 1 failed"), not one per file.
   When jobs are left needing attention, the Library landing's card names
   the counts rather than just flagging them: "Last import: 4 files
   failed, 2 skipped." with a **Review** button back to the queue.
@@ -148,7 +177,7 @@ In server mode the **Export** rail row is disabled, with the tooltip
   "Press again to replace form" confirmation before replacing an edited draft.
 
 **Export bundle (.zip)** is a single form: the "Export bundle (.zip)"
-header, a scope line ("Everything: 128 media · 542 conversations · 87 notes · 34
+header, a scope line ("Everything: 128 media items · 542 conversations · 87 notes · 34
 prompts", or "Prompts · 34 items" when you arrived scoped; "Counting…" while
 it tallies), the "Export name" and "Description (optional)" fields, a
 "quality: …" chooser with a helper line matching whichever option is
@@ -160,17 +189,22 @@ used to show regardless of the selected option) (shown only when media is
 in scope), "Choose destination…"
 above "No destination chosen", and the "Export bundle (.zip)" submit
 button. The chooser opens on **original** — full fidelity — so a bundle
-only loses content when you ask it to (task-32353).
+only loses content when you ask it to (task-32353). Skills and Collections
+captures are never part of a bundle.
 
 Directly above the submit button, two quiet lines say what pressing it
 will write, before you press it (task-32353): a **bundle line** —
-"Bundle: 2 media items · text only · about 4 KB before compression" —
+"Bundle: 2 media items · text + keywords only · about 4 KB before compression" —
 naming how many items are going in, what the archive holds for each of
 them, and how much content that is (the written `.zip` is smaller; the
-receipt after the run reports that file's own size). "text only" is not a
-summary of the quality chooser: whatever that control is set to, a bundle
-holds each item's stored text plus its details, never the original media
-file — the Library does not keep a path to one. The line is absent when
+receipt after the run reports that file's own size). "text + keywords only"
+is not a summary of the quality chooser: whatever that control is set to, a
+bundle holds each item's stored text, its details and its keywords, never
+the original media file — the Library does not keep a path to one. Keywords
+on media, notes and conversations travel in the bundle and come back on
+import. Every scope that can include media — Media and Everything — keeps
+the "only"; the Notes, Conversations and Prompts scopes, which carry no
+media, read "text + keywords". The line is absent when
 the scope is empty, where "Nothing to export in this scope." is the only
 thing worth saying. And a
 **contents list** naming the items themselves, up to 20 of them, then
@@ -241,13 +275,13 @@ checkpoint before any tool is allowed to run, as required by
 | Import control | What it does |
 |---|---|
 | "Browse…" | Opens the "Import media" file picker (remembers your last folder). Large folders [load progressively with progress and sorting controls](../file-picker.md). The listing shows Name / Size / Modified column headers, human-readable sizes ("512 B", "2.4 MB", never a bare byte count), no size on folder rows (including ".."), and a labeled "File name:" input at the bottom. That input is also the path field: type or paste an absolute path (or one starting with "~") into it and the listing jumps there as you type, and Ctrl+A selects what is in it. Folders and URLs are typed or pasted into the canvas's own path field instead. |
-| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. Audio/video warnings follow the selected transcription provider; alternative backends and retired MLX providers are not requirements. Auto uses faster-whisper; choose Parakeet (ONNX) or transcribe.cpp explicitly to use that installed backend. A compact "Copy install command" button sits right under the warnings (with several distinct commands, each button names its extra, e.g. "Copy install command (audio)", "Copy install command (video)"). Copy checks native clipboard delivery where available. If delivery cannot be confirmed, the warning details open so you can select the literal command manually. |
+| Pre-check warnings ("⚠ …") | Name a missing optional package, what it's needed for, and the install command that fixes it. Audio/video warnings follow the selected transcription provider; alternative backends and retired MLX providers are not requirements. Auto uses faster-whisper; choose Parakeet (ONNX) or transcribe.cpp explicitly to use that installed backend. The summary shows one "⚠" line counting the affected files ("⚠ 3 of 21 files need optional tooling — those imports may fail."), a "Copy install command" button that copies one command installing every missing extra, and a collapsed "What's missing" fold holding each warning. A compact "Copy install command" button sits right under the warnings (with several distinct commands, each button names its extra, e.g. "Copy install command (audio)", "Copy install command (video)"). Copy checks native clipboard delivery where available. If delivery cannot be confirmed, the warning details open so you can select the literal command manually. |
 | "Choose a file…" / "Retry" | Offered under pre-check errors — pick a different path, or re-run the check after a network hiccup. |
-| Per-type options | Every dropdown shows a plain-language choice (the internal value still travels to the pipeline). PDF documents: "PDF engine" ("PyMuPDF (plain text)" / "PyMuPDF4LLM (Markdown)" / "Docling (layout-aware · OCR-capable)" / "Docext (vision-model OCR)"), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" ("Auto (let Docext choose)" / Docext / Tesseract / EasyOCR / PaddleOCR / Docling — docext engine only). Word/Office documents: "Processing method" ("Auto (Docling when installed)" / Docling / "Native per-format parser"), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" ("Auto (faster-whisper)" / "Parakeet (ONNX)" / "Faster Whisper" / "transcribe.cpp (GGUF)"), "Local Parakeet model folder", "Transcription model" (the full faster-whisper catalog — Tiny through Large v3 including the English-only ".en" variants, the distilled "Distil" family, and the community "Large v3 Turbo" / "CrisperWhisper" builds), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter", "Start at" / "Stop at" (trim bounds, HH:MM:SS or seconds — blank means unbounded; "Stop at" is an absolute position in the recording, not a length measured from "Start at", and means the same thing for audio and video files), "Cookies file for gated URLs" (a Netscape cookies.txt path for yt-dlp; video URLs only — the file must exist when the job runs, otherwise the import proceeds without cookies and the queue row says "cookies ignored: …"), "Recursive summary (map-reduce)" (with Analyze after import + chunking: summarizes each chunk, then combines the summaries). E-books: "Extraction method" ("Filtered (skips covers & front matter)" / "Markdown (keeps headings & structure)" / "Basic (every section · plain text)"), "Chunking method" ("By chapter" / "By sentence" / "By word count" / "By paragraph"), "Include table of contents". Images (.png/.jpg/.jpeg/.gif/.webp/.bmp/.tiff/.tif): "Extract text (OCR)" (on by default — the extracted text is what gets imported), "OCR language", "OCR backend" ("Auto (best installed backend)" / "Docext (vision model)" / Docling / Tesseract / EasyOCR / PaddleOCR). Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch" ("This page only" / "Site map" / "Pages under this URL" / "Follow links (recursive)"), "Maximum pages", "Maximum depth". |
+| Per-type options | Every dropdown shows a plain-language choice (the internal value still travels to the pipeline). PDF documents: "PDF engine" ("PyMuPDF (plain text)" / "PyMuPDF4LLM (Markdown)" / "Docling (layout-aware · OCR-capable)" / "Docext (vision-model OCR)"), "Enable OCR (docling or docext engines only)", "OCR language", "OCR backend" ("Auto (let Docext choose)" / Docext / Tesseract / EasyOCR / PaddleOCR / Docling — docext engine only). Word/Office documents: "Processing method" ("Auto (Docling when installed)" / Docling / "Native per-format parser"), "Enable OCR (docling method only)", "OCR language". Audio & video: "Transcription provider" ("Auto (faster-whisper)" / "Parakeet (ONNX)" / "Faster Whisper" / "transcribe.cpp (GGUF)"), "Local Parakeet model folder", "Transcription model" (the full faster-whisper catalog — Tiny through Large v3 including the English-only ".en" variants, the distilled "Distil" family, and the community "Large v3 Turbo" / "CrisperWhisper" builds), "Language", "Translate to English (via faster-whisper)", "Include timestamps", "Speaker diarization", "Voice activity detection (VAD) filter", "Start at" / "Stop at" (trim bounds, HH:MM:SS or seconds — blank means unbounded; "Stop at" is an absolute position in the recording, not a length measured from "Start at", and means the same thing for audio and video files), "Cookies file for gated URLs" (a Netscape cookies.txt path for yt-dlp; video URLs only — the file must exist when the job runs, otherwise the import proceeds without cookies and the queue row says "cookies ignored: …"; the import only reads the file and never deletes it), "Recursive summary (map-reduce)" (with Analyze after import + chunking: summarizes each chunk, then combines the summaries). E-books: "Extraction method" ("Filtered (skips covers & front matter)" / "Markdown (keeps headings & structure)" / "Basic (every section · plain text)"), "Chunking method" ("By chapter" / "By sentence" / "By word count" / "By paragraph"), "Include table of contents". Images (.png/.jpg/.jpeg/.gif/.webp/.bmp/.tiff/.tif): "Extract text (OCR)" (on by default — the extracted text is what gets imported), "OCR language", "OCR backend" ("Auto (best installed backend)" / "Docext (vision model)" / Docling / Tesseract / EasyOCR / PaddleOCR). Plain text & HTML: "Analyze after import", "Chunk content", "Chunk size", "Chunk overlap", "Encoding". Web pages (URLs): "What to fetch" ("This page only" / "Site map" / "Pages under this URL" / "Follow links (recursive)"), "Maximum pages", "Maximum depth". |
 | PDF / document OCR | The OCR checkbox is inert under engines that cannot OCR — the label names the capable ones. "OCR language" rides the OCR toggle; the PDF "OCR backend" applies to the docext engine only. |
 | Inert (grayed) options | Any option whose precondition isn't met renders dimmed on a darker field AND says why at its label — "Local Parakeet model folder — needs the parakeet-onnx provider", "Maximum pages — single-page fetch selected", "Chunk size — needs Chunk content on", "OCR language — needs Enable OCR on"; a missing optional package reads "— needs <package> installed". Flip the named gate and the field wakes up. |
 | "Translate to English" | Transcribes audio/video into English regardless of the spoken language. Runs via faster-whisper — the toggle is inert under parakeet-onnx and transcribe-cpp, which cannot translate. |
-| Image imports | An image's imported content is the text OCR finds in it, so OCR needs a backend installed (any one of docling, tesseract, easyocr, paddleocr, or docext — the pre-check "⚠" warning carries an install command when none is present). An image with OCR off, or in which OCR finds no text, fails its row honestly ("No text was found in …") instead of storing an empty, unsearchable entry. Images import locally only — a server-mode submission refuses them, since the server's ingest API has no image type. The Images fold applies to image FILES: a link to an image (`https://…/chart.png`) is pre-checked and imported as a web page, because the URL pipeline fetches and clips pages and has no image-download step. |
+| Image imports | An image's imported content is the text OCR finds in it, so OCR needs a backend installed (any one of docling, tesseract, easyocr, paddleocr, or docext — the pre-check "⚠" warning carries an install command when none is present). PaddleOCR counts only with `paddle` installed beside it, and docext only with one of `gradio_client`, `transformers` or `openai`. An image with OCR off, or in which OCR finds no text, fails its row honestly ("No text was found in …") instead of storing an empty, unsearchable entry. Images import locally only — a server-mode submission refuses them, since the server's ingest API has no image type. The Images fold applies to image FILES: a link to an image (`https://…/chart.png`) is pre-checked and imported as a web page, because the URL pipeline fetches and clips pages and has no image-download step. |
 | E-book "Chunking method" | "chapters" (the default) stores one retrieval chunk per chapter; sentences / words / paragraphs chunk by that unit using the Chunk size/overlap values. Chapter chunking now works for PDFs and other documents too, not just e-book files — the same engine method underlies both, so a PDF imported with the chapter scheme is split by its headings/chapters rather than rejected or silently re-split. |
 | Web "What to fetch" on a local import | The multi-page methods (sitemap / url_level / recursive_scraping) run only on the server. Selecting one while importing on this machine shows "Multi-page fetch runs on the server — this local import fetches one page." right under the control. |
 | "Analyze after import" | Runs an LLM summary of each imported item, stored alongside it (visible from the media viewer's analysis panel). The whole `[analysis_defaults]` section travels — provider, model, temperature, top_p, min_p, max_tokens, system_prompt — so the stored analysis matches what the Media analysis panel would produce under the same config; the key comes from `[api_settings.<provider>]` or the provider's usual environment variable. The toggle's state rides the collapsed **"Import behavior"** panel's own title even while the fold is closed — "Import behavior · analysis on" / "· analysis off" — so the setting is not hidden inside a fold you have to open to check. When the option is on but no provider is callable — including a configured provider the analysis pipeline cannot dispatch ("provider 'X' is not supported for ingest analysis") — a line above Start says so ("Analyze after import is on, but … Imports will run without analysis.") and finished rows read "Imported name — analysis skipped: <reason>". If the analysis call itself fails (provider error), the import still succeeds and the row reads "Imported name — analysis failed: <reason>" instead of silently storing nothing (or worse, the error text). Once a provider IS configured, an **"Analyze N skipped"** button appears above the queue — one action, over every analysis-skipped id currently in the queue (not per batch), so a 40-item run left skipped by a missing provider does not mean 40 manual Reader visits. Pressing it runs the same Select-mode Analyze worker; each fixed row's line updates in place to "✓ analyzed · name" or "✗ analysis failed · name · reason". If one of the ids turns out to already carry an analysis (fixed some other way since the import completed), that id is skipped automatically and a notice says how many ("2 already analyzed · skipped") rather than silently overwriting it or arming a choice on a canvas you are not viewing; if every id already has one, the press says "Nothing left to analyze" and runs nothing. The button stays absent while no provider is callable, and disables for the duration of a run; leaving Library mid-run reports where it stopped and how to continue it. |
@@ -256,7 +290,7 @@ checkpoint before any tool is allowed to run, as required by
 | "Chunking template" — "Auto" | The picker's other choice, listed right after "None (manual settings)": let the app pick the chunking scheme per item. Auto decides in three steps and always lands somewhere: (1) if one of your templates carries a **classifier block** that matches the item (its `media_types`, plus optional `filename_regex` / `title_regex` / `url_regex`, cleared its `min_score`), the highest-scoring match wins and runs in full — preprocessing, chunking and postprocessing, indistinguishable from picking it by hand; (2) otherwise a media-type-aware plan from the same auto planner the server uses derives the method/size/overlap; (3) if that declines too, today's plain defaults apply — Auto never fails an import, it can only explain why it declined. Templates opt in by carrying a classifier block: a template without one is never auto-picked (the built-ins ship without blocks, so nothing changes until you author one), and blocks are added through the template authoring path in RAG Admin / the service layer. The name "auto" is reserved — you cannot create or rename a template to it — so the choice can never be shadowed by a row. The decision is recorded per item and **re-decided, not replayed**: a later re-chunk re-runs the selection against the current template store (add, delete or re-score classifier blocks and the re-chunk follows the new outcome), and the item's stored record is re-stamped to say what the re-chunk actually used. Auto is exclusively this picker choice — the `[chunking] default_template` config key never triggers it (a configured default is an ordinary template name). |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
-| "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Importing on the server adds one more: a selection this machine reads perfectly well but that backend will not take at all (a folder of nothing but images) gates Start with "Nothing in this selection can be sent to the server — 3 files unsupported by the server. Switch to importing on this machine, or choose video, audio, document, PDF or e-book files." — a different sentence from the one above, because the files are fine and the destination is the problem. None of these leaves a failed row behind: the import never starts. |
+| "Start import" | Queues everything the pre-check found. If overridable "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Missing selected transcription runtimes block Start; unavailable model files or VAD block queue creation with a repair instruction. These requirements cannot be overridden by a second Start press. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Importing on the server adds one more: a selection this machine reads perfectly well but that backend will not take at all (a folder of nothing but images) gates Start with "Nothing in this selection can be sent to the server — 3 files unsupported by the server. Switch to importing on this machine, or choose video, audio, document, PDF or e-book files." — a different sentence from the one above, because the files are fine and the destination is the problem. None of these leaves a failed row behind: the import never starts. |
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "– skipped · name · reason" for a file the pipeline never attempted (an unsupported type), "⊘ cancelled · name" when stopped on purpose. The reason is always plain language and carries its next step on the same line where one exists — a worker that cannot start on this machine reads "The import worker couldn't start on this machine (system resource limit) · Restart the app, then Retry", never a raw errno. Server jobs carry an " · on server" suffix. |
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error — offered on **every** failed row that has one, including failures with no structured reason; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. A skipped row is never offered Retry: the file would be skipped again. |
 | "Show details" | Opens inline under the row: a plain-language reason ("Reason: No text could be extracted." / "The file couldn't be read." / "The file is empty." / "The Library couldn't be written to."), the full message when it says more than the row line, the underlying tool output once (never repeated between the message and the chain), and — only when a retry could actually change the outcome — one line of advice derived from that same reason. A deterministic failure whose text actually named a remedy says so ("Retrying now will fail the same way — install the tooling named above first, then Retry."); when nothing on screen named one, the advice states the determinism without inventing a remedy ("Retrying now will fail the same way — this file's content, or the tooling for it, has to change first."); a named missing package is named ("Missing dependency: pymupdf. Install it, then Retry."); and a cause we can't classify says nothing rather than encouraging a retry that would repeat itself. When a failure carries no structured reason at all, the expansion shows the underlying text verbatim — that is where an errno, a spawn error, or a tool's own output lives, out of the row line but one press away. Pressing it keeps the keyboard on the button you pressed — it toggles to "Hide details" under your finger and Tab from there walks on into the queue, never back up to the "Keywords (optional)" field of the next import. The same holds for a grouped row's "Show the N files". |
@@ -275,14 +309,42 @@ choosing an unusable model leaves it failed. If the retry removes the focused
 row action, focus returns to the source field. A newer focus move or navigation
 away from Import is respected when model validation finishes.
 
+For local audio/video imports, the summary beside **Start import** names the
+transcription backend and effective model. **Auto** uses
+`[transcription] default_model`: fresh installs use `base`; existing configured
+choices, including `distil-large-v3`, are preserved. Choosing **Faster Whisper**
+explicitly uses the **Transcription model** selection instead. Custom model paths
+are shown as “custom model” in the summary; server imports use server settings.
+Each local Auto submission keeps the model shown when Library was opened,
+including while queued. Restart Chatbook after editing `default_model` externally
+to load the new choice; saved settings and the Auto selection stay unchanged.
+
 **Parakeet setup:** Installing the Python package adds the transcription runtime;
 it does not download the model files. In the Audio & video options, select
 "Parakeet (ONNX)", then press "Install verified Parakeet v2 INT8 (630.6 MiB)…"
 and confirm the displayed download plan. This installs the English v2 INT8 model
 and selects it for the batch. Leave "Local Parakeet model folder" blank to use
 the model installed through Chatbook; that field is an optional override for
-model files you already have. The install button downloads v2 INT8 specifically,
+model files you already have. Its "Browse…" button picks a folder and fills
+in only that field; the rest of your draft stays as it is.
+The install button downloads v2 INT8 specifically,
 so use English and INT8 with that bundle.
+
+Before a local audio/video import starts, Chatbook checks the selected runtime
+and model files. A missing selected runtime blocks Start and provides an install
+command for Chatbook's Python environment. Selecting a different installed
+provider does not require installing the alternatives. Restart after installing
+packages so the running app can detect them.
+
+Model files are separate from Python packages. Missing or incomplete Faster
+Whisper caches (including missing vocabulary files) report a model-download
+remedy; catalog model IDs, including distilled and community models, include an
+explicit download command. These checks do not download anything automatically.
+Missing Parakeet models point to **Lab > Models** or the matching local folder;
+a missing **Silero VAD** is identified separately with its install remedy.
+External Parakeet folders still offer the existing VAD install-consent dialog.
+An unsuccessful check keeps your import draft and queues no jobs. Server-targeted
+imports use the server's environment and are not blocked by missing local STT tools.
 
 For native clipboard copying on Fedora Wayland, install
 [`wl-clipboard`](https://packages.fedoraproject.org/pkgs/wl-clipboard/wl-clipboard/)
@@ -291,7 +353,7 @@ SSH and browser sessions use the client-facing clipboard route; terminal or
 browser permissions can prevent delivery. An unconfirmed-copy warning leaves
 the command visible for manual selection.
 
-**Consent for risky imports** — starting with "⚠" tooling warnings
+**Consent for risky imports** — starting with overridable "⚠" tooling warnings
 outstanding takes two presses, right at the Start button (task-3314
 retired the old "Some files may fail to import:" dialog). The first press
 converts the line beside Start into "⚠ Press Start again to import anyway
@@ -304,8 +366,10 @@ press — button or Enter,
 they behave identically — starts the import. You can arm with Enter in
 the path field and confirm with the Start button, or the other way
 round; moving focus between the two presses does not cancel anything.
-Starting anyway is safe: affected files simply fail individually and show
-up as ✗ rows you can retry after installing. Esc backs out of the pending
+Selected transcription runtime, model and VAD requirements must be repaired
+before queue creation; this confirmation cannot override them. For the remaining
+tooling warnings, starting anyway is safe: affected files simply fail individually
+and show up as ✗ rows you can retry after installing. Esc backs out of the pending
 confirm (and stays on the form); editing the path, changing an option,
 picking a different file with "Browse…", or a pre-check that comes back
 different also cancels it. The "Copy install command" buttons stay under
@@ -325,8 +389,8 @@ destination, or leaving the Import canvas cancels pending consent.
 | Export control | What it does |
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
-| "quality: original" | Opens on "original" (full fidelity, task-32353). Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
-| "Bundle: N media items · text only · about X KB before compression" | What pressing Export will actually write: how many items go in, what the archive holds for each (stored text and details — never the original media file, whatever the quality chooser says), and how much content that is. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. The count is the items still exportable, so a selection whose item was trashed underneath reports what will really be written. Absent for an empty scope. Appears once counting finishes. |
+| "quality: original" | Opens on "original" (full fidelity, task-32353). Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. While the strip is open, the narrow-stage **‹ Library** return is disabled until the strip closes. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
+| "Bundle: N media items · text + keywords only · about X KB before compression" | What pressing Export will actually write: how many items go in, what the archive holds for each (stored text, details and keywords — never the original media file, whatever the quality chooser says — the "only" stays on every scope that can include media, Everything included; the Notes, Conversations and Prompts scopes read "text + keywords"), and how much content that is. Keywords on media, notes and conversations travel in the bundle and come back on import. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. The count is the items still exportable, so a selection whose item was trashed underneath reports what will really be written. Absent for an empty scope. Appears once counting finishes. |
 | The contents list | The titles of the items going into the bundle, up to 20, then "+ N more". Absent when the scope's items cannot be enumerated before the run. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). A destination that cannot be written is refused right there, with the reason on the line under the button and nothing accepted — "Can't save there: The folder \<path\> does not exist.", "… \<name\> is a file, not a folder.", "… That name is a folder." |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, the reason is printed on the line directly below the button AND repeated in its tooltip (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |
@@ -340,10 +404,6 @@ destination, or leaving the Import canvas cancels pending consent.
    file, wait for the type breakdown, then press "Start import". When the
    row reads "✓ done", press "Open in Library" to view it. The reader opens
    on the new item and the middle Items list lands populated alongside it.
-
-*Verified against fix/library-uat-31796-31797 — 2026-09-06 (task-31797: the
-"Open in Library" deep-link now loads the Items page instead of leaving it on
-"0 of 0 · type: None / No page loaded").*
 2. **Import a whole folder** — Type or paste the folder's path into the
    path field (the "Browse…" picker selects single files only). Review the
    breakdown and size estimate — folder scans stop at 1,000 files and note
@@ -374,15 +434,15 @@ destination, or leaving the Import canvas cancels pending consent.
    collection. Choose the rail's **Export** row for `Everything` when the bundle
    should also include media, conversations, and notes.
 7. **Retry a failed job** — Find the "✗ failed" row in the Queue and press
-   "Retry"; the new attempt shows a **" · attempt 2"** suffix (then
-   " · attempt 3", and so on — the label counts attempts, not retries, so
-   the first retry reads 2). No Retry button
+   "Retry"; the requeued row shows a **" · retry 1"** suffix (then
+   " · retry 2", and so on). No Retry button
    means the failure is permanent (unsupported type or missing file) — fix
    the source and start a fresh import, and use "Dismiss" to drop the row.
    A URL your web-security settings refuse fails with a plain receipt:
    "URL blocked — your web-security settings don't allow fetching this
    address. To allow it, add the host to allowed_hosts under web_security
-   in config.toml."
+   in config.toml." When the refused address can be read back, the receipt
+   names it in place of "this address".
 
 ## Keyboard & commands
 
@@ -407,7 +467,11 @@ and recovery actions first, and F1 lists the same state-derived set:
 `enter check this path` / `enter start import`, `esc back`, and, when
 available, `r retry`.
 
-The Export form has no screen-specific shortcuts. **Escape** also closes
+The Export form has no screen-specific shortcuts. **Escape** there returns
+to the canvas whose export action opened it, or to the Library landing when you
+came from the rail, and the footer names that destination; while the
+quality strip is open the footer reads `enter choose quality` /
+`esc cancel` instead. **Escape** also closes
 the Parakeet install dialog. Global keys live in the
 [guide index](../index.md).
 
@@ -516,6 +580,12 @@ imported items afterwards.
 - **Export is local-only.** In server mode the rail's Export row is
   disabled ("Export packages local content only.") — switch the Library
   back to local to package content.
+- **Mix-ins keep their own identity.** Their Chatbook Prompt records use version
+  2 and preserve the exact stored definition, literal body and placement. Prompt
+  and Recipe records remain version 1. Imported library entries are not enabled
+  in a chat. Mix-in Markdown uses a distinct JSON envelope; malformed or unknown
+  versions fail without falling back to an ordinary Prompt. See
+  [portable mix-in definitions](prompts.md#portable-mix-in-definitions).
 - **Prompt records are portable, not database backups.** They preserve current
   Prompt/Recipe content, separate System/User lanes, keywords, type/format/schema,
   and stored definition. They exclude source IDs/UUIDs, versions, source
@@ -527,620 +597,8 @@ imported items afterwards.
   show**; a failure whose reason arrived with nothing behind it offers no
   "Show details" at all. Infrastructure failures that stop the import
   worker before it reads a single file are the case you are most likely to
-  meet: they surface as a raw system message on the row ("Parse pool could
-  not start: [Errno 28] No space left on device", which on macOS usually
-  means exhausted POSIX semaphores rather than a full disk) with no details
-  row and no plain-language remedy. Mapping those to a readable reason with
-  a next step is tracked as task-32054.
-
-—
-
-*Verified against dev @ 4acb17a0b — 2026-08-07 (TASK-2857: the rail
-button/canvas title/Start button/completion toast all read "Import…" /
-"Import media" / "Start import" / "Import finished" — was "Add content…"
-/ "Import media" / "Start ingest" / "Ingest finished"; the Export form
-reads "Export bundle (.zip)" everywhere it used to say "Export chatbook";
-option labels and dialogs say "import" instead of "ingest" throughout)*
-
-*Verified against dev @ 6b38a13b8 — 2026-08-07 (task-2858 AC#3:
-the Export button's disabled state now always carries an explaining
-tooltip, and a successful export leaves the durable "Last export: …"
-line described above — previously an empty-scope/no-destination press
-had no tooltip and a successful export left the canvas unchanged)*
-
-*Verified against dev @ 023a04a48 — 2026-08-07 (task-3300: the "Some
-files may fail to import:" dialog now renders every warning line and its
-"Copy install command" button in a compact themed dialog — previously the
-warning rows collapsed to an empty full-height column; counts read
-"1 file" / "N files"; "Start import anyway" fits on one line; Cancel is
-no longer styled red)*
-
-*Verified against dev @ 023a04a48 — 2026-08-07 (task-2859: the export
-quality helper line now matches the selected option instead of always
-describing "original"; the queue count line reads "This queue: …" instead
-of the self-contradicting "… — in queue" suffix)*
-
-*Verified against dev @ 023a04a48 — 2026-08-07 (task-3302: the Keyboard
-& commands section above is new behavior — entering Import media now
-focuses the path field, Esc returns to the landing, `i` works from any
-Library canvas, the footer/F1 advertise `enter start import` / `esc back
-to hub`, and focused fields/compact buttons show a heavy structural focus
-edge instead of a color-only change)*
-
-*Verified against feat/media-ingest-ux-parity @ 7c451678e — 2026-08-07
-(task-3301: "Analyze after import", "Chunk content" OFF, and "Encoding"
-are wired for real on the local path — analysis resolves the
-`[analysis_defaults]` provider (readiness hint above Start, "analysis
-skipped: …" on done rows when unconfigured), Chunk OFF stores no chunks
-for any type while Chunk ON now chunks plain text/HTML/documents too,
-the Encoding select governs text decoding, the chunk size/overlap unit
-hints read "words", and an untouched form submits overlap 100 on both
-the local and server paths — previously all three options were silent
-no-ops locally and the local overlap fallback was 50)*
-
-*Verified against feat/media-ingest-ux-parity @ e28d31d76 — 2026-08-07
-(task-3303: Word/Office documents (.doc/.docx/.odt/.rtf) get their own
-options fold — "Processing method", "Enable OCR", "OCR language" — and an
-honest pre-check noun ("1 Word/Office document", previously "1 plain text
-file"); the PDF fold adds the docext engine plus "OCR language"/"OCR
-backend", and Enable OCR is inert with its reason under engines that
-cannot OCR (previously a silent no-op); e-books gain a "Chunking method"
-select whose "chapters" default reaches the processor; Audio & video gain
-"Translate to English (via faster-whisper)" and a VAD filter toggle; a
-local import with a multi-page "What to fetch" selection now says
-"Multi-page fetch runs on the server — this local import fetches one
-page." under the control — previously it silently imported one page)*
-
-*Verified against feat/media-ingest-ux-parity @ 4839d7ce2 — 2026-08-07
-(task-3304: schema-disabled options now read as inert AND say why at the
-control ("— needs the parakeet-onnx provider", "— single-page fetch
-selected", "— needs Chunk content on"), with app-tier Legible Disabled
-styling instead of the invisible 0.7 fade; Start scrolls the Queue heading
-into view and a pinned "▼ more — scroll for the rest" row marks overflow;
-the Browse picker gained Name/Size/Modified headers, humanized sizes, no
-size on folder rows, and a "File name:" label; "Copy install command" now
-also sits under the pre-check "⚠" warnings, not only in the guardrail
-dialog)*
-
-*Verified against feat/media-ingest-ux-parity @ 0ba5bf44c — 2026-08-08
-(task-3305: every option dropdown shows plain-language choices ("PyMuPDF4LLM
-(Markdown)", "Auto (faster-whisper)", "This page only") while the internal
-value still persists; the supported-formats list and the Start gate name
-URLs ("Enter a file path or URL to start."); URL pre-check failures read as
-plain reasons ("URL unreachable — the server name could not be found."),
-never a raw exception; a URL pre-check reads "1 web page" with no bogus
-"1 file · 0 B" estimate; bracketed filenames render clean in Recent
-imports; a finished queue's tally drops the "— in queue" suffix; collapsed
-option-fold titles cap at the three most salient settings (changed values
-first) and never render a dangling empty value; the empty Parakeet folder
-field shows an example path instead of repeating its label; a failed row
-no longer repeats its own filename inside the reason; and the "N will
-import" commit line hides while the fix-your-options gate is blocking
-Start)*
-
-*Verified against feat/media-ingest-ux-parity — 2026-08-08 (task-3301
-xhigh review round: "Analyze after import" now actually reaches a
-provider — the ingest analysis dispatches through the same `chat_api_call`
-path the Media analysis panel uses, carrying the full `[analysis_defaults]`
-call shape (model/temperature/top_p/min_p/max_tokens/system_prompt);
-provider spellings like "MistralAI"/"KoboldCpp" resolve to dispatchable
-names or the pre-Start hint says "provider 'X' is not supported for ingest
-analysis"; an in-band "Error: …" result is never stored as an analysis —
-done rows read "Imported name — analysis failed: <reason>" instead)*
-
-*Verified against feat/media-ingest-ux-parity — 2026-08-08 (xhigh review
-round 2: e-book chunking now actually executes — the "Chunking method"
-select (chapters/sentences/words/paragraphs) governs real chunk output
-instead of silently degrading to one full-text chunk; the chunk size/
-overlap "words" unit is now true for PDF and audio/video too (the
-pipeline sends an explicit word method where the processors used to
-default to sentences); the "Some files may fail to import:" dialog
-scrolls its warning list so Cancel / "Start import anyway" stay reachable
-at any warning count; a stale "Translate to English" tick left over from
-a translating provider no longer fails transcribe-cpp/parakeet batches
-at dispatch; and an unknown explicit Encoding value degrades to
-replacement characters plus a visible warning instead of failing the
-import)*
-
-*Verified against feat/media-ingest-followups — 2026-08-09 (tasks
-3311/3312/3308: "Clear" now always returns the caret to the path field,
-even mid-relayout, so the next keystrokes build a path instead of running
-a Library search; F1 lists one escape row while the form is open; an
-egress-blocked URL's queue receipt reads in plain language with the
-allowed_hosts remedy intact (no markup artifacts, no clipped sentence);
-the "Some files may fail to import:" dialog never repeats a feature name
-as its own explanation; focused option-fold headers show a structural
-(heavy side-rail) focus cue with no size change; `.xml` files are
-declared unsupported at pre-check and skipped — XML import remains
-deferred)*
-
-*Verified against feat/media-ingest-followups — 2026-08-09 (task-3306:
-Audio & video gains "Start at" / "Stop at" trim bounds (format-checked in
-the form: HH:MM:SS or seconds — and applied exactly once, the video path
-used to be able to double-cut), "Cookies file for gated URLs" (a
-cookies.txt PATH for yt-dlp video downloads — raw cookie text is never
-accepted, since these options persist to config), and "Recursive summary
-(map-reduce)"; the Transcription model list now offers the full
-faster-whisper catalog (.en variants, Large v1-v3, Distil family,
-community Turbo/CrisperWhisper builds) instead of five sizes; the
-adaptive / multi-level chunking and chunk-language processor knobs were
-audited and deliberately NOT exposed — the audio/video chunker ignores
-them end-to-end, so the controls would lie)*
-
-*Verified against feat/media-ingest-followups — 2026-08-09 (task-3307,
-ship ruling in task-3310: raster images (.png/.jpg/.jpeg/.gif/.webp/
-.bmp/.tiff/.tif) are now a supported import type with their own Images
-option fold — "Extract text (OCR)" on by default, "OCR language", and an
-"OCR backend" select; the OCR text is the imported content and is chunked
-and analyzable like any text import; a no-text image fails its queue row
-honestly instead of storing an empty entry; images stay local-only (the
-server ingest API accepts no image type); .svg/.ico/.heic/.heif remain
-honestly unsupported)*
-
-*Verified against feat/media-ingest-followups — 2026-08-09 (tasks
-3313/3314, owner rulings in task-3310: consent is now one grammar — the
-"Some files may fail to import:" dialog is retired, and starting with "⚠"
-warnings outstanding is an inline two-press at the Start button ("⚠ Press
-Start again to import anyway — N files may fail.", second press or second
-Enter submits; Esc/edits/a changed pre-check cancel the pending confirm;
-no-warning starts stay single-press); "Copy install command" lives under
-the warnings; a "Retry this batch" button below the queue (key: `r`)
-re-stages the session's last submission — source, options, and metadata
-— and re-runs the pre-check fresh, so tooling installed since the last
-run changes the forecast)*
-
-*Verified against feat/media-ingest-followups — 2026-08-09 (tasks
-3306/3307 xhigh review round: "Stop at" is now absolute on BOTH media
-paths — a video trimmed 0:30-1:00 used to yield 0:30-1:30 while the same
-pair on an audio file yielded 0:30-1:00; a cookies path that does not
-exist is refused at the option boundary and annotated on the queue row
-("cookies ignored: …") instead of being silently parsed as cookie JSON,
-and a cookies file the user owns is never deleted by the downloader's
-cleanup; cookies now also authenticate the pre-download size probe and
-metadata lookup, so a gated URL no longer fails before the cookied
-download runs; an image URL pre-checks as a web page, matching what the
-pipeline actually does with it, instead of promising OCR that never ran;
-image OCR text is chunked by the form's chunk size like any other text
-import; and the "no OCR backend" warning now follows the OCR manager's
-real rules — paddleocr alone, or docext without one of
-gradio_client/transformers/openai, counts as no backend)*
-
-*Verified against feat/media-ingest-followups — 2026-08-09 (xhigh review
-+ live-verify round): the two-press Start confirm now survives moving
-focus out of the path field, so "Press Start again" can be answered with
-the Start button after arming with Enter (previously that click cancelled
-the consent and merely re-armed, and nothing could submit); picking a
-different file with "Browse…" cancels a pending confirm instead of
-letting it cover the new file; "Retry this batch" takes two presses when
-re-staging would overwrite form content you entered (the button renames
-itself "Press again to replace form"), and `r` is now inert exactly while
-the button is hidden mid-run; each "Copy install command" button names
-its extra in plain text ("(audio)") — the bracketed spelling was eaten by
-the renderer and every button read "Copy install command (.)"; a gated
-text option keeps its format hint beside the reason it is inert (e.g.
-"Cookies file for gated URLs (Netscape cookies.txt · video URLs only) —
-needs yt-dlp installed"); a blocked-URL failure row now names the address
-it refused; and characters typed immediately after "Clear" are no longer
-swallowed by the relayout.*
-
-*Verified against feat/media-ingest-forecast-truth — 2026-08-10 (tasks
-14820/14821/14823): the commit-point forecast and the two-press consent
-line are now two renderings of ONE computation, so they can no longer
-state different numbers for the same selection (live saw "15 will
-import" two rows above "7 files may fail", delivering 8 imported / 5
-skipped / 8 failed); files whose type group needs tooling this install
-lacks are forecast as failures with the reason named ("3 need tooling,
-1 empty"), verified against the real import receipt for a mixed folder;
-the forecast stays visible while a gate blocks Start; a failure's
-"Show details" now states a plain-language reason instead of a raw
-category token ("write error" for a file that never reached a write),
-prints the underlying tool output once instead of twice, and derives its
-retry advice from that reason — the optimistic "a retry can succeed if
-the failure was transient" no longer appears under a deterministic
-missing-tooling failure, and an unclassifiable cause says nothing at
-all; and a selection with nothing importable (an empty folder, or one
-whose files are all unsupported) gates Start with its own stated reason
-instead of manufacturing a permanent "✗ failed · <folder>" receipt.*
-
-*Verified against feat/media-ingest-forecast-truth — 2026-08-10 (xhigh
-review of tasks 14820/14821/14823): the forecast now knows WHICH backend
-it is forecasting. Local tooling gaps are local facts, so a server import
-is no longer condemned by this machine's inventory — five recordings with
-no local audio extra read "0 will import · 5 will fail (need tooling)"
-for a batch the server would have transcribed in full, and now read "5
-will be sent to the server · server tooling isn't checked from here",
-which is the most this app can honestly claim about a machine it cannot
-inspect. A capped duplicate check now hedges the import count as well as
-the match count. The forecast goes quiet when the runtime has no import
-path at all, rather than promising imports beside a permanently dead
-Start. A folder whose entries were all skipped (symlinks, hidden files,
-unreadable subfolders) is no longer told it is empty — it gets its own
-sentence and its own recovery. And the retry advice stopped claiming
-tooling was "named above" when nothing named any: a transient executor
-teardown is no longer sentenced to "retrying now will fail the same
-way", and the generic "no text could be extracted" refusal states the
-determinism without pointing at a remedy that was never given.*
-
-*Verified against feat/media-ingest-forecast-truth — 2026-08-10 (tasks
-14822/14824/14825/14826): missing optional tooling no longer prints a
-wall. A folder that needs eleven optional components now shows one line
-("⚠ 3 of 21 files need optional tooling — those imports may fail"), one
-**Copy install command** button that copies a SINGLE pip command
-installing every missing extra at once, and a **What's missing** fold
-holding the per-component detail and its per-extra copy buttons — so the
-type breakdown, the options and **Start import** are all on screen at
-once, which eleven warnings and nine stacked buttons used to prevent.
-The lines that describe your selection ("5 unsupported files will be
-skipped", "1 empty file will fail") are now bold, distinct from the
-muted environment note above them. Accessibility: the encoding (and
-every other) dropdown now shows a heavy border on focus instead of a
-colour change only; the path field carries a persistent "File, folder or
-URL to import" label that survives being filled in; placeholder text was
-raised to meet the AA contrast floor in both enabled and disabled
-fields; and an options group whose controls are all disabled — which
-Textual removes from the tab order entirely — states the reason on its
-collapsible title, which IS a tab stop ("Audio & video — 13 options
-unavailable — needs faster-whisper installed"). A collapsed options
-panel holding an invalid value is marked in its title ("⚠ Chunk size
-needs fixing"), and a collapsed title no longer advertises settings for
-controls you cannot edit. In the file picker, the Name/Size/Modified
-headers now line up with their own columns whether or not the listing is
-long enough to show a scrollbar.*
-
-*Verified against fix/ingest-test-health-and-server-forecast — 2026-08-10
-(task-14827): the forecast now asks the backend it is actually aimed at.
-Importing on the server, a file that backend refuses — an image, or a
-format nothing recognises — is counted as a failure with its reason named
-("2 will fail (unsupported by the server)") instead of the local
-pipeline's "will skip", which is what the queue really recorded: the
-submission raised before it ever left this machine and the row landed as
-"✗ failed". The two backends genuinely refuse different sets — an image
-imports locally via OCR and a web page is clipped rather than refused —
-so the wording says which one is refusing. Missing local extras stop
-being presented as blockers during a server-targeted import: the ⚠ block
-and its "Copy install command" button are replaced by one quiet note
-saying the gap affects imports on this machine only.*
-
-*Verified against dev @ 642567627 — 2026-08-10 (task-4023 AC#1, RC-07:
-while its gate is closed the submit button reads "○ Export bundle (.zip)"
-— the Library's non-colour disabled marker — and renders at 7.25:1
-(measured live; it was 1.44:1), with its F-018 reason tooltip unchanged).*
-*Verified for TASK-197 — 2026-08-12 (ADR-057: the widest export scope is
-`Everything` across media, conversations, notes, and Prompts/Recipes. Prompt
-scope uses uncapped active local IDs, while Skills and Prompt collection/history
-lifecycle state remain excluded. Escape returns to the canvas whose Export…
-opened the form, including Prompts, or to the hub when entered from the rail.)*
-
-*Verified against fix/ui-background-signal-bounds — 2026-08-10
-(task-14910): a 0-byte file is no longer uploaded to the server. The
-forecast has always counted one as a certain failure, which was true
-locally (the parse chain refuses an empty source before any write) and
-merely assumed on the server, where the app sent the file and only the
-server decided. The client now refuses it with the reason it already
-knows — the row reads "✗ failed · empty.txt · empty.txt is empty; there
-was nothing to send." — so the forecast's count is a statement about
-this app's own behaviour on both targets, and no round trip is spent on
-a file that is almost certainly a mistake.*
-
-*Verified against fix/ui-background-signal-bounds — 2026-08-10
-(task-14911): the Start gate now asks the backend the import is aimed at.
-A folder of nothing but images used to forecast "0 will be sent to the
-server · 3 will fail (unsupported by the server)" with **Start import**
-still live, and pressing it queued three rows that could only land as
-permanent failures — the guaranteed-failure submit the gate already
-prevented on this machine, one backend over. The gate reads the same
-forecast the commit line does, so the two cannot state different
-numbers, and it keeps its two vocabularies apart: "Nothing in this
-selection can be imported" for files nothing here can read, "Nothing in
-this selection can be sent to the server" for files that only this
-destination refuses. The refusal is enforced at the submit itself, not
-just on the button, so Enter in the path field cannot route around it.*
-
-*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
-(task-14902: the quality control converged on the Library chooser-strip
-pattern — pressing "quality: thumbnail" opens a one-row strip of all
-three values under the still-visible button with ✓ on the active one; a
-pick applies directly and updates the helper line, a second press or
-Escape cancels (Escape never leaves the form while the strip is open),
-and the footer/F1 read "enter choose quality / esc cancel" meanwhile.)*
-
-*Verified against the chunking-engine-parity worktree — 2026-08-19
-(chunking-engine-parity, doc-only on this page): the chunking engine behind
-every import path is now the server's engine (vendored at dev@385afa95
-behind a compatibility shim). The sanitization behavior (null bytes →
-spaces, length-preserving NFC normalization, control-character and
-bidirectional-override neutralization) is the engine's `_sanitize_input`
-(`tldw_chatbook/Chunking/engine/chunker.py`), the full method roster is the
-shim's `_LEGACY_METHOD_MAP` plus engine-native pass-throughs
-(`tldw_chatbook/Chunking/Chunk_Lib.py`), `tiktoken`/`defusedxml` are core
-dependencies (`pyproject.toml`), and the engine-version stamp
-(`parity-1@385afa95`, media DB schema v6) plus the RAG Admin legacy-chunk
-report are Phase C — pinned by
-`Tests/DB/test_media_db_schema_v6.py`,
-`Tests/Local_Ingestion/test_engine_version_stamp.py`, and
-`Tests/Chunking/test_callsite_characterization.py`. The import form's own
-controls are unchanged; only what the chunking layer does underneath
-moved.*
-
-*Verified against feat/chunking-template-parity — 2026-08-21
-(chunking-template-parity task 11: the Import behavior fold gains the
-"Chunking template" picker documented above — default "None (manual
-settings)", hidden in server mode, markup-escaped labels, populated from
-the template store off the mount path; `[chunking] default_template` ships
-in the config template; template imports fill the `chunking_template` /
-`chunking_params` chunk columns and `Media.chunking_config` in a shape both
-existing readers (`get_documents_using_template`'s LIKE,
-`get_template_statistics`' `json_extract`) round-trip; and the
-offset-basis caveat for template chunks is the paragraph above. Pinned by
-`Tests/UI/test_library_ingest_template_picker.py`,
-`Tests/Local_Ingestion/test_ingest_template_persistence.py`, and
-`Tests/test_config_chunking_defaults.py`.)*
-
-*Verified against feat/chunking-auto-selection — 2026-08-22
-(chunking-auto-selection, tasks 1-5: the "Chunking template" picker gains
-the "Auto" option documented above — value the reserved sentinel name
-`"auto"` (`Chunking/auto_selection.AUTO_SENTINEL`), None still the
-default, the sentinel stripped from server-mode ingest kwargs. The
-three-tier decision is `Chunking/auto_selection.resolve_auto` over the
-vendored planner (`Chunking/engine/auto_planner.py`, manifest-moved from
-excluded), with the media-type vocabulary pinned by
-`Tests/Chunking/test_media_type_vocabulary.py` and planner parity by
-byte-pinned fixtures (`Tests/Chunking/test_auto_planner_parity.py`).
-Persistence (`mode`/`auto_tier`/`auto_rationale`, `template` key only on
-a template-tier win) and re-chunk re-resolution — including the re-stamp
-of `Media.chunking_config` with the re-resolved outcome, so a tier flip
-on re-chunk never leaves a stale template name for the readers to count —
-are pinned by `Tests/Local_Ingestion/test_ingest_template_resolution.py`,
-`Tests/UI/test_library_ingest_template_picker.py`, and
-`Tests/Library/test_library_rechunk_service.py`. Template CRUD refuses
-the reserved name `auto` on create and rename.)*
-
-*Verified for TASK-2526 — 2026-08-27: standard source and installed-wheel
-tokenization uses the immutable bundled tables with network access prohibited;
-source-built and sdist-rebuilt wheels were also exercised from read-only
-installed trees. Explicit pre-import cache overrides remain caller-owned.*
-
-*Verified against task/19556-burn @ f12bb21ad — 2026-08-22 (TASK-19556 (a)):
-the import pre-check no longer contacts a URL. It used to fetch the address's
-headers 0.8 s after you stopped typing — before you had asked for anything to
-be imported — and the three answers it could get back (refused / answered
-with a status / clean) were each rendered differently in the summary, so
-pasting a link read out the state of whatever the address pointed at,
-including hosts on your own network. Pasting is now inert; the address is
-classified by name, exactly as a local path is classified by its extension.
-A link check remains available behind `[library]
-ingest_url_preflight_probe = true`, and in that mode it runs only from the
-deliberate triggers (leaving the field, Enter, Browse…, "Retry check"
-— note Textual also reports the field as left when the terminal itself
-loses focus), is
-routed through the `[web_security]` egress policy, follows no redirects, and
-reports one identical "could not be checked" note for every address the
-policy declines. Pinned by `Tests/Library/test_ingest_preflight_egress.py`
-and `Tests/Library/test_ingest_preflight.py`.*
-
-*Verified against fix/media-wave4-d — 2026-09-04 (task-28007 AC#1/AC#2: the
-Import queue's "Analyze N skipped" run-summary action. It appears once at
-least one row in the queue completed with analysis skipped AND a provider
-is now callable (Task 1's resolver reason is empty), scoped over every
-skipped id currently in the queue rather than one per batch — the action's
-id is fixed/singular, so a per-batch button could mount the same id twice.
-Pressing it reuses the Select-mode Analyze worker verbatim; each row's own
-progress line updates as its outcome lands ("✓ analyzed · name" / "✗
-analysis failed · name · reason"). With no provider configured the button
-stays absent, matching the disabled Reader Generate control from AC#5.
-Live-verified at 235x52 through pre-flight, the toggle, and the honest "no
-analysis provider is configured" gate against the real user config; a
-system-wide multiprocessing/semaphore exhaustion on the verification host
-(reproduced with a bare `multiprocessing.Pool(1)` outside the app,
-unrelated to this change) blocked completing a live import, so the
-button/run/receipt were verified in real-screen
-`Tests/UI/test_library_ingest_analyze_skipped.py` with a stubbed resolver
-and generator instead.)*
-
-*Verified against fix/media-wave4-d — 2026-09-04, fix round 1 (task-28007
-review response): an id that already has an analysis is now skipped
-automatically with a count notice ("N already analysed · skipped") rather
-than silently arming the Media canvas's Skip/Overwrite choice on a screen
-the Import user is not viewing (that choice stayed reserved for Select
-mode's own gesture, which still has the card to show it); if every id in
-the set already has one, the press says "Nothing left to analyse" and
-starts no run. A raised per-item exception's own message is now the
-receipt's reason ("✗ analysis failed · name · provider timeout") instead
-of a generic placeholder. Leaving Library mid-run now names the Import
-queue's own action to reopen, not Select mode's. Verified in real-screen
-tests with the underlying analyze/lookup calls stubbed, for the same
-no-provider-on-the-verification-host reason as the round above.)*
-
-*Verified against fix/media-wave4-d @ 759947bb1d — 2026-09-04 (final fix
-round, task-28007: both notices above and the "Analyze after import"
-table entry now read en-US "already analyzed" / "Nothing left to
-analyze", matching the receipt copy on the Media canvas; documented the
-collapsed **"Import behavior"** panel's own title carrying the toggle's
-state while the fold is closed ("Import behavior · analysis on" / "·
-analysis off", AC#6), previously undocumented. No behaviour changed on
-this page; verified by reading the current source strings.)*
-
-*Verified against fix/library-crit8-polish-shell — 2026-09-08 (task-32058:
-Export ▸ Everything counts every conversation the rail counts. The export
-enumerator kept a `client_id` filter the Library's own browse query had
-dropped, so a library seeded or synced by another client reported "0
-conversations" against a rail showing six.)*
-
-*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
-docs-vs-live pass from critique #8): the Library import queue's retry
-suffix is **" · attempt N"** (`library_ingest_state.py`), not the
-" · retry 1" this page claimed — the " · retry N" form belongs to Home's
-Active work card, a different surface. And **"Show details"** ships but is
-conditional on the failed job carrying an error detail, so the pool-start
-failures critique #8 hit showed a raw errno with no details row; the copy
-fix for those is task-32054. Import could not be exercised end to end on
-the review host (every local import failed at process-pool start there),
-so both were verified against the shipping code paths rather than a live
-run; every other claim on this page is unchanged.)*
-
-*Verified against fix/library-crit8-recovery-copy — 2026-09-08 (task-32054:
-failed rows now state a plain-language reason with its next step instead of
-a raw errno; "Show details" is offered on every failed row and reveals the
-underlying text; an unsupported file stays "skipped" with its own reason
-and no Retry even when the parse worker never started; a batch reports ONE
-"Import finished — …" toast instead of one per file; the retry suffix reads
-" · retry 1", matching this page and Home.)*
-
-*Verified against fix/library-crit8-waits — 2026-09-08 (task-32055: the export
-bundle write reports "still working · Cancel" past three seconds, beside the
-Cancel button it already shipped).*
-
-*Verified against fix/library-export-selected-ids — 2026-09-10 (task-32232: a
-selected-media export now contains every selected item — the canonical
-`local:media:<n>` ids select mode carries are coerced once at the scope seam;
-a selection that collects nothing fails with "✗ export produced no content ·
-N items were selected" plus "Retry export" instead of writing an empty
-bundle; the receipt reads "✓ exported · N items · X KB · <path>" back off the
-written archive.)*
-
-*Verified against fix/library-crit9-grammar — 2026-09-10 (task-32235,
-task-32221, task-32229: a never-attempted queue row now reads "– skipped",
-since "○" means a blocked action and nothing else; export counts pluralise
-("Selected notes · 1 item", "Everything: 12 media items · … · 7 notes");
-and the file dialogs' "File name" box takes a typed or pasted absolute/"~"
-path, jumping the listing to it, with Ctrl+A selecting the field.)*
-
-*Verified against fix/library-crit9-import — 2026-09-10 (task-32216: "Show details" leaves focus on the row action it toggled instead of the Keywords field 25 rows up; task-32231: a run of identical settled outcomes collapses into one "✗ failed · N files · reason" row with "Show the N files", "Retry all" and "Dismiss all"; a group whose members need a different transcription model offers no bare "Retry all", matching those rows' own actions; a group never spans two imports.)*
-
-*Verified against fix/library-crit10-export — 2026-09-11 (task-32353: the
-quality chooser opens on "original" instead of "thumbnail", so a bundle only
-loses content when asked, and a bundle line plus a contents list state what
-the export will write — count, what the archive holds, estimated size, and
-the item titles — before the button is pressed, the size qualified "before compression" so it
-cannot be read as contradicting the receipt's smaller written-archive figure;
-task-32362: a blocked "Export bundle (.zip)"
-prints its reason on the line below it, not only in a tooltip.)*
-
-*Verified against fix/library-crit10-export — 2026-09-11, review round 2
-(Qodo on PR #2601: the bundle line no longer names the quality chooser's
-value — the exporter writes the same stored text for all three options, so
-"previews only"/"compressed files"/"full files" described an archive that is
-never produced; an empty scope shows no bundle line rather than "0 items …
-about 1 KB"; and the count is the items still exportable, not the raw size
-of a selection that may have gone stale.)*
-
-*Verified against fix/library-crit10-onboarding-import — 2026-09-11
-(task-32351: a folder batch is named after the folder you chose, not after
-whichever subfolder the recursive scan reached first; the landing's
-needs-attention card states the failed and skipped counts.)*
-
-*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32364
-AC#3: the Import footer no longer says "enter start" for both steps — on an
-unchecked path it reads "enter check this path" and only once the Start gate
-clears does it read "enter start import", derived from the same gate Enter
-itself obeys.)*
-
-*Verified against fix/library-crit10-media-rows — 2026-09-11, fix round 1
-(task-32364 AC#3 review: the Enter label now reaches the footer on a gate
-transition that does not recompose the canvas — previously only a changed
-type-group set re-registered it, so opening the gate any other way left the
-footer naming the previous step's action.)*
-
-*Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32251:
-"Choose destination…" judges the destination when you pick it. The form used
-to accept anything the save dialog returned — including the concatenated
-`.../Library export.zip/private/tmp/.../notes-bundle.zip` a pre-filled path
-field produced — and failed at write time with `[Errno 2] No such file or
-directory: '...notes-bundle.zip.partial'`. A write that still fails now names
-the destination you chose instead of an internal `.partial` file. Verified
-live at 235x52.)*
-
-*Verified against fix/library-notes-w3-pickers-git — 2026-09-11 (task-32242:
-the ingest "Browse…" browser reads `[library.ingest] last_directory` through
-the same validation the three Notes pickers use — a relative or traversing
-value is no longer resolved against the process working directory — and its
-write is ordered, so two picks made inside one config write settle on the
-later one.)*
-
-*Verified against fix/library-notes-wave3-docs — 2026-09-12 (task-32271: the
-two wave-3 claims on this page re-walked on dev 7159fc0b99 at 235x52 —
-**Choose destination…** refuses an unwritable pick on the line under the
-button, "Can't save there: The folder /nonexistent/dir does not exist.", and
-accepts nothing; the ingest **Browse…** opens at the folder `[notes]
-sync_directory` names when nothing is remembered. Nothing on this page needed
-correcting.)*
-
-*Reviewed on feat/component-pattern-library — 2026-09-16 (TASK-32663):
-Import media recovery and consent text stays complete at compact widths.
-Targeted checks cover both themes; native checks exercise local preflight,
-keyboard Clear/re-entry and metadata retention without submitting imports.*
-
-*Reviewed on feat/component-pattern-library — 2026-09-16 (TASK-32664):
-The local Parakeet folder Browse action returns to a visible button after Select
-or Cancel. Selecting updates the staged folder without replacing other draft
-fields or resetting their cursor positions. Missing Parakeet tooling keeps the
-folder controls disabled and names the missing package. This qualifies the folder
-picker UI; it does not qualify model installation or transcription.*
-
-*Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
-wave-4 guide sweep; corrected in fix round 2 after this stamp's first version
-certified a claim it had not checked).*
-
-***Two claims on this page were wrong, both about the Notes export control.***
-The "Scoped exports also arrive here on their own" paragraph near the top of
-this page, and step 5 of "Common tasks" ("Export your notes as a bundle"),
-both told you to press **"Export…"** in Notes. (Named, not numbered: a line
-citation inside the page it cites is wrong on the next edit — which is how
-this stamp's first version already went wrong once.) The Notes
-list toolbar ships it **bare** — `("Export", "library-notes-export")` at
-`Widgets/Library/library_notes_canvas.py:1842` — and six of this sweep's own
-captures paint `Add from files…     Export` (`docs-03`, `docs-04`, `docs-05`,
-`docs-06`, `docs-08`, `docs-09`). Notes is the **only** browse canvas spelled
-without the ellipsis: Media (`library_media_canvas.py:1178`), Conversations
-(`library_conversations_canvas.py:150`) and Prompts
-(`library_prompts_canvas.py:890`) all ship `Export…`, which is why step 6
-("Export all Prompts and Recipes") was right and the Notes step was not.
-(Source line numbers are kept — they point at another file, which a reader
-can check and which this page's edits cannot move.) Both sentences
-now name the bare label and say it is the odd one out; the label
-inconsistency itself is filed as task-32590.
-
-*Checked and correct, so left alone:* the export scope lines this page quotes
-are exact — `"Notes · N items"`, `"Selected notes · 1 item"`, the
-`"Everything: …"` form and `"Prompts · N items"` all come from
-`Library/library_export_scope.py:395-417` — and the rail ▸ Browse ▸ Notes
-route, the `"Export bundle (.zip)"` form name and `"Choose destination…"` are
-as written. *Caveat carried over from* [Library notes](notes.md): on a
-brand-new profile there is no Browse section to click, which that page's
-"Getting there" now explains.
-
-*How the first version of this stamp went wrong, since it is the whole
-subject of this sweep:* it asserted "none needed correcting" for a page whose
-Notes claims had been read but not grepped.
-`scripts/check_guide_claim_strings.py` did not catch it either, and this
-stamp has now given the reason wrongly **twice** — first "the string lives
-only in comments" (it does not; `Export…` is a live **Button** label on six
-other surfaces), then "the checker probes the whole tree" (true, but only
-half the cause). Measured, with every figure labelled by the probe that
-produced it — "scoped" being the twelve `library_notes*` modules, "AST"
-being non-docstring string literals — and by its **match semantics**, which
-here are **containment** (a literal counts when it *contains* the fragment,
-the `grep -F` the script runs):
-
-| probe (containment match) | `"Export…"` | `"Export"` |
-|---|---|---|
-| repo-wide + raw | 35 | 1431 |
-| repo-wide + AST | 9 | 373 |
-| scoped + raw | 1 | 31 |
-| **scoped + AST** | **0** | **13** |
-
-**A figure without its match semantics is not reproducible.** An independent
-re-derivation of the `"Export"` column matching **exact equality** (the
-literal *is* `Export`) read **21** repo-wide + AST and **4** scoped + AST,
-not 373 and 13 — two readers, two answers, neither wrong, because the
-question differed. Quote both halves of the label, always. What decides this
-incident is the same under either: 0 for the false spelling, non-zero for the
-true one.
-
-**Both conditions are necessary and neither alone is sufficient.** Literals
-alone still find 9. Scoping alone still finds 1 — a stale docstring on
-`handle_library_notes_export`, the handler for the very button that ships
-bare, so prose *about* the Notes export action, inside a Notes module,
-satisfies it. Only the pair reaches 0 for the false spelling while leaving
-13 for the true one, which is what lets the corrected sentence above still
-pass its own check. Recorded on the script and as task-32589 AC#7-8.)*
+  meet. The common one on macOS is exhausted POSIX semaphores, which the
+  system reports as "No space left on device" although the disk has room:
+  the row reads "The import worker couldn't start on this machine (system
+  resource limit) · Restart the app, then Retry", and **Show details** holds
+  the raw system message.

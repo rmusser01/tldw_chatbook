@@ -1,0 +1,144 @@
+{
+  "native": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_prompt_mixin_retry.py",
+    "Tests/Chat/test_console_prompt_mixin_admission.py",
+    "Tests/Chat/test_console_prompt_mixin_journey.py",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/native-tmp"
+  ],
+  "ui": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_prompt_mixins.py",
+    "Tests/UI/test_library_prompt_mixins.py",
+    "Tests/UI/test_console_capture_policy_dialog.py",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/ui-tmp"
+  ],
+  "storage": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/DB/test_console_prompt_mixins.py",
+    "Tests/Backup_Recovery/test_prompt_mixin_restore.py",
+    "Tests/Backup_Recovery/test_core_owners.py::test_schema_policy_matches_installed_store",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/storage-tmp"
+  ],
+  "remaining-covering": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_prompt_mixin_forks.py",
+    "Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private",
+    "Tests/Chat/test_console_chat_fork.py::test_fork_public_record_fields_are_exact",
+    "Tests/UI/test_css_bundle_sync_guard.py",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/remaining-covering-tmp"
+  ],
+  "check_schema_table_allowlist": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_schema_table_allowlist.py"
+  ],
+  "check_index_plan_pins": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_index_plan_pins.py"
+  ],
+  "check_textual_worker_contract": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_textual_worker_contract.py"
+  ],
+  "check_markup_interpolation": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_markup_interpolation.py"
+  ],
+  "check_persistent_diagnostic_inventory": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_persistent_diagnostic_inventory.py"
+  ],
+  "prompt-recovery": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Backup_Recovery/test_sqlite_validation.py",
+    "-k",
+    "prompt",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/prompt-recovery-tmp"
+  ],
+  "native-commit": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_refused_native_send_keeps_usage_facts_until_acceptance[native_commit]",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/native-commit-tmp"
+  ],
+  "held-toggle-final": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_prompt_mixins.py::test_accepted_toggle_preserves_editor_dirtied_during_apply",
+    "Tests/UI/test_console_prompt_mixins.py::test_dirty_toggle_restores_truth_without_losing_editor",
+    "Tests/UI/test_console_prompt_mixins.py::test_failed_toggle_restores_authoritative_state_once",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/held-toggle-final-tmp"
+  ],
+  "final-followup": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_prompt_mixins.py::test_accepted_toggle_preserves_editor_dirtied_during_apply",
+    "Tests/UI/test_console_prompt_mixins.py::test_usage_facts_leave_layout_revision_to_workbench_projection",
+    "Tests/UI/test_console_prompt_mixins.py::test_dirty_toggle_restores_truth_without_losing_editor",
+    "Tests/UI/test_console_prompt_mixins.py::test_failed_toggle_restores_authoritative_state_once",
+    "Tests/UI/test_console_prompt_mixins.py::test_deleted_disabled_and_enabled_choices_keep_count_and_preview_is_read_only",
+    "Tests/UI/test_console_prompt_mixins.py::test_shared_editor_dirty_close_invalid_save_and_version_change_preserve_draft",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_refused_native_send_keeps_usage_facts_until_acceptance",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_queue_usage_publishes_only_after_admission",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_original_retry_ignores_unavailable_current_usage_preferences",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_first_native_acceptance_publishes_usage",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_used_revision_flush_reopen_and_racing_selection_cas",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_retry_original_regenerate_current_and_clean_history",
+    "Tests/Chat/test_console_prompt_mixin_admission.py::test_changed_library_version_and_placement_affect_next_capture_only",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/final-followup-tmp"
+  ]
+}

@@ -44,9 +44,7 @@ async def test_list_definitions_routes_to_control_plane_with_pagination(monkeypa
     )
     monkeypatch.setattr(client, "_request", mocked)
 
-    result = await client.list_scheduled_task_automation_definitions(
-        limit=25, offset=0
-    )
+    result = await client.list_scheduled_task_automation_definitions(limit=25, offset=0)
 
     assert mocked.await_args.args[:2] == ("GET", "/api/v1/scheduled-tasks/definitions")
     assert mocked.await_args.kwargs["params"] == {"limit": 25, "offset": 0}
@@ -298,7 +296,9 @@ async def test_preview_definition_posts_to_previews_route(monkeypatch):
     # plain non-nullable `dict[str, Any]` defaulting to `{}` per
     # automation_endpoints.md, so drop that key here and let the model
     # default apply instead of feeding the fixture's `null` into it.
-    request_payload = {k: v for k, v in case["request"].items() if k != "visibility_policy"}
+    request_payload = {
+        k: v for k, v in case["request"].items() if k != "visibility_policy"
+    }
     request = ScheduledTaskPreviewCreateRequest(**request_payload)
     result = await client.preview_scheduled_task_definition(request)
 
@@ -347,7 +347,12 @@ async def test_preview_definition_excludes_unset_optional_fields_from_request_bo
     assert body["family"] == "recurring_question"
     assert body["config"] == {}
     assert body["schedule"] == {}
-    for optional_field in ("definition_id", "definition_version", "name", "description"):
+    for optional_field in (
+        "definition_id",
+        "definition_version",
+        "name",
+        "description",
+    ):
         assert optional_field not in body
 
 

@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ady · not tested
+   New tab     Se│  Chat settings · Chat 1 · 1 unsaved edit                                                                                                                                     │
+─────────────────│                                                                                                                                                                              │──────────────────
+                 │  Model and generation  ● Context and memory                                                                                                                                  │       │
+                 │ Applies to this chat only · defaults live in Settings ▸ Console Behavior (F4)                                                                                                │       │
+   Terminal      │  Response rules                                                                                                                                                              │       │
+ ────────────────│                                                                                                                                                                              │       │
+ Workspaces      │ Model capacity                                                                                                                                                               │       │
+ ────────────────│ Model window        unknown, 32,000 assumed                                                                                                                                  │       │
+ Conversations   │ Max tokens          4,096 tokens                                                                                                                                             │       │
+        Archive t│ Safety margin       640 tokens                                                                                                                                               │       │
+          Archive│ Safe input ceiling  27,264 tokens                                                                                                                                            │       │
+        Search al│ Context window unknown; budgets use the assumed size. Enter the model's documented limit in Settings ▸ Providers & Models (F4).                                              │       │
+   Chat 1        │                                                                                                                                                                              │       │
+                 │ Conversation budget                                                                                                                                                          │       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔│ Budget strategy         █ Automatic                   ▼                                                                                                                      │       │
+  ▊  Filter visib│ Conversation max tokens │ if Custom                                                                                                                                          │       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁│ Effective           27,264 tokens                                                                                                                                            │       │
+                 │ Next request        0 tokens                                                                                                                                                 │       │◂ Inspect
+   New conversati│ Request overhead    unknown                                                                                                                                                  │       │
+  Chats          │                                                                                                                                                                              │       │
+    Today        │ Compaction                                                                                                                                                                   │       │
+                 │ When limit nears        │ Ask                         ▼                                                                                                                      │       │
+ ────────────────│ Representation          │ Text summary                ▼                                                                                                                      │       │
+ Character · No c│ Visual transcript and Hybrid require a vision-capable model.                                                                                                               ▆ │       │
+ ────────────────│ Compact at (%)          │ 80                                                                                                                                                 │       │
+ Model           │ Reduce context to (%)   │ 55                                                                                                                                                 │       │
+ ────────────────│ Summary response max    │ 1024                                                                                                                                               │       │
+ Agent           │ Summary response max applies only to Text summary and Hybrid.                                                                                                                │       │
+ ────────────────│ If compaction fails     │ Stop and ask                ▼                                                                                                                      │       │
+ Details         │ Keep after compaction   │ Memory with recent turns    ▼                                                                                                                      │       │
+                 │ Inherited from Console Behavior defaults.                                                                                                                                    │       │
+                 │ ▼ more — scroll for the rest                                                                                                                                                 │       │
+                 │                                                                                                                  Save the vLLM endpoint in Model and generation to continue. │       │
+                 │                                                                                                                                                                              │       │
+─────────────────│                                                                                                                                                  Esc close (asks: 1 unsaved) │──────────────────
+ Status ▾   Libra╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ow $0.00
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
+
+  Ctrl+P palette | Ctrl+Q quit

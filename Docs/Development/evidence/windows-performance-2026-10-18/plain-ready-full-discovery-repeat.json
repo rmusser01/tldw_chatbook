@@ -1,0 +1,601 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "profiled": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-h8zmagf_",
+  "import_ms": 3742.8916999924695,
+  "construct_ms": 13994.01680000301,
+  "mount_ready_ms": 22616.08680000063,
+  "startup_phases": {
+    "basic_init": 1.0454891999979736,
+    "attribute_init": 1.3900003978051245e-05,
+    "parallel_init": 6.507397299996228,
+    "total_init": 13.993464500003029
+  },
+  "console_resume": [
+    {
+      "iteration": 0,
+      "resume_to_input_ms": 999.9201000027824,
+      "input_ms": 998.6301999888383,
+      "max_loop_overshoot_ms": 291.5328000037698,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 2070.897600002354
+    },
+    {
+      "iteration": 1,
+      "resume_to_input_ms": 1165.7281999941915,
+      "input_ms": 1164.465099995141,
+      "max_loop_overshoot_ms": 520.7127999985823,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1703.8649000023725
+    },
+    {
+      "iteration": 2,
+      "resume_to_input_ms": 807.4440000054892,
+      "input_ms": 806.4395999972476,
+      "max_loop_overshoot_ms": 506.5438000112772,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1344.8199999984354
+    },
+    {
+      "iteration": 3,
+      "resume_to_input_ms": 629.1759000014281,
+      "input_ms": 628.1108999974094,
+      "max_loop_overshoot_ms": 392.6624999969499,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1175.189200002933
+    },
+    {
+      "iteration": 4,
+      "resume_to_input_ms": 740.1727999967989,
+      "input_ms": 738.7642999965465,
+      "max_loop_overshoot_ms": 416.6416000027675,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1245.783999998821
+    },
+    {
+      "iteration": 5,
+      "resume_to_input_ms": 933.014499998535,
+      "input_ms": 931.5907999989577,
+      "max_loop_overshoot_ms": 617.7178000018466,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 1473.7375999975484
+    }
+  ],
+  "config_presentation_returns": [
+    [
+      "console-resume-0",
+      "_checked_display_status",
+      626,
+      "None",
+      1
+    ],
+    [
+      "console-resume-0",
+      "_checked_display_status",
+      703,
+      "False",
+      5
+    ],
+    [
+      "console-resume-0",
+      "_checked_display_status",
+      703,
+      "None",
+      1
+    ],
+    [
+      "console-resume-0",
+      "_checked_display_status",
+      709,
+      "True",
+      8
+    ],
+    [
+      "console-resume-0",
+      "_checked_pricing_current",
+      891,
+      "True",
+      14
+    ],
+    [
+      "console-resume-0",
+      "run_console_config_sync",
+      39,
+      "False",
+      5
+    ],
+    [
+      "console-resume-0",
+      "run_console_config_sync",
+      39,
+      "True",
+      3
+    ],
+    [
+      "console-resume-0",
+      "run_console_config_sync",
+      43,
+      "False",
+      1
+    ],
+    [
+      "console-resume-0",
+      "run_console_presentation_sync",
+      103,
+      "False",
+      6
+    ],
+    [
+      "console-resume-0",
+      "run_console_presentation_sync",
+      103,
+      "True",
+      3
+    ],
+    [
+      "console-resume-1",
+      "_checked_display_status",
+      626,
+      "None",
+      1
+    ],
+    [
+      "console-resume-1",
+      "_checked_display_status",
+      703,
+      "False",
+      4
+    ],
+    [
+      "console-resume-1",
+      "_checked_display_status",
+      703,
+      "None",
+      2
+    ],
+    [
+      "console-resume-1",
+      "_checked_display_status",
+      709,
+      "True",
+      13
+    ],
+    [
+      "console-resume-1",
+      "_checked_pricing_current",
+      891,
+      "True",
+      19
+    ],
+    [
+      "console-resume-1",
+      "run_console_config_sync",
+      39,
+      "False",
+      4
+    ],
+    [
+      "console-resume-1",
+      "run_console_config_sync",
+      39,
+      "True",
+      5
+    ],
+    [
+      "console-resume-1",
+      "run_console_config_sync",
+      76,
+      "True",
+      1
+    ],
+    [
+      "console-resume-1",
+      "run_console_presentation_sync",
+      103,
+      "False",
+      4
+    ],
+    [
+      "console-resume-1",
+      "run_console_presentation_sync",
+      103,
+      "True",
+      6
+    ],
+    [
+      "console-resume-2",
+      "_checked_display_status",
+      626,
+      "None",
+      1
+    ],
+    [
+      "console-resume-2",
+      "_checked_display_status",
+      703,
+      "False",
+      4
+    ],
+    [
+      "console-resume-2",
+      "_checked_display_status",
+      703,
+      "None",
+      2
+    ],
+    [
+      "console-resume-2",
+      "_checked_display_status",
+      709,
+      "True",
+      13
+    ],
+    [
+      "console-resume-2",
+      "_checked_pricing_current",
+      891,
+      "True",
+      19
+    ],
+    [
+      "console-resume-2",
+      "run_console_config_sync",
+      39,
+      "False",
+      4
+    ],
+    [
+      "console-resume-2",
+      "run_console_config_sync",
+      39,
+      "True",
+      5
+    ],
+    [
+      "console-resume-2",
+      "run_console_config_sync",
+      76,
+      "True",
+      1
+    ],
+    [
+      "console-resume-2",
+      "run_console_presentation_sync",
+      103,
+      "False",
+      4
+    ],
+    [
+      "console-resume-2",
+      "run_console_presentation_sync",
+      103,
+      "True",
+      6
+    ],
+    [
+      "console-resume-3",
+      "_checked_display_status",
+      626,
+      "None",
+      1
+    ],
+    [
+      "console-resume-3",
+      "_checked_display_status",
+      703,
+      "False",
+      4
+    ],
+    [
+      "console-resume-3",
+      "_checked_display_status",
+      703,
+      "None",
+      2
+    ],
+    [
+      "console-resume-3",
+      "_checked_display_status",
+      709,
+      "True",
+      13
+    ],
+    [
+      "console-resume-3",
+      "_checked_pricing_current",
+      891,
+      "True",
+      19
+    ],
+    [
+      "console-resume-3",
+      "run_console_config_sync",
+      39,
+      "False",
+      4
+    ],
+    [
+      "console-resume-3",
+      "run_console_config_sync",
+      39,
+      "True",
+      5
+    ],
+    [
+      "console-resume-3",
+      "run_console_config_sync",
+      76,
+      "True",
+      1
+    ],
+    [
+      "console-resume-3",
+      "run_console_presentation_sync",
+      103,
+      "False",
+      4
+    ],
+    [
+      "console-resume-3",
+      "run_console_presentation_sync",
+      103,
+      "True",
+      6
+    ],
+    [
+      "console-resume-4",
+      "_checked_display_status",
+      626,
+      "None",
+      1
+    ],
+    [
+      "console-resume-4",
+      "_checked_display_status",
+      703,
+      "False",
+      3
+    ],
+    [
+      "console-resume-4",
+      "_checked_display_status",
+      703,
+      "None",
+      2
+    ],
+    [
+      "console-resume-4",
+      "_checked_display_status",
+      709,
+      "True",
+      16
+    ],
+    [
+      "console-resume-4",
+      "_checked_pricing_current",
+      891,
+      "True",
+      21
+    ],
+    [
+      "console-resume-4",
+      "run_console_config_sync",
+      39,
+      "False",
+      3
+    ],
+    [
+      "console-resume-4",
+      "run_console_config_sync",
+      39,
+      "True",
+      6
+    ],
+    [
+      "console-resume-4",
+      "run_console_config_sync",
+      76,
+      "True",
+      1
+    ],
+    [
+      "console-resume-4",
+      "run_console_presentation_sync",
+      103,
+      "False",
+      3
+    ],
+    [
+      "console-resume-4",
+      "run_console_presentation_sync",
+      103,
+      "True",
+      7
+    ],
+    [
+      "console-resume-5",
+      "_checked_display_status",
+      626,
+      "None",
+      1
+    ],
+    [
+      "console-resume-5",
+      "_checked_display_status",
+      703,
+      "False",
+      3
+    ],
+    [
+      "console-resume-5",
+      "_checked_display_status",
+      703,
+      "None",
+      2
+    ],
+    [
+      "console-resume-5",
+      "_checked_display_status",
+      709,
+      "True",
+      16
+    ],
+    [
+      "console-resume-5",
+      "_checked_pricing_current",
+      891,
+      "True",
+      21
+    ],
+    [
+      "console-resume-5",
+      "run_console_config_sync",
+      39,
+      "False",
+      3
+    ],
+    [
+      "console-resume-5",
+      "run_console_config_sync",
+      39,
+      "True",
+      6
+    ],
+    [
+      "console-resume-5",
+      "run_console_config_sync",
+      76,
+      "True",
+      1
+    ],
+    [
+      "console-resume-5",
+      "run_console_presentation_sync",
+      103,
+      "False",
+      3
+    ],
+    [
+      "console-resume-5",
+      "run_console_presentation_sync",
+      103,
+      "True",
+      7
+    ],
+    [
+      "leave-console",
+      "_checked_display_status",
+      709,
+      "True",
+      5
+    ],
+    [
+      "leave-console",
+      "_checked_pricing_current",
+      891,
+      "True",
+      5
+    ],
+    [
+      "leave-console",
+      "run_console_config_sync",
+      39,
+      "True",
+      2
+    ],
+    [
+      "leave-console",
+      "run_console_presentation_sync",
+      103,
+      "True",
+      2
+    ],
+    [
+      "startup",
+      "_checked_display_status",
+      626,
+      "None",
+      1
+    ],
+    [
+      "startup",
+      "_checked_display_status",
+      703,
+      "False",
+      4
+    ],
+    [
+      "startup",
+      "_checked_display_status",
+      703,
+      "None",
+      2
+    ],
+    [
+      "startup",
+      "_checked_display_status",
+      709,
+      "True",
+      32
+    ],
+    [
+      "startup",
+      "_checked_pricing_current",
+      891,
+      "True",
+      38
+    ],
+    [
+      "startup",
+      "run_console_config_sync",
+      39,
+      "False",
+      5
+    ],
+    [
+      "startup",
+      "run_console_config_sync",
+      39,
+      "True",
+      11
+    ],
+    [
+      "startup",
+      "run_console_config_sync",
+      43,
+      "False",
+      1
+    ],
+    [
+      "startup",
+      "run_console_presentation_sync",
+      103,
+      "False",
+      8
+    ],
+    [
+      "startup",
+      "run_console_presentation_sync",
+      103,
+      "True",
+      11
+    ]
+  ],
+  "final_screen": null,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0
+}

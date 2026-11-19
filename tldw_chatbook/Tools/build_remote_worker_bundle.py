@@ -869,7 +869,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ok: {_BUNDLE_PATH} matches a fresh build")
         return 0
 
-    _BUNDLE_PATH.write_text(text, encoding="utf-8")
+    _BUNDLE_PATH.write_text(text, encoding="utf-8", newline="\n")
     print(f"wrote {_BUNDLE_PATH} ({len(text)} bytes)")
     return 0
 

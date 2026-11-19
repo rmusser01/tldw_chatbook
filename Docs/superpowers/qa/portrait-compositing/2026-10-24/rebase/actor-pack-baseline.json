@@ -1,0 +1,34 @@
+{
+  "dev": "2f0b142d42cfff88ad4cd44aa04cd9afe068fdf4",
+  "targeted_test": "Tests/Actor_Packs/test_actor_pack_export.py::test_archive_matches_independent_golden_bytes",
+  "baseline_failed": 2,
+  "branch_failed": 2,
+  "baseline_seconds": 0.68,
+  "identical_production_and_golden_files": [
+    {
+      "path": "tldw_chatbook/Actor_Packs/export.py",
+      "same_as_dev": true,
+      "sha256": "3c429a6f37cf17c3516e08fd346ad4f5dc80ff4375b5b8114b3d18fb91cdd991"
+    },
+    {
+      "path": "tldw_chatbook/Actor_Packs/contracts.py",
+      "same_as_dev": true,
+      "sha256": "b779707b1b6fec38e67770f07e225633d03be50fca10a119bd9062f7df3e72fa"
+    },
+    {
+      "path": "tldw_chatbook/__init__.py",
+      "same_as_dev": true,
+      "sha256": "257513d3667504465b2cdeed4c86cd8555d02fff4be6993246769f87c9c78c64"
+    },
+    {
+      "path": "Tests/Actor_Packs/fixtures/export-golden/minimal-character.tldw-actor-pack",
+      "same_as_dev": true,
+      "sha256": "4895990dbeb50fc3c3af092f8d868646d57b4358b17de866803edd94cdc1431c"
+    },
+    {
+      "path": "Tests/Actor_Packs/fixtures/export-golden/minimal-persona.tldw-actor-pack",
+      "same_as_dev": true,
+      "sha256": "d2ca41922b4abdc531abec42adcb3c33213fe2fdba720ae5441560baad107f99"
+    }
+  ]
+}

@@ -74,11 +74,15 @@ class ProcessTextContext(Protocol):
         """Normalize public method input into the chunker's canonical form."""
         ...
 
-    def _resolve_method(self, method: Any, language: Any, options: dict[str, Any]) -> Any:
+    def _resolve_method(
+        self, method: Any, language: Any, options: dict[str, Any]
+    ) -> Any:
         """Resolve the effective strategy method for a prepared input."""
         ...
 
-    def _compute_paragraph_spans(self, text: str, template: Any = None) -> list[tuple[int, int, str]]:
+    def _compute_paragraph_spans(
+        self, text: str, template: Any = None
+    ) -> list[tuple[int, int, str]]:
         """Return source spans used by multi-level paragraph dispatch."""
         ...
 

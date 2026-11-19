@@ -1,7 +1,7 @@
 ---
 id: TASK-32895
 title: "Work stream: untrusted-input bounds"
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-21 23:05'
 labels:
@@ -92,3 +92,14 @@ the same selection — **405 failed before -> 388 after, zero new failures**, de
 Loose end: `_kokoro_stream_download` still takes `hasher`, now unused in production, kept only because
 `test_hasher_sees_every_byte` pins it. Delete both if the observation is not wanted.
 <!-- SECTION:NOTES:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+Implemented on `fix/tier2-bounds` (cb86cea4d9) and merged via PR #2802 (2026-09-23):
+"fix(bounds): cap five classes of unbounded read on untrusted input (TASK-32895)". Implementation
+Notes record all five findings real and fixed, with the guard-family union correction.
+
+AC checkboxes are left as found; this section is the audit's evidence record.

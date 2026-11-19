@@ -1,0 +1,1484 @@
+{
+  "scope": "Actual source-extracted settlement statements; explicit metadata and real Textual Region only. No product import/App/network/model/native input/RGBA/timing claim.",
+  "source_sha256": "6723d106cbebb633a4e15926ae52edd6c1aece9efae51008b380d8c737c838a6",
+  "control_sha256": "8fa775c83359fee58b543cf38733c5a84ad1411032a85fcbeeb9f620532dd134",
+  "results": {
+    "complete_original_Ready_positive": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "independent_exact_Ready_not_tested_positive": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "independent_clipped_line_visible_provider_positive": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "refuse_header_3": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": false,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "refuse_header_4": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": false,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "refuse_header_5": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": false,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "refuse_header_6": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": false,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "refuse_header_7": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": false,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "refuse_header_8": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": false,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "refuse_header_9": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": false,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "actual_plain_header_10": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "actual_plain_header_11": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "provider_span_missing": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "provider_span_duplicate": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "provider_span_negative": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "provider_span_empty": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "provider_span_reverse": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "provider_span_outside_content": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "partial_provider_clip_left": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "partial_provider_clip_right": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "partial_provider_clip_above": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "partial_provider_clip_below": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "partial_provider_widget": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "provider_content_not_one_row": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "provider_widget_not_one_row": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "provider_not_visible": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "provider_scrolled": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ]
+        }
+      }
+    },
+    "other_ROI_whole_clip_generation": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "other_ROI_whole_clip_header": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "other_ROI_whole_clip_send": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "run_not_complete": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": false,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "task_pending": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": false,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "not_accepted": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": false,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "terminal_result_missing": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": false,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "wrong_session": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": false,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "card_displayed": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": false,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "card_identity_present": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": false,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "stop_displayed": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": false,
+        "run_segment_absent": true,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "run_segment_present": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": false,
+        "title_generation_matches": true,
+        "rois": {
+          "generation": [
+            28,
+            2,
+            12,
+            1
+          ],
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "wrong_title_generation": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": true,
+        "session_matches": true,
+        "card_retired": true,
+        "header_terminal": true,
+        "send_terminal": true,
+        "stop_hidden": true,
+        "run_segment_absent": true,
+        "title_generation_matches": false,
+        "rois": {
+          "header": [
+            60,
+            2,
+            20,
+            1
+          ],
+          "send": [
+            80,
+            35,
+            14,
+            1
+          ],
+          "provider": [
+            1,
+            34,
+            16,
+            1
+          ]
+        }
+      }
+    },
+    "missing_current": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": false,
+        "session_matches": false,
+        "card_retired": false,
+        "header_terminal": false,
+        "send_terminal": false,
+        "stop_hidden": false,
+        "run_segment_absent": false,
+        "title_generation_matches": false,
+        "rois": {}
+      }
+    },
+    "missing_session": {
+      "passed": true,
+      "settlement": {
+        "owner_terminal": false,
+        "session_matches": false,
+        "card_retired": false,
+        "header_terminal": false,
+        "send_terminal": false,
+        "stop_hidden": false,
+        "run_segment_absent": false,
+        "title_generation_matches": false,
+        "rois": {}
+      }
+    }
+  },
+  "passed": 42,
+  "failed": [],
+  "product_samples": 0
+}

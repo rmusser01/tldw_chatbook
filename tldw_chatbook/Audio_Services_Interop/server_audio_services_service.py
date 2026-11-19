@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Mapping
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api.exceptions import APIResponseError
+from ..tldw_api.exceptions import APIResponseError, AuthenticationError
 
 if TYPE_CHECKING:
     from ..tldw_api import (
@@ -22,11 +22,67 @@ if TYPE_CHECKING:
         SpeechChatRequest,
         SubmitAudioJobRequest,
         SubtitleExportRequest,
-        TLDWAPIClient,
         TTSHistoryFavoriteUpdate,
         VoiceEncodeRequest,
         VoiceProfileCreateRequest,
     )
+
+
+class ServerAudioServicesClient(Protocol):
+    """Client methods ServerAudioServicesService calls (TASK-36953.1)."""
+
+    async def create_audio_speech(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_audio_speech_job(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_audio_transcription(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_audio_translation(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_audiobook_job(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_audiobook_voice_profile(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def create_speech_chat(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def decode_audio_tokenizer(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_audiobook_voice_profile(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def delete_custom_voice(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_tts_history_entry(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def encode_audio_tokenizer(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def encode_audio_tokenizer_file(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def encode_custom_voice_reference(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def export_audiobook_subtitles(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_audio_job(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_audio_streaming_limits(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_audio_streaming_status(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_audiobook_job_status(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_audiobook_project(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_current_user_capabilities(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_custom_voice(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_stt_health(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_tts_health(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_tts_history_entry(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_audio_speech_job_artifacts(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def list_audiobook_job_artifacts(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_audiobook_project_artifacts(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def list_audiobook_project_chapters(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def list_audiobook_projects(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_audiobook_voice_profiles(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_custom_voices(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_tts_history(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_tts_providers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_tts_voices(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def parse_audiobook_source(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def preview_custom_voice(self, *args: Any, **kwargs: Any) -> Any: ...
+    def stream_audio_job_progress(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def submit_audio_job(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def test_audio_streaming(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_tts_history_favorite(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def upload_custom_voice(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerAudioServicesService:
@@ -36,7 +92,7 @@ class ServerAudioServicesService:
 
     def __init__(
         self,
-        client: TLDWAPIClient | None,
+        client: ServerAudioServicesClient | None,
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -71,7 +127,7 @@ class ServerAudioServicesService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerAudioServicesClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:
@@ -125,8 +181,21 @@ class ServerAudioServicesService:
             authority_owner="server",
         )
 
+    @staticmethod
+    def _auth_required(action_id: str) -> PolicyDeniedError:
+        # tldw_server#3058 made the STT health and streaming status probes
+        # require an authenticated user, and Chatbook allows a server binding
+        # with no token -- so a 401 here is a state to report, not a failure.
+        return PolicyDeniedError(
+            action_id=action_id,
+            reason_code="auth_required",
+            user_message="Authentication with the active server is required to check audio status.",
+            effective_source="server",
+            authority_owner="server",
+        )
+
     async def _require_audio_diagnostic_capability(
-        self, client: TLDWAPIClient, action_id: str
+        self, client: ServerAudioServicesClient, action_id: str
     ) -> None:
         try:
             capabilities = self._dump(await client.get_current_user_capabilities())
@@ -159,17 +228,21 @@ class ServerAudioServicesService:
             The server's STT health data.
 
         Raises:
-            PolicyDeniedError: Warm-up is denied by current server capability or
-                a later server 403.
+            PolicyDeniedError: The server rejected the request as
+                unauthenticated (``auth_required``), or warm-up is denied by
+                current server capability or a later server 403
+                (``admin_required``).
             APIResponseError: Other server or capability-request failures.
         """
         action_id = "audio.health.observe.server"
         self._enforce(action_id)
         client = self._require_client()
-        if warm:
-            await self._require_audio_diagnostic_capability(client, action_id)
         try:
+            if warm:
+                await self._require_audio_diagnostic_capability(client, action_id)
             return self._dump(await client.get_stt_health(model=model, warm=warm))
+        except AuthenticationError as exc:
+            raise self._auth_required(action_id) from exc
         except APIResponseError as exc:
             if warm and exc.status_code == HTTPStatus.FORBIDDEN:
                 raise self._admin_required(action_id) from exc
@@ -186,8 +259,22 @@ class ServerAudioServicesService:
         )
 
     async def get_audio_streaming_status(self) -> dict[str, Any]:
-        self._enforce("audio.streaming.status.server")
-        return self._dump(await self._require_client().get_audio_streaming_status())
+        """Read streaming status from the active server.
+
+        Returns:
+            The server's streaming status data.
+
+        Raises:
+            PolicyDeniedError: Runtime policy denies the probe or the server
+                requires authentication (``auth_required``).
+            APIResponseError: Other server response failures.
+        """
+        action_id = "audio.streaming.status.server"
+        self._enforce(action_id)
+        try:
+            return self._dump(await self._require_client().get_audio_streaming_status())
+        except AuthenticationError as exc:
+            raise self._auth_required(action_id) from exc
 
     async def get_audio_streaming_limits(self) -> dict[str, Any]:
         self._enforce("audio.streaming.detail.server")

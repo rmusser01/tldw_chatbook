@@ -1,0 +1,89 @@
+---
+id: TASK-41315
+title: "test_console_agent_storage_sources.py is 23 of 24 red on dev: the turn errors before any model call"
+status: Done
+created_date: 2026-11-16 19:55
+labels:
+- follow-up
+- tests
+- console
+- mcp
+priority: medium
+references:
+- Tests/Chat/test_console_agent_storage_sources.py
+- Tests/Chat/test_console_skill_substitution.py
+- Tests/console_provider_doubles.py
+dependencies: []
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Filed from the 2026-11-13..16 burn-down, which saw this file at 23 failing. Re-run on dev 5e3c8b2bd4 (2026-11-16, load 33-45, scratch-profile wrapper, `-n 4`): 23 failed, 1 passed. Line numbers are that tree's.
+
+**Why.** This file proves that a Console agent turn's original storage and MCP sources (execution log, run-log writer, workspace bindings, permission store) reach the child model unchanged. A changed source must be refused without effects. With 23 of 24 nodes red, none of that is checked, and the file runs on no PR lane (it is not in `scripts/ui_pr_gate_census.txt` or a workflow target). The file already has its `bootstrap_profile` marker, so this is not the config-sandbox trap.
+
+**Failures.**
+- `test_original_console_mcp_context_reaches_child_model`, 22 params (`none`, `unrelated`, `workspace*`, `writer*`, `root`, `log_dir`, `database`, `mcp_deny`, `late_permission`, …): the gateway records too few payloads, e.g. `assert 0 == 3` at `:405` for `[none-1]`. Other params fail the `:398` count check. For `[none-1]`, the log shows the primary run's first step is an error (`agent run step kind=error`), then "Console submit requires attention | accepted=True status=failed". No model call is made.
+- `test_original_mcp_capture_retains_structured_names_with_definition_hashes`: `KeyError: 'local:fixture::fixture'` at `:468`. The fixture tool is missing from the captured `mcp_definition_maximum`.
+- Lead, not confirmed: the file's gateway subclasses `Tests/Chat/test_console_skill_substitution.py`'s `_RecordingGateway`. Its resolution (`Tests/console_provider_doubles.provider_resolution`) has no `continuation_protocol`. TASK-40715's notes say child runs in these hosts need one. TASK-41028's ordinary-tree file uses the same double.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 The task notes name the cause of the primary run's first-step error and of the missing fixture definition, from the tests' own tracebacks
+- [x] #2 Every node passes on dev at `-n 4`, or is retargeted or retired with the reason recorded; any product defect found is fixed with a test that is red first
+- [x] #3 The file runs on a PR lane, or the task notes record why it should not
+<!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no. Test-double drift plus one comparison bug in existing agent-source admission; no new policy or interface.
+
+1. Reproduce `[none-1]` and read the primary run's error step from AgentRuns (not the log line).
+2. Fix the shared provider double (`Tests/console_provider_doubles.provider_resolution`) once, if a child run needs fields the real resolution has.
+3. If the primary error is a product defect, keep `[none-1]` as the red test, fix at the shared comparison, add a focused unit test, mutation-check both.
+4. Classify every remaining node (drift, product, retire) from its own failure text; record the cause of the missing `local:fixture::fixture` definition.
+5. Covering files on base and head; preflight; Tests/Architecture.
+
+## Implementation Notes
+
+Outcome: all 22 nodes pass at `-n 4`. AC #3 (PR lane) is left for the lane PR.
+
+**Cause of the primary run's first-step error (AC #1).** The run's `error` step, read from AgentRuns, is `unexpected provider error (Command event activation source changed.)`. It is raised by `_CommandEvent.refresh_permissions` at turn start. The MCP context event captured its sources inside the submit's `_AgentSources.activate()` on the loop (profile observation first, then the bridge's). The turn's worker chain starts with `worker_guard(bridge)` (bridge order). Same set of sources, different order, and they were compared as tuples. Fix: `Agents/activation.sources_changed()` compares them as a set, so any added, removed or moved source still refuses. `_CommandEvent.check`/`refresh_permissions` use it. Red first: `[none-1]`, plus the unit test `test_reordered_admission_is_not_a_source_change`; both fail again with the ordered comparison.
+
+**Cause of the missing `local:fixture::fixture` definition (AC #1).** The fixture's MCP catalog uses `manifest_provider=dict`, which is not the stock manifest. Under a managed Console runtime, `capture_turn_configuration_snapshot` therefore defers (`mcp_capture_pending=True`, empty maximum; 11d71e5db5). Retargeted, per the 2026-11-17 decision, to `test_original_mcp_capture_defers_a_non_stock_catalog`. It asserts what the deferred capture guarantees: pending, no definition hash and no structured name pinned, not complete. The send treats a pending capture as opaque.
+
+**Changed source at turn finish (product defect, fixed).** Unmasked by the first fix. The changed source is refused, and the run row is terminal (`error`); my earlier note that it "stays running" came from reads taken mid-persist. The defect was elsewhere. `OrdinaryTurn._finish_primary_if_returned` entered `source.activate()`, which raised before `host_returned`/`finish_root`. The `RuntimeError` escaped `submit_draft` (skipping `_unregister_submit_task`). The turn stayed sealed with a live primary that was never host-returned, so `unproven_only()` was False and disposal waited forever. Fixed at the shared seam: the new `OrdinaryTurn.return_host(owner, release)` settles a refused owner unproven, which means its own durability read is refused too. The claim and scratch stay held (TASK-40716) and disposal leaves the turn. The primary finish and the child `_finish_execution` both use it; the child re-raises so its worker still records unproven cleanup. Red first: `test_changed_source_at_finish_leaves_the_primary_returned_unproven` and `test_changed_source_at_child_return_leaves_the_child_unproven`; both fail when the helper re-raises without settling. End to end, `root`, `log_dir`, `writer_source`, `bound_directory`, `database` and `late_permission` now pass with no teardown hang.
+
+**Retired (owner decision 2026-11-17, same as TASK-41314):** `writer`, `writer_segment_path`, `writer_write_bytes`, `writer_manifest`, `writer_close`. They replaced writer methods and expected a refusal based on implementation identity, which ADR-356 decision 4 dropped (06f8b0bf94, TASK-39147).
+
+**`workspace*` (6 nodes):** these were cancelled before their first step. Cherry-picked TASK-41312's harness fix 3ff4b82d8d (`_RecordingGateway` gains `execution_key`; that branch's TASK-41312 task-file hunk was left out). Now 6/6 pass. The double's explicit `continuation_protocol`/`api_mode` match the shared `provider_resolution` defaults.
+
+**Left unchanged (follow-up):** the same ordered source comparison at `Agents/legacy_hook_ownership.py:205`, `Chat/console_plugin_hook_preparation.py:177`, `Chat/console_reference_preparation.py:312`, and `Chat/console_workflow_runs.py:241, 390, 943, 2262`.
+
+**AC #3.** Not ticked, because this task does not edit workflows. `Tests/Chat/test_console_agent_storage_sources.py` should join `pr-fast-lane-admission` ("Run admission-sensitive suites"). It finishes in about 2 minutes at `-n 4` with no hang.
+
+Files: `tldw_chatbook/Agents/activation.py`, `tldw_chatbook/Agents/hooks_v2/native_commands.py`, `tldw_chatbook/Agents/ordinary_tree.py`, `tldw_chatbook/Agents/agent_native_execution.py`, `Tests/Chat/test_console_agent_storage_sources.py`, `Tests/Chat/test_console_skill_substitution.py` (cherry-pick), `Tests/Chat/test_console_ordinary_tree_widening.py` (cherry-pick).
+
+**Verification (2026-11-17, branch fu/41315-storage-sources-first-send; load 50-107).** `./scripts/preflight.sh` passed. Base for each comparison is fbf1c9ea74, `-n 4`.
+- `test_console_agent_storage_sources.py`: 22/22, no hang. On base it was 23 failed / 1 passed, with teardown hangs.
+- `test_console_first_send_survivor_native.py`: 7/8; `retains_changed_original_source` is waiting on the decision.
+- `test_console_ordinary_tree.py`: head 70 passed / 5 failed, no hang. Base: 41 passed / 33 failed, then hung. Every head failure also fails on base.
+- `test_console_skill_substitution.py`: 39/39 on both. `test_console_ordinary_tree_widening.py`: 17/17 on both. `test_unproven_tool_cleanup_run.py`: 11/11 on both.
+- `test_console_ordinary_receipt_native.py`, `test_console_ssh_custody.py` and `test_native_v2_mcp_events.py`: every node that failed only on head passes alone on head. The leftovers time out or hang on base too: receipt `[queued]` fails alone on both, and passive-context `[disk]` hangs alone on both.
+- `Tests/Architecture` (serial): 6 failed / 1415 passed. Three of the failures also fail on base (`test_reviewed_diagnostic_changes_are_metadata_only` and two in `test_timer_path_static_update_inventory.py`). The other three, `test_task_15103_review_ledger_*`, hit the 300 s timeout while three Architecture runs shared the machine. Re-run alone with a longer timeout, all three pass on both head and base (about 148 s each).
+
+## Review round (2026-11-17)
+
+A static review of 2fdd1e8b09 found three Importants and a Minor; each is confirmed by a test and fixed.
+- **First-send give-up had no wake.** `OrdinaryTurn.host_returned` and `_drained` now call `runtime._wake_first_send()` (retirement was the only wake). Test parks the waiter on a live owner first, then flips the turn unproven-only; dispose-side wait returns. Reverting the wakes makes it fail.
+- **Refused owner could drain proven.** `return_host` now calls `owner.mark_cleanup_unproven()` before `host_returned`/`finish_root` on refusal, so a refused owner with `row_started=False` stays unproven and keeps the claim. Cleanup that needs the source scope is not run outside it (`release()` touches the custody and event scopes), so it stays unproven rather than half-done.
+- **`except RuntimeError` was too broad.** New `OriginalSourceChanged(RuntimeError)` (in `Agents/activation.py`) is raised by the source-changed/unavailable checks in `native_source_storage.py`. `return_host` enters the scope via `ExitStack` and absorbs only that type at activation, logs its type name, and never re-runs `host_returned`/`finish_root`; unrelated errors (scratch lease retired, a failing `release()`) propagate once.
+- **Minor.** `sources_changed` docstring reworded (order ignored; a different owner or path, added or removed source is a change; duplicates collapse because one (owner, path) names one source). The unused `service` parameter is removed (both call sites passed none).
+- The 7 other ordered comparisons are untouched, as instructed.
+- Mutation checks, each fix reverted alone: wakes, `mark_cleanup_unproven`, and the narrowed except each make exactly their own test fail.
+
+**Review round 2 (delta review of 2965b0dcb9).** Narrowing the except let plain entry-time errors (scratch lease retired, a database handle that did not return, any raise inside `activate()`) escape before the owner returned, the original hang. `return_host` now runs the unproven return (`mark_cleanup_unproven`, `host_returned`, `finish_root`) exactly once on ANY exception at scope entry, then absorbs and logs only `OriginalSourceChanged` and re-raises everything else. Body errors still propagate with no second return. Test: an activation-time `RuntimeError` settles the owner unproven, keeps the claim, wakes first-send and propagates; it fails with the broad catch narrowed back. Minor: the child's `_ordinary_child_keys`/`_ordinary_child_notifications` pops moved out of `release()` into `_finish_execution` (dict bookkeeping, no custody effect); `abandon_unstarted()` stays in `release()` because it acts on custody.
+
+**AC #3 (lane PR, 2026-11-18).** The file runs in the new `pr-fast-lane-admission-4` job (owner decision 2026-11-18, "New job"), not `pr-fast-lane-admission`, which measured up to 27 of its 35 min over the ten PR runs before this. With the first-send survivor file: 34 nodes in 362 s serially at load 29-36 on dev 908e9840aa.

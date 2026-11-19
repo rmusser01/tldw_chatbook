@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any, Mapping
 
@@ -178,6 +179,52 @@ async def test_refresh_re_reads_the_authoritative_context() -> None:
 
     assert [item.name for item in controller._console_skill_candidates] == ["second"]
     assert service.calls == ["local", "local"]
+
+
+class _HeldFirstSkillsService(_SkillsService):
+    """Hold the first read open until released, as a slow off-loop read."""
+
+    def __init__(self, contexts: list[object]) -> None:
+        super().__init__(contexts)
+        self.release_first = asyncio.Event()
+
+    async def get_context(self, *, mode: str | None = None) -> object:
+        self.calls.append(mode)
+        value = self._contexts.pop(0)  # Each read takes its context at its start.
+        if len(self.calls) == 1:
+            await self.release_first.wait()
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("older", ["stale", "failed"])
+async def test_a_superseded_refresh_never_publishes_over_a_newer_one(older) -> None:
+    """TASK-38948: discovery reads leave the loop, so they finish in any order.
+
+    A refresh started first and finished last (stale skills, or a failed read
+    that fails closed to no skills) must not replace the newer candidates.
+    """
+    stale = (
+        {"available_skills": [_skill("stale")]}
+        if older == "stale"
+        else RuntimeError("older read failed")
+    )
+    controller, _, _, _, _, syncs = _controller()
+    service = _HeldFirstSkillsService([stale, {"available_skills": [_skill("fresh")]}])
+    controller.app_instance.skills_scope_service = service
+    first = asyncio.create_task(controller._refresh_console_skill_candidates())
+    async with asyncio.timeout(3):
+        while service.calls != ["local"]:
+            await asyncio.sleep(0.005)
+    await controller._refresh_console_skill_candidates()
+    assert [item.name for item in controller._console_skill_candidates] == ["fresh"]
+    service.release_first.set()
+    await first
+
+    assert [item.name for item in controller._console_skill_candidates] == ["fresh"]
+    assert syncs == ["sync"]
 
 
 @pytest.mark.asyncio

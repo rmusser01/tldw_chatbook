@@ -53,7 +53,9 @@ EXPECTED_INPUT_KEYS = {
     "129": frozenset({"unet_name", "weight_dtype"}),
     "130": frozenset({"clip_name", "device", "type"}),
     "131": frozenset({"noise_seed"}),
-    "133": frozenset({"clip", "first_frame", "height", "length", "prompt", "vae", "width"}),
+    "133": frozenset(
+        {"clip", "first_frame", "height", "length", "prompt", "vae", "width"}
+    ),
     "139": frozenset({"value"}),
     "140": frozenset({"image"}),
     "141": frozenset({"image", "megapixels", "resolution_steps", "upscale_method"}),
@@ -174,17 +176,20 @@ _APPROVED_LITERAL_PATHS = {
     "165.inputs.filename_prefix": EXPECTED_NEUTRAL_LITERALS["165.filename_prefix"],
 }
 _APPROVED_TITLE_PATHS = {
-    f"{node_id}._meta.title": title
-    for node_id, title in EXPECTED_NODE_TITLES.items()
+    f"{node_id}._meta.title": title for node_id, title in EXPECTED_NODE_TITLES.items()
 }
 
 LOAD_ERROR = "Packaged workflow could not be loaded as a nonempty JSON object"
 STRUCTURE_ERROR = "Packaged workflow structure does not match the approved contract"
 LINK_ERROR = "Packaged workflow direct links do not match the approved contract"
 OUTPUT_ERROR = "Packaged workflow output path does not match the approved contract"
-CONTROL_ERROR = "Packaged workflow controlled literals do not match the approved contract"
+CONTROL_ERROR = (
+    "Packaged workflow controlled literals do not match the approved contract"
+)
 PRIVACY_ERROR = "Packaged workflow contains prohibited provenance data"
-RESOURCE_ERROR = "Image workflow resource inventory does not match the approved contract"
+RESOURCE_ERROR = (
+    "Image workflow resource inventory does not match the approved contract"
+)
 
 
 def _require(condition: bool, message: str) -> None:
@@ -227,7 +232,9 @@ def _is_direct_link(value: Any) -> bool:
     )
 
 
-def _walk_json(value: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], str | None, Any]]:
+def _walk_json(
+    value: Any, path: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], str | None, Any]]:
     if isinstance(value, Mapping):
         for key, child in value.items():
             key_text = str(key)
@@ -278,7 +285,9 @@ def _validate_workflow_structure(graph: Mapping[str, Any]) -> None:
         _require(set(inputs) == EXPECTED_INPUT_KEYS[node_id], STRUCTURE_ERROR)
         _require(isinstance(metadata, Mapping), STRUCTURE_ERROR)
         _require(set(metadata) == EXPECTED_METADATA_KEYS, STRUCTURE_ERROR)
-        _require(metadata.get("title") == EXPECTED_NODE_TITLES[node_id], STRUCTURE_ERROR)
+        _require(
+            metadata.get("title") == EXPECTED_NODE_TITLES[node_id], STRUCTURE_ERROR
+        )
 
 
 def _validate_workflow_privacy(graph: Mapping[str, Any]) -> None:
@@ -298,9 +307,7 @@ def _validate_workflow_privacy(graph: Mapping[str, Any]) -> None:
             and _is_separator_free_basename(value)
         )
         allowed = (
-            operational_basename
-            or approved_value == value
-            or approved_title == value
+            operational_basename or approved_value == value or approved_title == value
         )
         _require(allowed, PRIVACY_ERROR)
 
@@ -370,9 +377,7 @@ def test_workflow_has_only_the_approved_controlled_literals() -> None:
     _require(controlled == EXPECTED_CONTROLLED_LITERALS, CONTROL_ERROR)
     for path, expected in EXPECTED_NEUTRAL_LITERALS.items():
         _require(leaves.get(path) == expected, CONTROL_ERROR)
-    prompt_paths = {
-        path for path in leaves if path.rsplit(".", 1)[-1] == "prompt"
-    }
+    prompt_paths = {path for path in leaves if path.rsplit(".", 1)[-1] == "prompt"}
     _require(prompt_paths == {"133.prompt"}, CONTROL_ERROR)
 
 
@@ -433,9 +438,7 @@ def _workflow_with_unapproved_title() -> dict[str, Any]:
 
 def _workflow_with_operational_selector_path() -> dict[str, Any]:
     graph = copy.deepcopy(_load_workflow())
-    graph["121"]["inputs"]["vae_name"] = (
-        "relative folder/harmless selector.safetensors"
-    )
+    graph["121"]["inputs"]["vae_name"] = "relative folder/harmless selector.safetensors"
     return graph
 
 

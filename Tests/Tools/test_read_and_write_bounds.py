@@ -52,7 +52,7 @@ def _function_source(module: str, name: str, must_contain: str | None = None) ->
         ),
         (
             "tldw_chatbook/Tools/local_tool_impls.py",
-            "_read_relative_file",
+            "_read_bounded_bytes",
             "MAX_READ_FILE_BYTES",
         ),
     ],
@@ -63,7 +63,7 @@ def test_reads_are_bounded_before_the_file_is_materialised(
     body = _function_source(module, function, must_contain=st_size_guard)
     assert ".st_size" in body, f"{function} does not check st_size"
     # The size guard must appear before the whole-file read in source order.
-    read_call = "read_text(" if "read_text(" in body else "read_bytes("
+    read_call = "read_text(" if "read_text(" in body else "os.read("
     assert body.index(st_size_guard) < body.index(read_call), (
         f"{function} reads the whole file before checking its size"
     )

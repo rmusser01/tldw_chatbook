@@ -1,0 +1,18 @@
+{
+  "backlog/decisions/285-native-phased-agent-workflows.md": {
+    "before": "f5fc656e9f1e4af5ed687188681d15519393242b27c4af5dbca3ec40ae9f8379",
+    "after": "f486fd84a193d394b4eb0c349c3bb5df4f825526b4caf5ae841bc36f3351d7ca"
+  },
+  "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md": {
+    "before": "d14f7ea885c40e30c894a77abcbe17c7c95b232452dacd765eb4d77730895035",
+    "after": "b33f273a6de60d8dd8ec47e9425aeffc5d0b7adf205b75c820160845c910e0c1"
+  },
+  "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md": {
+    "before": "1f45e403578db17139849ad73eeda9824c19488e281449db660e66261047fc33",
+    "after": "fdb6f4bd34e0b269e1ea88cca501afd16fc505c0259acc221e19f93bef35487f"
+  },
+  "backlog/tasks/task-38533 - Qualify-shared-worktree-workflows-across-execution-and-restart.md": {
+    "before": "0146df023ec2cba7ed3d2b46ff86eba3f73703f886213c470877869aaadf02cb",
+    "after": "c23bdde941a5b183ba3197950c6bb435daacedd9abd0afddf327b4b946557819"
+  }
+}

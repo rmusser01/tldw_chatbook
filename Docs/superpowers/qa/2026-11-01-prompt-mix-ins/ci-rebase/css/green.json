@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet",
+    "Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling",
+    "Tests/UI/test_design_token_governance.py",
+    "Tests/UI/test_css_bundle_sync_guard.py",
+    "Tests/UI/test_console_prompt_mixins.py",
+    "-q",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-css-3wip854v/green-pytest"
+  ],
+  "returncode": 0,
+  "raw_text": ".....................................................                    [100%]\n============================= slowest 25 durations =============================\n7.15s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]\n6.20s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]\n6.11s call     Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size2]\n4.99s call     Tests/UI/test_css_bundle_sync_guard.py::test_committed_bundle_reproduces_from_sources\n3.83s call     Tests/UI/test_design_token_governance.py::test_section_header_preserves_global_and_stats_computed_geometry\n3.28s call     Tests/UI/test_design_token_governance.py::test_documented_design_vocabulary_is_available\n3.22s call     Tests/UI/test_design_token_governance.py::test_defined_tokens_have_no_orphans_in_catalog\n3.20s call     Tests/UI/test_design_token_governance.py::test_new_sheets_must_use_spacing_tokens\n3.19s call     Tests/UI/test_design_token_governance.py::test_hex_literals_are_ratcheted_outside_token_definitions\n3.16s call     Tests/UI/test_design_token_governance.py::test_hex_ratchet_ignores_comments\n3.13s call     Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet\n3.12s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_have_no_trailing_whitespace\n3.12s call     Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor\n3.07s call     Tests/UI/test_component_pattern_governance.py::test_sheet_size_ceiling\n3.06s call     Tests/UI/test_css_bundle_sync_guard.py::test_generated_widget_and_screen_sheets_end_with_one_newline\n2.94s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_names_the_changed_module\n2.89s call     Tests/UI/test_css_bundle_sync_guard.py::test_drifted_modules_ignores_the_generated_timestamp\n2.85s call     Tests/UI/test_design_token_governance.py::test_all_referenced_ds_tokens_are_defined\n2.42s call     Tests/UI/test_console_prompt_mixins.py::test_mounted_selection_order_toggles_reopen_and_origin_fence\n1.27s call     Tests/UI/test_console_prompt_mixins.py::test_artifact_capture_completion_cannot_replace_newer_work[dirty_mixins-prompt]\n1.15s call     Tests/UI/test_console_prompt_mixins.py::test_shared_editor_dirty_close_invalid_save_and_version_change_preserve_draft\n1.13s call     Tests/UI/test_console_prompt_mixins.py::test_deleted_disabled_and_enabled_choices_keep_count_and_preview_is_read_only\n1.03s call     Tests/UI/test_console_prompt_mixins.py::test_accepted_toggle_preserves_editor_dirtied_during_apply\n1.02s call     Tests/UI/test_console_prompt_mixins.py::test_dirty_toggle_restores_truth_without_losing_editor[discard]\n1.00s call     Tests/UI/test_console_prompt_mixins.py::test_dirty_toggle_restores_truth_without_losing_editor[save]\n53 passed in 109.92s (0:01:49)\n"
+}

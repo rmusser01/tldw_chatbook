@@ -8,7 +8,6 @@ This directory contains comprehensive UI tests for the embeddings functionality 
 - `test_toast_notifications.py` - Tests for toast notification system
 - `test_detailed_progress.py` - Tests for multi-stage progress tracking
 - `test_embedding_templates.py` - Tests for embedding configuration templates
-- `test_activity_log.py` - Tests for activity logging functionality
 
 ### Utilities
 - `test_base.py` - Base classes and common fixtures

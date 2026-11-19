@@ -1,0 +1,24 @@
+..........................                                               [100%]
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-retention_green/tests.xml -
+============================= slowest 25 durations =============================
+3.78s call     Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_preserves_unowned_lifetimes[custom-notes]
+3.55s call     Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_preserves_unowned_lifetimes[memory-notes]
+2.61s call     Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[cancel-media]
+2.58s call     Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[operation-media]
+2.40s call     Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[transaction-media]
+2.27s call     Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[error-media]
+2.25s call     Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[success-media]
+2.13s setup    Tests/DB/test_sync_log_retention.py::test_chachanotes_prune_deletes_only_rows_older_than_cutoff
+1.95s call     Tests/Backup_Recovery/test_finite_library_workers.py::test_finite_worker_native_cache_lifetime[borrowed-media]
+1.91s setup    Tests/DB/test_sync_log_retention.py::test_app_pass_prunes_both_stores
+1.77s setup    Tests/DB/test_sync_log_retention.py::test_chachanotes_prune_writes_still_land_after_prune
+1.75s setup    Tests/DB/test_sync_log_retention.py::test_chachanotes_prune_rejects_invalid_cutoff[123]
+1.73s setup    Tests/DB/test_sync_log_retention.py::test_chachanotes_prune_rejects_invalid_cutoff[None]
+1.70s setup    Tests/DB/test_sync_log_retention.py::test_app_pass_zero_disables
+1.62s setup    Tests/DB/test_sync_log_retention.py::test_app_pass_invalid_config_value_is_contained
+1.56s setup    Tests/DB/test_sync_log_retention.py::test_chachanotes_prune_rejects_invalid_cutoff[]
+1.33s call     Tests/DB/test_sync_log_retention.py::test_app_pass_prunes_both_stores
+1.26s setup    Tests/DB/test_sync_log_retention.py::test_chachanotes_prune_keeps_row_at_exact_cutoff
+
+(7 durations < 1s hidden.)
+26 passed in 40.18s

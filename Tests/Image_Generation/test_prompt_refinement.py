@@ -4,6 +4,7 @@ import pytest
 @pytest.fixture
 def pr():
     from tldw_chatbook.Image_Generation import prompt_refinement as m
+
     return m
 
 
@@ -18,7 +19,9 @@ def test_basic_always_appends_suffix(pr):
 
 def test_auto_skips_when_prompt_already_detailed(pr):
     detailed = "a cat, highly detailed, cinematic lighting, sharp focus, 8k, masterpiece composition"
-    assert pr.refine_image_prompt(detailed, mode="auto") == detailed  # has quality cues -> no append
+    assert (
+        pr.refine_image_prompt(detailed, mode="auto") == detailed
+    )  # has quality cues -> no append
 
 
 def test_auto_appends_for_short_sparse_prompt(pr):

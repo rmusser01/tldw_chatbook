@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 
 
-WORKFLOW_DIR = Path(__file__).parents[2] / "tldw_chatbook" / "Video_Generation" / "workflows"
+WORKFLOW_DIR = (
+    Path(__file__).parents[2] / "tldw_chatbook" / "Video_Generation" / "workflows"
+)
 WORKFLOW_NAMES = ("minimax_h3_t2v.json", "minimax_h3_t2v_spectrum.json")
 FRAME_GRID_EXPRESSION = (
     "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17"

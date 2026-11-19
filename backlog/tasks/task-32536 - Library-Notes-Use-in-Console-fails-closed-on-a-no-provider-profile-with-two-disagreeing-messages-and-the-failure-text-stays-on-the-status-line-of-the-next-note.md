@@ -116,4 +116,7 @@ Modified: `UI/Library_Modules/library_notes_controller.py`,
 Live: 235x52 and 100x30 on a no-provider profile and a 12-note profile;
 captures `wave4-caps/console-handoff/handoff-10`, `10b`, `14`, `14b`, `15`,
 `15b`, `16`, `16b`, `17`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/notes.md`: Fix round 1: the two hand-off failure paths changed in that round (the Console seam missing, and the seam raising) cannot be induced from the UI; they are pinned by tests, not walked. Captures `wave4-caps/console-handoff/handoff-30-already-linked-status`, `31-fresh-link-status`, `32-second-press-already-linked`.
 <!-- SECTION:NOTES:END -->

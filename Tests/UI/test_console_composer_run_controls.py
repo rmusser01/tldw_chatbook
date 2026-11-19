@@ -23,6 +23,7 @@ fresh profile first (`lessons-testing-evidence.md`: "Tests/UI
 
 from __future__ import annotations
 
+import contextlib
 import time
 
 import pytest
@@ -33,9 +34,10 @@ from textual.events import Paste
 from textual.widgets import Button, OptionList, Static
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import attach_chachanotes_db
+from Tests.UI import pump_probe
 from Tests.UI.test_console_dictation import FakeDictationSession
 from Tests.UI.test_console_native_chat_flow import (
+    _build_console_send_test_app,
     _select_llamacpp_console,
     _staged_image_attachment,
 )
@@ -46,6 +48,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
@@ -66,8 +69,7 @@ class _PaletteConsoleHarness(ConsoleHarness):
 def _held_run_host(harness=ConsoleHarness):
     """Build a Console whose next send streams one chunk, then holds."""
 
-    app = _build_test_app()
-    attach_chachanotes_db(app)
+    app = _build_console_send_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     gateway = GatedGateway()
@@ -105,9 +107,105 @@ async def _type(pilot, text: str) -> None:
 async def _mounted(host, pilot):
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-native-composer")
-    _select_llamacpp_console(console)
+    await _select_llamacpp_console(console)
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
     return console, composer
+
+
+@contextlib.contextmanager
+def _activation_restore_ledger():
+    """Record every focus restore a ChatScreen schedules, and whether it ran.
+
+    Yields a list of ``[how, ran]`` entries, one per scheduled
+    ``_restore_console_workbench_focus``. Install it before the host runs:
+    it wraps ``call_after_refresh`` and ``set_timer`` on ChatScreen, so it
+    sees a restore however Textual stores it afterwards -- ``set_timer``
+    keeps ``partial(self.call_next, callback)``, not the callback, and the
+    ``call_next`` hop then parks it on ``_next_callbacks`` -- and an entry
+    turns ``ran`` only when the restore itself has returned.
+    """
+    restore = ChatScreen._restore_console_workbench_focus
+    after_refresh = ChatScreen.call_after_refresh
+    set_timer = ChatScreen.set_timer
+    ledger: list[list] = []
+
+    def tracked(callback, how: str):
+        if getattr(callback, "__func__", None) is not restore:
+            return callback, None
+        entry = [how, False]
+
+        def run_restore() -> None:
+            try:
+                callback()
+            finally:
+                entry[1] = True
+
+        return run_restore, entry
+
+    def counting_after_refresh(self, callback, *args, **kwargs):
+        callback, entry = tracked(callback, "after refresh")
+        scheduled = after_refresh(self, callback, *args, **kwargs)
+        if entry is not None and scheduled:
+            ledger.append(entry)
+        return scheduled
+
+    def counting_set_timer(self, delay, callback=None, **kwargs):
+        callback, entry = tracked(callback, f"{delay} s timer")
+        timer = set_timer(self, delay, callback, **kwargs)
+        if entry is not None:
+            ledger.append(entry)
+        return timer
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ChatScreen, "call_after_refresh", counting_after_refresh)
+        patch.setattr(ChatScreen, "set_timer", counting_set_timer)
+        yield ledger
+
+
+async def _after_activation_focus_restores(console, pilot, restores) -> None:
+    """Wait until every focus restore the Console's activation scheduled has run.
+
+    The activation schedules ``_restore_console_workbench_focus`` three times,
+    all from the attach reconcile: after refresh and on a 0.2 s timer when the
+    view starts, and after refresh again when the reconcile replays the
+    screen's resume. One that runs after a case's ``set_focus(None)`` focuses
+    the draft again, and the case reads that as "the key focused the draft"
+    (TASK-33620.15.7, TASK-33620.15.23).
+
+    The earlier waits looked for the restore on the screen's timers and
+    callback list. Neither could see the timer's: Textual's ``set_timer``
+    stores ``partial(self.call_next, restore)``, so ``timer._callback ==
+    restore`` was never true, and the wait returned before the timer fired
+    in 8 of 42 probed runs -- exactly the 8 that failed. ``restores`` is the
+    ``_activation_restore_ledger`` this case installed, which records each
+    restore as it is scheduled and marks it when it has run.
+
+    So this waits, without a fixed sleep, until the reconcile has finished
+    (nothing more will be scheduled) and every recorded restore has run, then
+    makes one round trip through the app's queue: a ``focus()`` a restore
+    made lands through ``App.call_later``, ahead of that round trip.
+    """
+    await _wait_for(
+        pilot,
+        lambda: (
+            console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+        ),
+        "the Console's attach reconcile never finished",
+    )
+
+    def unrun() -> list[str]:
+        return [how for how, ran in list(restores) if not ran]
+
+    await _wait_for(
+        pilot,
+        lambda: bool(restores) and not unrun(),
+        lambda: (
+            f"activation focus restores not yet run: {unrun()} "
+            f"(scheduled: {[how for how, _ran in restores]})"
+        ),
+    )
+    assert await pump_probe.pump_runs(console.app), "the app's pump never ran"
 
 
 async def _start_held_run(console, composer, pilot):
@@ -125,6 +223,9 @@ async def _start_held_run(console, composer, pilot):
             for message in store.messages_for_session(store.active_session_id)
         ),
         "the held run never streamed its first chunk",
+        # Preparation includes real provider validation and persistence;
+        # this gates control assertions, rather than measuring send latency.
+        timeout=60.0,
     )
     stop = composer.query_one("#console-stop-generation", Button)
     await _wait_for(pilot, lambda: stop.display, "Stop never displayed mid-run")
@@ -147,22 +248,19 @@ def _user_turns(store) -> int:
     )
 
 
-def _spy_sends(console) -> list:
-    """Record every entry into the visible send path (pass-through).
-
-    `_send_console_message_from_visible_action` is where the `ui_action`
-    console_send_stage is recorded; this wraps it without changing it, so a
-    key that wrongly reaches the send path shows up here.
-    """
+def _spy_sends(console, monkeypatch) -> list:
+    """Record visible send requests before native or legacy dispatch."""
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement
 
     calls: list = []
-    original = console._send_console_message_from_visible_action
+    original = send_acknowledgement.request_visible_send
 
-    async def spy(**kwargs):
-        calls.append(kwargs)
-        return await original(**kwargs)
+    def spy(screen, **kwargs):
+        if screen is console:
+            calls.append(kwargs)
+        return original(screen, **kwargs)
 
-    console._send_console_message_from_visible_action = spy
+    monkeypatch.setattr(send_acknowledgement, "request_visible_send", spy)
     return calls
 
 
@@ -303,7 +401,7 @@ async def test_running_stop_is_painted_whole_inside_the_action_row(size, request
 )
 @private_profile_test
 async def test_tab_reaches_a_visibly_focused_stop_and_its_key_stops_the_run(
-    key, size, request
+    key, size, request, monkeypatch
 ):
     gateway, host = _held_run_host()
     async with host.run_test(size=size) as pilot:
@@ -313,7 +411,7 @@ async def test_tab_reaches_a_visibly_focused_stop_and_its_key_stops_the_run(
             stop = composer.query_one("#console-stop-generation", Button)
             unfocused = _focus_style(stop)
             user_turns = _user_turns(store)
-            sends = _spy_sends(console)
+            sends = _spy_sends(console, monkeypatch)
 
             composer.focus()
             await pilot.pause()
@@ -510,14 +608,16 @@ async def test_running_reason_copy_matches_the_queue_button(request):
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_enter_on_each_idle_composer_button_runs_its_own_action(request):
+async def test_enter_on_each_idle_composer_button_runs_its_own_action(
+    request, monkeypatch
+):
     gateway, host = _held_run_host()
     async with host.run_test(size=(160, 45)) as pilot:
         console, composer = await _mounted(host, pilot)
         store = console._ensure_console_chat_store()
         composer.load_draft("hello menu test")
         await pilot.pause()
-        sends = _spy_sends(console)
+        sends = _spy_sends(console, monkeypatch)
 
         # Menu: Enter opens the Composer actions menu, focus on its first item.
         menu = composer.query_one("#console-composer-menu", Button)
@@ -577,7 +677,7 @@ async def test_enter_on_focused_dictate_starts_dictation_without_sending(
         console, composer = await _mounted(host, pilot)
         composer.load_draft("dictate beside this")
         await pilot.pause()
-        sends = _spy_sends(console)
+        sends = _spy_sends(console, monkeypatch)
         dictate = composer.query_one("#console-dictation", Button)
         dictate.focus()
         await pilot.pause()
@@ -593,7 +693,9 @@ async def test_enter_on_focused_dictate_starts_dictation_without_sending(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_enter_on_running_queue_and_redirect_run_their_own_actions(request):
+async def test_enter_on_running_queue_and_redirect_run_their_own_actions(
+    request, monkeypatch
+):
     gateway, host = _held_run_host()
     async with host.run_test(size=(235, 52)) as pilot:
         console, composer = await _mounted(host, pilot)
@@ -624,7 +726,7 @@ async def test_enter_on_running_queue_and_redirect_run_their_own_actions(request
             await pilot.pause()
             redirect = composer.query_one("#console-redirect-generation", Button)
             assert redirect.display, "Redirect should fit at 235 columns"
-            sends = _spy_sends(console)
+            sends = _spy_sends(console, monkeypatch)
             redirect.focus()
             await pilot.pause()
             await pilot.press("enter")
@@ -666,7 +768,9 @@ async def test_enter_on_running_queue_and_redirect_run_their_own_actions(request
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_enter_collapses_mid_run_and_the_collapsed_stop_takes_enter(request):
+async def test_enter_collapses_mid_run_and_the_collapsed_stop_takes_enter(
+    request, monkeypatch
+):
     """AC#1's "Expand/Stop where shown": Enter on Composer ▾ collapses the
     composer mid-run, and Enter on the collapsed strip's Stop stops the run."""
     gateway, host = _held_run_host()
@@ -674,7 +778,7 @@ async def test_enter_collapses_mid_run_and_the_collapsed_stop_takes_enter(reques
         console, composer = await _mounted(host, pilot)
         try:
             store = await _start_held_run(console, composer, pilot)
-            sends = _spy_sends(console)
+            sends = _spy_sends(console, monkeypatch)
             composer.query_one("#console-composer-collapse", Button).focus()
             await pilot.pause()
             await pilot.press("enter")
@@ -876,7 +980,7 @@ async def test_after_send_the_next_prompt_is_typed_into_the_draft(
         assert fake.start_calls == 0, "a keystroke of the next prompt dictated"
         # Enter sends it (the send path is entered -- this harness does not
         # complete a second turn even for two plain draft sends).
-        sends = _spy_sends(console)
+        sends = _spy_sends(console, monkeypatch)
         await pilot.press("enter")
         await _wait_for(pilot, lambda: len(sends) == 1, "Enter did not send it")
         assert fake.start_calls == 0, "Enter on the next prompt started dictation"
@@ -1290,28 +1394,30 @@ async def test_paste_with_nothing_focused_lands_in_a_focused_draft(request):
     `_should_capture_console_input` still claims it for the draft -- which
     then changed with no caret anywhere on screen (PR #2934 checkpoint
     review). The draft takes focus first here too."""
-    gateway, host = _held_run_host()
-    async with host.run_test(size=(160, 45)) as pilot:
-        console, composer = await _mounted(host, pilot)
-        composer.load_draft("hello")
-        console.set_focus(None)
-        await pilot.pause()
-        assert console.app.focused is None
+    with _activation_restore_ledger() as restores:
+        gateway, host = _held_run_host()
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, composer = await _mounted(host, pilot)
+            await _after_activation_focus_restores(console, pilot, restores)
+            composer.load_draft("hello")
+            console.set_focus(None)
+            await pilot.pause()
+            assert console.app.focused is None
 
-        host.post_message(Paste(" world"))
-        await _wait_for(
-            pilot, lambda: composer.draft_text() != "hello", "the paste never landed"
-        )
-        assert composer.draft_text() == "hello world"
-        assert console.app.focused is composer, (
-            f"the paste edited the draft but focus is {console.app.focused!r}"
-        )
-        await _wait_for(
-            pilot,
-            lambda: ConsoleComposerBar.CURSOR_GLYPH in _draft_render(composer),
-            "the pasted-into draft never painted its caret",
-        )
-        gateway.release.set()
+            host.post_message(Paste(" world"))
+            await _wait_for(
+                pilot, lambda: composer.draft_text() != "hello", "the paste never landed"
+            )
+            assert composer.draft_text() == "hello world"
+            assert console.app.focused is composer, (
+                f"the paste edited the draft but focus is {console.app.focused!r}"
+            )
+            await _wait_for(
+                pilot,
+                lambda: ConsoleComposerBar.CURSOR_GLYPH in _draft_render(composer),
+                "the pasted-into draft never painted its caret",
+            )
+            gateway.release.set()
 
 
 @pytest.mark.asyncio
@@ -1321,29 +1427,31 @@ async def test_typing_with_nothing_focused_focuses_the_draft_first(request):
     key used to land in a draft that showed no caret, and Backspace then
     edited it unseen (PR #2934 round-2 review). A printable key now focuses
     the draft and types there; an editing key alone leaves it untouched."""
-    gateway, host = _held_run_host()
-    async with host.run_test(size=(160, 45)) as pilot:
-        console, composer = await _mounted(host, pilot)
-        composer.load_draft("hello")
-        console.set_focus(None)
-        await pilot.pause()
-        assert console.app.focused is None
+    with _activation_restore_ledger() as restores:
+        gateway, host = _held_run_host()
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, composer = await _mounted(host, pilot)
+            await _after_activation_focus_restores(console, pilot, restores)
+            composer.load_draft("hello")
+            console.set_focus(None)
+            await pilot.pause()
+            assert console.app.focused is None
 
-        await pilot.press("backspace")
-        await pilot.pause()
-        assert composer.draft_text() == "hello", (
-            "Backspace edited a draft that shows no caret"
-        )
+            await pilot.press("backspace")
+            await pilot.pause()
+            assert composer.draft_text() == "hello", (
+                "Backspace edited a draft that shows no caret"
+            )
 
-        await pilot.press("k")
-        await _wait_for(
-            pilot, lambda: composer.draft_text() != "hello", "the key never landed"
-        )
-        assert composer.draft_text() == "hellok"
-        assert console.app.focused is composer, (
-            f"the key edited the draft but focus is {console.app.focused!r}"
-        )
-        gateway.release.set()
+            await pilot.press("k")
+            await _wait_for(
+                pilot, lambda: composer.draft_text() != "hello", "the key never landed"
+            )
+            assert composer.draft_text() == "hellok"
+            assert console.app.focused is composer, (
+                f"the key edited the draft but focus is {console.app.focused!r}"
+            )
+            gateway.release.set()
 
 
 # ---------------------------------------------------------------------------
@@ -1354,6 +1462,7 @@ async def test_typing_with_nothing_focused_focuses_the_draft_first(request):
 def test_disabled_reason_names_the_queue_state_not_send_or_setup():
     """TASK-33625.1 AC#4: mid-run copy follows the queue-state label."""
     from tldw_chatbook.Chat.console_display_state import (
+        ConsoleBlockedReason,
         SEND_LABEL_PREPARING,
         SEND_LABEL_QUEUE,
         SEND_LABEL_QUEUE_FULL,
@@ -1397,7 +1506,9 @@ def test_disabled_reason_names_the_queue_state_not_send_or_setup():
             action_id="send",
             has_draft=True,
             send_blocked=True,
-            setup_blocked_reason="Choose a model before sending.",
+            setup_blocked_reason=ConsoleBlockedReason(  # TASK-33621.11: coded
+                "Choose a model before sending.", code="model_missing"
+            ),
             queue_blocked_reason="Wait for this turn to be accepted.",
             send_label=label,
         )
@@ -1502,3 +1613,58 @@ def test_palette_lists_stop_and_the_composer_menu_actions_class_safe():
         "Console: Improve current draft…",
     ):
         assert expected in labels, expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("threshold_offset", [-1, 0, 1])
+@private_profile_test
+async def test_redirect_fit_boundary_keeps_run_controls_in_place(
+    threshold_offset, request
+):
+    """Fit comes from the visible control cells and draft/reason floors."""
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        await pilot.pause(0.2)
+        row = composer.query_one("#console-composer-expanded")
+        chrome = host.size.width - row.content_size.width
+        # Independent geometry: left Menu/collapse 12+6; Send reserves 14
+        # for its longest label (Preparing... plus padding),
+        # gap 2, Dictate 11, Stop 6, Redirect 10; margin 2; draft floor
+        # 32; widest reason 52. No production budget method supplies this.
+        threshold = chrome + 12 + 6 + 14 + 2 + 11 + 6 + 10 + 2 + 32 + 52
+        await pilot.resize_terminal(threshold + threshold_offset, 52)
+        await pilot.pause(0.3)
+        actions = composer.query_one("#console-composer-actions")
+        send = composer.query_one("#console-send-message", Button)
+        dictate = composer.query_one("#console-dictation", Button)
+        redirect = composer.query_one("#console-redirect-generation", Button)
+        draft = composer.query_one("#console-command-visible-text", Static)
+
+        def geometry():
+            return (actions.region, send.region, dictate.region)
+
+        resting = geometry()
+        expected_fit = threshold_offset >= 0
+        assert composer._redirect_budgeted is expected_fit
+        try:
+            await _start_held_run(console, composer, pilot)
+            await pilot.pause(0.2)
+            assert redirect.display is expected_fit
+            assert geometry() == resting, (
+                "run activation shifted the action row or controls"
+            )
+            assert draft.region.width >= 32
+            if expected_fit:
+                assert redirect.region.width == 10
+                assert actions.region.contains_region(redirect.region)
+                assert _painted_at(host, redirect)
+            composer.query_one("#console-stop-generation", Button).press()
+            await _wait_for(pilot, lambda: not composer.run_active, "run never stopped")
+            await pilot.pause(0.2)
+            assert not redirect.display
+            assert geometry() == resting, (
+                "run deactivation shifted the action row or controls"
+            )
+        finally:
+            gateway.release.set()

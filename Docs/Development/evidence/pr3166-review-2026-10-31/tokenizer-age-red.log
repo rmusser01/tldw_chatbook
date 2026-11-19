@@ -1,0 +1,39 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 40 items / 38 deselected / 2 selected
+
+Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[False] PASSED [ 50%]
+Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[True] FAILED [100%]
+
+================================== FAILURES ===================================
+_______ test_tokenizer_wait_never_renews_original_checked_display[True] _______
+Tests\UI\test_console_checked_display_scope.py:860: in test_tokenizer_wait_never_renews_original_checked_display
+    assert accepted is not expire_during_tokenizer
+E   assert True is not True
+============================== warnings summary ===============================
+Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[False]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+3.28s call     Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[True]
+2.17s call     Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[False]
+2.06s setup    Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[False]
+
+(3 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[True]
+=========== 1 failed, 1 passed, 38 deselected, 1 warning in 13.94s ============

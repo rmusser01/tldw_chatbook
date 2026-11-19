@@ -1,20 +1,16 @@
-"""Artifacts screen Dreams slot: rows, mode label, empty states, teardown.
-
-Harness copied from ``test_artifacts_screen_reports.py``: a factory-built
-TldwCli (never mounted, so the app's post-``_ui_ready`` Dreams wiring never
-runs and ``app.dreams_db`` stays whatever the test assigns) wrapped in
-``DestinationHarness``, with a real ``DreamsDB`` on ``tmp_path`` for seeding.
-"""
+"""Dreams rows on the canonical Library route (ADR172/196)."""
 
 import time
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import OptionList, Static
 
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.test_library_dreams_reader import ProductionArtifactsHarness
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
-from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 pytestmark = pytest.mark.ui
 
@@ -59,67 +55,88 @@ def _seed_failed_cycle_db(tmp_path) -> DreamsDB:
     return db
 
 
-async def _settle_artifacts_refreshes(screen, pilot, *, timeout: float = 10.0) -> None:
-    """Wait out the Artifacts screen's mount/resume refresh workers.
+def _seed_tracked_item_db(tmp_path) -> DreamsDB:
+    """One story plus one active tracked question whose latest run changed."""
+    db = _seed_story_db(tmp_path)
+    item_id = db.create_tracked_item(
+        mechanism="question",
+        intent="deal",
+        query_template="cheap flights japan",
+        event_date="2026-10-01",
+        cadence_seconds=3600,
+    )
+    db.insert_track_run(item_id, status="changed", digest_hash="digest")
+    db.touch_tracked_checked(item_id, "2026-09-22T00:00:00+00:00")
+    return db
 
-    ``on_mount`` starts the chatbook, daily-reports and dreams thread
-    workers, and the push that mounted the screen also fires
-    ``on_screen_resume`` (artifacts_screen.py), which starts the reports
-    and dreams refreshes a second time. Every apply recomposes the shared
-    list pane, remounting each row and empty-state Static. A query or
-    click made between one of those recomposes and the next layout pass
-    reads a *detached* widget (``region`` collapses to 0x0) or raises
-    ``NoMatches`` — which is what made these tests rotate red in batch
-    runs while passing solo: the surviving window depends purely on
-    thread timing. Waiting for the workers to finish, then draining the
-    still-queued ``call_from_thread`` applies, closes the window.
-    """
+
+async def _settle_artifacts_refreshes(screen, pilot, *, timeout=10.0):
+    """Wait on the real Library data/presentation owner, with the old deadline."""
+    c = screen._artifacts_controller
     deadline = time.monotonic() + timeout
-    while True:
-        workers = (
-            getattr(screen, "_dreams_worker", None),
-            getattr(screen, "_daily_reports_worker", None),
-            getattr(screen, "_chatbook_refresh_worker", None),
-        )
-        if all(worker is None or worker.is_finished for worker in workers):
-            break
-        if time.monotonic() > deadline:
-            raise AssertionError("Artifacts refresh workers never finished")
+    while c.loading or c.detail_loading or c.busy:
+        assert time.monotonic() < deadline, "Library artifact work never settled"
         await pilot.pause(0.02)
-    # ``worker.is_finished`` turns True before its ``call_from_thread``
-    # apply has run; an idle pause drains that pending apply (and the
-    # layout pass it schedules) before the caller queries or clicks.
     await pilot.pause()
     await pilot.pause()
 
 
-async def _wait_for_dreams(screen, pilot, selector: str, *, attempts: int = 50):
-    """Wait until the worker has landed rows AND composed them.
-
-    Waiting on the widget (not just ``screen._dreams``) is deliberate:
-    ``_apply_dreams`` sets state, then recomposes asynchronously, so a
-    query made the moment the state flips can race the repaint.
-
-    The settle afterwards is as load-bearing as the wait: the dreams
-    apply is only the FIRST of the mount/resume recompose waves (see
-    ``_settle_artifacts_refreshes``), and a row reference taken now is
-    detached (region 0x0, click-miss) the moment a later wave lands.
-    """
+async def _wait_for_dreams(screen, pilot, selector, *, attempts=50):
+    if (
+        screen._artifacts_controller is None
+        or screen._artifacts_controller.scope.view != "dreams"
+    ):
+        await screen._select_library_rail_row("artifacts-dreams")
+    c = screen._artifacts_controller
+    source = (
+        "dream_track"
+        if "-track-row-" in selector
+        else "dream_collection"
+        if "-row-cycle-" in selector
+        else "dream_story"
+    )
     for _ in range(attempts):
         await pilot.pause(0.05)
-        if screen._dreams and screen.query(selector):
-            break
-    else:
-        raise AssertionError(f"dreams refresh never landed {selector!r}")
+        rows = c.page.items if c.page else ()
+        selected = next(
+            (
+                row
+                for row in rows
+                if row.key.source == source
+                and (
+                    source == "dream_collection"
+                    and selector.rsplit("cycle-", 1)[1] in row.title
+                    or source != "dream_collection"
+                    and row.key.native_id == int(selector.rsplit("-", 1)[1])
+                )
+            ),
+            None,
+        )
+        if not c.loading and selected:
+            c.select(selected.key)
+            await _settle_artifacts_refreshes(screen, pilot)
+            assert c.detail is not None
+            return
+    raise AssertionError(f"production Library never displayed {selector}")
+
+
+@asynccontextmanager
+async def _mounted_dreams(app):
+    host = ProductionArtifactsHarness(app, "library")
+    try:
+        async with host.run_test(size=(160, 50)) as pilot:
+            assert isinstance(host.screen, LibraryScreen)
+            yield host, host.screen, pilot
+    finally:
+        db = getattr(app, "dreams_db", None)
+        if db is not None:
+            db.close_all()
+
+
+async def _open_dreams_view(screen, pilot):
+    await screen._select_library_rail_row("artifacts-dreams")
     await _settle_artifacts_refreshes(screen, pilot)
-
-
-def _dream_row_widgets(screen):
-    return [
-        widget
-        for widget in screen.query(Static)
-        if (widget.id or "").startswith("artifacts-dream-row-")
-    ]
+    return screen._artifacts_controller
 
 
 @pytest.mark.bootstrap_profile
@@ -128,68 +145,46 @@ async def test_seeded_dream_rows_paint_and_mode_label_names_dreams(
     tmp_path, monkeypatch
 ):
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_story_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
-        await pilot.pause(0.1)
-        screen = host.screen_stack[-1]
-        assert isinstance(screen, ArtifactsScreen)
-
+    async with _mounted_dreams(app) as (_host, screen, pilot):
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-1")
-        row = screen.query_one("#artifacts-dream-row-1", Static)
-        assert row.region.height >= 1, "dream row must paint, not just mount"
-        mode_label = screen.query_one("#artifacts-mode-label", Static)
-        assert "Dreams" in str(mode_label.renderable)
-        assert not screen.query("#artifacts-list-dreams"), (
-            "rows on screen mean the empty state must be gone"
+        rows = screen.query_one("#library-artifacts-list", OptionList)
+        assert rows.region.height >= 1 and rows.option_count == 1
+        assert "Cheap flights to Japan" in str(rows.get_option_at_index(0).prompt)
+        assert "Dreams" in str(
+            screen.query_one("#library-artifacts-retention", Static).renderable
+        )
+        assert "No Dreams" not in str(
+            screen.query_one("#library-artifacts-count", Static).renderable
         )
 
 
-# Every test here builds a real app via ``_build_test_app``, whose
-# ``build_test_app_config`` calls the real ``load_settings()`` (a guarded
-# config read). Under the default per-test TLDW_CONFIG_PATH redirect the
-# config participant admitted at collection time no longer matches and
-# admission fails closed (RecoveryRequired("raw_source_selection_changed")).
-# ``bootstrap_profile`` (Tests/conftest.py, TASK-32873) keeps the
-# collection-time profile so the bound selection still matches.
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_failed_cycle_synthetic_row_paints(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_failed_cycle_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
-        await pilot.pause(0.1)
-        screen = host.screen_stack[-1]
-
-        await _wait_for_dreams(
-            screen, pilot, "#artifacts-dream-row-cycle-2026-09-22"
-        )
-        row = screen.query_one("#artifacts-dream-row-cycle-2026-09-22", Static)
-        assert row.region.height >= 1, "the synthetic failed-cycle row must paint"
+    async with _mounted_dreams(app) as (_host, screen, pilot):
+        await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-cycle-2026-09-22")
+        rows = screen.query_one("#library-artifacts-list", OptionList)
+        assert rows.region.height >= 1 and rows.option_count == 1
+        assert "Cycle 2026-09-22" in str(rows.get_option_at_index(0).prompt)
+        assert "failed" in str(rows.get_option_at_index(0).prompt)
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_disabled_dreams_renders_disabled_even_with_rows(tmp_path):
-    # No [dreams] section in the sandbox config: dreams_setting defaults off.
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_story_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
-        await pilot.pause(0.2)
-        screen = host.screen_stack[-1]
-        # Dreams is disabled, so there is no row to wait for -- but the
-        # reports/chatbook refresh waves still remount this Static, and a
-        # query taken mid-recompose raises NoMatches.
-        await _settle_artifacts_refreshes(screen, pilot)
-
-        empty = screen.query_one("#artifacts-list-dreams", Static)
-        assert str(empty.renderable) == "> Dreams: disabled"
-        assert not _dream_row_widgets(screen), (
-            "a disabled feature must not paint story rows"
+    async with _mounted_dreams(app) as (_host, screen, pilot):
+        c = await _open_dreams_view(screen, pilot)
+        assert c.page.items == ()
+        assert screen.query_one("#library-artifacts-list", OptionList).option_count == 0
+        assert "Enable Dreams in F4 Settings" in str(
+            screen.query_one("#library-artifacts-count", Static).renderable
         )
 
 
@@ -197,56 +192,84 @@ async def test_disabled_dreams_renders_disabled_even_with_rows(tmp_path):
 @pytest.mark.asyncio
 async def test_enabled_dreams_with_no_rows_renders_none_yet(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = DreamsDB(tmp_path / "empty-dreams.sqlite", "artifacts-dreams")
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
-        await pilot.pause(0.2)
-        screen = host.screen_stack[-1]
-        await _settle_artifacts_refreshes(screen, pilot)
-
-        empty = screen.query_one("#artifacts-list-dreams", Static)
-        assert str(empty.renderable) == "> Dreams: none yet"
+    async with _mounted_dreams(app) as (_host, screen, pilot):
+        c = await _open_dreams_view(screen, pilot)
+        assert c.page.items == ()
+        assert "No Dreams yet" in str(
+            screen.query_one("#library-artifacts-count", Static).renderable
+        )
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_missing_dreams_db_degrades_to_none_yet_without_crashing(monkeypatch):
-    """Wiring order tolerance: no dreams_db attribute yet means no rows, not
-    an exception out of the refresh worker."""
+async def test_missing_dreams_db_degrades_to_unavailable_without_crashing(monkeypatch):
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")  # no dreams_db
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
-        await pilot.pause(0.2)
-        screen = host.screen_stack[-1]
-        await _settle_artifacts_refreshes(screen, pilot)
-        assert isinstance(screen, ArtifactsScreen)
-
-        empty = screen.query_one("#artifacts-list-dreams", Static)
-        assert str(empty.renderable) == "> Dreams: none yet"
-        assert screen._dreams == []
+    app = _build_test_app(configured_default="library")
+    app.get_dreams_db = lambda: None
+    async with _mounted_dreams(app) as (_host, screen, pilot):
+        c = await _open_dreams_view(screen, pilot)
+        assert c.page is None and "unavailable" in c.error
+        assert "unavailable" in str(
+            screen.query_one("#library-artifacts-count", Static).renderable
+        )
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_unmount_invalidates_late_dreams_apply(tmp_path, monkeypatch):
-    """Same teardown contract as the daily-reports trio (Qodo #15): unmount
-    bumps the generation, so a late ``call_from_thread`` apply is a no-op
-    instead of recomposing an unmounted screen."""
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_story_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
-        await pilot.pause(0.1)
-        screen = host.screen_stack[-1]
+    async with _mounted_dreams(app) as (host, screen, pilot):
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-1")
-        stale_generation = screen._dreams_generation
-
-        await pilot.app.pop_screen()  # real unmount
+        c = screen._artifacts_controller
+        generation, profile, scope, page = c.generation, c.profile(), c.scope, c.page
+        await host.pop_screen()
         await pilot.pause()
+        assert c.disposed and c.generation != generation
+        empty = SimpleNamespace(items=(), total=0)
+        await c._load_page(
+            SimpleNamespace(read_page=lambda *a, **kw: empty),
+            generation,
+            profile,
+            scope,
+            None,
+            "after",
+            None,
+        )
+        assert c.page is page, "late result cannot clear the retired reader"
 
-        assert screen._dreams_generation != stale_generation
-        screen._apply_dreams(stale_generation, [])
-        assert screen._dreams, "stale apply must not clear the landed rows"
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_tracked_rows_render_before_older_dream_rows(tmp_path, monkeypatch):
+    _enable_dreams(monkeypatch)
+    app = _build_test_app(configured_default="library")
+    app.dreams_db = _seed_tracked_item_db(tmp_path)
+    with app.dreams_db.transaction() as connection:
+        connection.execute(
+            "UPDATE dreams_collections SET created_at='2000-01-01T00:00:00+00:00'"
+        )
+    async with _mounted_dreams(app) as (_host, screen, pilot):
+        await _wait_for_dreams(screen, pilot, "#artifacts-dream-track-row-1")
+        rows = screen.query_one("#library-artifacts-list", OptionList)
+        assert rows.option_count == 2 and rows.can_focus
+        assert rows.get_option_at_index(0).id == "dream_track:1"
+        assert rows.get_option_at_index(1).id == "dream_story:1"
+        text = str(rows.get_option_at_index(0).prompt)
+        assert "cheap flights japan" in text and "changed" in text
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_tracked_empty_state_has_no_phantom_rows(tmp_path, monkeypatch):
+    _enable_dreams(monkeypatch)
+    app = _build_test_app(configured_default="library")
+    app.dreams_db = _seed_story_db(tmp_path)
+    async with _mounted_dreams(app) as (_host, screen, pilot):
+        await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-1")
+        c = screen._artifacts_controller
+        assert [row.key.source for row in c.page.items] == ["dream_story"]
+        assert screen.query_one("#library-artifacts-list", OptionList).option_count == 1

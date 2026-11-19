@@ -1,0 +1,4 @@
+{
+  "sha256": "088cfc6bc184ada82cc17110b27254b6d74dfb4d68d25e52c6cdc9658d6dfd65",
+  "raw_text": "....................................................                     [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-ui18-idymhtpd/fixed.xml -\n============================= slowest 25 durations =============================\n9.75s call     Tests/UI/test_console_turn_resend_ui.py::test_resend_poll_survives_initial_hook_admission_read\n8.90s call     Tests/UI/test_console_turn_resend_ui.py::test_transcript_resend_retains_failed_rows_until_connection_is_ready\n3.97s call     Tests/UI/test_console_turn_resend_ui.py::test_console_resend_click_re_runs_a_failed_turn_in_place\n2.91s call     Tests/UI/test_library_notes_move_never_false_conflicts.py::test_new_note_keeps_focus_after_a_targeted_notes_refresh\n\n(21 durations < 1s hidden.)\n52 passed in 45.77s\n"
+}

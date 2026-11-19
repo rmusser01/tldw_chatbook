@@ -1,7 +1,7 @@
 ---
 id: TASK-464
 title: 'Character import: accept integer position in embedded character_book'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 22:00'
 labels:
@@ -20,7 +20,14 @@ Found during TASK-429 live verification. A V2 character card whose embedded char
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A V2 card whose character_book entry uses an integer position (0/1) imports successfully instead of aborting the whole card
-- [ ] #2 The integer position is coerced to the correct string enum on the imported/converted world-book entry
-- [ ] #3 Strictly-compliant string-position cards continue to import unchanged
+- [x] #1 A V2 card whose character_book entry uses an integer position (0/1) imports successfully instead of aborting the whole card
+- [x] #2 The integer position is coerced to the correct string enum on the imported/converted world-book entry
+- [x] #3 Strictly-compliant string-position cards continue to import unchanged
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Character_Chat_Lib.py normalizes integer positions via numeric_position_map = {0: 'before_char', 1: 'after_char'} (lines 1369-1371, applied at 1411-1415) and validate_character_book_entry is documented lenient about SillyTavern integer positions (lines 2046-2049); Tests/Character_Chat/test_world_book_import.py covers the import path.

@@ -25,7 +25,7 @@ retired `ingest_media` placeholder remains absent: it fabricated a queued
 result without submitting ingestion work, so external clients must use
 Chatbook's Library Import flow for persistent URL/file ingestion. The server
 does not consume the combined in-app capability manifest and does not expose the eighteen
-`library_*` tools. Those Library tools remain owned by ADR-030's in-process
+`library_*` tools. Those Library tools remain owned by ADR-298's in-process
 descriptor-backed runtime, including its gated execution path and raw
 `tools/call` refusal.
 
@@ -183,6 +183,6 @@ repository's architecture rules.
 - [TASK-2512](../tasks/task-2512%20-%20Migrate-MCP-server-from-FastMCP-to-tldw_servers-mcp-unified-package.md)
 - [TASK-1354](../tasks/task-1354%20-%20Complete-web_search-and-web_fetch-Console-and-MCP-exposure.md)
 - [Migration specification](../../Docs/superpowers/specs/2026-08-09-mcp-unified-standalone-server-migration-design.md)
-- [ADR-030: Direct Local Library Tool Boundary](030-local-library-agent-tool-boundary.md)
-- [ADR-032: Local Agent Tool Permission Boundary](032-local-agent-tool-permission-boundary.md)
-- [ADR-033: Local Agent Process Execution Boundary](033-local-agent-process-execution-boundary.md)
+- [ADR-298: Direct Local Library Tool Boundary](298-local-library-agent-tool-boundary.md)
+- [ADR-300: Local Agent Tool Permission Boundary](300-local-agent-tool-permission-boundary.md)
+- [ADR-302: Local Agent Process Execution Boundary](302-local-agent-process-execution-boundary.md)

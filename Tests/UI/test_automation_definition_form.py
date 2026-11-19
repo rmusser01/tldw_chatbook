@@ -12,17 +12,22 @@ only where a real server round trip needs to be simulated.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import pytest
-from textual.widgets import Checkbox, Input, Select, Static, TextArea
+from textual.widgets import Button, Checkbox, Input, Select, Static, TextArea
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.services.scheduling_service import SchedulingService
-from tldw_chatbook.Scheduling.services.server_client import ServerUnavailableError
+from tldw_chatbook.Scheduling.services.server_client import (
+    ServerClientValidationError,
+    ServerUnavailableError,
+)
 from tldw_chatbook.UI.Screens.scheduling.forms.automation_definition_form import (
     AutomationDefinitionForm,
 )
@@ -51,6 +56,7 @@ class _FormHost(App):
         self._service = service
         self._form_kwargs = kwargs
         self.result = "not-yet-dismissed"
+        self.outcomes = []
 
     def on_mount(self) -> None:
         self.run_worker(self._drive)
@@ -59,6 +65,7 @@ class _FormHost(App):
         self.result = await self.push_screen_wait(
             AutomationDefinitionForm(self._service, **self._form_kwargs)
         )
+        self.outcomes.append(self.result)
 
 
 async def _wait_for_form_worker(pilot) -> None:
@@ -128,7 +135,9 @@ async def test_form_renders_expected_fields(request, local_service):
         # 31712 AC#2: create mode defaults Schedule Kind to Recurring (the
         # form's whole purpose) -- the cron group is visible, the one-time
         # run-at group is not.
-        assert screen.query_one("#automation-schedule-kind", Select).value == "recurring"
+        assert (
+            screen.query_one("#automation-schedule-kind", Select).value == "recurring"
+        )
         assert not screen.query_one("#automation-run-at-group").display
         assert screen.query_one("#automation-cron-group").display
 
@@ -163,7 +172,10 @@ async def test_runs_on_select_offers_constructor_owners_and_defaults(
 ):
     app = _FormHost(
         local_service,
-        available_owners=[("This device", "local"), ("Server (example.com)", "server:example.com")],
+        available_owners=[
+            ("This device", "local"),
+            ("Server (example.com)", "server:example.com"),
+        ],
         default_owner="server:example.com",
     )
     async with app.run_test(size=(120, 50)) as pilot:
@@ -198,7 +210,10 @@ async def test_build_payload_is_create_only_recurring_question(request, local_se
         assert payload["config"]["scope"] == {"mode": "all_searchable_library"}
         assert payload["config"]["generation_mode"] == "optional"
         assert payload["config"]["finding_policy"] == {"preset": "balanced_findings"}
-        assert payload["notification_policy"] == {"on_success": True, "on_failure": True}
+        assert payload["notification_policy"] == {
+            "on_success": True,
+            "on_failure": True,
+        }
 
 
 @pytest.mark.asyncio
@@ -314,7 +329,9 @@ async def test_preview_maps_validation_errors_onto_their_fields(request, local_s
 
         name_error = screen.query_one("#automation-name-error", Static)
         question_error = screen.query_one("#automation-question-error", Static)
-        assert name_error.display and "name is required" in name_error.visual.plain.lower()
+        assert (
+            name_error.display and "name is required" in name_error.visual.plain.lower()
+        )
         assert (
             question_error.display
             and "question is required" in question_error.visual.plain.lower()
@@ -379,6 +396,142 @@ async def test_set_validation_errors_puts_unrecognized_fields_in_form_level_area
 # --- save ------------------------------------------------------------------------
 
 
+async def _until(predicate) -> None:
+    """Wait for a witnessed UI/thread state, bounded independently of Pilot."""
+    async with asyncio.timeout(8):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
+@pytest.fixture
+def held_definition_insert(db, monkeypatch):
+    """Hold the real physical create and witness every thread's settlement."""
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+    settled = []
+    original = db.create_automation_definition
+
+    def create(*args, **kwargs):
+        calls.append(len(calls))
+        try:
+            entered.set()
+            assert release.wait(8), "test did not release the physical insert"
+            return original(*args, **kwargs)
+        finally:
+            settled.append(True)
+
+    monkeypatch.setattr(db, "create_automation_definition", create)
+    try:
+        yield entered, release, calls, settled
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_double_save_while_insert_pending_creates_one_definition(
+    request, local_service, db, held_definition_insert
+):
+    entered, release, calls, settled = held_definition_insert
+    app = _FormHost(local_service)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        await _fill_minimal_valid_form(screen)
+        await pilot.pause()
+        save = screen.query_one("#automation-save", Button)
+        try:
+            await pilot.click("#automation-save")
+            await _until(entered.is_set)
+            # A normal Button briefly ignores clicks during its active effect.
+            # The second real gesture must arrive AFTER that protection ends.
+            await _until(lambda: not save.has_class("-active"))
+            await pilot.click("#automation-save")
+        finally:
+            release.set()
+            await _until(lambda: len(settled) == len(calls))
+        await _until(lambda: app.result != "not-yet-dismissed")
+        assert len(db.list_automation_definitions(owner_id="local")) == 1
+        assert len(calls) == 1
+        assert [outcome.status for outcome in app.outcomes] == ["saved"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_same_turn_save_admission_retains_the_first_worker(
+    request, local_service, db, held_definition_insert
+):
+    entered, release, calls, settled = held_definition_insert
+    app = _FormHost(local_service)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        await _fill_minimal_valid_form(screen)
+        await pilot.pause()
+        try:
+            screen._run_save()
+            first = next(w for w in app.workers if w.group == "automation-form-save")
+            screen._run_save()  # No event-loop yield: the worker has not entered.
+            assert not first.is_cancelled
+            save = screen.query_one("#automation-save", Button)
+            assert save.disabled
+            assert "saving" in str(save.label).lower()
+            await _until(entered.is_set)
+            screen._run_save()  # Also guard direct/keyboard dispatch after entry.
+            assert not first.is_cancelled
+        finally:
+            release.set()
+            await _until(lambda: len(settled) == len(calls))
+        await _until(lambda: app.result != "not-yet-dismissed")
+        assert len(calls) == 1
+        assert len(db.list_automation_definitions(owner_id="local")) == 1
+        assert [outcome.status for outcome in app.outcomes] == ["saved"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_failed_sqlite_save_preserves_draft_and_can_retry(
+    request, local_service, db
+):
+    # The real writer reaches SQLite and rolls back, rather than a mocked facade
+    # manufacturing a failure outcome. Removing the trigger permits real retry.
+    with db.transaction() as conn:
+        conn.execute("""CREATE TRIGGER fail_definition_insert
+            BEFORE INSERT ON automation_definitions
+            BEGIN SELECT RAISE(ABORT, 'test insert refused'); END""")
+    app = _FormHost(local_service)
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        await _fill_minimal_valid_form(screen)
+        await pilot.pause()
+        await pilot.click("#automation-save")
+        await _until(
+            lambda: "Save failed"
+            in screen.query_one("#automation-form-errors", Static).visual.plain
+        )
+        assert app.result == "not-yet-dismissed"
+        assert db.list_automation_definitions(owner_id="local") == []
+        assert (
+            screen.query_one("#automation-name", Input).value == "Daily standup digest"
+        )
+        assert (
+            screen.query_one("#automation-question", TextArea).text
+            == "What shipped today?"
+        )
+        save = screen.query_one("#automation-save", Button)
+        assert not save.disabled
+        assert str(save.label) == "Save"
+        with db.transaction() as conn:
+            conn.execute("DROP TRIGGER fail_definition_insert")
+        await _until(lambda: not save.has_class("-active"))
+        await pilot.click("#automation-save")
+        await _until(lambda: app.result != "not-yet-dismissed")
+        assert len(db.list_automation_definitions(owner_id="local")) == 1
+        assert [outcome.status for outcome in app.outcomes] == ["saved"]
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_save_local_writes_the_definition_and_dismisses(
@@ -407,7 +560,7 @@ async def test_save_local_writes_the_definition_and_dismisses(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_save_invalid_shows_errors_and_stays_open(request, local_service):
+async def test_save_invalid_shows_errors_and_stays_open(request, local_service, db):
     app = _FormHost(local_service)
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
@@ -424,6 +577,62 @@ async def test_save_invalid_shows_errors_and_stays_open(request, local_service):
         assert isinstance(pilot.app.screen, AutomationDefinitionForm)
         name_error = screen.query_one("#automation-name-error", Static)
         assert name_error.display
+        assert db.list_automation_definitions(owner_id="local") == []
+        assert not screen.query_one("#automation-save", Button).disabled
+        await _fill_minimal_valid_form(screen)
+        await pilot.pause()
+        await pilot.click("#automation-save")
+        await _until(lambda: app.result != "not-yet-dismissed")
+        assert len(db.list_automation_definitions(owner_id="local")) == 1
+        assert [outcome.status for outcome in app.outcomes] == ["saved"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_server_refusal_preserves_draft_and_allows_queued_retry(request, db):
+    server_client = AsyncMock()
+    server_client.preview_automation_definition.side_effect = [
+        ServerClientValidationError("permission denied"),
+        ServerUnavailableError("offline"),
+    ]
+    service = SchedulingService(
+        db=db, server_client=server_client, runtime_source="server:1"
+    )
+    app = _FormHost(
+        service, available_owners=[("Server", "server:1")], default_owner="server:1"
+    )
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        await _fill_minimal_valid_form(screen)
+        await pilot.pause()
+        await pilot.click("#automation-save")
+        await _until(
+            lambda: "refused"
+            in screen.query_one("#automation-form-errors", Static).visual.plain
+        )
+        assert app.result == "not-yet-dismissed"
+        assert db.list_automation_definitions(owner_id="server:1") == []
+        assert (
+            db.get_pending_mutations("server:1", primitive="automation_definition")
+            == []
+        )
+        assert (
+            screen.query_one("#automation-question", TextArea).text
+            == "What shipped today?"
+        )
+        save = screen.query_one("#automation-save", Button)
+        assert not save.disabled
+        assert str(save.label) == "Save"
+        await _until(lambda: not save.has_class("-active"))
+        await pilot.click("#automation-save")
+        await _until(lambda: app.result != "not-yet-dismissed")
+        assert [outcome.status for outcome in app.outcomes] == ["queued"]
+        assert len(db.list_automation_definitions(owner_id="server:1")) == 1
+        assert (
+            len(db.get_pending_mutations("server:1", primitive="automation_definition"))
+            == 1
+        )
 
 
 @pytest.mark.asyncio
@@ -511,7 +720,11 @@ async def test_edit_mode_prefills_all_major_fields_and_disables_runs_on(
         "family": "recurring_question",
         "mode": "create",
         "name": "Weekly digest",
-        "input": {"question": "What shipped this week?", "provider": "openai", "model": "gpt-5"},
+        "input": {
+            "question": "What shipped this week?",
+            "provider": "openai",
+            "model": "gpt-5",
+        },
         "schedule": {"kind": "cron", "cron": "0 9 * * 1", "timezone": "UTC"},
         "config": {
             "scope": {"mode": "sources", "sources": ["notes", "chats"]},
@@ -571,7 +784,9 @@ async def test_edit_mode_prefills_all_major_fields_and_disables_runs_on(
         assert runs_on.disabled
         assert runs_on.value == "local"
 
-        assert "Edit Recurring Question" in str(screen.query_one(".form-title").render())
+        assert "Edit Recurring Question" in str(
+            screen.query_one(".form-title").render()
+        )
 
 
 @pytest.mark.asyncio
@@ -597,9 +812,7 @@ async def test_edit_mode_unrecognized_schedule_falls_back_to_create_defaults(
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
         screen = app.screen
-        assert (
-            screen.query_one("#automation-schedule-kind", Select).value == "one_time"
-        )
+        assert screen.query_one("#automation-schedule-kind", Select).value == "one_time"
         assert screen.query_one("#automation-run-at", Input).value == ""
 
 
@@ -711,9 +924,7 @@ async def test_edit_mode_prefills_a_non_curated_stored_timezone(
     stored = db.get_automation_definition(outcome.definition_id)
     stored["schedule"] = {**stored["schedule"], "timezone": stored_zone}
 
-    app = _FormHost(
-        local_service, definition_row=stored, definition_id=stored["id"]
-    )
+    app = _FormHost(local_service, definition_row=stored, definition_id=stored["id"])
     async with app.run_test(size=(120, 50)) as pilot:
         await pilot.pause()
         tz_select = app.screen.query_one("#automation-timezone", Select)

@@ -14,7 +14,11 @@ from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 from tldw_chatbook.Skills_Interop.skill_trust_scanner import scan_skill_directory
 
 SKILL_DIR = (
-    Path(__file__).resolve().parents[2] / "Docs" / "Examples" / "skills" / "web-research"
+    Path(__file__).resolve().parents[2]
+    / "Docs"
+    / "Examples"
+    / "skills"
+    / "web-research"
 )
 SKILL_PATH = SKILL_DIR / "SKILL.md"
 

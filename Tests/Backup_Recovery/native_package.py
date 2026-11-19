@@ -11,6 +11,7 @@ import pytest
 @pytest.fixture(scope="module")
 def native_package(tmp_path_factory):
     """Install the application wheel and preserve every installed file."""
+    from Tests.Backup_Recovery.restart_observation import _wait_while_busy
     from Tests.Packaging.test_backup_helper_distribution import (
         _build_wheel,
         _copy_build_source,
@@ -22,27 +23,30 @@ def native_package(tmp_path_factory):
     _copy_build_source(source)
     wheel = _build_wheel(source, root / "wheels")
     installed = root / "installed"
-    # The current interpreter installs the locally built wheel with fixed arguments.
-    result = subprocess.run(  # nosec B603
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--no-index",
-            "--no-deps",
-            "--disable-pip-version-check",
-            "--target",
-            str(installed),
-            str(wheel),
-        ],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    log = root / "pip-install.log"
+    with log.open("w") as output:
+        # The current interpreter installs the locally built wheel with fixed arguments.
+        process = subprocess.Popen(  # nosec B603
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--no-deps",
+                "--disable-pip-version-check",
+                "--target",
+                str(installed),
+                str(wheel),
+            ],
+            cwd=root,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
+        # TASK-41116: a fixed 60 s ran out at load ~90 while pip was still
+        # working; fail only once the install stops using CPU (a hang).
+        returncode = _wait_while_busy(process, idle=60, timeout=600)
+    assert returncode == 0, log.read_text()
     worker = installed / "tldw_chatbook/Backup_Recovery/age_worker.py"
     assert worker.is_file() and not worker.is_symlink()
     files = {

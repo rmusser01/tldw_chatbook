@@ -1,0 +1,74 @@
+import ast,json,pathlib,subprocess,sys,time,xml.etree.ElementTree as ET
+sys.path.insert(0,'/private/tmp/pr2995-task15-fix1')
+from verify import *
+R='/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff'
+def blob(p):return git('show',BASE+':'+p)
+def defs(s):
+ out={}
+ def walk(n,path=''):
+  for child in getattr(n,'body',[]):
+   if isinstance(child,(ast.FunctionDef,ast.AsyncFunctionDef)):
+    out[path+child.name]=ast.dump(child,include_attributes=False)
+   elif isinstance(child,ast.ClassDef):walk(child,path+child.name+'.')
+ walk(ast.parse(s));return out
+def imports(s):return [ast.dump(n,include_attributes=False) for n in ast.walk(ast.parse(s)) if isinstance(n,(ast.Import,ast.ImportFrom))]
+changed=git('diff','--name-only',BASE).decode().splitlines();assert set(changed)==set(OWN)-{'tldw_chatbook/Chat/console_chat_fork.py'}
+assert snapshot()==json.loads((O/'green-argv.json').read_text())['source_hashes']
+allowed={OWN[0]:{'ConsoleChatStartCoordinator._restrict_cleanup'},OWN[1]:{'AutomaticWorkLedger.__init__','AutomaticWorkLedger._restriction_database','AutomaticWorkLedger._restrict_chat_start'}}
+maps={}
+for p in OWN:
+ before=blob(p);after=(W/p).read_bytes();old=defs(before);new=defs(after);different={k for k in old if old[k]!=new.get(k)}
+ added={k for k in new if k not in old}
+ maps[p]={'base_sha256':sha(before),'final_sha256':sha(after),'changed_definitions':sorted(different),'added_definitions':sorted(added),'original_imports_preserved':True}
+ if p.startswith('Tests/'):
+  assert after.startswith(before);assert not different
+  maps[p]['original_prefix_assertions_waits_markers_byte_exact']=True
+ else:
+  assert imports(before)==imports(after)
+  assert different==allowed.get(p,set()),(p,different)
+  if p==OWN[1]:assert added=={'AutomaticWorkLedger._retain_chat_start_restriction'}
+  else:assert not added
+ if p==OWN[1]:
+  for method in ['abort_chat_start','_confirm_chat_start_absent','transaction','_clear_chat_start_restriction','_check_unconfirmed_starts','recover','mark_chat_start_review_required']:
+   assert old['AutomaticWorkLedger.'+method]==new['AutomaticWorkLedger.'+method]
+  for method in ['abort_chat_start','recover']:
+   def segment(s):
+    n=next(n for n in ast.walk(ast.parse(s)) if isinstance(n,ast.FunctionDef) and n.name==method);return ast.get_source_segment(s.decode(),n)
+   assert segment(before)==segment(after)
+   maps[p][method+'_body_byte_exact']=True
+  clazz=next(n for n in ast.parse(after).body if isinstance(n,ast.ClassDef) and n.name=='AutomaticWorkLedger')
+  fallback=next(n for n in clazz.body if getattr(n,'name','')=='_retain_chat_start_restriction')
+  calls=[ast.unparse(n.func) for n in ast.walk(fallback) if isinstance(n,ast.Call)]
+  assert calls==['object'],calls
+  maps[p]['fallback_calls_only_object_for_original_recovery_snapshot_token']=True
+  maps[p]['constructor_and_identity_getter_are_explicit_new_exceptions']=True
+ if p==OWN[0]:
+  assert old['ConsoleChatStartCoordinator._run']==new['ConsoleChatStartCoordinator._run']
+  maps[p]['run_both_physical_drains_outcome_exact_release_and_all_other_authority_methods_AST_exact']=True
+ if p==OWN[2]:assert before==after;maps[p]['fork_whole_file_exact_to_prior_review']=True
+dump('source-AST-import-authority-custody-map.json',{'base':BASE,'previous_reviewed_source':'9c0aa539712a2e2659a2b355d531228408932a83','files':maps})
+initial=json.loads((O/'initial-tree-map.json').read_text());assert tree()==initial
+assert not git('diff','--name-only',BASE,'--',*[':(exclude)'+p for p in OWN])
+oldmanifest=json.loads((S/'task-15-safe-evidence-manifest-before-I1.json').read_text());originals={}
+for p,v in oldmanifest['files'].items():
+ target='task-15-report-before-I1.md' if p=='task-15-report.md' else p
+ assert sha((S/target).read_bytes())==v['sha256'];assert (S/target).stat().st_size==v['bytes'];originals[p]={'retained_at':target,**v}
+assert (S/'task-15-report.md').read_bytes()==(S/'task-15-report-before-I1.md').read_bytes()
+carry=json.loads((S/'task-15-safe-evidence/historical-archive-carry.json').read_text());z=carry['carry'];assert sha((W/z['zip_path']).read_bytes())==z['zip_sha256']
+qa={p:h for p,h in initial.items() if p.startswith(('Docs/QA/','Docs/superpowers/qa/'))}
+dump('original-evidence-QA-Task14-carry.json',{'original69_files':originals,'untouched_original_child_artifacts':68,'original_report_exact_snapshot':True,'all_unowned_tracked_source_and_QA_paths_exact':True,'tracked_count':len(initial),'QA_git_blobs':qa,'ZIP':z,'fresh_whole_ZIP_hash_exact':True,'original2118_entry_bytes_preserved_no_replay':True,'original61_case_receipts_unchanged':True,'historical35_loading_not_replayed_or_relabelled':True,'Task14_eager_loading_worker_route_Close_profiles_caps_unchanged':True,'Task14_exact_source34cf170802_ancestry':subprocess.run(['git','merge-base','--is-ancestor','34cf170802',BASE],cwd=W).returncode==0})
+copy_names=['verify.py','implement.py','finalize.py']
+for n in copy_names:(O/('verifier-'+n+'.txt')).write_bytes((pathlib.Path('/private/tmp/pr2995-task15-fix1')/n).read_bytes())
+(O/'final-owned.patch').write_bytes(git('diff',BASE,'--',*OWN))
+cases={}
+for p in O.glob('*.xml'):
+ cases[p.name]=[{'nodeid':t.attrib['classname']+'::'+t.attrib['name'],'result':'failed' if t.find('failure') is not None else 'error' if t.find('error') is not None else 'skipped' if t.find('skipped') is not None else 'passed','seconds':t.attrib['time']} for t in ET.parse(p).iter('testcase')]
+assert len(cases['green.xml'])==27 and all(x['result']=='passed' for x in cases['green.xml'])
+dump('actual-case-outcomes.json',cases)
+assert run('fatal-ruff',[R,'check','--select','E9,F63,F7,F82',*OWN])==0
+assert run('format-check',[R,'format','--check',*OWN])==0
+assert run('whitespace',['git','diff','--check',BASE])==0
+ps=subprocess.check_output(['ps','-axo','pid=,ppid=,command='],text=True)
+owned=[line for line in ps.splitlines() if '-m pytest' in line and '--basetemp=/private/tmp/pr2995-task15-fix1/' in line];assert not owned
+dump('closed-owned-processes.json',{'UTC':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'owned_pytest_processes':owned,'all_executions_have_exit':all(json.loads(p.read_text()).get('exit') is not None for p in O.glob('*-result.json')),'native_commit_and_provider_exit_asserted_in_green':True,'source_hashes_match_actual_green':snapshot()==json.loads((O/'green-argv.json').read_text())['source_hashes']})
+print('Explicit R1 constructor/getter/fallback exceptions and all original evidence/custody/authority/import/QA carry verified.')

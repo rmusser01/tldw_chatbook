@@ -17,7 +17,7 @@ BUILTIN_SKILLS_DIR = Path(__file__).resolve().parents[1] / "assets" / "skills"
 #: python -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>
 BUILTIN_SKILL_DIGESTS: dict[str, dict[str, str]] = {
     "character-creator": {
-        "SKILL.md": "5578f8c35c38b2be38597fb7a6321a82d4aa701257898a85d7cd103479f493e8"
+        "SKILL.md": "eba841ad8d551159a069d51eceaa7d0c48d0f694cdcac05e564a823b807deb76"
     },
 }
 _SCRIPT_SUFFIXES = frozenset(

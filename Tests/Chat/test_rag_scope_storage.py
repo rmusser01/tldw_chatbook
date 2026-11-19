@@ -45,7 +45,10 @@ def _raw_metadata(db, conversation_id) -> dict:
 class TestReadWriteRoundTrip:
     def test_write_then_read_round_trips(self, cha_db, conversation_id):
         scope = RagScope(
-            items=(ScopeItem(SOURCE_TYPE_MEDIA, "42"), ScopeItem(SOURCE_TYPE_NOTE, "n1")),
+            items=(
+                ScopeItem(SOURCE_TYPE_MEDIA, "42"),
+                ScopeItem(SOURCE_TYPE_NOTE, "n1"),
+            ),
             updated_at="2026-07-21T00:00:00+00:00",
         )
 
@@ -280,7 +283,9 @@ class TestSessionScopeHolder:
 
     def test_set_none_clears(self):
         holder = SessionScopeHolder()
-        holder.set(RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "1"),), updated_at="t1"))
+        holder.set(
+            RagScope(items=(ScopeItem(SOURCE_TYPE_MEDIA, "1"),), updated_at="t1")
+        )
 
         holder.set(None)
 

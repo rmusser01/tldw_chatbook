@@ -8,9 +8,9 @@ to be prepended to the user's next prompt. This strip puts the staged rows on
 the main surface, one keystroke from the composer, and carries the only
 un-stage control in the Console.
 
-The strip renders three shapes, all decided by the pure state contract in
-``Chat/console_display_state.py``: hidden, staged rows, or the one-send
-"evidence sent" notice.
+The strip renders two shapes, both decided by the pure state contract in
+``Chat/console_display_state.py``: hidden, or staged rows. What a send
+carried is shown on its reply instead (TASK-33620.7).
 """
 
 from __future__ import annotations
@@ -53,15 +53,6 @@ class ConsoleStagedEvidenceStrip(RecomposeCaptureGuard, Vertical):
         if not self.state.visible:
             return
 
-        if self.state.notice:
-            yield Static(
-                self.state.notice,
-                id="console-staged-evidence-notice",
-                classes="console-staged-evidence-notice",
-                markup=False,
-            )
-            return
-
         with Horizontal(classes="console-staged-evidence-header"):
             yield Static(
                 self.state.heading,
@@ -95,9 +86,9 @@ class ConsoleStagedEvidenceStrip(RecomposeCaptureGuard, Vertical):
         """Refresh the mounted strip from a new staged-evidence snapshot.
 
         Equality-guarded like the other Console trays: an unchanged state is
-        a no-op, and a real change recomposes only this widget (row count,
-        the un-stage button, and the notice line all vary with the state),
-        never the owning screen.
+        a no-op, and a real change recomposes only this widget (row count
+        and the un-stage button vary with the state), never the owning
+        screen.
 
         Args:
             state: Staged-evidence display-state snapshot to render.

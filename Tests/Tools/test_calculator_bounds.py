@@ -150,3 +150,29 @@ async def test_numeric_modulo_still_works(calculator):
     """The legitimate calculator use of % (numeric modulo) is unaffected."""
     result = await calculator.execute(expression="17 % 5")
     assert result["result"] == 2
+
+
+@pytest.mark.asyncio
+async def test_keyword_arguments_are_rejected_not_dropped(calculator):
+    """TASK-38596: keywords were silently dropped, so ``round(3.14159,
+    ndigits=2)`` returned 3 -- a numerically wrong answer from an always-on
+    auto-approved tool. They must fail loudly instead."""
+    with pytest.raises(ValueError, match="keyword"):
+        await calculator.execute(expression="round(3.14159, ndigits=2)")
+
+
+@pytest.mark.asyncio
+async def test_min_max_with_keywords_are_rejected_not_wrong(calculator):
+    """``min``/``max`` with a dropped ``default=`` keyword could return an
+    element the model did not ask for; reject loudly."""
+    with pytest.raises(ValueError, match="keyword"):
+        await calculator.execute(expression="min((), default=0)")
+    with pytest.raises(ValueError, match="keyword"):
+        await calculator.execute(expression="max((), default=0)")
+
+
+@pytest.mark.asyncio
+async def test_positional_round_still_rounds(calculator):
+    """The legitimate positional call is unaffected by the keyword guard."""
+    result = await calculator.execute(expression="round(3.14159, 2)")
+    assert result["result"] == 3.14

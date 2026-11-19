@@ -1,8 +1,7 @@
 name: Tests
 
 on:
-  push:
-    branches: ["main"]
+  workflow_call:
   workflow_dispatch:
     inputs:
       backup_platform_only:
@@ -26,11 +25,11 @@ on:
           - qodo-review
         default: full
 
-# Comprehensive tests run on main pushes or explicit dispatch. Pull requests
-# use the bounded fast lane in derived-artifacts.yml; scheduled full-tree
-# breadth lives in nightly-deep.yml, activated from default-branch main.
+# Comprehensive tests run through release callers or explicit dispatch. Dev PRs
+# use derived-artifacts.yml. regression-nightly.yml dispatches its preserved
+# regression census; the former nightly-deep.yml remains disabled (ADR-366).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.backup_platform_selection == 'support-diagnostic' && '-support-diagnostic' || '' }}
+  group: comprehensive-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.backup_platform_selection == 'support-diagnostic' && '-support-diagnostic' || '' }}
   # Keep the shared push-only cancellation policy. `main` and manual runs are
   # never cancelled; this workflow no longer accepts pull_request events.
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
@@ -112,7 +111,7 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-test.txt
         pip install pytest-json-report
-        pip install -e ".[embeddings_rag,websearch,chunker]"
+        pip install -e ".[embeddings_rag,websearch,chunker,web]"
         # pydub (+ its 3.13 audioop shim) only: the briefings audio tests need
         # these two and nothing else from the `audio` extra, which would also drag
         # in faster-whisper/ctranslate2/onnxruntime for no benefit here.
@@ -133,7 +132,7 @@ jobs:
         pytest Tests --ignore=Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
           --shard-id=${{ matrix.shard }} --num-shards=6 \
-          --timeout=300 \
+          --timeout=300 --maxfail=1 -v \
           --json-report --json-report-omit log \
           --json-report-file=core-test-results-${{ matrix.shard }}.json
 
@@ -157,6 +156,11 @@ jobs:
         python-version: ["3.12"]
 
     steps:
+    - name: Enable long checkout paths on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: git config --global core.longpaths true
+
     - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
@@ -266,7 +270,7 @@ jobs:
         pytest Tests/UI \
           -n auto --dist loadscope --max-worker-restart=3 \
           --shard-id=${{ matrix.shard }} --num-shards=12 \
-          --timeout=180 \
+          --timeout=180 --maxfail=1 -v \
           --json-report --json-report-omit log \
           --json-report-file=ui-test-results-${{ matrix.shard }}.json
 
@@ -297,7 +301,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip setuptools wheel
         pip install -e .
-        pip install pytest pytest-asyncio pytest-timeout
+        pip install pytest pytest-asyncio pytest-timeout pytest-xdist
         # Floor check against the declared minimum supported Textual (pinned in pyproject.toml).
         pip install "textual==8.2.8"
 
@@ -307,13 +311,14 @@ jobs:
           Tests/CI/test_textual_runtime_contract.py \
           Tests/UI/test_mcp_workbench.py \
           Tests/UI/test_mcp_tools_mode.py \
+          -n 2 --dist=load \
           --timeout=180 \
           --tb=short
   
   all-tests:
     name: Full Test Suite (Manual)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.backup_platform_only != true
+    if: github.workflow == 'Tests' && github.event_name == 'workflow_dispatch' && inputs.backup_platform_only != true
     timeout-minutes: 60
     
     steps:

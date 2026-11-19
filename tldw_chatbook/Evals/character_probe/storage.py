@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, Optional
 
 from ...DB.Evals_DB import EvalsDB
@@ -31,6 +31,25 @@ from .targets import ResolvedTarget, resolve_targets
 
 #: Marks a dataset row as holding probes rather than snippets.
 PROBE_DATASET_TYPE = "character_probe"
+
+
+def _unique_name(base: str) -> str:
+    """Append a short random suffix so a generated name never collides on
+    ``eval_tasks.name``'s ``UNIQUE`` constraint (which carries no
+    ``deleted_at`` exemption -- see ``word_bench.storage._unique_name``'s
+    own docstring for the full account).
+
+    A deliberate LOCAL twin of that function, not an import of it:
+    ``word_bench.storage`` imports ``capture_client`` (and transitively
+    ``httpx``), and this package must never acquire distribution
+    vocabulary in its import graph -- the same constraint that keeps
+    ``character_probe.targets`` reading steering through ``..steering``
+    instead (see ``Evals/steering.py``'s module docstring). The two
+    functions are one line each; the import would cost more than the
+    duplication. ``duplicate_character_bench`` below is this module's own
+    user, naming a copy ``f"{source.name} copy"`` through this.
+    """
+    return f"{base} {uuid.uuid4().hex[:8]}"
 
 
 def is_probe_set(dataset_row: Mapping[str, Any]) -> bool:
@@ -93,8 +112,7 @@ def _samples_to_probe_set(samples: Any, dataset_id: str) -> ProbeSet:
     for index, sample in enumerate(samples):
         if not isinstance(sample, Mapping):
             raise ValueError(
-                f"Probe set {dataset_id!r} sample {index} is not a mapping: "
-                f"{sample!r}"
+                f"Probe set {dataset_id!r} sample {index} is not a mapping: {sample!r}"
             )
         turns = sample.get("turns")
         if isinstance(turns, str):
@@ -106,8 +124,7 @@ def _samples_to_probe_set(samples: Any, dataset_id: str) -> ProbeSet:
             )
         if not turns or not isinstance(turns, Sequence):
             raise ValueError(
-                f"Probe set {dataset_id!r} sample {index} has no turns: "
-                f"{turns!r}"
+                f"Probe set {dataset_id!r} sample {index} has no turns: {turns!r}"
             )
         for turn in turns:
             if not isinstance(turn, str):
@@ -323,8 +340,7 @@ def save_character_bench(
         )
         if not updated:
             raise ValueError(
-                f"Bench {task_id!r} could not be updated; it may have been "
-                "deleted."
+                f"Bench {task_id!r} could not be updated; it may have been deleted."
             )
         return task_id
     return db.create_task(
@@ -388,9 +404,7 @@ def _stored_int_field(
     if value is None:
         return default
     if not isinstance(value, int) or isinstance(value, bool):
-        raise ValueError(
-            f"Bench {task_id!r} has a non-integer {key!r}: {value!r}"
-        )
+        raise ValueError(f"Bench {task_id!r} has a non-integer {key!r}: {value!r}")
     if value < 0:
         raise ValueError(f"Bench {task_id!r} has a negative {key!r}: {value!r}")
     return value
@@ -459,9 +473,7 @@ def _stored_temperature(data: Mapping[str, Any], task_id: str, default: float) -
             f"Bench {task_id!r} has a non-numeric 'temperature': {value!r}"
         )
     if value < 0:
-        raise ValueError(
-            f"Bench {task_id!r} has a negative 'temperature': {value!r}"
-        )
+        raise ValueError(f"Bench {task_id!r} has a negative 'temperature': {value!r}")
     return float(value)
 
 
@@ -517,6 +529,48 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
         extra_tags=_tags_from_json(data.get("extra_tags"), task_id),
         strict=False,
     )
+
+
+def duplicate_character_bench(db: EvalsDB, task_id: str) -> str:
+    """Copy a character-probe bench under a fresh, collision-proof name.
+
+    The character-probe mirror of ``word_bench.storage.duplicate_bench``
+    (task-1912): that function loads/rebuilds through ``BenchConfig``/
+    ``save_bench``, which reject this bench type's stored shape outright
+    -- a widened gate there would couple the word-bench write path to a
+    config class it otherwise never names, so the counterpart lives here
+    beside its own loader/saver instead.
+
+    Every config field is carried to the copy: the probe-set binding,
+    the full character selection, the targets, the sampler
+    (``concurrency``/``samples_per_cell``/``seed``/``temperature``/
+    ``max_tokens``), ``extra_tags``, and ``description``. Only ``name``
+    changes (via ``_unique_name``, the same convention the word-bench
+    duplicate uses), and only run history is left behind: no
+    ``eval_runs``/``eval_results`` rows are copied, so the copy starts
+    with an empty grid. The probe set and the ``eval_models`` target rows
+    are REFERENCED, not copied -- exactly as the source references them.
+
+    Args:
+        db: The evals database handle.
+        task_id: The source bench's ``eval_tasks`` row id.
+
+    Returns:
+        str: The new bench's ``eval_tasks`` id.
+
+    Raises:
+        ValueError: If ``task_id`` does not name an existing, non-deleted
+            character-probe bench (``load_character_bench``'s own named
+            error, re-raised with the duplicate context) -- matching
+            ``duplicate_bench``'s ``RuntimeError`` contract in spirit:
+            naming the id rather than raising an opaque ``TypeError``.
+    """
+    if db.get_task(task_id) is None:
+        raise ValueError(f"cannot duplicate character bench {task_id!r}: not found")
+
+    source = load_character_bench(db, task_id)
+    copy = replace(source, name=_unique_name(f"{source.name} copy"))
+    return save_character_bench(db, copy)
 
 
 #: get_run_results is a paginated API (default limit=1000), same reason
@@ -737,9 +791,7 @@ def run_group_vocabulary(db: EvalsDB, run_group_id: str) -> tuple[Tag, ...]:
             corrupt -- naming the run group as the owner.
     """
     snapshot = load_probe_run_snapshot(db, run_group_id)
-    return resolve_vocabulary(
-        _tags_from_json(snapshot.get("extra_tags"), run_group_id)
-    )
+    return resolve_vocabulary(_tags_from_json(snapshot.get("extra_tags"), run_group_id))
 
 
 def save_conversations(
@@ -799,9 +851,7 @@ def save_conversations(
             mode ``save_probe_set``/``save_character_bench`` above already
             guard against for ``update_dataset``/``update_task``.
     """
-    unknown = sorted(
-        {c.target_id for c in conversations if c.target_id not in run_ids}
-    )
+    unknown = sorted({c.target_id for c in conversations if c.target_id not in run_ids})
     if unknown:
         raise ValueError(
             f"No run id supplied for target(s) {unknown!r} in run group "
@@ -821,7 +871,9 @@ def save_conversations(
         db.store_result(
             run_id=run_ids[conversation.target_id],
             sample_id=conversation_sample_id(
-                conversation.card_id, conversation.probe_index, conversation.sample_index
+                conversation.card_id,
+                conversation.probe_index,
+                conversation.sample_index,
             ),
             input_data={
                 "card_id": conversation.card_id,
@@ -899,8 +951,7 @@ def _conversation_from_row(row: Mapping[str, Any], target_id: str) -> Conversati
         card_id, probe_index, sample_index = (int(part) for part in parts)
     except ValueError:
         raise ValueError(
-            f"eval_results row {row_id!r} has a non-integer sample_id "
-            f"{sample_id!r}."
+            f"eval_results row {row_id!r} has a non-integer sample_id {sample_id!r}."
         ) from None
 
     metadata = row.get("metadata")
@@ -912,15 +963,13 @@ def _conversation_from_row(row: Mapping[str, Any], target_id: str) -> Conversati
     turns_payload = metadata.get("turns")
     if not isinstance(turns_payload, list):
         raise ValueError(
-            f"eval_results row {row_id!r} is missing its turns list in "
-            "metadata."
+            f"eval_results row {row_id!r} is missing its turns list in metadata."
         )
     turns = []
     for turn in turns_payload:
         if not isinstance(turn, Mapping):
             raise ValueError(
-                f"eval_results row {row_id!r} has a non-mapping turn entry: "
-                f"{turn!r}"
+                f"eval_results row {row_id!r} has a non-mapping turn entry: {turn!r}"
             )
         turns.append(
             ConversationTurn(
@@ -933,8 +982,7 @@ def _conversation_from_row(row: Mapping[str, Any], target_id: str) -> Conversati
     error = metadata.get("error", "")
     if not isinstance(error, str):
         raise ValueError(
-            f"eval_results row {row_id!r} has a non-string metadata error: "
-            f"{error!r}"
+            f"eval_results row {row_id!r} has a non-string metadata error: {error!r}"
         )
 
     return Conversation(

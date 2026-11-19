@@ -64,6 +64,6 @@ there is no new timeout, retry policy, or guarantee after hard termination.
 - Add persistent jobs or a general settings framework: unnecessary for this one
   existing staged field.
 
-Existing ADR-033 governs honest save models; ADR-150/161 govern presentation.
+Existing ADR-303 governs honest save models; ADR-150/161 govern presentation.
 The [design](../../Docs/superpowers/specs/2026-09-18-mcp-root-settings.md) and
 [plan](../../Docs/superpowers/plans/2026-09-18-mcp-root-settings.md) define evidence.

@@ -74,7 +74,7 @@ async def test_home_subscription_completion_updates_badge_without_blocking(
         await pilot.pause()
         home = host.screen
         assert credential_io.entered.is_set()
-        assert "Model: Blocked" in str(home.query_one("#home-details-body").renderable)
+        assert "Model: Not set up" in str(home.query_one("#home-details-body").renderable)
         assert home._current_dashboard.next_action.action_id == "fix_model_setup"
         heartbeats = []
         timer = home.set_interval(0.01, lambda: heartbeats.append(None))
@@ -94,7 +94,7 @@ async def test_home_subscription_completion_updates_badge_without_blocking(
 
         status = str(home.query_one("#home-details-body").renderable)
         expected_badge = (
-            "Model: Ready" if credential_state == "ready" else "Model: Blocked"
+            "Model: Ready" if credential_state == "ready" else "Model: Not set up"
         )
         assert expected_badge in status
         assert home._home_content_snapshot.console_ready is (

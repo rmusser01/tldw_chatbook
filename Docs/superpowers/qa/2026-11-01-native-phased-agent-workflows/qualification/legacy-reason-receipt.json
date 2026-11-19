@@ -1,0 +1,36 @@
+{
+  "workflow_id": "27061b38-fb42-4f92-ba75-79b1a4ec3931",
+  "read_only": true,
+  "sqlite": "3.49.1",
+  "rows": [
+    {
+      "status": "failed",
+      "checks": [
+        {
+          "status": "failed",
+          "reason": "native_evidence_unavailable",
+          "exit_code": 7
+        }
+      ],
+      "payload_sha256": "54225304c11ab71d7e5ac9ae71d595444e39fdfa6a26e34797edf78bade60ffe"
+    },
+    {
+      "status": "completed",
+      "checks": [
+        {
+          "status": "passed",
+          "reason": "native_evidence",
+          "exit_code": 0
+        }
+      ],
+      "payload_sha256": "511aa88d4ab070a159ccb3b996f475027c022b211d9c4aa97c1bf4077917e2fe"
+    },
+    {
+      "status": "completed",
+      "checks": [],
+      "payload_sha256": "8defb695105556badbf4fc67fcc18b14fd94fddb3a6a90a5722795557371d0d9"
+    }
+  ],
+  "scope": "Original restart9 immutable history retains its previously stored reason; future publications use verified_exit.",
+  "earlier_diagnostic": "System Python3 sqlite could not open the file in normal or escalated read-only mode. Repository CPython3.12/SQLite3.49.1 read succeeded."
+}

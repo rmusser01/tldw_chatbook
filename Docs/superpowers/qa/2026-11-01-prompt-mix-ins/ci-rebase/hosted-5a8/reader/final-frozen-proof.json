@@ -1,0 +1,68 @@
+{
+  "published_base": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+  "supersedes": [
+    "move-and-original-test-proof.json",
+    "lint-delta.json"
+  ],
+  "move_reverse_ast_equal": true,
+  "facade_signature_equal": true,
+  "facade_docstring_equal": true,
+  "live_dependency_keys": [
+    "Widget",
+    "NoMatches",
+    "QueryError",
+    "LIBRARY_ADAPTIVE_READER_GRIP_CLASS"
+  ],
+  "all_original_test_and_helper_ASTs_equal": {
+    "_media_items": true,
+    "_host": true,
+    "_library": true,
+    "_open_media_item": true,
+    "_select_reader_mode": true,
+    "_scroll_reader": true,
+    "_rail": true,
+    "_reader_scroll_y": true,
+    "_loaded_rows": true,
+    "_saved": true,
+    "_session": true,
+    "test_media_item_survives_a_rail_round_trip": true,
+    "test_new_note_with_saved_content_survives_a_rail_round_trip": true,
+    "_record_surface_flags_at_mount": true,
+    "_assert_editor_surfaces_composed": true,
+    "_painted": true,
+    "_assert_editor_surfaces_painted": true,
+    "_assert_no_conflict_rendered": true,
+    "test_n_in_the_reader_creates_a_note_naming_the_document_and_the_reader_keeps_its_place": true
+  },
+  "entire_published_test_source_is_unchanged_prefix": true,
+  "library_screen_has_only_approved_retained_reader_conditional": true,
+  "new_blocks_ruff_formatted": {
+    "new_helper": true,
+    "new_native_test": true,
+    "new_marker_test": true
+  },
+  "lint": {
+    "published_total": 224,
+    "final_total": 224,
+    "added": [],
+    "removed": []
+  },
+  "source": {
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": {
+      "sha256": "3051480add6edf724dc0fd7829dbb2194e2cde9764e587e0cf9cfca4939bf419",
+      "lines": 5246
+    },
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
+      "sha256": "cc43d84343e5f40581bede079d19fc5c64140366b2d053663423d0e6e221a341",
+      "lines": 1314
+    },
+    "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py": {
+      "sha256": "d283d15275448b8c03835e704a33bbf8f5098731cc689c97bace12cb7f4c84d0",
+      "lines": 640
+    },
+    "tldw_chatbook/UI/Screens/library_screen.py": {
+      "sha256": "6d16398620b71765d1aaf49a35dedf3d61e8f275fb3f15c0db67ccaf8ede9eb4",
+      "lines": 38177
+    }
+  }
+}

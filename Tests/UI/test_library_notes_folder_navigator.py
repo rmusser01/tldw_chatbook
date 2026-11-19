@@ -57,6 +57,9 @@ from tldw_chatbook.Notes.note_folder_models import (
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.UI.Library_Modules.library_notes_controller import (
+    LibraryNotesController,
+)
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
@@ -279,7 +282,48 @@ def _branch_screen_fake(service: _BranchService):
     fake._focus_library_notes_tree_after_page = lambda *args, **kwargs: (
         fake._focus_calls.append((args, kwargs))
     )
+    # The default worker records the group and closes the coroutine unrun,
+    # so a test that wants a requested read to happen swaps ``run_worker``
+    # for one that keeps it.
+    fake._worker_groups = []
+
+    def _run_worker(work, **kwargs):
+        fake._worker_groups.append(kwargs.get("group"))
+        close = getattr(work, "close", None)
+        if callable(close):
+            close()
+
+    fake.run_worker = _run_worker
+    _bind_folder_slice_helper(fake)
     return fake
+
+
+def _bind_folder_slice_helper(fake) -> None:
+    """Give a screen fake the notes controller's shared slice helper.
+
+    TASK-34000.28 (N-28): the locator asks
+    ``_ensure_library_notes_folder_slices`` for every folder it newly
+    expands. Bound lazily to the CONTROLLER function over a view of the
+    fake's live state (tests reassign ``tree_branches``), requesting
+    through the real ``_request_library_notes_tree_slice`` -- which hands
+    the read to the fake's ``run_worker``.
+    """
+    if not hasattr(fake, "_request_library_notes_tree_slice"):
+        fake._request_library_notes_tree_slice = (
+            lambda *args, **kwargs: LibraryScreen._request_library_notes_tree_slice(
+                fake, *args, **kwargs
+            )
+        )
+    fake._ensure_library_notes_folder_slices = (
+        lambda folder_id: LibraryNotesController._ensure_library_notes_folder_slices(
+            SimpleNamespace(
+                _library_notes_tree_expanded_ids=fake._notes_state.tree_expanded_ids,
+                _library_notes_tree_branches=fake._notes_state.tree_branches,
+                _request_library_notes_tree_slice=fake._request_library_notes_tree_slice,
+            ),
+            folder_id,
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -308,25 +352,71 @@ async def test_initial_branch_load_requests_independent_root_slices_and_isolates
 
 
 @pytest.mark.asyncio
-async def test_expansion_loads_only_one_parent_and_collapse_retains_fresh_branch():
+async def test_ensuring_the_root_requests_only_the_missing_slices_once():
+    """TASK-34000.14: the one seam that owes the root is idempotent.
+
+    Replaces the test of the retired ``_ensure_library_notes_tree_folder_
+    loaded`` (no production caller). An absent root slice is requested; a
+    second call finds both slices fresh and requests nothing; a slice a
+    mutation fence left ``uninitialized`` and not loading is requested again,
+    while one that is already loading is left to its worker.
+    """
     service = _BranchService()
-    service.folder_pages["personal"] = _folder_page("personal", "ideas")
-    service.placement_pages["personal"] = _placement_page("personal", "n1")
     fake = _branch_screen_fake(service)
 
-    await LibraryScreen._ensure_library_notes_tree_folder_loaded(fake, "personal")
-    first_calls = tuple(service.calls)
-    await LibraryScreen._ensure_library_notes_tree_folder_loaded(fake, "personal")
-
-    assert first_calls == (
-        ("folders", "personal", 0, 20),
-        ("placements", "personal", 0, 20),
+    requested = await LibraryScreen._ensure_library_notes_tree_root_loaded(
+        fake, await_load=True
     )
+    first_calls = tuple(service.calls)
+    again = await LibraryScreen._ensure_library_notes_tree_root_loaded(
+        fake, await_load=True
+    )
+
+    assert requested == [
+        NotesBranchKey(None, "folders"),
+        NotesBranchKey(None, "placements"),
+    ]
+    assert first_calls == (
+        ("folders", None, 0, 20),
+        ("placements", None, 0, 20),
+    )
+    assert again == []
     assert tuple(service.calls) == first_calls
     assert set(fake._notes_state.tree_branches) == {
-        NotesBranchKey("personal", "folders"),
-        NotesBranchKey("personal", "placements"),
+        NotesBranchKey(None, "folders"),
+        NotesBranchKey(None, "placements"),
     }
+
+    # The shape ``_fence_library_notes_tree_mutation`` leaves behind when it
+    # fences a slice mid-load: uninitialized and not loading -- owed again.
+    fenced_key = NotesBranchKey(None, "folders")
+    fake._notes_state.tree_branches[fenced_key] = replace(
+        fake._notes_state.tree_branches[fenced_key],
+        freshness="uninitialized",
+        loading=False,
+    )
+    loading_key = NotesBranchKey(None, "placements")
+    fake._notes_state.tree_branches[loading_key] = replace(
+        fake._notes_state.tree_branches[loading_key],
+        freshness="uninitialized",
+        loading=True,
+    )
+    third = await LibraryScreen._ensure_library_notes_tree_root_loaded(
+        fake, await_load=True
+    )
+    assert third == [fenced_key]
+    assert tuple(service.calls) == first_calls + (("folders", None, 0, 20),)
+
+    # Folder files has no tree: nothing is requested there.
+    fake._notes_state.source = "files"
+    fake._notes_state.tree_branches = {}
+    assert (
+        await LibraryScreen._ensure_library_notes_tree_root_loaded(
+            fake, await_load=True
+        )
+        == []
+    )
+    assert tuple(service.calls) == first_calls + (("folders", None, 0, 20),)
 
 
 def test_branch_projection_receives_authoritative_folder_protection_metadata():
@@ -938,6 +1028,69 @@ async def test_deep_link_locator_loads_root_to_target_exact_ranges() -> None:
     ]
     assert fake._notes_state.tree_expanded_ids == {"root-40", "target"}
     assert fake._notes_state.tree_selected_placement_id.endswith("m-preferred")
+    # TASK-34000.28 (N-28): the two folders this opened also owe the slices
+    # the walk did not load -- root-40's notes and target's sub-folders --
+    # REQUESTED as worker reads (this fake closes them unrun), never awaited
+    # by the locate, so the four awaited calls above are unchanged.
+    assert sorted(fake._worker_groups) == sorted(
+        f"library_notes_tree:{NotesBranchKey(parent, kind).pager_id}"
+        for parent, kind in (("root-40", "placements"), ("target", "folders"))
+    )
+
+
+@pytest.mark.asyncio
+async def test_locating_a_folder_loads_its_placements_slice_too() -> None:
+    """TASK-34000.28 N-28 (AC#7): a folder the locator expands lists its own notes.
+
+    The locator expanded a destination by loading only the PARENT's folders
+    slice to find it, so after a folder move the destination opened with
+    its notes slice ``uninitialized`` -- the review's "▾ Research" showing
+    only "▾ Recipes". The folder toggle always loaded both of an expanded
+    folder's slices; the locator now asks the same helper, which REQUESTS
+    them (worker reads, here kept and then awaited).
+    """
+
+    class _FolderLocator(_BranchService):
+        async def locate_note_tree_folder(self, **kwargs):
+            self.calls.append(("locator", kwargs["folder_id"], 0, kwargs["page_size"]))
+            return NoteTreeLocation(
+                placement_id=FolderPlacementId.folder("research"),
+                note_id=None,
+                membership_id=None,
+                path=(NoteTreePathStep("research", None, 0),),
+                placement_offset=None,
+            )
+
+    service = _FolderLocator()
+    service.folder_pages[None] = _folder_page(None, "research")
+    fake = _branch_screen_fake(service)
+    workers: list = []
+    fake.run_worker = lambda work, **kwargs: workers.append((kwargs.get("group"), work))
+
+    located = await LibraryScreen._locate_library_notes_tree_target(
+        fake, folder_id="research", focus=False
+    )
+    for _group, work in workers:
+        await work
+
+    assert located
+    assert fake._notes_state.tree_expanded_ids == {"research"}
+    assert ("placements", "research", 0, 20) in service.calls, service.calls
+    assert ("folders", "research", 0, 20) in service.calls, service.calls
+    placements = fake._notes_state.tree_branches[
+        NotesBranchKey("research", "placements")
+    ]
+    assert placements.freshness == "fresh" and not placements.loading
+
+    # The helper is idempotent: a second locate of the same, now expanded,
+    # folder requests neither slice again.
+    calls_before = list(service.calls)
+    workers.clear()
+    assert await LibraryScreen._locate_library_notes_tree_target(
+        fake, folder_id="research", focus=False
+    )
+    assert workers == []
+    assert service.calls == [*calls_before, ("locator", "research", 0, 20)]
 
 
 @pytest.mark.asyncio
@@ -1125,9 +1278,7 @@ async def test_superseded_topology_receipt_reload_cannot_apply_blocked_range() -
     await task
 
     assert fake._notes_state.tree_expanded_ids == set()
-    assert all(
-        not state.loading for state in fake._notes_state.tree_branches.values()
-    )
+    assert all(not state.loading for state in fake._notes_state.tree_branches.values())
 
 
 @pytest.mark.asyncio
@@ -1661,9 +1812,7 @@ async def test_removed_locator_target_uses_deterministic_visible_fallback_and_cl
         FolderPlacementId.folder("fallback")
     )
     assert fake._notes_state.navigation_status == ""
-    assert not any(
-        state.loading for state in fake._notes_state.tree_branches.values()
-    )
+    assert not any(state.loading for state in fake._notes_state.tree_branches.values())
 
 
 def test_submitting_new_filter_clears_previous_result_state():
@@ -1853,6 +2002,19 @@ def _mutation_fake(service: _MutationService):
     fake._notes_state.notice = ""
     fake._notes_state.deleted_folder_receipt = None
     fake._notes_state.tree_selected_placement_id = ""
+    # TASK-34000.14: a ``note_create`` reconcile owes the root folders slice
+    # through the slice WORKER (``_request_library_notes_tree_slice``); the
+    # fake records the worker group and closes the coroutine unrun.
+    fake._worker_groups = []
+
+    def _run_worker(work, **kwargs):
+        fake._worker_groups.append(kwargs.get("group"))
+        close = getattr(work, "close", None)
+        if callable(close):
+            close()
+
+    fake.run_worker = _run_worker
+    _bind_folder_slice_helper(fake)
     return fake
 
 
@@ -2420,6 +2582,173 @@ async def test_typed_folder_failures_produce_actionable_status(failure, expected
     )
 
     assert expected_copy.casefold() in fake._notes_state.notice.casefold()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "expected_copy"),
+    (
+        ("folder_version", "This folder was changed elsewhere since the tree loaded."),
+        ("folder_changed", "This folder was changed elsewhere since the tree loaded."),
+        (
+            "membership_version",
+            "This note's placement changed elsewhere since the tree loaded.",
+        ),
+        (
+            "membership_changed",
+            "This note's placement changed elsewhere since the tree loaded.",
+        ),
+        ("membership_exists", "The note is already in that folder."),
+        ("busy", "The notes database was busy — nothing was written."),
+        ("unknown", "The folder organization changed elsewhere."),
+    ),
+)
+async def test_each_folder_conflict_names_what_changed_and_offers_refresh(
+    reason, expected_copy
+):
+    """TASK-34000.28 (N-24): one sentence per reason, never the old generic
+    "That folder changed elsewhere — refresh and try again." for a busy
+    database, and a Refresh offer beside it."""
+    failure = FolderConflictError("conflict", reason=reason)
+    fake = _mutation_fake(_FailingMutationService(failure))
+
+    assert not await LibraryScreen._execute_library_notes_tree_mutation(
+        fake,
+        "create_folder",
+        name="New",
+        parent_id=None,
+    )
+
+    assert fake._notes_state.notice == expected_copy
+    assert fake._notes_state.notice_refresh_offered is True
+
+
+def _ready_for_list_state(fake) -> None:
+    """Give a mutation fake what ``_build_library_notes_state`` reads."""
+    state = fake._notes_state
+    state.filter_records = None
+    state.sort = "newest"
+    state.filter = ""
+    state.select_mode = False
+    state.row_selection = SimpleNamespace(ids=frozenset())
+    state.sort_choices_visible = False
+    state.selected_note_id = ""
+    state.tree_attention_folder_ids = frozenset()
+    state.delete_receipt = None
+    fake._local_source_records = {"notes": ()}
+    fake._local_source_counts = {"notes": 0}
+    fake._library_notes_operation_for_active_region = lambda: None
+    fake._library_notes_mutation_fenced = lambda: False
+
+
+@pytest.mark.asyncio
+async def test_refresh_is_offered_only_beside_a_folder_conflict_sentence(
+    monkeypatch,
+):
+    """TASK-34000.28 fix round 1 (I-2): a conflict paints its sentence whole
+    (62 cells -- no 52-cell cut) with Refresh beside it. A later, unrelated
+    notice -- here a sync-managed placement's Move note, through the real
+    handler -- must not inherit the still-set offer."""
+    monkeypatch.setattr(
+        library_screen_module, "_sync_library_canvas", lambda *a, **k: None
+    )
+    failure = FolderConflictError("conflict", reason="membership_version")
+    fake = _mutation_fake(_FailingMutationService(failure))
+    _ready_for_list_state(fake)
+
+    assert not await LibraryScreen._execute_library_notes_tree_mutation(
+        fake, "create_folder", name="New", parent_id=None
+    )
+    conflict = LibraryScreen._build_library_notes_state(fake)
+
+    assert conflict.notice_refresh_offered is True
+    assert conflict.status_copy == (
+        "This note's placement changed elsewhere since the tree loaded."
+    )
+
+    fake._selected_library_notes_tree_row = lambda: SimpleNamespace(
+        kind="note", note_id="n1", protected=True
+    )
+    LibraryScreen._choose_library_notes_placement_target(fake, move=True)
+    unrelated = LibraryScreen._build_library_notes_state(fake)
+
+    assert fake._notes_state.notice == (
+        "This placement is managed by sync; change its sync root instead."
+    )
+    assert unrelated.notice_refresh_offered is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_folder_id", "reloads_unfiled"), (("", True), ("ideas", False))
+)
+async def test_a_move_out_of_unfiled_reloads_the_unfiled_slice(
+    monkeypatch, source_folder_id, reloads_unfiled
+):
+    """TASK-34000.28 (M4): a note moved out of Unfiled leaves the root
+    placements slice too -- its ``None`` source used to be dropped by the
+    ``if value`` filter, so the moved note kept painting under Unfiled. A
+    move between folders leaves Unfiled alone."""
+    fake = _mutation_fake(_MutationService())
+    for parent in (None, "ideas", "reading"):
+        key = NotesBranchKey(parent, "placements")
+        fake._notes_state.tree_branches[key] = apply_notes_slice_page(
+            begin_notes_slice_load(
+                empty_notes_slice(key, topology_epoch=1),
+                generation=1,
+                direction="replace",
+                requested_offset=0,
+                requested_limit=20,
+            ),
+            _placement_page(parent, "n1", "n2"),
+            direction="replace",
+            request_generation=1,
+            topology_epoch=1,
+        ).state
+    loaded: list[NotesBranchKey] = []
+
+    async def record_load(_screen, key, **_kwargs):
+        loaded.append(key)
+
+    async def located(*_args, **_kwargs):
+        return False
+
+    monkeypatch.setattr(LibraryScreen, "_load_library_notes_tree_slice", record_load)
+    monkeypatch.setattr(
+        LibraryScreen, "_locate_library_notes_tree_target", located
+    )
+
+    await LibraryScreen._reconcile_library_notes_tree_mutation(
+        fake,
+        "move_placement",
+        {
+            "note_id": "n1",
+            "destination_folder_id": "reading",
+            "source_folder_id": source_folder_id or None,
+        },
+        before=None,
+        result=True,
+    )
+
+    assert (NotesBranchKey(None, "placements") in loaded) is reloads_unfiled
+    assert NotesBranchKey("reading", "placements") in loaded
+
+
+@pytest.mark.asyncio
+async def test_the_next_successful_folder_operation_withdraws_the_conflict():
+    fake = _mutation_fake(_MutationService())
+    fake._notes_state.notice = "This note's placement changed elsewhere."
+    fake._notes_state.notice_refresh_offered = True
+
+    assert await LibraryScreen._execute_library_notes_tree_mutation(
+        fake,
+        "create_folder",
+        name="New",
+        parent_id=None,
+    )
+
+    assert fake._notes_state.notice == "Folder organization updated."
+    assert fake._notes_state.notice_refresh_offered is False
 
 
 @pytest.mark.asyncio
@@ -3376,6 +3705,14 @@ async def test_note_create_refreshes_unfiled_and_every_exact_active_placement_pa
     assert fake._notes_state.tree_pending_target_placement_id == (
         FolderPlacementId.unfiled("created")
     )
+    # TASK-34000.14: the root FOLDERS slice was never loaded here, so the
+    # create owes it -- requested through its own slice worker, after the
+    # locate, while the fresh root placements slice above is left alone.
+    root_folders = fake._notes_state.tree_branches[NotesBranchKey(None, "folders")]
+    assert root_folders.loading is True
+    assert fake._worker_groups == [
+        f"library_notes_tree:{NotesBranchKey(None, 'folders').pager_id}"
+    ]
 
 
 @pytest.mark.asyncio
@@ -4182,9 +4519,7 @@ async def test_mounted_create_flow_fences_and_refreshes_every_exact_placement_pa
         assert set(service.postcommit_placement_calls) == {None, "ideas", "reading"}
         assert "unrelated" not in service.postcommit_placement_calls
         root = screen._notes_state.tree_branches[NotesBranchKey(None, "placements")]
-        ideas = screen._notes_state.tree_branches[
-            NotesBranchKey("ideas", "placements")
-        ]
+        ideas = screen._notes_state.tree_branches[NotesBranchKey("ideas", "placements")]
         reading = screen._notes_state.tree_branches[
             NotesBranchKey("reading", "placements")
         ]
@@ -4564,17 +4899,13 @@ async def test_mounted_stale_receipt_reload_cannot_steal_newer_user_focus() -> N
         await _wait_until(pilot, lambda: screen.focused is filter_input)
         focus_generation = screen._notes_state.focus_intent_generation
         receipt = LibraryNotesTreeReceipt(
-            selected_placement_id=FolderPlacementId.note(
-                "target", "n1", "m-preferred"
-            ),
+            selected_placement_id=FolderPlacementId.note("target", "n1", "m-preferred"),
             selected_note_id="n1",
             expanded_folder_ids=("target",),
             branch_ranges=(LibraryNotesBranchRange(None, "folders", 40, 41),),
             filter_query="",
             filter_range=None,
-            focus_semantic_id=FolderPlacementId.note(
-                "target", "n1", "m-preferred"
-            ),
+            focus_semantic_id=FolderPlacementId.note("target", "n1", "m-preferred"),
             focus_role="note-placement",
             scroll_offset=None,
             rail_scroll_offset=None,
@@ -4602,11 +4933,13 @@ async def test_mounted_stale_receipt_reload_cannot_steal_newer_user_focus() -> N
         service.range_release.set()
         await _wait_until(
             pilot,
-            lambda: not any(
-                worker.node is screen
-                and worker.group == "library_notes_tree:return"
-                and not worker.is_finished
-                for worker in screen.workers
+            lambda: (
+                not any(
+                    worker.node is screen
+                    and worker.group == "library_notes_tree:return"
+                    and not worker.is_finished
+                    for worker in screen.workers
+                )
             ),
         )
 

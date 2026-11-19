@@ -21,7 +21,7 @@ from Tests.Chat.test_citation_trace_repository import (
     _identity,
     _sealed_write,
 )
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, swap_app_aliases
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -345,8 +345,9 @@ async def test_console_chat_fork_complete_provider_free_journey(
         fingerprint_codec=TEST_FINGERPRINT_CODEC,
     )
     app = _build_test_app(config_overrides={"API": {"openai_api_key": provider_secret}})
-    app.chachanotes_db = db
-    app.citation_trace_repository = citation_repository
+    swap_app_aliases(
+        app, chachanotes_db=db, citation_trace_repository=citation_repository
+    )
     permission_service = app.unified_mcp_service
     permission_store = permission_service.permission_store
     assert permission_store is not None
@@ -1012,8 +1013,11 @@ async def test_console_chat_fork_complete_provider_free_journey(
             fingerprint_codec=TEST_FINGERPRINT_CODEC,
         )
         restarted_app = _build_test_app()
-        restarted_app.chachanotes_db = restarted_db
-        restarted_app.citation_trace_repository = restarted_repository
+        swap_app_aliases(
+            restarted_app,
+            chachanotes_db=restarted_db,
+            citation_trace_repository=restarted_repository,
+        )
         restarted_host = ConsoleHarness(restarted_app)
         try:
             async with restarted_host.run_test(size=(120, 35)) as pilot:

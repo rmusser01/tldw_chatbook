@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N   Saved · Next: Keep editing; changes save automatically.
+  a    o
+  v    t    ‹ Back to list    Advisor meeting 2026-09-24      Library notes
+       e   In the Library database only — no file on disk
+       s   Saved
+              Edit     Preview     Info
+--->          Save     Use in Console
+           Title     Advisor meeting 2026-09-24
+     --->  Keywords  meeting, thesis
+           Body
+          ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+--->      ┃ # Advisor meeting — 2026-09-24                                     ┃
+          ┃                                                                 ▃▃ ┃
+          ┃ Attendees: me, Dr. Okafor                                          ┃
+          ┃                                                                    ┃
+          ┃ ## Notes                                                           ┃
+          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                                                                 60 words · 1:1
+  esc notes | ctrl+end end | F1 · F6 · Ctrl+P · Ctrl+Q

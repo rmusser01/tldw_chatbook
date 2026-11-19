@@ -8,7 +8,10 @@ from ..DB.Prompts_DB import ConflictError
 from . import Prompts_Interop as prompts_interop
 from .prompt_normalizers import prepare_retained_snapshot_for_restore
 from .prompt_restore_errors import prompt_restore_error_from_conflict
-from .prompt_source_capabilities import local_prompt_capabilities
+from .prompt_source_capabilities import (
+    local_prompt_capabilities,
+    prepare_local_mixin_payload,
+)
 
 
 class LocalPromptService:
@@ -30,6 +33,7 @@ class LocalPromptService:
         include_deleted: bool = False,
         limit: int = 100,
         offset: int = 0,
+        artifact_type: str | None = None,
     ) -> list[dict[str, Any]]:
         per_page = max(1, int(limit or 100))
         page = max(1, int(offset // per_page) + 1)
@@ -37,10 +41,11 @@ class LocalPromptService:
             page=page,
             per_page=per_page,
             include_deleted=include_deleted,
+            **({"artifact_type": artifact_type} if artifact_type is not None else {}),
         )
         return prompts
 
-    async def count_prompts(self) -> int:
+    async def count_prompts(self, *, artifact_type: str | None = None) -> int:
         """Count all non-deleted local prompts.
 
         Mirrors ``list_prompts`` above: a direct, un-offloaded call into
@@ -58,6 +63,7 @@ class LocalPromptService:
             page=1,
             per_page=1,
             include_deleted=False,
+            **({"artifact_type": artifact_type} if artifact_type is not None else {}),
         )
         return int(total_items)
 
@@ -118,6 +124,22 @@ class LocalPromptService:
         prompt_definition: Any = None,
         artifact_type: str | None = None,
     ) -> dict[str, Any]:
+        payload = prepare_local_mixin_payload(
+            {
+                "name": name,
+                "author": author,
+                "details": details,
+                "keywords": keywords,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "prompt_format": prompt_format,
+                "prompt_schema_version": prompt_schema_version,
+                "prompt_definition": prompt_definition,
+                "artifact_type": artifact_type,
+            }
+        )
+        system_prompt, user_prompt = payload["system_prompt"], payload["user_prompt"]
+        prompt_definition = payload["prompt_definition"]
         prompt_id, prompt_uuid, message = self.interop.add_prompt(
             name=name,
             author=author,
@@ -163,7 +185,7 @@ class LocalPromptService:
         if not existing:
             raise ValueError(f"Prompt '{prompt_id}' not found.")
 
-        update_payload = dict(kwargs)
+        update_payload = prepare_local_mixin_payload(dict(kwargs), existing=existing)
         expected_version = update_payload.pop("expected_version", None)
         db = self.interop.get_db_instance()
         prompt_uuid, message = db.update_prompt_by_id(
@@ -274,3 +296,37 @@ class LocalPromptService:
             if classified is not None:
                 raise classified from exc
             raise
+
+
+# Original Library read interfaces; unknown replacements require OPAQUE custody.
+from types import FunctionType as _LibraryFunction
+
+_NATIVE_ORDINARY_LIBRARY_CLASS = LocalPromptService
+_NATIVE_ORDINARY_LIBRARY_METHODS = tuple(
+    (name, value)
+    for name, value in vars(LocalPromptService).items()
+    if isinstance(value, (_LibraryFunction, staticmethod, classmethod, property))
+)
+_NATIVE_ORDINARY_LIBRARY_FUNCTIONS = tuple(
+    (
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        *(
+            value
+            for value in tuple(globals().values())
+            if type(value) is _LibraryFunction and value.__module__ == __name__
+        ),
+        *(
+            value.__func__ if isinstance(value, (staticmethod, classmethod)) else value
+            for _name, value in _NATIVE_ORDINARY_LIBRARY_METHODS
+            if not isinstance(value, property)
+        ),
+    )
+)

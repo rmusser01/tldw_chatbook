@@ -198,9 +198,10 @@ class _RecordingSink:
     _open_should_fail = False
 
     def __init__(
-        self, *, on_event, blocksize_ms: int = 20, stream_factory=None
+        self, *, on_event, blocksize_ms: int = 20, stream_factory=None, presentation=None
     ) -> None:
         self.on_event = on_event
+        self.presentation = presentation
         self.opened_with: tuple[int, int] | None = None
         #: Fix-round F2 pin: which thread actually called `open()`, so a
         #: test can assert it ran off the event-loop thread.
@@ -773,6 +774,13 @@ async def test_bare_stop_action_also_silences_legacy_file_playback(
         def get_current_file(self):
             return clip
 
+        def get_state(self):
+            # TASK-39040: the stop helper reads the state to refuse a clip
+            # handed to the default app; a legacy clip is PLAYING.
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+
+            return PlaybackState.PLAYING
+
         def stop(self):
             stop_calls.append(True)
             return True
@@ -808,6 +816,13 @@ async def test_message_scoped_stop_does_not_silence_a_different_messages_legacy_
     class _FakePlayer:
         def get_current_file(self):
             return clip
+
+        def get_state(self):
+            # TASK-39040: the stop helper reads the state to refuse a clip
+            # handed to the default app; a legacy clip is PLAYING.
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+
+            return PlaybackState.PLAYING
 
         def stop(self):
             stop_calls.append(True)
@@ -979,6 +994,11 @@ async def test_stop_with_empty_string_message_id_is_treated_as_a_bare_stop(
     class _FakePlayer:
         def get_current_file(self):
             return clip
+
+        def get_state(self):
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+
+            return PlaybackState.PLAYING
 
         def stop(self):
             player_stop_calls.append(True)
@@ -1231,3 +1251,45 @@ async def test_no_underrun_never_logs_or_bumps_the_underrun_metric(
     assert not any(
         labels.get("outcome_code") == "underrun" for _, labels in metric_calls
     ), metric_calls
+
+
+@pytest.mark.asyncio
+async def test_pcm16_wav_sink_entry_forwards_optional_portrait_observation(
+    handler, monkeypatch
+):
+    from tldw_chatbook.Audio.speech_presentation import (
+        SpeechPresentation,
+        SpeechPresentationOwner,
+    )
+
+    owner = SpeechPresentationOwner("wav-preview", object(), None, None, 7, None, None)
+    speech = SpeechPresentation(owner)
+    holder = {}
+
+    class ObservedSink(_RecordingSink):
+        def __init__(self, *, presentation=None, **kwargs):
+            super().__init__(**kwargs)
+            holder["sink"] = self
+            holder["presentation"] = presentation
+
+    monkeypatch.setattr(tts_events_module, "StreamingPcmSink", ObservedSink)
+    pcm = b"\x00\x40" * 480
+    body = _wav_with_trailing_chunk(data=pcm)
+    plan = tts_events_module.sink_plan("wav", None, body)
+    assert plan is not None
+    finished = []
+    outcome = await handler._stream_response_via_sink(
+        plan,
+        tts_events_module._replay_drained_bytes(body),
+        message_id="wav-preview",
+        fallback_on_failure=True,
+        on_finished=finished.append,
+        presentation=speech,
+    )
+    assert outcome == "success" and finished == [True]
+    assert holder["presentation"] is speech
+    assert b"".join(holder["sink"].fed) == pcm
+    completed = [
+        message for message in handler.messages if isinstance(message, TTSCompleteEvent)
+    ]
+    assert len(completed) == 1 and completed[0].audio_file is None

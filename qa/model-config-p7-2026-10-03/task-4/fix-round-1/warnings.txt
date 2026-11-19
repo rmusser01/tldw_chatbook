@@ -1,0 +1,95 @@
+# Warnings, re-run 2026-10-04 (finding 5)
+
+pytest prints a 'warnings summary' section and 'N warnings' in its last line whenever a test emits a
+Python warning; neither appears below.
+
+## 1. The new file alone at 769dff7edc: serial, env -i scratch profile, no admission plugin (raw output)
+============================= test session starts ==============================
+platform darwin -- Python 3.12.11, pytest-8.4.2, pluggy-1.6.0
+rootdir: <worktree>
+configfile: pyproject.toml
+plugins: anyio-4.12.1, mock-3.15.1, asyncio-1.2.0, Faker-40.15.0, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, hypothesis-6.152.3
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+collected 6 items
+Tests/UI/test_settings_save_reach.py ......                              [100%]
+============================= slowest 25 durations =============================
+22.80s call     Tests/UI/test_settings_save_reach.py::test_saving_default_b_states_its_reach_and_a_new_chat_takes_it[untouched]
+21.03s call     Tests/UI/test_settings_save_reach.py::test_saving_default_b_states_its_reach_and_a_new_chat_takes_it[message]
+12.16s call     Tests/UI/test_settings_save_reach.py::test_focused_field_shows_help_and_range_and_its_key_only_when_opened
+11.81s call     Tests/UI/test_settings_save_reach.py::test_inspector_leads_with_reach_then_the_next_new_chat_then_the_field
+11.13s call     Tests/UI/test_settings_save_reach.py::test_a_long_chat_title_wraps_the_row_rather_than_cut_the_pair
+10.78s call     Tests/UI/test_settings_save_reach.py::test_applies_to_row_sits_under_the_default_model_and_says_no_chat_is_open
+(12 durations < 1s hidden.)
+========================= 6 passed in 95.18s (0:01:35) =========================
+rc=0
+
+## 2. Every test the commit added or rewrote, both sides, serial with the scratch admission plugin
+(lessons-testing-evidence 'A local red wall of RecoveryRequired': without it the hub/journey files stop at
+fixture setup on ADR-126 RecoveryRequired, 11 of 17 here). Head = the worktree with fix round 1's comment.
+Nodes: the two AC#6 hub tests, the R15 vLLM snapshot test, test_settings_provider_keyboard_journeys.py
+(whose _tab_to guard changed), the discovery journey that uses _tab_to, and test_settings_save_reach.py (head only).
+
+### head
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+PASSED Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_lists_console_supported_catalog
+PASSED Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_defaults_appear_before_reference_copy
+PASSED Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_default_late_ack_failure_restores_complete_provider_presentation
+PASSED Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-dark]
+PASSED Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-light]
+PASSED Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-dark]
+PASSED Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-light]
+PASSED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-dark]
+PASSED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-light]
+PASSED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-dark]
+PASSED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-light]
+PASSED Tests/UI/test_settings_save_reach.py::test_applies_to_row_sits_under_the_default_model_and_says_no_chat_is_open
+PASSED Tests/UI/test_settings_save_reach.py::test_a_long_chat_title_wraps_the_row_rather_than_cut_the_pair
+PASSED Tests/UI/test_settings_save_reach.py::test_inspector_leads_with_reach_then_the_next_new_chat_then_the_field
+PASSED Tests/UI/test_settings_save_reach.py::test_focused_field_shows_help_and_range_and_its_key_only_when_opened
+PASSED Tests/UI/test_settings_save_reach.py::test_saving_default_b_states_its_reach_and_a_new_chat_takes_it[untouched]
+PASSED Tests/UI/test_settings_save_reach.py::test_saving_default_b_states_its_reach_and_a_new_chat_takes_it[message]
+======================== 17 passed in 508.81s (0:08:28) ========================
+rc=0
+captured-log lines 'ERROR root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found': 11 (one per mounted pre-existing test, same on both sides; a log record, not a warning)
+'warnings summary' sections: 0
+
+### base
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+PASSED Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_lists_console_supported_catalog
+PASSED Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_defaults_appear_before_reference_copy
+PASSED Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_default_late_ack_failure_restores_complete_provider_presentation
+PASSED Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-dark]
+PASSED Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size0-textual-light]
+PASSED Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-dark]
+PASSED Tests/UI/test_settings_provider_keyboard_journeys.py::test_provider_keyboard_edit_revert_save_and_return[size1-textual-light]
+PASSED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-dark]
+PASSED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size0-textual-light]
+PASSED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-dark]
+PASSED Tests/UI/test_settings_model_discovery_journeys.py::test_discovery_keyboard_selection_survives_rebuild_and_save[size1-textual-light]
+======================== 11 passed in 437.53s (0:07:17) ========================
+rc=0
+captured-log lines 'ERROR root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found': 11 (one per mounted pre-existing test, same on both sides; a log record, not a warning)
+'warnings summary' sections: 0

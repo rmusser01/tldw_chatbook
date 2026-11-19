@@ -1,0 +1,9 @@
+{
+  "base_commit": "e16100e2b3",
+  "path": "Tests/Chat/test_console_chat_controller.py",
+  "base_count": 3,
+  "current_count": 3,
+  "introduced": [],
+  "removed": [],
+  "comparison": "rule/message/exact source line; line-number shifts ignored"
+}

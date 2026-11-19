@@ -1,0 +1,608 @@
+I001 [*] Import block is un-sorted or un-formatted
+  --> Tests/Chat/test_console_library_runtime_policy.py:3:1
+   |
+ 1 |   """ADR-079 runtime provider selection and immutable authority tests."""
+ 2 |
+ 3 | / from __future__ import annotations
+ 4 | |
+ 5 | | from functools import partial
+ 6 | | from types import SimpleNamespace
+ 7 | |
+ 8 | | import pytest
+ 9 | |
+10 | | from tldw_chatbook.Agents.library_rag_tool_provider import (
+11 | |     LibraryRagToolProvider,
+12 | |     RAG_TOOL_NAME,
+13 | | )
+14 | | from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
+15 | | from tldw_chatbook.Chat.console_agent_bridge import (
+16 | |     _compose_run_registry_and_allowed,
+17 | | )
+18 | | from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+19 | | from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+20 | | from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+21 | | from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+22 | |     ConsoleEgressClass,
+23 | |     ConsoleLibraryItemScopeSnapshot,
+24 | |     ConsoleProviderIntent,
+25 | |     ConsoleResolvedDestination,
+26 | |     ConsoleTurnLibraryAuthority,
+27 | | )
+28 | | from tldw_chatbook.Chat.console_library_policy import (
+29 | |     AUTOMATIC_LIBRARY_SOURCE_TYPES,
+30 | |     ConsoleAssistantLibraryAccess,
+31 | |     ConsoleAutoRetrieve,
+32 | |     ConsoleLibraryPolicySnapshot,
+33 | | )
+34 | | from tldw_chatbook.Chat.console_runtime import _library_provider_for_app
+35 | | from tldw_chatbook.Chat.console_turn_context import (
+36 | |     ConsoleTurnConfigurationSnapshot,
+37 | |     ConsoleTurnExecutionContext,
+38 | | )
+39 | | from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
+40 | | from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
+41 | | from tldw_chatbook.Library.local_media_chunk_tool_service import LocalMediaChunkToolService
+   | |___________________________________________________________________________________________^
+help: Organize imports
+   |
+10 | from tldw_chatbook.Agents.library_rag_tool_provider import (
+11 +     RAG_TOOL_NAME,
+12 |     LibraryRagToolProvider,
+   -     RAG_TOOL_NAME,
+13 | )
+--------------------------------------------------------------------------------
+40 | from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
+   - from tldw_chatbook.Library.local_media_chunk_tool_service import LocalMediaChunkToolService
+41 + from tldw_chatbook.Library.local_media_chunk_tool_service import (
+42 +     LocalMediaChunkToolService,
+43 + )
+44 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> tldw_chatbook/Chat/console_runtime.py:114:1
+    |
+112 |   """
+113 |
+114 | / from __future__ import annotations
+115 | |
+116 | | import asyncio
+117 | | import inspect
+118 | | import os
+119 | | import functools
+120 | | import threading
+121 | | import time
+122 | | from dataclasses import dataclass, field
+123 | | from datetime import datetime, timezone
+124 | | from pathlib import Path
+125 | | from threading import Lock, get_ident
+126 | | from typing import TYPE_CHECKING, Any, Callable, Mapping
+127 | | from uuid import uuid4
+128 | |
+129 | | from loguru import logger
+130 | |
+131 | | from tldw_chatbook.Chat.console_chat_models import (
+132 | |     ConsoleLifecycleRevisionChanged,
+133 | |     ConsoleRunStatus,
+134 | |     ConsoleSubmissionOrigin,
+135 | | )
+136 | | from tldw_chatbook.Chat.console_library_policy import (
+137 | |     ConsoleAssistantLibraryAccess,
+138 | |     ConsoleAutoRetrieve,
+139 | |     ConsoleLibraryPolicyDefaults,
+140 | | )
+141 | | from tldw_chatbook.Chat.console_display_state import console_prompted_source_count
+142 | | from tldw_chatbook.Chat.console_onboarding_state import (
+143 | |     coerce_console_first_send_completed,
+144 | | )
+145 | | from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+    | |_______________________________________________________________________________^
+146 |   if TYPE_CHECKING:
+147 |       from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+    |
+help: Organize imports
+    |
+116 | import asyncio
+117 + import functools
+118 | import inspect
+119 | import os
+    - import functools
+120 | import threading
+--------------------------------------------------------------------------------
+135 | )
+136 + from tldw_chatbook.Chat.console_display_state import console_prompted_source_count
+137 | from tldw_chatbook.Chat.console_library_policy import (
+--------------------------------------------------------------------------------
+141 | )
+    - from tldw_chatbook.Chat.console_display_state import console_prompted_source_count
+142 | from tldw_chatbook.Chat.console_onboarding_state import (
+143 |     coerce_console_first_send_completed,
+144 | )
+145 | from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+146 +
+147 | if TYPE_CHECKING:
+    |
+
+UP035 [*] Import from `collections.abc` instead: `Callable`, `Mapping`
+   --> tldw_chatbook/Chat/console_runtime.py:126:1
+    |
+124 | from pathlib import Path
+125 | from threading import Lock, get_ident
+126 | from typing import TYPE_CHECKING, Any, Callable, Mapping
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+127 | from uuid import uuid4
+    |
+help: Import from `collections.abc`
+    |
+125 | from threading import Lock, get_ident
+    - from typing import TYPE_CHECKING, Any, Callable, Mapping
+126 + from typing import TYPE_CHECKING, Any
+127 + from collections.abc import Callable, Mapping
+128 | from uuid import uuid4
+    |
+
+I001 [*] Import block is un-sorted or un-formatted
+   --> tldw_chatbook/Chat/console_runtime.py:147:5
+    |
+145 |   from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+146 |   if TYPE_CHECKING:
+147 | /     from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+148 | |     from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
+149 | |     from tldw_chatbook.Chat.console_voice_promotion import (
+150 | |         VoicePromotionOwner,
+151 | |         VoicePromotionQuitPermit,
+152 | |         VoicePromotionSessionCloseToken,
+153 | |     )
+    | |_____^
+154 |   from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
+155 |   from tldw_chatbook.Chat.thinking_blocks import normalize_thinking_history_policy
+    |
+help: Organize imports
+    |
+147 |     from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+    -     from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
+148 |     from tldw_chatbook.Chat.console_voice_promotion import (
+--------------------------------------------------------------------------------
+152 |     )
+153 +     from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
+154 | from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
+    |
+
+UP017 [*] Use `datetime.UTC` alias
+   --> tldw_chatbook/Chat/console_runtime.py:337:45
+    |
+335 |         else ConsoleTraceRepository()
+336 |     )
+337 |     timestamp = occurred_at or datetime.now(timezone.utc).isoformat().replace(
+    |                                             ^^^^^^^^^^^^
+338 |         "+00:00", "Z"
+339 |     )
+    |
+help: Convert to `datetime.UTC` alias
+    |
+122 | from dataclasses import dataclass, field
+    - from datetime import datetime, timezone
+123 + from datetime import datetime, timezone, UTC
+124 | from pathlib import Path
+--------------------------------------------------------------------------------
+336 |     )
+    -     timestamp = occurred_at or datetime.now(timezone.utc).isoformat().replace(
+337 +     timestamp = occurred_at or datetime.now(UTC).isoformat().replace(
+338 |         "+00:00", "Z"
+    |
+
+BLE001 Do not catch blind exception: `Exception`
+   --> tldw_chatbook/Chat/console_runtime.py:492:12
+    |
+491 |         fresh = load_settings()
+492 |     except Exception:
+    |            ^^^^^^^^^
+493 |         return snapshot
+494 |     return fresh if isinstance(fresh, Mapping) and fresh else snapshot
+    |
+
+UP037 [*] Remove quotes from type annotation
+    --> tldw_chatbook/Chat/console_runtime.py:1113:29
+     |
+1112 |     @property
+1113 |     def chat_store(self) -> "ConsoleChatStore | None":
+     |                             ^^^^^^^^^^^^^^^^^^^^^^^^^
+1114 |         """The built store, or `None` if nothing has asked for one yet."""
+1115 |         return self._chat_store
+     |
+help: Remove quotes
+     |
+1112 |     @property
+     -     def chat_store(self) -> "ConsoleChatStore | None":
+1113 +     def chat_store(self) -> ConsoleChatStore | None:
+1114 |         """The built store, or `None` if nothing has asked for one yet."""
+     |
+
+UP037 [*] Remove quotes from type annotation
+    --> tldw_chatbook/Chat/console_runtime.py:1129:34
+     |
+1128 |     @property
+1129 |     def chat_controller(self) -> "ConsoleChatController | None":
+     |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1130 |         """The built chat controller, or `None`."""
+1131 |         return self._chat_controller
+     |
+help: Remove quotes
+     |
+1128 |     @property
+     -     def chat_controller(self) -> "ConsoleChatController | None":
+1129 +     def chat_controller(self) -> ConsoleChatController | None:
+1130 |         """The built chat controller, or `None`."""
+     |
+
+UP037 [*] Remove quotes from type annotation
+    --> tldw_chatbook/Chat/console_runtime.py:1134:35
+     |
+1133 |     @property
+1134 |     def run_hooks_engine(self) -> "RunHooksEngine | None":
+     |                                   ^^^^^^^^^^^^^^^^^^^^^^^
+1135 |         """The built run-hooks engine, or `None`.
+     |
+help: Remove quotes
+     |
+1133 |     @property
+     -     def run_hooks_engine(self) -> "RunHooksEngine | None":
+1134 +     def run_hooks_engine(self) -> RunHooksEngine | None:
+1135 |         """The built run-hooks engine, or `None`.
+     |
+
+I001 [*] Import block is un-sorted or un-formatted
+    --> tldw_chatbook/Chat/console_runtime.py:1170:13
+     |
+1168 |             if self._disposed:
+1169 |                 raise RuntimeError("voice_runtime_disposed")
+1170 |             from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+1171 |
+1172 |             self._voice_dispatch_supervisor = VoiceDispatchSupervisor()
+     |
+help: Organize imports
+     |
+1169 |                 raise RuntimeError("voice_runtime_disposed")
+     -             from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
+1170 +             from tldw_chatbook.Chat.console_voice_supervisor import (
+1171 +                 VoiceDispatchSupervisor,
+1172 +             )
+1173 |
+     |
+
+TRY203 Remove exception handler; error is immediately re-raised
+    --> tldw_chatbook/Chat/console_runtime.py:1784:9
+     |
+1782 |                       continue
+1783 |               return decision.result
+1784 | /         except asyncio.CancelledError:
+1785 | |             raise
+     | |_________________^
+1786 |           finally:
+1787 |               with self._project_decision_lock:
+     |
+
+TRY004 Prefer `TypeError` exception for invalid type
+    --> tldw_chatbook/Chat/console_runtime.py:2001:17
+     |
+1999 |                 call_later(retry)
+2000 |             else:
+2001 |                 raise RuntimeError("app has no projection retry scheduler")
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2002 |         except Exception:  # noqa: BLE001 -- later reconciliation may retry
+2003 |             with self._project_decision_lock:
+     |
+
+BLE001 Do not catch blind exception: `BaseException`
+    --> tldw_chatbook/Chat/console_runtime.py:2570:16
+     |
+2568 |             ):
+2569 |                 self._record_turn_recovery(record)
+2570 |         except BaseException as exc:
+     |                ^^^^^^^^^^^^^
+2571 |             if (
+2572 |                 record is not None
+     |
+
+UP037 [*] Remove quotes from type annotation
+    --> tldw_chatbook/Chat/console_runtime.py:2877:10
+     |
+2875 |         workspace_context: Any | None = None,
+2876 |         on_scope_flushed: Callable[..., Any] | None = None,
+2877 |     ) -> "ConsoleChatStore":
+     |          ^^^^^^^^^^^^^^^^^^
+2878 |         """Return the Console chat store, creating it lazily.
+     |
+help: Remove quotes
+     |
+2876 |         on_scope_flushed: Callable[..., Any] | None = None,
+     -     ) -> "ConsoleChatStore":
+2877 +     ) -> ConsoleChatStore:
+2878 |         """Return the Console chat store, creating it lazily.
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:2910:20
+     |
+2908 |             try:
+2909 |                 recover_console_trace_calls(db)
+2910 |             except Exception as exc:
+     |                    ^^^^^^^^^
+2911 |                 logger.warning("console_trace_recovery_failed: {}", type(exc).__name__)
+2912 |             citation_repository = getattr(
+     |
+
+B023 Function definition does not bind loop variable `last_provider_activity`
+    --> tldw_chatbook/Chat/console_runtime.py:3184:61
+     |
+3182 | …                         if callable(controller_idle)
+3183 | …                         else lambda: max(
+3184 | …                             0.0, time.monotonic() - last_provider_activity
+     |                                                       ^^^^^^^^^^^^^^^^^^^^^^
+3185 | …                         )
+3186 | …                     ),
+     |
+
+UP037 [*] Remove quotes from type annotation
+    --> tldw_chatbook/Chat/console_runtime.py:3471:56
+     |
+3469 |         return self._archive_recovery
+3470 |
+3471 |     def ensure_chat_controller(self, **kwargs: Any) -> "ConsoleChatController":
+     |                                                        ^^^^^^^^^^^^^^^^^^^^^^^
+3472 |         """Return the Console chat controller, creating it lazily.
+     |
+help: Remove quotes
+     |
+3470 |
+     -     def ensure_chat_controller(self, **kwargs: Any) -> "ConsoleChatController":
+3471 +     def ensure_chat_controller(self, **kwargs: Any) -> ConsoleChatController:
+3472 |         """Return the Console chat controller, creating it lazily.
+     |
+
+UP037 [*] Remove quotes from type annotation
+    --> tldw_chatbook/Chat/console_runtime.py:3563:35
+     |
+3561 |         return self._chat_controller
+3562 |
+3563 |     def ensure_run_hooks(self) -> "RunHooksEngine | None":
+     |                                   ^^^^^^^^^^^^^^^^^^^^^^^
+3564 |         """Return the app-owned run-hooks engine, building it lazily.
+     |
+help: Remove quotes
+     |
+3562 |
+     -     def ensure_run_hooks(self) -> "RunHooksEngine | None":
+3563 +     def ensure_run_hooks(self) -> RunHooksEngine | None:
+3564 |         """Return the app-owned run-hooks engine, building it lazily.
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:3641:16
+     |
+3639 |         try:
+3640 |             return view.app.screen is view
+3641 |         except Exception:  # screen-free projection doubles have no Textual app
+     |                ^^^^^^^^^
+3642 |             return True
+     |
+
+B010 [*] Do not call `setattr` with a constant attribute value. It is not any safer than normal property access.
+    --> tldw_chatbook/Chat/console_runtime.py:3959:17
+     |
+3957 |                 self._reconciled_view = None
+3958 |             try:
+3959 |                 setattr(view, "_console_runtime_attachment_generation", generation)
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+3960 |             except Exception:  # noqa: BLE001 -- read-only view doubles are supported
+3961 |                 pass
+     |
+help: Replace `setattr` with assignment
+     |
+3958 |             try:
+     -                 setattr(view, "_console_runtime_attachment_generation", generation)
+3959 +                 view._console_runtime_attachment_generation = generation
+3960 |             except Exception:  # noqa: BLE001 -- read-only view doubles are supported
+     |
+
+S110 `try`-`except`-`pass` detected, consider logging the exception
+    --> tldw_chatbook/Chat/console_runtime.py:3960:13
+     |
+3958 |               try:
+3959 |                   setattr(view, "_console_runtime_attachment_generation", generation)
+3960 | /             except Exception:  # noqa: BLE001 -- read-only view doubles are supported
+3961 | |                 pass
+     | |____________________^
+3962 |               self._bind_view_hooks()
+3963 |               return generation
+     |
+
+SIM102 Use a single `if` statement instead of nested `if` statements
+    --> tldw_chatbook/Chat/console_runtime.py:3999:13
+     |
+3997 |           """
+3998 |           with self._attention_operation_lock:
+3999 | /             if view is not None:
+4000 | |                 if self.view is not view or generation != self._attached_generation:
+     | |____________________________________________________________________________________^
+4001 |                       return False
+4002 |               controller = self._chat_controller
+     |
+help: Combine `if` statements using `and`
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:4044:41
+     |
+4042 |         try:
+4043 |             task.exception()
+4044 |         except (asyncio.CancelledError, Exception):
+     |                                         ^^^^^^^^^
+4045 |             return
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:4246:24
+     |
+4244 |                         generation=provisional_generation,
+4245 |                     )
+4246 |                 except Exception:
+     |                        ^^^^^^^^^
+4247 |                     logger.warning(
+4248 |                         "Console runtime: provisional fleet fence could not abort."
+     |
+
+S110 `try`-`except`-`pass` detected, consider logging the exception
+    --> tldw_chatbook/Chat/console_runtime.py:4258:25
+     |
+4256 |                           try:
+4257 |                               conversation_id = conversation_id_for_session(session_id)
+4258 | /                         except Exception:
+4259 | |                             pass
+     | |________________________________^
+4260 |                       if fence_fleet(
+4261 |                           conversation_id,
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:4258:32
+     |
+4256 |                         try:
+4257 |                             conversation_id = conversation_id_for_session(session_id)
+4258 |                         except Exception:
+     |                                ^^^^^^^^^
+4259 |                             pass
+4260 |                     if fence_fleet(
+     |
+
+SIM117 [*] Use a single `with` statement with multiple contexts instead of nested `with` statements
+    --> tldw_chatbook/Chat/console_runtime.py:4282:9
+     |
+4280 |               abort_provisional_fences()
+4281 |               raise
+4282 | /         with self._execution_capacity_lock:
+4283 | |             with self._canvas_native_lock:
+     | |__________________________________________^
+4284 |                   self._disposed = True
+4285 |           with self._run_hooks_lock:
+     |
+help: Combine `with` statements
+     |
+4281 |             raise
+     -         with self._execution_capacity_lock:
+     -             with self._canvas_native_lock:
+     -                 self._disposed = True
+4282 +         with self._execution_capacity_lock, self._canvas_native_lock:
+4283 +             self._disposed = True
+4284 |         with self._run_hooks_lock:
+     |
+
+SIM117 [*] Use a single `with` statement with multiple contexts instead of nested `with` statements
+    --> tldw_chatbook/Chat/console_runtime.py:4337:9
+     |
+4335 |           # Capacity allocation precedes the existing Canvas/receipt publication
+4336 |           # lock; no Canvas critical section acquires capacity admission.
+4337 | /         with self._execution_capacity_lock:
+4338 | |             with self._canvas_native_lock:
+     | |__________________________________________^
+4339 |                   self._disposed = True
+4340 |                   self._canvas_native_view_binding = None
+     |
+help: Combine `with` statements
+     |
+4336 |         # lock; no Canvas critical section acquires capacity admission.
+     -         with self._execution_capacity_lock:
+     -             with self._canvas_native_lock:
+     -                 self._disposed = True
+     -                 self._canvas_native_view_binding = None
+4337 +         with self._execution_capacity_lock, self._canvas_native_lock:
+4338 +             self._disposed = True
+4339 +             self._canvas_native_view_binding = None
+4340 |         if self._archive_recovery is not None:
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:4440:24
+     |
+4438 |                 try:
+4439 |                     conversation_ids.add(conversation_id_for_session(session_id))
+4440 |                 except Exception:
+     |                        ^^^^^^^^^
+4441 |                     conversation_ids.add(session_id)
+4442 |             else:
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:4449:20
+     |
+4447 |             try:
+4448 |                 begin_shutdown()
+4449 |             except Exception:
+     |                    ^^^^^^^^^
+4450 |                 logger.warning("Console runtime: shutdown fence failed at dispose.")
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:4464:24
+     |
+4462 |                     if self._voice_worker is not None:
+4463 |                         await self._voice_worker.aclose()
+4464 |                 except Exception as exc:
+     |                        ^^^^^^^^^
+4465 |                     logger.warning(
+4466 |                         "Console runtime: voice cleanup failed category={}",
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:4489:24
+     |
+4487 |                 try:
+4488 |                     fence_fleet(conversation_id, generation=self.generation)
+4489 |                 except Exception:
+     |                        ^^^^^^^^^
+4490 |                     logger.warning("Console runtime: fleet fence failed at dispose.")
+4491 |             if callable(cancel_all):
+     |
+
+BLE001 Do not catch blind exception: `Exception`
+    --> tldw_chatbook/Chat/console_runtime.py:4494:24
+     |
+4492 |                 try:
+4493 |                     cancel_all(conversation_id)
+4494 |                 except Exception:
+     |                        ^^^^^^^^^
+4495 |                     logger.warning("Console runtime: fleet cancel failed at dispose.")
+4496 |             if callable(await_fleet):
+     |
+
+B010 [*] Do not call `setattr` with a constant attribute value. It is not any safer than normal property access.
+    --> tldw_chatbook/Chat/console_runtime.py:4710:13
+     |
+4708 |         generation = runtime.attach_view(view)
+4709 |         try:
+4710 |             setattr(view, "_console_runtime_attachment_generation", generation)
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+4711 |         except Exception:  # noqa: BLE001 -- read-only view doubles are supported
+4712 |             pass
+     |
+help: Replace `setattr` with assignment
+     |
+4709 |         try:
+     -             setattr(view, "_console_runtime_attachment_generation", generation)
+4710 +             view._console_runtime_attachment_generation = generation
+4711 |         except Exception:  # noqa: BLE001 -- read-only view doubles are supported
+     |
+
+S110 `try`-`except`-`pass` detected, consider logging the exception
+    --> tldw_chatbook/Chat/console_runtime.py:4711:9
+     |
+4709 |           try:
+4710 |               setattr(view, "_console_runtime_attachment_generation", generation)
+4711 | /         except Exception:  # noqa: BLE001 -- read-only view doubles are supported
+4712 | |             pass
+     | |________________^
+4713 |       return runtime
+     |
+
+Found 35 errors.
+[*] 16 fixable with the `--fix` option.

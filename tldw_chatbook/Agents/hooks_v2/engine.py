@@ -27,6 +27,7 @@ from .validation import handler_phase, parse_event
 _teardown_continuation = contextvars.ContextVar(
     "hook_teardown_continuation", default=None
 )
+_current_delivery = contextvars.ContextVar("hook_current_delivery", default=None)
 
 
 def _envelope(event: HookEvent) -> dict:
@@ -49,6 +50,7 @@ class HookEventOutcome:
     omissions: tuple[str, ...] = ()
     failures: tuple[HookFailure, ...] = ()
     outstanding_cleanup: tuple[str, ...] = ()
+    _native_sources: tuple = field(default=(), compare=False, repr=False)
 
     @property
     def succeeded(self) -> bool:
@@ -59,6 +61,15 @@ class HookEventOutcome:
         return not any(f.blocking for f in self.failures) and not any(
             result.decision == "deny" for _, result in self.accepted
         )
+
+
+def native_outcome_current(event, outcome):
+    try:
+        for source in outcome._native_sources:
+            source.check_memory(event)
+        return True
+    except (RuntimeError, PermissionError):
+        return False
 
 
 @dataclass
@@ -74,6 +85,7 @@ class _ExecutionState:
     closed: bool = False
     busy: bool = False
     dependencies: dict[str, tuple[bool, str | None]] = field(default_factory=dict)
+    native: object | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +140,19 @@ class HookEventExecution:
 
     def close(self) -> None:
         self._state.closed = True
+        if self._state.native is not None:
+            self._state.native.close()
+            native = self._state.native
+            if getattr(native, "future", False) and native.ordinary_tree is not None:
+                native.ordinary_tree.consume_event(self)
+
+    def retain_host(self) -> None:
+        if self._state.native is not None:
+            self._state.native.retain_host()
+
+    def host_done(self) -> None:
+        if self._state.native is not None:
+            self._state.native.host_done()
 
 
 @dataclass(eq=False)
@@ -138,6 +163,7 @@ class _Delivery:
     task: asyncio.Task | None = None
     job: object | None = None
     mcp_context: object | None = None
+    native_target: object | None = None
 
 
 class HookEngine:
@@ -158,8 +184,10 @@ class HookEngine:
         budget_owner: HookBudgetOwner,
         *,
         process_owner: HookProcessOwner | None = None,
+        process_owner_for: Callable | None = None,
         environment: Callable | None = None,
         host_environment: Callable | None = None,
+        command_launch: Callable | None = None,
         invalid_admissions: tuple = (),
         dependency_required: Callable | None = None,
         enabled: bool = True,
@@ -185,10 +213,14 @@ class HookEngine:
         self.invalid_admissions = tuple(invalid_admissions)
         self._environment = environment
         self._host_environment = host_environment
+        self._process_owner_for = process_owner_for
         self._event_projector = event_projector
+        self._command_launch = command_launch
         self._dependency_required = dependency_required or (lambda *_: False)
         self._lock = RLock()
         self._scope_issuer = object()
+        self._native_commands = None
+        self._native_commands_required = False
         self._sealed_at: float | None = None
         self._teardown_closed = False
         self._deliveries: set[_Delivery] = set()
@@ -217,6 +249,7 @@ class HookEngine:
         # Ambient host-owned roots cannot leak into an unrelated hook launch.
         result.pop("PLUGIN_ROOT", None)
         result.pop("PLUGIN_DATA", None)
+        result.pop("CHATBOOK_WORKSPACE_DATA", None)
         references = self._environment(handler, event) if self._environment else {}
         for key, value in (handler.env or {}).items():
             resolved = (
@@ -227,7 +260,11 @@ class HookEngine:
             result[key] = resolved
         if self._host_environment:
             reserved = self._host_environment(handler, event)
-            if set(reserved) - {"PLUGIN_ROOT", "PLUGIN_DATA"}:
+            if set(reserved) - {
+                "PLUGIN_ROOT",
+                "PLUGIN_DATA",
+                "CHATBOOK_WORKSPACE_DATA",
+            }:
                 raise ValueError("invalid host environment")
             result.update(reserved)
         return result
@@ -244,6 +281,23 @@ class HookEngine:
             return state
         return None
 
+    def _delivery_current(self, execution, source_event, event) -> bool:
+        """Authenticate this delivery's trusted projection of an exact host event."""
+        current = _current_delivery.get()
+        state = self._execution_state(execution)
+        if not isinstance(current, tuple) or len(current) != 5 or state is None:
+            return False
+        with self._lock:
+            return bool(
+                current[0] is self
+                and current[1] in self._deliveries
+                and not current[1].cancel.is_set()
+                and current[2] is state
+                and current[3] is source_event
+                and current[4] is event
+                and self._current_continuation() is state
+            )
+
     @contextlib.contextmanager
     def _continuation_scope(self, execution):
         root = execution.continuation_of or execution
@@ -257,7 +311,7 @@ class HookEngine:
             _teardown_continuation.reset(token)
 
     def begin_event(
-        self, event: HookEvent, *, teardown: bool = False
+        self, event: HookEvent, *, teardown: bool = False, _future: bool = False
     ) -> HookEventExecution:
         value = _envelope(event)
         parse_event(value)  # Bound input before serialization or admission.
@@ -274,6 +328,13 @@ class HookEngine:
                 raise ValueError("invalid teardown event")
             if self._sealed_at is not None:
                 deadline = min(deadline, self._sealed_at + 3.0)
+        native = None
+        if self._native_commands_required:
+            if self._native_commands is None:
+                raise ValueError("native event source unavailable")
+            native = self._native_commands.capture(
+                event, teardown=teardown, future=_future
+            )
         return HookEventExecution._issue(
             _ExecutionState(
                 self._scope_issuer,
@@ -281,8 +342,44 @@ class HookEngine:
                 min(deadline, continuation.deadline) if continuation else deadline,
                 teardown or continuation is not None,
                 continuation_of=continuation,
+                native=native,
             )
         )
+
+    def prehold_event(self, event: HookEvent) -> HookEventExecution | None:
+        """Admit this producer's finite later event under original ordinary custody."""
+        from ..execution_capacity import current_ordinary_tree
+
+        if current_ordinary_tree() is None or not self._native_commands_required:
+            return None
+        if self._native_commands.preheld_nested(event):
+            # The original MCP producer already reserved its complete nested
+            # event tree. Its receiving path validates and consumes those holds.
+            return None
+        scope = self.begin_event(event, _future=True)
+        try:
+            failure = self._configuration_failure(event)
+            if failure is not None and not failure.allowed:
+                raise ValueError("future event configuration refused")
+            scope._state.native.admit()
+            current_ordinary_tree().retain_event(scope)
+            return scope
+        except BaseException:
+            scope.close()
+            raise
+
+    def consume_preheld(self, scope: HookEventExecution, event: HookEvent) -> None:
+        """Consume only this engine's original identity and captured match union."""
+        state = self._execution_state(scope)
+        if (
+            state is None
+            or state.closed
+            or state.native is None
+            or not state.native.future
+        ):
+            raise ValueError("original future event unavailable")
+        self.plan_handlers(scope, event)
+        state.native.ordinary_tree.consume_event(scope)
 
     def _execution_state(self, execution: HookEventExecution) -> _ExecutionState | None:
         if type(execution) is not HookEventExecution:
@@ -313,6 +410,8 @@ class HookEngine:
                 != tuple((k, v) for k, v in value.items() if k != "data")
             ):
                 raise ValueError("invalid event execution")
+            if state.native is not None:
+                state.native.check_memory(event)
             plans = []
             for handler in self.definitions:
                 if handler.event != event.event:
@@ -408,35 +507,81 @@ class HookEngine:
             raise
 
     def fire(self, event: HookEvent) -> HookEventOutcome:
-        return self._sync(self.fire_async(event))
+        scope = self.begin_event(event)
+        try:
+            if scope._state.native is not None:
+                try:
+                    scope._state.native.admit()
+                except Exception:  # noqa: BLE001 - host admission fails with a fixed code
+                    return HookEventOutcome(
+                        failures=tuple(
+                            self._failure(handler, event, "native_admission_refused")
+                            for handler in self.definitions
+                            if handler.event == event.event
+                        )
+                    )
+            return self._sync(self._fire(event, teardown=False, execution=scope))
+        finally:
+            scope.close()
 
     def fire_handler(
         self, execution: HookEventExecution, handler_id: str, event: HookEvent
     ) -> HookEventOutcome:
+        state = self._execution_state(execution)
+        if state is not None and state.native is not None:
+            try:
+                state.native.check_memory(event)
+                state.native.admit()
+            except Exception:  # noqa: BLE001 - host admission fails with a fixed code
+                handler = next(
+                    (h for h in self.definitions if h.id == handler_id), None
+                )
+                return HookEventOutcome(
+                    failures=(
+                        self._failure(handler, event, "native_admission_refused")
+                        if handler is not None
+                        else HookFailure(handler_id, "unknown_handler", True),
+                    )
+                )
         return self._sync(self.fire_handler_async(execution, handler_id, event))
 
-    async def fire_async(self, event: HookEvent) -> HookEventOutcome:
-        return await self._fire(event, teardown=False)
+    async def fire_async(
+        self, event: HookEvent, *, _execution: HookEventExecution | None = None
+    ) -> HookEventOutcome:
+        if _execution is not None and self._execution_state(_execution) is None:
+            return HookEventOutcome(
+                failures=(HookFailure("", "invalid_event_execution", True),)
+            )
+        return await self._fire(event, teardown=False, execution=_execution)
 
     async def fire_teardown_async(self, event: HookEvent) -> HookEventOutcome:
         """Only Interrupt/SessionEnd, within the fixed post-seal window."""
         return await self._fire(event, teardown=True)
 
-    async def _fire(self, event, *, teardown):
+    async def _fire(self, event, *, teardown, execution=None):
         if self.loop.is_closed() or not self.loop.is_running():
             return HookEventOutcome(
                 failures=(HookFailure("", "owner_unavailable", True),)
             )
-        if asyncio.get_running_loop() is not self.loop:
-            return await asyncio.wrap_future(
-                asyncio.run_coroutine_threadsafe(
-                    self._fire(event, teardown=teardown), self.loop
-                )
-            )
         try:
-            execution = self.begin_event(event, teardown=teardown)
+            execution = execution or self.begin_event(event, teardown=teardown)
         except ValueError:
             return HookEventOutcome(failures=(HookFailure("", "invalid_event", True),))
+        if asyncio.get_running_loop() is not self.loop:
+            try:
+                if execution._state.native is not None:
+                    from ..activation import worker_guard
+
+                    admit = worker_guard()(execution._state.native.admit)
+                    await asyncio.to_thread(admit)
+                return await asyncio.wrap_future(
+                    asyncio.run_coroutine_threadsafe(
+                        self._fire(event, teardown=teardown, execution=execution),
+                        self.loop,
+                    )
+                )
+            finally:
+                execution.close()
         outcomes = []
         try:
             for handler in self.definitions:
@@ -463,7 +608,12 @@ class HookEngine:
             *(
                 tuple(item for outcome in outcomes for item in getattr(outcome, key))
                 for key in ("accepted", "omissions", "failures", "outstanding_cleanup")
-            )
+            ),
+            _native_sources=tuple(
+                dict.fromkeys(
+                    source for outcome in outcomes for source in outcome._native_sources
+                )
+            ),
         )
 
     async def fire_handler_async(
@@ -473,6 +623,27 @@ class HookEngine:
             return HookEventOutcome(
                 failures=(HookFailure(handler_id, "owner_unavailable", True),)
             )
+        state = self._execution_state(execution)
+        if state is not None and state.native is not None:
+            try:
+                if state.closed or state.busy:
+                    raise RuntimeError("event closed or busy")
+                state.native.check_memory(event)
+                from ..activation import worker_guard
+
+                admit = worker_guard()(state.native.admit)
+                await asyncio.to_thread(admit)
+            except Exception:  # noqa: BLE001 - host admission fails with a fixed code
+                handler = next(
+                    (h for h in self.definitions if h.id == handler_id), None
+                )
+                return HookEventOutcome(
+                    failures=(
+                        self._failure(handler, event, "native_admission_refused")
+                        if handler is not None
+                        else HookFailure(handler_id, "unknown_handler", True),
+                    )
+                )
         if asyncio.get_running_loop() is not self.loop:
             return await asyncio.wrap_future(
                 asyncio.run_coroutine_threadsafe(
@@ -520,6 +691,20 @@ class HookEngine:
         except UnsupportedEventField:
             return failed("unsupported_matcher")
         with self._lock:
+            native_target = None
+            if state.native is not None:
+                try:
+                    state.native.check_memory(event)
+                    if state.native.covered:
+                        native_target = state.native.targets.get(handler.id)
+                        if (
+                            native_target is None
+                            or native_target.started
+                            or native_target.returned
+                        ):
+                            return failed("native_target_refused")
+                except Exception:  # noqa: BLE001 - host admission fails with a fixed code
+                    return failed("native_source_changed")
             continuation = state.continuation_of
             continuation_live = (
                 continuation is not None
@@ -548,7 +733,11 @@ class HookEngine:
                 )
             except BudgetExceeded:
                 return failed("delivery_capacity")
-            delivery = _Delivery(ticket, asyncio.Event(), state.teardown)
+            delivery = _Delivery(
+                ticket, asyncio.Event(), state.teardown, native_target=native_target
+            )
+            if native_target is not None:
+                native_target.started = True
             self._deliveries.add(delivery)
             state.busy = True
             delivery.task = asyncio.create_task(
@@ -587,9 +776,43 @@ class HookEngine:
             state.busy = False
 
     async def _deliver(self, delivery, handler, event, execution, value):
+        target = delivery.native_target
+        from ..activation import _guard
+
+        try:
+            with (
+                _guard.worker_isolation()
+                if target is not None
+                else contextlib.nullcontext(),
+                self._continuation_scope(execution),
+                target.activate() if target is not None else contextlib.nullcontext(),
+            ):
+                outcome = await self._deliver_current(
+                    delivery, handler, event, execution, value
+                )
+                if execution.native is not None:
+                    from dataclasses import replace
+
+                    outcome = replace(outcome, _native_sources=(execution.native,))
+                return outcome
+        except (RuntimeError, PermissionError):
+            return HookEventOutcome(
+                failures=(self._failure(handler, event, "native_source_changed"),)
+            )
+        finally:
+            if delivery.job is None:
+                if target is not None:
+                    execution.native.plans[handler.id].producer_returned()
+                delivery.ticket.release()
+            with self._lock:
+                self._deliveries.discard(delivery)
+
+    async def _deliver_current(self, delivery, handler, event, execution, value):
         ticket = delivery.ticket
         failure = None
         job = None
+        source_event = event
+        token = _current_delivery.set(None)
         try:
             acquire = asyncio.create_task(ticket.acquire())
             cancelled = asyncio.create_task(delivery.cancel.wait())
@@ -617,6 +840,7 @@ class HookEngine:
                 except (ValueError, PermissionError):
                     failure = "owner_projection_refused"
             if failure is None:
+                _current_delivery.set((self, delivery, execution, source_event, event))
                 authorized, callback_failure = await self._authority_status(
                     handler, event, "admission"
                 )
@@ -689,6 +913,12 @@ class HookEngine:
                 self.authority_check,
                 self._env,
                 deadline,
+                command_launch=self._command_launch,
+                process_owner_factory=(
+                    (lambda cancel: self._process_owner_for(handler, event, cancel))
+                    if self._process_owner_for is not None
+                    else None
+                ),
             )
             result = await self.processes.wait(job, deadline)
             execution.active_seconds += result.duration
@@ -722,6 +952,7 @@ class HookEngine:
                 )
             return HookEventOutcome(accepted=((handler.id, result.result),))
         finally:
+            _current_delivery.reset(token)
             if job is None:
                 ticket.release()
             with self._lock:
@@ -729,6 +960,8 @@ class HookEngine:
 
     def effects_current(self, event: HookEvent, outcome: HookEventOutcome) -> bool:
         """Recheck staged effects at host acceptance; this grants no permission."""
+        if not native_outcome_current(event, outcome):
+            return False
         if not outcome.accepted:
             return True
         with self._lock:
@@ -760,15 +993,30 @@ class HookEngine:
     def notify(self, event: HookEvent) -> bool:
         return self._notify(event, teardown=False)
 
-    def notify_teardown(self, event: HookEvent) -> bool:
-        return self._notify(event, teardown=True)
+    def notify_teardown(
+        self, event: HookEvent, *, _execution: HookEventExecution | None = None
+    ) -> bool:
+        return self._notify(event, teardown=True, execution=_execution)
 
-    def _notify(self, event, *, teardown, planned=None):
+    def _notify(self, event, *, teardown, planned=None, execution=None):
         # Reserve every matching handler synchronously so queue capacity bounds
         # submissions even when called faster than the owner loop can dispatch.
         try:
-            execution = self.begin_event(event, teardown=teardown)
+            if execution is None:
+                execution = self.begin_event(event, teardown=teardown)
             value = _envelope(event)
+            parse_event(value)
+            state = self._execution_state(execution)
+            if (
+                state is None
+                or state.closed
+                or state.busy
+                or teardown
+                and not state.teardown
+                or state.identity
+                != tuple((k, v) for k, v in value.items() if k != "data")
+            ):
+                return False
             if planned is not None:
                 previous = self._execution_state(planned)
                 if previous is None or previous.closed:
@@ -776,6 +1024,7 @@ class HookEngine:
                 state = self._execution_state(execution)
                 state.deadline = previous.deadline
                 state.dependencies = dict(previous.dependencies)
+                state.native = previous.native
         except ValueError:
             return False
         # Snapshot the exact host view before acquiring the engine lock: its
@@ -789,17 +1038,42 @@ class HookEngine:
             except PermissionError:
                 pass
         admitted = False
+        if state.native is not None:
+            try:
+                plans = self.plan_handlers(execution, event)
+                state.native.admit(
+                    tuple(p.handler_id for p in plans if p.phase == "observe")
+                )
+            except Exception:  # noqa: BLE001 - host admission fails with a fixed code
+                self.notification_omissions += 1
+                state.native.close()
+                return False
         with self._lock:
+            if state.native is not None:
+                try:
+                    state.native.check_memory(event)
+                except Exception:  # noqa: BLE001 - host admission fails with a fixed code
+                    self.notification_omissions += 1
+                    state.native.close()
+                    return False
             continuation = self._execution_state(execution).continuation_of
             if (
-                (self._teardown_closed and continuation is None)
+                state.closed
+                or state.busy
+                or (self._teardown_closed and continuation is None)
                 or (self._sealed_at is not None and not execution.teardown)
                 or self.invalid_admissions
                 or not self.enabled
             ):
+                if planned is None and state.native is not None:
+                    state.native.close()
                 return False
             if time.monotonic() >= execution.deadline:
+                if planned is None and state.native is not None:
+                    state.native.close()
                 return False
+            # One host-issued notification scope cannot mint a second delivery.
+            state.busy = True
             for handler in self.definitions:
                 try:
                     if not matches_handler(handler, event):
@@ -822,6 +1096,15 @@ class HookEngine:
                         if admission_context is None:
                             raise PermissionError("hook_mcp_context_unavailable")
                         mcp_context = admission_context
+                    native_target = None
+                    if state.native is not None and state.native.covered:
+                        native_target = state.native.targets.get(handler.id)
+                        if (
+                            native_target is None
+                            or native_target.started
+                            or native_target.returned
+                        ):
+                            raise PermissionError("native_target_refused")
                     ticket = self.budget_owner.reserve(event.runtime_session_id, True)
                 except (ValueError, PermissionError, BudgetExceeded):
                     self.notification_omissions += 1
@@ -831,19 +1114,56 @@ class HookEngine:
                     asyncio.Event(),
                     execution.teardown,
                     mcp_context=mcp_context,
+                    native_target=native_target,
                 )
+                if native_target is not None:
+                    native_target.started = True
+                    state.native.retain_host()
                 self._deliveries.add(delivery)
 
-                def submit(d=delivery, h=handler):
+                def submit(d=delivery, h=handler, s=state):
                     d.task = asyncio.create_task(
                         self._deliver(
                             d, h, event, self._execution_state(execution), value
                         )
                     )
-                    d.task.add_done_callback(self._consume_notification)
 
-                self.loop.call_soon_threadsafe(submit)
-                admitted = True
+                    def consumed(done):
+                        try:
+                            self._consume_notification(done)
+                        finally:
+                            if d.native_target is not None:
+                                s.native.host_done()
+
+                    d.task.add_done_callback(consumed)
+
+                # Mirror of the begin_close guard: a teardown notification
+                # can reach the engine after the owner loop has closed (the
+                # budget reserve above only checks the loop while it is
+                # running, so a close racing this submission slips past it).
+                # notify()/notify_teardown() must never raise out of that
+                # race -- lifecycle.seal() calls notify_teardown uncaught --
+                # so refuse the admission, count the omission, and roll back
+                # the reservations this iteration already made (ticket and
+                # pending-delivery bookkeeping) instead of leaking them into
+                # cleanup_pending forever.
+                submitted = False
+                if not self.loop.is_closed():
+                    try:
+                        self.loop.call_soon_threadsafe(submit)
+                        submitted = True
+                    except RuntimeError:
+                        # Closed between the guard and the submission -- the
+                        # same window begin_close accepts.
+                        submitted = False
+                if submitted:
+                    admitted = True
+                else:
+                    self.notification_omissions += 1
+                    delivery.ticket.release()
+                    self._deliveries.discard(delivery)
+        if planned is None and state.native is not None:
+            state.native.close()
         return admitted
 
     def _consume_notification(self, task) -> None:
@@ -868,6 +1188,8 @@ class HookEngine:
         with self._lock:
             return bool(
                 self._deliveries
+                or self._native_commands is not None
+                and self._native_commands.cleanup_pending
                 or self.processes.records
                 or (self.mcp_executor is not None and self.mcp_executor.cleanup_pending)
             )
@@ -937,3 +1259,5 @@ class HookEngine:
             {self._reconcile_task},
             timeout=max(0, self._sealed_at + 8.0 - time.monotonic()),
         )
+        if self._native_commands is not None:
+            await asyncio.to_thread(self._native_commands.wait_closed)

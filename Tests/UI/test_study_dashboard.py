@@ -7,7 +7,7 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.app_module_patches import set_app_global
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import _build_test_app, set_runtime_source_state
 import tldw_chatbook.app as app_module
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -180,8 +180,7 @@ def _build_full_study_app(app_instance):
         active_source=source,
         server_configured=source == "server",
     )
-    app.runtime_policy.state = runtime_state
-    app._publish_runtime_policy_projection(runtime_state)
+    set_runtime_source_state(app, runtime_state)
     scope_context = getattr(app_instance, "scope_context", None)
     if scope_context is not None:
         app.pending_handoffs.stage(HandoffChannel.STUDY_SCOPE, scope_context)
@@ -437,7 +436,9 @@ async def test_study_quizzes_review_in_chat_preserves_workspace_scope_metadata()
     app_instance.scope_context = StudyScopeContext(
         scope_type=StudyScopeType.WORKSPACE,
         workspace_id="workspace-1",
-        workspace_name="Research Workspace",
+        # Fix round 6, finding 2: the payload is plain text, so the name
+        # travels as typed, never markup-escaped.
+        workspace_name="Notes [draft]",
     )
     app_instance.open_chat_with_handoff = Mock()
     app = _build_full_study_app(app_instance)
@@ -470,3 +471,36 @@ async def test_study_quizzes_review_in_chat_preserves_workspace_scope_metadata()
         assert payload.backend_contracts == {
             "workspace_isolation": {"workspace_scope_id": "workspace-1"}
         }
+        assert payload.metadata["scope_summary"].startswith(
+            "Workspace: Notes [draft] |"
+        )
+        assert "Scope: Workspace: Notes [draft] |" in payload.body
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("workspace_name", ["Arr [/] x", "[TODO] Q3 plan"])
+async def test_a_workspace_name_with_brackets_is_shown_as_typed(workspace_name):
+    """#3057 review, fix round 5, finding 2: the workspace name in the
+    dashboard's and the Quiz Session's scope line was read as markup, so a
+    workspace named "Arr [/] x" raised `MarkupError` on every shell sync.
+    Fix round 6, finding 1: rich's narrow escape left "[TODO]" to Textual,
+    which deleted it ("Workspace:  Q3 plan").
+    """
+    app_instance = _build_app_instance()
+    app_instance.current_runtime_backend = "server"
+    app_instance.scope_context = StudyScopeContext(
+        scope_type=StudyScopeType.WORKSPACE,
+        workspace_id="workspace-1",
+        workspace_name=workspace_name,
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        app.screen.sync_shell_from_window()  # MarkupError before the fix
+        shown = [
+            _text(app.screen.query_one(selector, Static))
+            for selector in ("#study-scope-summary", "#quiz-scope-summary")
+        ]
+        assert shown == [f"Workspace: {workspace_name} | Backend: server"] * 2

@@ -6,14 +6,17 @@ import hashlib
 import json
 import unicodedata
 from dataclasses import dataclass
-from ipaddress import ip_address
 from urllib.parse import urlsplit, urlunsplit
 
-from httpx import InvalidURL, URL
+from tldw_chatbook.Provider_Contract.provider_continuation import EPHEMERAL_ORIGIN_KEY  # noqa: F401  (re-export)
+# TASK-36517: the endpoint contract's label rule, so "_" hosts key and label.
+from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+    canonical_endpoint_host,
+    read_schemeless_loopback,
+)
 
 
 PROJECT_CONTEXT_VERSION = 1
-EPHEMERAL_ORIGIN_KEY = "_chatbook_ephemeral_origin"
 
 LOCATOR_FINGERPRINT_DOMAIN = b"tldw_chatbook.console.project-instructions.locator.v1\0"
 PROVIDER_DESTINATION_FINGERPRINT_DOMAIN = (
@@ -284,7 +287,12 @@ def _parse_endpoint(endpoint: str | None) -> tuple[str, str, int | None, str] | 
         for character in raw_value
     ):
         return None
-    candidate = raw_endpoint if "://" in raw_endpoint else f"http://{raw_endpoint}"
+    # TASK-40300: the contract's rules, as the send now decides: only its
+    # loopback spellings may omit the scheme, and its host rule (one trailing
+    # dot folds; "..", "%", digit-only, non-ASCII or a bad label is refused).
+    candidate = read_schemeless_loopback(raw_endpoint)
+    if "://" not in candidate:
+        return None
     try:
         parsed = urlsplit(candidate)
         scheme = parsed.scheme.lower()
@@ -294,7 +302,7 @@ def _parse_endpoint(endpoint: str | None) -> tuple[str, str, int | None, str] | 
         return None
     if scheme not in {"http", "https"} or not hostname:
         return None
-    normalized_hostname = _canonical_hostname(hostname)
+    normalized_hostname = canonical_endpoint_host(hostname)
     if normalized_hostname is None:
         return None
     return scheme, normalized_hostname, port, parsed.path.rstrip("/")
@@ -307,36 +315,6 @@ def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise _DuplicateJSONKeyError
         result[key] = value
     return result
-
-
-def _canonical_hostname(hostname: str) -> str | None:
-    try:
-        return str(ip_address(hostname))
-    except ValueError:
-        pass
-    try:
-        normalized = (
-            URL(f"http://{hostname.rstrip('.')}").raw_host.decode("ascii").lower()
-        )
-    except (InvalidURL, UnicodeDecodeError):
-        return None
-    labels = normalized.split(".")
-    if (
-        not normalized
-        or len(normalized) > 253
-        or any(not _valid_dns_label(label) for label in labels)
-    ):
-        return None
-    return normalized
-
-
-def _valid_dns_label(label: str) -> bool:
-    return (
-        1 <= len(label) <= 63
-        and label[0].isalnum()
-        and label[-1].isalnum()
-        and all(character.isalnum() or character == "-" for character in label)
-    )
 
 
 def _netloc(scheme: str, hostname: str, port: int | None) -> str:

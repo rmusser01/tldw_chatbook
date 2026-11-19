@@ -47,3 +47,6 @@ https GitHub release hops; the model fetch rides the backend's warm-up thread so
 clustering thresholds are per engine. Reviews found and fixed two downloader Criticals (redirect scheme downgrade;
 unbounded tar member) and one pre-existing restart bug in `wait_ready`. Follow-ups: TASK-32014 (server backend),
 TASK-32015 (MOSS), TASK-32016 (Library ingest diarization via sherpa-onnx), TASK-32017 (CUDA providers).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/meetings.md`: Verified by reading code, not by a live session: no meeting was recorded on that host with `live_diarization = true`, and no model download was watched on the rail. The bake-off numbers come from one Apple M-series machine (the x86 runner half was never dispatched).

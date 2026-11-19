@@ -1,0 +1,48 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settin  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                 Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Find recently archived conv...                                                                         │
+                  Context ◂  │   Find recently arch…  ✕        Chat 2         ✕    New tab     Temporary                                             │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+ Workspaces             ▸    │  │ Archive events: workspace: 2026-09-27T22:38:52.033513+00:00                                                    │   │
+ ──────────────────────────  │  │ Match basis: workspace                                                                                         │   │
+ Conversations          ▾    │  │ Saved reply for Orchid planning conversation                                                                   │   │
+   New conversation          │  │                                                                                                                │   │
+     Archive this chat       │  │                                                                                                                │   │
+      Archived chats         │  │                                                    Preview                                                     │   │
+     Search all chats…       │  │                                                                                                                │   │
+   Find recently archived    │  │                                                                                                                │   │
+   conv...                   │  │                                                                                                                │   │
+                             │  │                                                    Restore                                                     │   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  │                                                                                                                │   │
+  ▊  Filter      ▎           │  │                                                                                                                │   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  │                                                                                                                │   │
+                             │  │                                                    Refresh                                                     │   │◂ Inspect
+  Chats                 ▾    │  │                                                                                                                │   │
+         Find         *      │  │                                                                                                                │   │
+   ▢     recently         ▁  │  │                                                                                                                │   │
+         archived            │  │                                               Search in Library                                                │   │
+                             │  │                                                                                                                │   │
+   ▢     Chat 2       *      │  │                                                                                                                │   │
+         open                │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘   │
+                             │                                                                                                                       │
+         Find         *      │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐   │
+ ▼ more — scroll             │  │                                                                                                                │   │
+ ──────────────────────────  │  │ The selected scope was restored.                                                                               │   │
+ Character · No chats   ▸    │  │                                                                                                                │   │
+ ──────────────────────────  │  │                                                                                                                │   │
+ Model                  ▸    │  │                                                      Open                                                      │   │
+ ──────────────────────────▇ │  │                                                                                                                │   │
+ Agent                  ▸    │  │                                                                                                                │   │
+ ▼ Details                   │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘   │
+                             │                                                                                                                       │  failed
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▴ Status hidden
+
+│  Composer ▾  Menu  Source draft remains unsent during restore.                                                                 Send | $       Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

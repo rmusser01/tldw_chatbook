@@ -1,0 +1,4 @@
+{
+  "sha256": "9c65c6a829a08358768a671af62f4f3f37c9dedf40ee92960027b9d2354cd40b",
+  "raw_text": "..                                                                       [100%]\n============================= slowest 25 durations =============================\n2.69s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_delete_modal_cancel_preserves_dirty_editor_and_request\n2.68s call     Tests/UI/test_library_prompts_canvas.py::test_library_prompt_copy_uses_live_unsaved_legacy_lane_markdown\n\n(4 durations < 1s hidden.)\n2 passed in 7.52s\n"
+}

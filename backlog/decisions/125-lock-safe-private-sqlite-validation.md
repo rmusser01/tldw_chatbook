@@ -5,7 +5,7 @@ Amendment status: Native-close integration and Python >=3.12 baseline approved
 Date: 2026-09-07
 Related Task: TASK-32160
 Extends: ADR-029
-Preserves: ADR-028, ADR-051, ADR-121, ADR-124
+Preserves: ADR-294, ADR-051, ADR-121, ADR-124
 
 ## Context
 
@@ -200,5 +200,5 @@ security-sensitive correction.
 - [Detailed design](../../Docs/superpowers/specs/2026-09-07-sqlite-lock-safe-private-validation-design.md)
 - [TASK-32160](<../tasks/task-32160 - Resolve-native-SQLite-crash-blocking-Canvas-qualification.md>)
 - [ADR-029](029-local-private-data-boundary.md)
-- [ADR-028](028-character-tts-generation-profile-ownership.md)
+- [ADR-294](294-character-tts-generation-profile-ownership.md)
 - [ADR-051](051-private-tts-clone-reference-assets.md)

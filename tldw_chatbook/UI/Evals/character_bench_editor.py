@@ -84,7 +84,7 @@ from ...Evals.character_probe.storage import (
 from ...Evals.steering import model_steering
 from .card_picker import CardPicker
 from .evals_state import EvalsViewModel
-from .snippet_editor import guard_single_line, render_snippet_cell
+from .snippet_editor import DatasetRenameRow, guard_single_line, render_snippet_cell
 
 #: Verbatim. The pinned error for an unparseable or sub-1 samples-per-cell
 #: value -- asserted exactly by
@@ -147,7 +147,9 @@ def _probe_listing_widget(probe_set: Optional[ProbeSet], widget_id: str) -> Stat
         return Static("(probe set unavailable)", id=widget_id, markup=False)
     if not probe_set.probes:
         return Static("(no probes yet)", id=widget_id, markup=False)
-    lines = [render_snippet_cell(_probe_preview_text(probe)) for probe in probe_set.probes]
+    lines = [
+        render_snippet_cell(_probe_preview_text(probe)) for probe in probe_set.probes
+    ]
     combined = Text("\n").join(lines)
     return Static(combined, id=widget_id, markup=False)
 
@@ -159,17 +161,16 @@ class CharacterBenchEditor(Vertical):
     docstring."""
 
     class Saved(Message, namespace="character_bench_editor"):
-        """Posted after ``save_character_bench`` succeeds. Carries the
-        bench's own ``eval_tasks`` id (unchanged across a save -- this is
-        always an edit, never a create) so a future routing handler
-        (Task 5) can re-select it the same way ``BenchEditor.Saved`` is
-        handled today, without this widget reaching into ``self.screen``
-        itself.
+        """Successful write and its originating raw form, for conditional reload.
+
+        The snapshot is ephemeral UI state, never persisted or logged.
         """
 
-        def __init__(self, bench_id: str) -> None:
+        def __init__(self, editor: CharacterBenchEditor) -> None:
             super().__init__()
-            self.bench_id = bench_id
+            self.bench_id = editor._bench_id
+            self.editor = editor
+            self.form_state = editor.save_publication_state()
 
     def __init__(
         self,
@@ -179,15 +180,15 @@ class CharacterBenchEditor(Vertical):
         **kwargs: Any,
     ) -> None:
         """Args:
-            view_model: The read side for this workbench.
-            bench_id: The ``eval_tasks`` id of the character-probe bench to
-                edit.
-            cards: Already-fetched character-card rows (``EvalsViewModel.
-                character_cards()``'s own shape) for the ``CardPicker`` --
-                this widget never opens ``ChaChaNotes_DB`` itself, mirroring
-                ``CardPicker``'s own "receives already-fetched rows" design
-                (see that module's docstring for why: cards live in a
-                different database from the one ``view_model`` wraps).
+        view_model: The read side for this workbench.
+        bench_id: The ``eval_tasks`` id of the character-probe bench to
+            edit.
+        cards: Already-fetched character-card rows (``EvalsViewModel.
+            character_cards()``'s own shape) for the ``CardPicker`` --
+            this widget never opens ``ChaChaNotes_DB`` itself, mirroring
+            ``CardPicker``'s own "receives already-fetched rows" design
+            (see that module's docstring for why: cards live in a
+            different database from the one ``view_model`` wraps).
         """
         super().__init__(**kwargs)
         self._view_model = view_model
@@ -200,6 +201,7 @@ class CharacterBenchEditor(Vertical):
         #: this task. `None` only when `compose()` bailed out before
         #: reaching the form (no db, or an unreadable row).
         self._loaded_config: Optional[CharacterProbeConfig] = None
+        self._publication_revision = 0
 
     def compose(self) -> ComposeResult:
         db = self._view_model.db
@@ -281,6 +283,20 @@ class CharacterBenchEditor(Vertical):
                 classes="console-action-secondary",
                 tooltip="Discard unsaved changes and reload this bench.",
             )
+
+    def on_mount(self) -> None:
+        # Synchronous reactive watches see accepted changes before queued messages.
+        for field in self.query(Input):
+            self.watch(field, "value", self._advance_publication_revision, init=False)
+            self.watch(
+                field, "selection", self._advance_publication_revision, init=False
+            )
+        self.watch(
+            self.screen, "focused", self._advance_publication_revision, init=False
+        )
+
+    def _advance_publication_revision(self) -> None:
+        self._publication_revision += 1
 
     def is_dirty(self) -> bool:
         """True when the mounted form differs from ``self._loaded_config``
@@ -400,6 +416,14 @@ class CharacterBenchEditor(Vertical):
 
         return False
 
+    def save_publication_state(self) -> tuple[Any, ...]:
+        """Fence later Saves, input and editing context as well as raw values."""
+        return (
+            self._publication_revision,
+            tuple((field.id, field.value) for field in self.query(Input)),
+            self.query_one(CardPicker).selected_ids(),
+        )
+
     def _build_probe_set_section(
         self, db: EvalsDB, config: CharacterProbeConfig
     ) -> list[Any]:
@@ -482,9 +506,17 @@ class CharacterBenchEditor(Vertical):
         requested``, which this fix round also stopped from resolving a
         steered row in the first place) gave no visible clue why it either
         could never run (a ``prefix``) or was quietly producing
-        contaminated conversations (a ``system_prompt``). Reading a
-        corrupt row's steering (``model_steering`` raising) degrades to
-        the unsuffixed label rather than crashing this render.
+        contaminated conversations (a ``system_prompt``).
+
+        task-1913 AC5: a row whose steering is CORRUPT (``model_steering``
+        raising -- e.g. hand-edited JSON with BOTH ``prefix`` and
+        ``system_prompt`` set, a non-mapping ``config``, or a non-string
+        field value) is flagged as corrupt here rather than silently
+        degrading to the unsuffixed label: ``resolve_target`` raises on
+        such a row for every run attempt, so an unlabelled row would read
+        as a healthy target that inexplicably fails to run. The label
+        still never crashes the render -- the suffix names the condition,
+        it does not propagate the exception.
 
         Returns:
             list[Any]: Widgets to yield, in order.
@@ -493,7 +525,9 @@ class CharacterBenchEditor(Vertical):
             Static("Targets", classes="destination-section evals-pane-title")
         ]
         if not config.target_ids:
-            widgets.append(Static("No targets configured yet.", id="evals-cb-targets-empty"))
+            widgets.append(
+                Static("No targets configured yet.", id="evals-cb-targets-empty")
+            )
             return widgets
         rows = []
         for index, target_id in enumerate(config.target_ids):
@@ -502,11 +536,27 @@ class CharacterBenchEditor(Vertical):
                 label: Any = f"(deleted target {target_id}) — unresolvable"
             else:
                 base = f"{model['name']} ({model['provider']})"
+                # task-1913 AC5: corrupt steering is FLAGGED, never
+                # silently degraded to the bare label (see this method's
+                # docstring) -- `model_steering` raises for a row carrying
+                # BOTH `prefix` and `system_prompt`, a non-mapping config,
+                # or a non-string field value, and such a row can never
+                # run (`resolve_target` raises on it for every attempt).
+                # A flag, not an extra branch off the except: the except
+                # body cannot carry the `if prefix/elif` chain itself, and
+                # swallowing into a flag keeps one linear label chain.
+                corrupt_reason: Optional[str] = None
                 try:
                     prefix, system_prompt = model_steering(model)
-                except ValueError:
-                    prefix, system_prompt = None, None
-                if prefix:
+                except ValueError as exc:
+                    corrupt_reason = str(exc)
+                    prefix = system_prompt = None
+                if corrupt_reason is not None:
+                    label = (
+                        f"{base} · corrupt steering config — unusable "
+                        f"until its eval_models row is fixed ({corrupt_reason})"
+                    )
+                elif prefix:
                     # A raw-completion prefix has no slot in a probe's
                     # chat-shaped turns -- `targets.resolve_target` raises
                     # on this target for every run attempt, so this is
@@ -645,7 +695,10 @@ class CharacterBenchEditor(Vertical):
             self._show_form_error(str(exc))
             return
 
-        self.post_message(self.Saved(self._bench_id))
+        # Later edits compare against this submitted config even without a reload.
+        self._loaded_config = config
+        self._advance_publication_revision()
+        self.post_message(self.Saved(self))
 
     @on(Button.Pressed, "#evals-cb-revert")
     def _on_revert_pressed(self, event: Button.Pressed) -> None:
@@ -695,12 +748,12 @@ class ProbeSetDetail(Vertical):
         self, view_model: EvalsViewModel, dataset: Mapping[str, Any], **kwargs: Any
     ) -> None:
         """Args:
-            view_model: The read side for this workbench -- only ``db``
-                is used here (a plain read: ``load_probe_set``).
-            dataset: The already-fetched ``eval_datasets`` row (``EvalsView
-                Model.dataset_by_id``'s own shape) -- this widget never
-                re-resolves it, mirroring ``CharacterBenchEditor``'s own
-                "receives already-fetched data" convention for cards.
+        view_model: The read side for this workbench -- only ``db``
+            is used here (a plain read: ``load_probe_set``).
+        dataset: The already-fetched ``eval_datasets`` row (``EvalsView
+            Model.dataset_by_id``'s own shape) -- this widget never
+            re-resolves it, mirroring ``CharacterBenchEditor``'s own
+            "receives already-fetched data" convention for cards.
         """
         super().__init__(**kwargs)
         self._view_model = view_model
@@ -717,6 +770,16 @@ class ProbeSetDetail(Vertical):
             id="evals-probeset-detail-name",
             classes="evals-pane-heading",
             markup=False,
+        )
+        # task-1484: a probe set IS a dataset row, so it gets the SAME
+        # rename affordance a snippet dataset gets -- the probe LISTING
+        # below stays read-only (renaming touches the row's NAME, never
+        # its stored probes).
+        yield DatasetRenameRow(
+            self._view_model,
+            str(dataset.get("id") or ""),
+            str(dataset.get("name") or "Untitled probe set"),
+            id="evals-dataset-rename-row",
         )
 
         db = self._view_model.db

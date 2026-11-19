@@ -1,0 +1,159 @@
+{
+  "actual_cases": 25,
+  "cases": [
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[/]]",
+      "outcome": "passed",
+      "time": "0.344"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[b]x]",
+      "outcome": "passed",
+      "time": "0.189"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[@click=app.record('x')]N[/]]",
+      "outcome": "passed",
+      "time": "0.191"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[/]",
+      "outcome": "passed",
+      "time": "0.163"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[TODO] y]",
+      "outcome": "passed",
+      "time": "0.167"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[a\\\\[/]b]",
+      "outcome": "passed",
+      "time": "0.163"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[\\\\[x^2\\\\]]",
+      "outcome": "passed",
+      "time": "0.183"
+    },
+    {
+      "classname": "Tests.UI.test_chat_question_card",
+      "name": "test_submit_returns_selections_other_text_and_unanswered_with_the_request_id",
+      "outcome": "passed",
+      "time": "0.412"
+    },
+    {
+      "classname": "Tests.UI.test_console_ask_user_typed_answers",
+      "name": "test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+      "outcome": "failure",
+      "time": "2.593"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[/]]",
+      "outcome": "passed",
+      "time": "0.064"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[b]x]",
+      "outcome": "passed",
+      "time": "0.073"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[@click=app.record('x')]N[/]]",
+      "outcome": "passed",
+      "time": "0.067"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[/]",
+      "outcome": "passed",
+      "time": "0.077"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[TODO] y]",
+      "outcome": "passed",
+      "time": "0.082"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[a\\\\[/]b]",
+      "outcome": "passed",
+      "time": "0.077"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[\\\\[x^2\\\\]]",
+      "outcome": "passed",
+      "time": "0.072"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[/]]",
+      "outcome": "passed",
+      "time": "0.321"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[b]x]",
+      "outcome": "passed",
+      "time": "0.302"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[@click=app.record('x')]N[/]]",
+      "outcome": "passed",
+      "time": "0.293"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[/]",
+      "outcome": "passed",
+      "time": "0.284"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[TODO] y]",
+      "outcome": "passed",
+      "time": "0.297"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[a\\\\[/]b]",
+      "outcome": "passed",
+      "time": "0.301"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[\\\\[x^2\\\\]]",
+      "outcome": "passed",
+      "time": "0.312"
+    },
+    {
+      "classname": "Tests.UI.test_personas_preview",
+      "name": "test_styled_line_italicizes_action_and_escapes_markup",
+      "outcome": "passed",
+      "time": "0.104"
+    },
+    {
+      "classname": "Tests.UI.test_personas_workbench.TestPreviewIntegration",
+      "name": "test_open_in_console_stages_preview_transcript",
+      "outcome": "failure",
+      "time": "1.485"
+    }
+  ],
+  "outcomes": {
+    "failure": 2,
+    "passed": 23
+  }
+}

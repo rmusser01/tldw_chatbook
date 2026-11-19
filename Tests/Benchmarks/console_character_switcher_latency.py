@@ -18,6 +18,7 @@ import sqlite3
 import stat
 import subprocess
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,16 @@ BUSY_LIMIT_MS = 100.0
 LOOP_LIMIT_MS = 50.0
 READY_TIMEOUT = 60.0
 OPERATION_TIMEOUT = 15.0
+
+
+def _blank_character_frame_ready(modal: Any, frame: str) -> bool:
+    """Require ready blank content, not flags sampled before a live refresh."""
+    return (
+        not modal._query_pending
+        and modal._rendered_query == ""
+        and not modal._entries
+        and "Type a Keyword" in frame
+    )
 
 
 @dataclass
@@ -57,6 +68,24 @@ class PaintWindow:
         if self.busy_ns is None and any(label in text for label in labels):
             self.busy_ns = now_ns
             self.busy_text = text
+
+    def capture_frame(self, screen: Any, now_ns: int) -> str | None:
+        """Capture only native frames still needed by this observation window.
+
+        Args:
+            screen: The screen whose native display just completed.
+            now_ns: Timestamp of that actual display observation.
+
+        Returns:
+            Current compositor text, or None when no capture is needed.
+        """
+        if self.screen is not None and screen is not self.screen:
+            return None
+        if self.operation == "activation" and self.busy_ns is not None:
+            return None
+        frame = "\n".join(strip.text for strip in screen._compositor.render_strips())
+        self.observe(frame, now_ns, screen=screen)
+        return frame
 
     def summary(self) -> dict[str, Any]:
         """Serialize raw observations and separate busy from total latency."""
@@ -103,6 +132,17 @@ def _accepted_modal_closed(app: Any, modal: Any, chat: Any) -> bool:
         and modal not in app.screen_stack
         and not app.is_mounted(modal)
     )
+
+
+async def _press_activation_enter(pilot: Any) -> None:
+    """Dispatch measured Enter through the installed native driver.
+
+    Args:
+        pilot: The real running app's Pilot; readiness is checked by the probe.
+    """
+    # Pilot.press adds callbacks to every descendant; this window instead waits
+    # for the actual activation result, exact exposure and modal unregister.
+    await pilot.app._press_keys(("enter",))
 
 
 def _observe_commit_waiter(original: Any, current_window: Any) -> Any:
@@ -213,33 +253,42 @@ def _keyword_evidence(database: Any) -> dict[str, Any]:
     from tldw_chatbook.Character_Chat.character_conversation_navigation import (
         CharacterConversationNavigationService,
     )
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
-    service = CharacterConversationNavigationService(database)
-    with database.transaction() as connection:
-        return {
-            "database_path": str(database.db_path),
-            "status": str(service.keyword_index_status()),
-            "revision": connection.execute(
-                "SELECT data_revision FROM character_conversation_search_revision"
-            ).fetchone()[0],
-            "generations": [
-                dict(row)
-                for row in connection.execute(
-                    "SELECT generation_id,data_authority_id,source_revision,status "
-                    "FROM character_conversation_search_generations ORDER BY rowid"
-                )
-            ],
-            "dirty_conversations": connection.execute(
-                "SELECT count(*) FROM character_conversation_search_dirty"
-            ).fetchone()[0],
-            "counts": [
-                connection.execute("SELECT count(*) FROM conversations").fetchone()[0],
-                connection.execute("SELECT count(*) FROM messages").fetchone()[0],
-                connection.execute(
-                    "SELECT count(*) FROM character_conversation_search_documents"
+    with (
+        operation_owned_connection(database)
+        if type(database) is CharactersRAGDB and not database.is_memory_db
+        else nullcontext()
+    ):
+        service = CharacterConversationNavigationService(database)
+        with database.transaction() as connection:
+            return {
+                "database_path": str(database.db_path),
+                "status": str(service.keyword_index_status()),
+                "revision": connection.execute(
+                    "SELECT data_revision FROM character_conversation_search_revision"
                 ).fetchone()[0],
-            ],
-        }
+                "generations": [
+                    dict(row)
+                    for row in connection.execute(
+                        "SELECT generation_id,data_authority_id,source_revision,status "
+                        "FROM character_conversation_search_generations ORDER BY rowid"
+                    )
+                ],
+                "dirty_conversations": connection.execute(
+                    "SELECT count(*) FROM character_conversation_search_dirty"
+                ).fetchone()[0],
+                "counts": [
+                    connection.execute("SELECT count(*) FROM conversations").fetchone()[
+                        0
+                    ],
+                    connection.execute("SELECT count(*) FROM messages").fetchone()[0],
+                    connection.execute(
+                        "SELECT count(*) FROM character_conversation_search_documents"
+                    ).fetchone()[0],
+                ],
+            }
 
 
 def _finalize_evidence(
@@ -375,10 +424,9 @@ async def run(
                 ):
                     return
                 observed_ns = time.perf_counter_ns()
-                frame = "\n".join(
-                    strip.text for strip in screen._compositor.render_strips()
-                )
-                window.observe(frame, observed_ns, screen=screen)
+                frame = window.capture_frame(screen, observed_ns)
+                if frame is None:
+                    return
                 if (
                     window.operation != "activation"
                     and not screen._query_pending
@@ -501,11 +549,23 @@ async def run(
                 )
                 modal = await settled_modal("")
                 await pilot.pause()
+                # Activity hydration can reconcile again during pilot.pause.
+                # This untimed setup boundary needs the actual ready frame,
+                # not an earlier flag snapshot or a pending loading surface.
+                await _wait(
+                    lambda modal=modal: _blank_character_frame_ready(
+                        modal,
+                        "\n".join(
+                            strip.text for strip in modal._compositor.render_strips()
+                        ),
+                    ),
+                    "blank Character compositor frame",
+                )
                 blank = "\n".join(
                     strip.text for strip in modal._compositor.render_strips()
                 )
-                assert "Type a Keyword" in blank and not modal._entries
                 (output_dir / f"{prefix}-blank.txt").write_text(blank)
+                assert _blank_character_frame_ready(modal, blank)
 
                 # Normal startup can add unrelated built-in cards, advancing
                 # the global revision. This genuine first query lets the real
@@ -592,7 +652,7 @@ async def run(
                     assert target.conversation_id == item["expected"][0]
                     window = begin("activation", item["query"], modal)
                     try:
-                        await pilot.press("enter")
+                        await _press_activation_enter(pilot)
                         await _wait(
                             lambda window=window: any(
                                 call.get("returned_ns")

@@ -88,6 +88,8 @@ _OWNER_LABELS = {
     "external.files": "External files",
     "persona.assets": "Persona artwork",
     "persona.visual_identity_builtin": "Bundled persona artwork",
+    "persona.visual_identity": "Reaction artwork",
+    "persona.actor_packs": "Actor Pack persona artwork",
     "chat.dictionaries": "Chat dictionaries",
     "runtime.source_state": "Runtime settings",
     "eval.definitions": "Evaluation definitions",
@@ -98,8 +100,69 @@ _OWNER_LABELS = {
     "db.workspaces": "Workspaces",
     "db.subscriptions": "Subscriptions",
     "db.scheduled_tasks": "Scheduled tasks",
+    "plugins": "Plugins",
     "db.library_collections": "Library collections",
     "db.library_ingest_jobs": "Library imports",
+    # TASK-41111: every other installed owner (an architecture pin keeps this
+    # complete), and the credential material include-mode capture adds.
+    "recovery.credentials": "Credentials",
+    "actor_packs.import_staging": "Actor Pack import scratch files",
+    "agents.history": "Agent run logs",
+    "audio.history": "Audio history",
+    "cache.model_catalog": "Model catalog cache",
+    "chat.dictionary_history": "Chat dictionary history",
+    "chat.grammars": "Generation grammars",
+    "chat.prompt_history": "Prompt history",
+    "chat.prompts": "Prompt templates",
+    "chat.rag_context": "Chat retrieval context",
+    "chatbooks.archives": "Saved chatbooks",
+    "chatbooks.registry": "Chatbook registry",
+    "chunking.templates": "Chunking templates",
+    "collections.archives": "Collection archives",
+    "db.dreams": "Dreams",
+    "db.guardian": "Guardian rules and alerts",
+    "db.rag_indexing": "Retrieval indexing records",
+    "db.workspace_project_index": "Workspace project index",
+    "diagnostics.logs": "Diagnostic logs",
+    "feedback": "Response feedback",
+    "generation.assets": "Generated media",
+    "generation.styles": "Image generation styles",
+    "hooks.permissions": "Hook permissions",
+    "kanban.local": "Kanban boards",
+    "mcp.context": "MCP context",
+    "mcp.history": "MCP execution history",
+    "mcp.local": "MCP definitions",
+    "mcp.permissions": "MCP permissions",
+    "models.artifacts": "Model files",
+    "notes.file_notes": "File notes",
+    "notes.sync_state": "Note sync status",
+    "notes.templates": "Note templates",
+    "personal_context.interview_drafts": "Personal Context interview drafts",
+    "personal_context.repository": "Personal Context profile",
+    "personas": "Personas",
+    "rag.definitions": "Retrieval definitions",
+    "rag.projections": "Retrieval indexes",
+    "recovered.media": "Recovered media",
+    "research.local": "Research projects",
+    "research.paste_staging": "Research paste scratch files",
+    "runtime.chatbook_scratch": "Chatbook scratch files",
+    "runtime.config_lock": "Settings lock file",
+    "runtime.crash_forensics": "Crash log",
+    "runtime.event_state": "Event history",
+    "runtime.instance_lock": "App instance lock",
+    "runtime.scheduler_heartbeat": "Scheduler heartbeat",
+    "runtime.sync_state": "Server sync state",
+    "skills": "Skills",
+    "subscriptions.assets": "Briefing audio",
+    "tamagotchi.config": "Pet settings",
+    "tokenizers.custom": "Custom tokenizers",
+    "tts.profile_store": "Voice profiles",
+    "tts.references": "Voice reference audio",
+    "tts.voices": "Saved voices",
+    "ui.emoji_recents": "Recent emoji",
+    "ui.themes": "Themes",
+    "workspaces.change_tracking": "Workspace change history",
+    "writing.local": "Writing projects",
 }
 
 
@@ -151,7 +214,157 @@ _ISSUE_MESSAGES = {
     "insufficient_space": "Choose a location with more free space and review again.",
     "permission_denied": "Choose a local folder you can read and write.",
     "backup_operation_failed": "Review the selected file and local folders, then try again. Open the detailed recovery evidence if the problem continues.",
+    "plugin_writers_active": (
+        "Plugins are in use, so their files are not copied. Chatbook keeps plugins "
+        "running from their first use, in Plugins or in a Console chat that uses "
+        "one, until you quit: quit Chatbook, reopen it and back up before using "
+        "plugins. If this remains after reopening, an earlier session left a plugin "
+        "process recorded as running. To clear it, open Plugins and choose "
+        "Authority… to unlock plugin authority (or recover it if already unlocked); "
+        "if that session stopped unexpectedly, also review the plugin's reboot "
+        "reconciliation. Then quit and reopen Chatbook and back up before using "
+        "plugins. Either way, a partial backup without plugins is available now."
+    ),
+    "plugin_fetch_removal_required": (
+        "Plugins were downloaded from a repository since this backup was made (a "
+        "source refresh, an update check, an install or an update). Restoring "
+        "Tools and skills removes those download folders, and they hold files a "
+        "backup never includes. Review the restore on the Backup screen, which "
+        "lists them and removes them when you confirm; or run tldw-cli "
+        "recovery restore again with --remove-newer-plugin-downloads, which lists "
+        "them and removes them when you type remove; or restore without the Tools "
+        "and skills group."
+    ),
+    # TASK-40134: Personal Context, told before anything is written.
+    "personal_context_first_link_in_progress": (
+        "Personal Context is in the middle of linking to your home server, so it "
+        "is not copied. Finish linking, or retry an interrupted link, in Settings "
+        "> Personal Context, then back up again. A partial backup without Personal "
+        "Context is available now."
+    ),
+    "personal_context_backup_key_excluded": (
+        "Personal Context: database only. Its key is not in this backup, so the "
+        "copy is readable only on this device, and only until Personal Context is "
+        "linked or removed. To include the key, back up with credentials."
+    ),
+    # TASK-40135/40136: what a restore will do with Personal Context.
+    "personal_context_restore_readable": (
+        "Personal Context will be restored readable: its key goes into a new "
+        "keyring account, and no existing keyring entry is changed."
+    ),
+    "personal_context_restore_locked:personal_context_key_not_in_backup": (
+        "Personal Context will be restored but stay locked: this backup does not "
+        "include its key, and this device does not have it. The data is kept."
+    ),
+    "personal_context_restore_locked:personal_context_keyring_unavailable": (
+        "Personal Context will be restored but stay locked: a separately restored "
+        "copy has no access to the system keyring. Its data and key are kept; "
+        "restore with Replace to use it."
+    ),
+    "personal_context_restore_locked:personal_context_key_install_unavailable": (
+        "Personal Context will be restored but stay locked: this device has no "
+        "secure keyring to hold its key. The data is kept, and the key stays in "
+        "the encrypted restore copy."
+    ),
+    "sync_identity_unavailable": (
+        "The restored sync state could not be read, so nothing was cleared and "
+        "server sync stays off. Open Restored profiles again later."
+    ),
+    "sync_identity_counts_changed": (
+        "What the sync-identity review would clear changed after it was shown. "
+        "Open Restored profiles again and review the new counts."
+    ),
+    "personal_context_key_check_unavailable": (
+        "Personal Context was restored, but its key could not be checked (the "
+        "keyring or the database did not answer). The data and the new keyring "
+        "entry are kept; open Settings > Personal Context and choose Try again."
+    ),
+    "personal_context_restore_changed": (
+        "What Personal Context's restore would do changed after the plan was "
+        "shown (its key was added or removed on this device). Nothing was "
+        "restored; review the restore again."
+    ),
+    "personal_context_key_account_in_use": (
+        "The new keyring account for Personal Context's key is already in use, so "
+        "nothing was restored and no keyring entry changed. Review the restore again."
+    ),
+    "personal_context_key_install_failed": (
+        "Personal Context's key could not be stored in the keyring, so nothing was "
+        "restored. Check the keyring, then review the restore again."
+    ),
+    "personal_context_validation_unavailable": (
+        "Personal Context's copy in this backup could not be read, so the restore "
+        "cannot say how it would end. Restore without the Personal Context group, "
+        "or use another backup."
+    ),
+    "personal_context_keyring_read_failed": (
+        "The keyring did not answer while Personal Context's key was read, so "
+        "nothing was restored. Unlock the keyring, then review the restore again."
+    ),
+    "personal_context_key_unverified": (
+        "Personal Context was restored but its key did not open it, so it stays "
+        "locked and the new keyring entry was removed. The data is kept; restore "
+        "again with Replace from the same backup."
+    ),
+    "credential_personal_context_link_keys_excluded": (
+        "Personal Context's link keys are left out: the device wrapping key, staged "
+        "integrity keys and dataset staging keys stay in this device's keyring."
+    ),
 }
+
+
+def _verify_personal_context(service, operation, plan) -> None:
+    """TASK-40135: a published repository opens with the key its account holds."""
+    from tldw_chatbook.Personal_Context.recovery import verify_restored_keys
+
+    issues = verify_restored_keys(plan)
+    if issues:
+        service._update(operation, issues=issues)
+
+
+def retains_only_installed_keys(scopes, records, issues) -> bool:
+    """TASK-41124: every credential a replace restore keeps in its encrypted
+    archive is a Personal Context key the same restore installs, so none needs
+    manual recovery. ``scopes`` is the staged descriptor's ``credential_scopes``,
+    ``records`` the staged credential material, ``issues`` the plan's issues; a
+    locked Personal Context line means that key is not installed."""
+    import json
+
+    kinds = {record["id"]: record["kind"] for record in records}
+    retained = {
+        kinds.get(key)
+        for key, value in scopes.items()
+        if json.loads(value)["action"] == "retain"
+    }
+    return retained == {"personal_context"} and not any(
+        issue.startswith("personal_context_restore_locked:") for issue in issues
+    )
+
+
+def _retention_installs_keys(candidate, plan) -> bool:
+    """Classify a staged candidate's retention review; unknown reads as manual.
+
+    Reads only ``candidate.json`` and the staged credential material, pinned and
+    private. Nothing is hashed to choose review copy (``publication._descriptor``
+    would re-hash every staged file), and ``credentials._material`` would go
+    through storage admission, where a candidate's work folder is not enrolled.
+    """
+    from .bootstrap import _read
+    from .limits import RECOVERY_RECORD_BYTES
+
+    try:
+        with pinned_directory(candidate) as fd:
+            descriptor = _read(fd, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES)
+            material = _read(fd, "credential-recovery.json", max_bytes=16 * 1024**2)
+        if descriptor["archive_digest"] != plan.archive_digest or descriptor[
+            "issues"
+        ] != list(plan.issues):
+            return False
+        return retains_only_installed_keys(
+            descriptor["credential_scopes"], material["records"], plan.issues
+        )
+    except Exception:  # noqa: BLE001 - a failed check never replaces the review
+        return False
 
 
 def issue_message(code: str) -> str:
@@ -441,6 +654,7 @@ class RecoveryService:
             except Exception:
                 self._link_pending_candidate(operation, None, plan=plan)
                 raise
+            _verify_personal_context(self, operation, plan)  # TASK-41122
             self._update(
                 operation,
                 phase="restoration_validated",
@@ -554,6 +768,12 @@ class RecoveryService:
                         }
                     )
                     for row in doc.dependency_groups
+                    # Credential material is never offered for manual extraction.
+                    if not any(
+                        files_by_id.get(key) is not None
+                        and files_by_id[key].owner_id == "recovery.credentials"
+                        for key in row.members
+                    )
                 ),
                 "required_capabilities": doc.required_capabilities,
                 "exclusions": tuple(
@@ -742,13 +962,27 @@ class RecoveryService:
                         rollback_password=rollback_password,
                         cancel=cancel,
                     )
-                except Exception:
+                except Exception as error:
                     self._link_pending_candidate(operation, candidate)
+                    if getattr(error, "issues", None) == (
+                        "credential_isolated_retention_required",
+                    ) and _retention_installs_keys(candidate, plan):
+                        # TASK-41124: the review says the restore installs it.
+                        # Merged, so a result already recorded is kept (RLock).
+                        with self._lock:
+                            self._update(
+                                operation,
+                                result={
+                                    **self._states[operation]["result"],
+                                    "personal_context_keys_installed": True,
+                                },
+                            )
                     raise
                 result = {
                     "journal_operation_id": journal_operation,
                     "restoration_validated": True,
                 }
+                _verify_personal_context(self, operation, plan)
             self._update(operation, phase="restoration_validated", result=result)
 
         return self._start("restore", restore)
@@ -885,6 +1119,12 @@ class RecoveryService:
                     rollback_password=rollback_password,
                     cancel=cancel,
                 )
+            if outcome == "committed" and state["mode"] != "isolated":
+                from .plan_records import load_plan
+                from .recovery_copies import _journal
+
+                plan = load_plan(_journal(self.control_root, operation_id))
+                _verify_personal_context(self, operation, plan)
             self._update(
                 operation,
                 phase=outcome,
@@ -1044,6 +1284,123 @@ class RecoveryService:
                 )
         except (OSError, ValueError, RuntimeError):
             return MappingProxyType(unknown)
+
+    @contextmanager
+    def _reviewed_generation(self, generation, owners, changed):
+        """Hold the selected profile's lease and yield the activation store of
+        the reviewed current generation, refusing with ``changed`` unless that
+        generation is still current, requires ``owners`` and is a live paired
+        witness. Approval is per generation, so it covers every profile that
+        recovery restored."""
+        from . import bootstrap
+        from .activation import ActivationStore
+        from .generation_witnesses import _witnesses
+        from .storage_admission import acquire_storage
+
+        selected = bootstrap.effective_config_path()
+        with acquire_storage(selected) as lease:
+            root, _ = lease.execution_context(selected)
+            _, profiles, _ = bootstrap._control_records(root)
+            witness = next(
+                (
+                    row.get("activation")
+                    for row in profiles
+                    if row["selector"] == str(selected)
+                ),
+                None,
+            )
+            if (
+                witness is None
+                or witness["generation"] != generation
+                or not set(owners) <= set(witness["owners"])
+                or witness not in _witnesses(selected, lease)
+            ):
+                raise ValueError(changed)
+            yield ActivationStore(Path(witness["store_root"]))
+
+    def approve_config(self, generation):
+        """Approve only `config` for the reviewed current generation (TASK-40711).
+
+        This turns model-catalog auto-refresh and workspace change tracking
+        back on. It never approves `runtime.sync_state`: server sync waits for
+        the sync-identity review (TASK-40139; owner ruling of 2026-11-12 in
+        TASK-40137).
+        """
+        with self._reviewed_generation(
+            generation, ("config",), "config_review_changed"
+        ) as store:
+            store.approve(generation, "config")
+
+    def approve_models(self, generation):
+        """Approve only `models.artifacts` for the reviewed current generation
+        (TASK-41301; owner decision 2026-11-16, "Separate model-files review").
+
+        The one approver of restored model files: local model downloads,
+        installs and activation, speech start-up and a restored local embedding
+        model (which also keeps its own exact-files receipt) all use it.
+        """
+        with self._reviewed_generation(
+            generation, ("models.artifacts",), "models_review_changed"
+        ) as store:
+            store.approve(generation, "models.artifacts")
+
+    def approve_speech(self, generation):
+        """Approve only the restored voices and voice profiles (TASK-41119).
+
+        Speech start-up also needs `config` and `models.artifacts`, which keep
+        their own reviews; this approves neither.
+        """
+        with self._reviewed_generation(
+            generation, ("tts.profile_store", "tts.voices"), "speech_review_changed"
+        ) as store:
+            store.approve(generation, "tts.profile_store")
+            store.approve(generation, "tts.voices")
+
+    @staticmethod
+    def _sync_state_path():
+        """The current profile's sync state database (`runtime.sync_state`)."""
+        import tomllib
+
+        from tldw_chatbook.runtime_policy.server_parity_state import (
+            SYNC_STATE_DB_FILENAME,
+        )
+
+        from . import bootstrap
+        from .profile_paths import user_data_dir
+        from .storage_admission import _read_recovery_file, acquire_storage
+
+        selected = bootstrap.effective_config_path()
+        with acquire_storage(selected):
+            raw = _read_recovery_file("config", selected, max_bytes=16 * 1024**2)
+        return user_data_dir(tomllib.loads(raw.decode("utf-8"))) / SYNC_STATE_DB_FILENAME
+
+    def sync_identity_review(self):
+        """What the sync-identity review would clear, or None (TASK-40139).
+
+        Raises:
+            ValueError: ``sync_identity_unavailable`` when the sync state cannot
+                be read; other failures keep their own code.
+        """
+        import sqlite3
+
+        from tldw_chatbook.Sync_Interop.recovery import sync_identity_review
+
+        try:
+            return sync_identity_review(self._sync_state_path())
+        except sqlite3.Error:
+            raise ValueError("sync_identity_unavailable") from None
+
+    def approve_sync_identity(self, shown):
+        """Clear the restored sync identity the user saw counted, then approve
+        `config` and `runtime.sync_state` together (owner ruling, TASK-40137)."""
+        import sqlite3
+
+        from tldw_chatbook.Sync_Interop.recovery import approve_sync_identity
+
+        try:
+            approve_sync_identity(self._sync_state_path(), shown=shown)
+        except sqlite3.Error:
+            raise ValueError("sync_identity_unavailable") from None
 
     def profiles(self):
         """Enumerate locally associated restored profiles and recheck launch evidence."""

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 PromptFormat = Literal["legacy", "structured"]
-PromptArtifactType = Literal["prompt", "recipe"]
+PromptArtifactType = Literal["prompt", "recipe", "mixin"]
 ChatbookConflictResolution = Literal["skip", "rename"]
 
 

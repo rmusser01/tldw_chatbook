@@ -163,15 +163,20 @@ another machine (or attached to a bug report):
   privacy inventory, digest verdict, and source-authenticity limitation.
 - `DIGEST VALID` means the bundle content matches its included SHA-256 digest;
   it does **not** verify the sender. The screen therefore also states
-  `SOURCE NOT AUTHENTICATED`. Malformed files, unknown versions, tampering, and
-  credential-bearing bundles fail closed with actionable errors. Legacy v1
-  `tldw-trajectory` files remain importable and say that no digest was provided.
+  `SOURCE NOT AUTHENTICATED`. Malformed files, unknown versions and tampering
+  fail closed with actionable errors; a value an error quotes from the file is
+  credential-masked and shown as plain text. A bundle holding credential-shaped
+  text is not refused: it imports with those values masked by the current
+  export rules (TASK-41133). Legacy v1 `tldw-trajectory` files remain
+  importable, are masked the same way as they load (TASK-41603), and say that
+  no digest was provided. The v1 export masks its whole payload by the same
+  rules.
 
 The v2 export API lives in `tldw_chatbook/Chat/trajectory_export.py`
 (`preflight_trace_export`, `build_trace_export`, `write_trajectory_export`);
 version-dispatched import lives in `Chat/trajectory_import.py`. The current
 collaboration contract is [ADR-080](../../backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md);
-[ADR-067](../../backlog/decisions/067-trajectory-export-format.md) remains the
+[ADR-313](../../backlog/decisions/313-trajectory-export-format.md) remains the
 legacy v1 contract.
 
 ## What older conversations show
@@ -210,7 +215,7 @@ shows its `no timing data` placeholder. New turns get the full treatment.
 | `escape` | Close the view |
 
 All bindings follow the repo-wide TUI keybinding conventions
-([ADR-031](../../backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md));
+([ADR-299](../../backlog/decisions/299-tui-keybinding-and-footer-hint-conventions.md));
 the footer only advertises keys that work in the current context.
 
 ## Where the design lives
@@ -218,4 +223,4 @@ the footer only advertises keys that work in the current context.
 - Design spec: `Docs/superpowers/specs/2026-08-14-console-trajectory-view-design.md`
 - Sidecar schema and view architecture: `backlog/decisions/066-console-trajectory-view-and-trace-metadata.md`
 - Collaboration export/import v2: `backlog/decisions/080-trace-v2-exhaustive-event-projection-and-collaboration.md`
-- Legacy export format v1: `backlog/decisions/067-trajectory-export-format.md`
+- Legacy export format v1: `backlog/decisions/313-trajectory-export-format.md`

@@ -203,7 +203,7 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         assert screen._media_state.selected_media_id == video_id
         # Back to the list -- the selection survives the round trip, which is
         # how the browse canvas ends up pointing at a non-first row.
-        screen.action_library_media_viewer_back()
+        screen._media_controller.action_library_media_viewer_back()
         await _wait_for_selector(screen, pilot, "#library-media-type-filter")
         await pilot.pause()
         assert screen._media_state.selected_media_id == video_id
@@ -211,9 +211,7 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         screen.query_one("#library-media-type-filter", Button).focus()
         await pilot.pause()
         screen.query_one("#library-media-type-filter", Button).press()
-        chooser = await _wait_for_selector(
-            screen, pilot, "#library-media-type-choices"
-        )
+        chooser = await _wait_for_selector(screen, pilot, "#library-media-type-choices")
         assert isinstance(chooser, OptionList)
         chooser.highlighted = next(
             index
@@ -224,12 +222,14 @@ async def test_media_type_filter_keeps_selected_id_in_step_with_the_canvas():
         await pilot.pause()
         await pilot.pause()
 
-        canvas_state = screen._build_library_media_state()
+        canvas_state = screen._media_controller._build_library_media_state()
         assert canvas_state.selected_id != video_id  # the filter dropped it
         # The screen's own pointer must agree with what the canvas renders.
         assert screen._media_state.selected_media_id == canvas_state.selected_id
         # ...and the primary action must therefore open the visible item.
-        screen._open_library_media_viewer(screen._media_state.selected_media_id)
+        screen._media_controller._open_library_media_viewer(
+            screen._media_state.selected_media_id
+        )
         await pilot.pause()
         assert screen._media_state.selected_media_id == canvas_state.selected_id
 
@@ -639,6 +639,7 @@ async def test_skills_header_only_sync_keeps_current_mounted_focus() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
 async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
     """Falling back from a missing semantic row to its reused index is wrong."""
     app = _build_test_app()
@@ -663,7 +664,17 @@ async def test_entry_canvas_sync_does_not_focus_an_unrelated_replacement_row():
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-conversations").press()
-        row = await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        await _wait_for_selector(screen, pilot, "#library-conversation-row-0")
+        # task-32228 (10711f19b9) arms the list's entry focus on arrival: for
+        # its settle window every recompose re-focuses the FIRST row, by
+        # design. The semantic restore this test pins runs once the entry
+        # has settled.
+        await _wait_for_condition(
+            pilot,
+            lambda: not screen._library_pending_list_entry_focus,
+            message="The Conversations entry focus never settled.",
+        )
+        row = screen.query_one("#library-conversation-row-0")
         row.focus()
         await pilot.pause()
 

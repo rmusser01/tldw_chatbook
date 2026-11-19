@@ -12,7 +12,7 @@ than unmounted. The default ``--phase warm`` measures exactly that visit.
 
 ``--phase production`` / ``--phase controls`` are TASK-19505's composition
 A/Bs (eager vs deferred Context rail; empty Inspector/Context controls, the
-evidence behind ADR-078). Their variants patch ``compose``, which only runs
+evidence behind ADR-320). Their variants patch ``compose``, which only runs
 on a COLD mount, so those phases evict the cached Console before every
 measured visit (``_evict_reusable_console``): each sample is a cold mount
 and the variants measure their own compositions.

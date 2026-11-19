@@ -1,0 +1,32 @@
+.................ss..................................................... [ 61%]
+.............................................                            [100%]
+============================= slowest 25 durations =============================
+6.18s call     Tests/test_real_profile_guard.py::test_an_xdist_workers_session_end_refusal_fails_the_run[both-conftests]
+4.76s call     Tests/test_real_profile_guard.py::test_an_xdist_workers_session_end_refusal_fails_the_run[ui-rooted]
+4.50s call     Tests/test_real_profile_guard.py::test_the_factory_app_keeps_every_database_in_its_own_user_data_dir
+4.18s call     Tests/test_real_profile_guard.py::test_an_xdist_workers_session_end_refusal_fails_the_run[root-conftest-only]
+2.91s call     Tests/Chat/test_console_chat_create_integration.py::test_chat_create_callbacks_reach_bridge_when_ui_sinks_wired
+2.64s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_approved_creation_revocation_closes_prepared_token
+2.26s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_new_chat_cancelled_during_confirmation_closes_authority
+2.25s setup    Tests/Chat/test_console_chat_create_confirm.py::test_new_chat_card_payload_gets_default_title
+2.14s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_declined_creation_releases_prepared_token
+2.08s setup    Tests/Chat/test_console_chat_create_confirm.py::test_fork_card_payload_keeps_explicit_title
+1.94s setup    Tests/Chat/test_console_chat_create_confirm.py::test_fork_card_payload_is_enriched_with_fork_facts
+1.89s setup    Tests/Chat/test_console_chat_create_confirm.py::test_survivor_child_confirm_does_not_bind_next_turn_stop
+1.88s setup    Tests/Chat/test_console_chat_create_confirm.py::test_fork_enrichment_degrades_when_tree_read_fails
+1.87s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_revocation_between_record_check_and_arm_does_not_show_card
+1.75s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_ephemeral_source_error
+1.70s setup    Tests/Chat/test_console_chat_create_integration.py::test_child_new_chat_prepares_confirms_executes_and_requires_fresh_approval
+1.61s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_prefers_provided_enriched_title
+1.58s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_new_chat_requires_live_prepared_approval
+1.53s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_empty_source_creates_no_conversation_row
+1.53s call     Tests/Chat/test_console_chat_create_integration.py::test_chat_create_callbacks_remain_available_for_remembered_grants
+1.52s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_copies_history_and_lineage
+1.50s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_refuses_instructions_on_character_chat
+1.48s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_merges_source_metadata
+1.45s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_empty_history_error
+1.41s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_read_failure_maps_to_execution_failed
+=========================== short test summary info ============================
+SKIPPED [1] Tests/test_real_profile_guard.py:108: no os.setxattr here
+SKIPPED [1] Tests/test_real_profile_guard.py:108: no os.removexattr here
+115 passed, 2 skipped in 103.52s (0:01:43)

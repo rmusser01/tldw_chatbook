@@ -1,0 +1,34 @@
+{
+  "source_head": "ac4816ac0350fe98f9b45e775854893cbb313750",
+  "historical_requests": 457,
+  "historical_children": 31,
+  "allowed_new_requests": 60,
+  "allowed_fresh_children": 3,
+  "actual_new_requests": 27,
+  "actual_fresh_children": 2,
+  "cumulative_requests": 484,
+  "cumulative_children": 33,
+  "cumulative_request_ceiling": 517,
+  "cumulative_child_ceiling": 34,
+  "metadata_gets": 5,
+  "unused_requests_in_consumed_invocation": 33,
+  "unused_child_slots_in_consumed_invocation": 1,
+  "prior_retired_unused_requests": 98,
+  "total_retired_unused_requests": 131,
+  "invocation_consumed": true,
+  "qualification_retries": 0,
+  "no_retry_authority": true,
+  "models": {
+    "unsloth/Qwen3.8-27B-GGUF:Q8_0": 13,
+    "gpt-6-luna": 7,
+    "deepseek-flash": 7
+  },
+  "http_statuses": {
+    "200": 27
+  },
+  "ci_checks": {
+    "SUCCESS": 54,
+    "SKIPPED": 3
+  },
+  "manifest_sha256": "b31f4b62b94cb9c33263cfb414315fb3e6fb2bea712ce0960f1cb13f3a041644"
+}

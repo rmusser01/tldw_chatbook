@@ -21,6 +21,7 @@ from tldw_chatbook.Actor_Packs.repository import (
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
@@ -207,6 +208,34 @@ def test_external_store_change_before_sqlite_commit_quarantines_without_guessing
     assert _stored_profile(store)["name"] == "External"
 
 
+def test_mid_session_quarantine_updates_the_cached_recovery_summary(
+    components,
+) -> None:
+    """TASK-41521 AC#3: the app's next recovery read names an intent that a
+    failed compensation quarantined mid-session, as it does one found at
+    startup."""
+    coordinator, repository, _service, store = components
+    assert coordinator.ensure_recovered().blocked_intent_ids == ()
+
+    def replace_after_apply(phase: str) -> None:
+        # The external change the quarantine test above makes.
+        if phase == "profile_replaced":
+            payload = json.loads(store.read_text(encoding="utf-8"))
+            payload["profiles"][0]["name"] = "External"
+            store.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        PersonaActorPackCoordinatorError, match="actor_pack_creation_blocked"
+    ):
+        coordinator.create_persona(
+            _profile(), portable_uuid=UUID_A, phase_hook=replace_after_apply
+        )
+
+    (retained,) = repository.list_persona_intents()
+    assert coordinator.blocked_intent_ids == (retained.intent_id,)
+    assert coordinator.ensure_recovered().blocked_intent_ids == (retained.intent_id,)
+
+
 def test_recovery_cleans_prepared_old_json_old_sqlite(components) -> None:
     coordinator, repository, service, _store = components
     plan = service._actor_pack_plan_persona_profile(_profile(), operation="create")
@@ -384,9 +413,14 @@ def test_ensure_recovered_is_single_flight_across_threads(components) -> None:
 
     repository.list_persona_intents = slow
 
-    workers = [
-        threading.Thread(target=coordinator.ensure_recovered) for _ in range(6)
-    ]
+    def recover() -> None:
+        # The app runs recovery inside the operation that owns the worker
+        # thread's ChaChaNotes handle (ensure_actor_pack_recovery); without it
+        # each thread's handle outlives the test.
+        with operation_owned_connection(repository.db):
+            coordinator.ensure_recovered()
+
+    workers = [threading.Thread(target=recover) for _ in range(6)]
     for worker in workers:
         worker.start()
     for worker in workers:

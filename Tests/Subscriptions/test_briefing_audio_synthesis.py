@@ -30,7 +30,10 @@ from tldw_chatbook.Subscriptions.briefing_audio import (
 from tldw_chatbook.Subscriptions.briefing_voices import VoiceSelection
 from tldw_chatbook.TTS.adapter_types import TTSAudioResponse, TTSRequest
 from tldw_chatbook.TTS.audio_stitch import AudioStitchError
-from tldw_chatbook.TTS.legacy_bridge import UnknownLegacyModelError, resolve_legacy_route
+from tldw_chatbook.TTS.legacy_bridge import (
+    UnknownLegacyModelError,
+    resolve_legacy_route,
+)
 from tldw_chatbook.TTS.playground_types import TTSRequestedSelectionSnapshot
 
 pytestmark = pytest.mark.unit
@@ -400,7 +403,9 @@ def test_validate_exact_snapshot_voice_mismatch_still_names_the_voice() -> None:
     assert "format" not in message
 
 
-def test_validate_exact_snapshot_format_mismatch_names_the_format_not_the_voice() -> None:
+def test_validate_exact_snapshot_format_mismatch_names_the_format_not_the_voice() -> (
+    None
+):
     """FIX C's headline case: before this fix, ANY mismatch -- including
     this one, where the voice matches perfectly -- was reported as "TTS
     provider used voice 'wav', requested voice 'mp3'", a false lead.
@@ -421,7 +426,9 @@ def test_validate_exact_snapshot_format_mismatch_names_the_format_not_the_voice(
     assert "voice" not in message, "a format-only mismatch must never mention voice"
 
 
-def test_validate_exact_snapshot_options_mismatch_names_only_the_differing_keys() -> None:
+def test_validate_exact_snapshot_options_mismatch_names_only_the_differing_keys() -> (
+    None
+):
     """Bounded reporting: an options mismatch must name the differing
     KEYS, never dump the whole (potentially large, provider-specific)
     mapping into the error message."""
@@ -453,7 +460,9 @@ async def test_legacy_path_builds_request_via_the_shared_builder_and_joins_chunk
 ):
     wav = _silence_wav(90)
     midpoint = len(wav) // 2
-    selection = _legacy_selection(provider_id="kokoro", model_id="ignored", voice_id="bella")
+    selection = _legacy_selection(
+        provider_id="kokoro", model_id="ignored", voice_id="bella"
+    )
     service = _FakeTTSService(
         legacy_plans=[_LegacyPlan(chunks=[wav[:midpoint], wav[midpoint:]])]
     )
@@ -652,7 +661,9 @@ async def test_legacy_path_elevenlabs_yields_a_valid_wav_from_a_realistic_pcm_re
     frame_count = sample_rate * duration_ms // 1000
     raw_pcm = b"\x00\x00" * frame_count  # 16-bit silence, headerless
 
-    selection = _legacy_selection(speaker="Host", provider_id="elevenlabs", voice_id="rachel")
+    selection = _legacy_selection(
+        speaker="Host", provider_id="elevenlabs", voice_id="rachel"
+    )
     service = _FakeTTSService(legacy_plans=[_LegacyPlan(chunks=[raw_pcm])])
 
     result = await synthesize_turn(service, selection, "hello", turn_index=0)
@@ -693,7 +704,9 @@ async def test_legacy_path_elevenlabs_zero_byte_result_still_raises_naming_speak
 # --------------------------------------------------------------------------
 
 
-async def test_exact_path_provider_failure_is_wrapped_naming_speaker_and_index() -> None:
+async def test_exact_path_provider_failure_is_wrapped_naming_speaker_and_index() -> (
+    None
+):
     selection = _exact_selection(speaker="Host")
     boom = RuntimeError("adapter blew up")
     service = _FakeTTSService(exact_error=boom)
@@ -707,7 +720,9 @@ async def test_exact_path_provider_failure_is_wrapped_naming_speaker_and_index()
     assert "turn 6" in message
 
 
-async def test_legacy_path_provider_failure_is_wrapped_naming_speaker_and_index() -> None:
+async def test_legacy_path_provider_failure_is_wrapped_naming_speaker_and_index() -> (
+    None
+):
     selection = _legacy_selection(speaker="Guest", provider_id="kokoro")
     boom = RuntimeError("network blew up")
     service = _FakeTTSService(legacy_error=boom)

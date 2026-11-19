@@ -282,10 +282,12 @@ async def test_unchanged_refresh_does_not_bump_revision(credential_cache, tmp_pa
     assert first_revision >= 1
 
     # Force a stale TTL so status() starts a refresh, then let it complete
-    # observing the SAME credential file.
+    # observing the SAME credential file. TASK-38948: a stale snapshot keeps
+    # its last state ("ready") while it is re-read; "pending" is only the
+    # never-read state.
     with credential_cache._lock:
         credential_cache._completed_at = 0.0
-    assert subscription.subscription_credential_status(background=True) == "pending"
+    assert subscription.subscription_credential_status(background=True) == "ready"
     await wait_until(lambda: credential_cache._completed_at not in (None, 0.0))
     await wait_until(lambda: not credential_cache._refreshing)
     assert credential_cache.revision == first_revision
@@ -294,7 +296,55 @@ async def test_unchanged_refresh_does_not_bump_revision(credential_cache, tmp_pa
     path.unlink()
     with credential_cache._lock:
         credential_cache._completed_at = 0.0
-    assert subscription.subscription_credential_status(background=True) == "pending"
+    assert subscription.subscription_credential_status(background=True) == "ready"
     await wait_until(lambda: credential_cache._completed_at not in (None, 0.0))
     await wait_until(lambda: not credential_cache._refreshing)
     assert credential_cache.revision == first_revision + 1
+    assert subscription.subscription_credential_status(background=True) == "missing"
+
+
+@pytest.mark.asyncio
+async def test_lapsed_ttl_reread_of_unchanged_credential_never_moves_the_ui_gate(
+    credential_cache, monkeypatch
+):
+    """TASK-38948: an unchanged credential never wakes the 4 Hz UI pollers.
+
+    The Console's credential poll rebuilds readiness on the UI loop whenever
+    (status, revision) changes. Before the fix a lapsed TTL answered
+    "pending" for the whole re-read, so every 5 s the pair went
+    missing -> pending -> missing: two full rebuilds for no change.
+    """
+    entered, release = threading.Event(), threading.Event()
+    reads = []
+
+    def missing():
+        reads.append(threading.get_ident())
+        if len(reads) == 2:  # Hold the TTL re-read open.
+            entered.set()
+            assert release.wait(3)
+        return None
+
+    def gate():
+        return (
+            subscription.subscription_credential_status(background=True),
+            subscription.subscription_readiness_revision(),
+        )
+
+    monkeypatch.setattr(subscription, "read_claude_code_credential", missing)
+    assert gate()[0] == "pending"  # Never read yet.
+    await wait_until(lambda: credential_cache._completed_at is not None)
+    await wait_until(lambda: not credential_cache._refreshing)
+    settled = gate()
+    assert settled[0] == "missing"
+    with credential_cache._lock:
+        credential_cache._completed_at -= 10.0  # Lapse the 5 s TTL.
+    seen = [gate()]
+    try:
+        await wait_until(entered.is_set)
+        seen.append(gate())
+    finally:
+        release.set()
+    await wait_until(lambda: not credential_cache._refreshing)
+    seen.append(gate())
+    assert seen == [settled] * 3
+    assert len(reads) == 2 and threading.get_ident() not in reads

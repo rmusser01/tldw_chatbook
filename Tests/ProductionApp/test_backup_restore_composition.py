@@ -35,13 +35,15 @@ from tldw_chatbook.app import TldwCli, SettingsProvider
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Screens.backup_restore_screen import BackupRestoreScreen
 from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService, default_control_root
+# F9 opens Kanban since 04233174e6; open Settings by its own shortcut (TASK-41305).
+from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_SHORTCUTS
 async def main():
     app = TldwCli()
     app.app_config['_first_run'] = False
     app.app_config.setdefault('first_run', {})['setup_completed'] = True
     assert getattr(app, '_recovery_service', None) is None
     async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press('f9')
+        await pilot.press(SHELL_DESTINATION_SHORTCUTS['settings'])
         for _ in range(100):
             if isinstance(app.screen, SettingsScreen): break
             await pilot.pause(.05)
@@ -89,7 +91,7 @@ async def main():
     app.app_config.setdefault('first_run', {})['setup_completed'] = True
     destination = Path.home() / 'mounted.tldw-backup.zip'
     async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press('f9')
+        await pilot.press(SHELL_DESTINATION_SHORTCUTS['settings'])
         await pilot.pause()
         assert await pilot.click('#settings-backup-restore')
         await pilot.pause()
@@ -201,7 +203,7 @@ async def main():
     app.app_config['_first_run'] = False
     app.app_config.setdefault('first_run', {})['setup_completed'] = True
     async with app.run_test(size=(100, 36)) as pilot:
-        await pilot.press('f9')
+        await pilot.press(SHELL_DESTINATION_SHORTCUTS['settings'])
         await pilot.pause()
         await pilot.click('#settings-backup-restore')
         await pilot.pause()

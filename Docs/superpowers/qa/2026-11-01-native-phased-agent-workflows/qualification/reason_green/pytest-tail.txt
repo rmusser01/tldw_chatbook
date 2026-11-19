@@ -1,0 +1,13 @@
+.......                                                                  [100%]
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-reason_green/tests.xml -
+============================= slowest 25 durations =============================
+1.86s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[0-40000-False]
+1.47s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-40000-True]
+1.46s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-40000-False]
+1.42s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-150000-True]
+1.41s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-150000-False]
+1.38s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[0-40000-True]
+1.24s call     Tests/Agents/test_workflow_run_service.py::test_native_done_without_approved_verifier_stays_missing_and_blocks_quality_and_next_phase
+
+(14 durations < 1s hidden.)
+7 passed in 10.72s

@@ -1,0 +1,39 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___ test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge ____
+
+    @pytest.mark.asyncio
+    async def test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge():
+>       app, store, owner, other, _, handler = setup()
+                                               ^^^^^^^
+
+Tests/UI/test_buddy_speech.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def setup():
+        store = ConsoleChatStore()
+        session = store.create_session(title="Research", ephemeral=True)
+        message = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="Owned response"
+        )
+        other = store.create_session(ephemeral=True)
+        handler = Handler()
+>       host = InterruptRoundHost(SimpleNamespace(store=store))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InterruptRoundHost.__init__() takes 1 positional argument but 2 were given
+
+Tests/UI/test_buddy_speech.py:51: TypeError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-04 18:48:51.355 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-04 18:48:51.383 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-04 18:48:51.442 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-04 18:48:51.445 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-10-04 18:48:51.576 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-10-04 18:48:51.774 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-18-safe-evidence/probe.xml -
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_buddy_speech.py::test_hidden_named_reply_uses_consent_and_does_not_select_or_acknowledge
+1 failed in 1.33s

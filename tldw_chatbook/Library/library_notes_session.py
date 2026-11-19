@@ -596,11 +596,12 @@ class DatabaseNoteSessionCoordinator:
                     veto=payload,
                 )
 
-            self._snapshot = replace(
+            saving = replace(
                 snapshot,
                 saving=True,
                 status_message="Saving…",
             )
+            self._snapshot = saving
             try:
                 reply = await self._port.save_note(
                     note_id,

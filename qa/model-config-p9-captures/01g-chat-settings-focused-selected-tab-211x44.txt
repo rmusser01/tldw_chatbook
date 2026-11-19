@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+                 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+                 │  Chat settings · Chat 1                                                                                                                                                      │
+                 │                                                                                                                                                                              │
+                 │  ● Model and generation  Context and memory                                                                                                                                  │
+                 │ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                                                │
+                 │  Response rules                                                                                                                                                              │
+                 │ Model             model-a · llama.cpp                                                                      this chat  Ready · not tested · context unknown   Change Alt+M    │
+                 │ Temperature       │ 0.6         Console Behavior   Lower stays focused; higher is more varied.                                                                               │
+                 │ Max tokens        │ 4096        provider           Longest reply the model may give, in tokens.                                                                              │
+                 │ Streaming         │ On       ▼  provider           Show the reply as it is generated.                                                                                        │
+                 │ Reasoning effort  │ Minimal  ▼  model default      Minimal is not supported here, so it is not sent.                                                                         │
+                 │ Thinking budget   │             provider           the provider decides · Tokens reserved for Thinking when it is on.                                                        │
+                 │  ▶ Sampling · hidden for llama.cpp: Reasoning summary, Verbosity, Thinking (this provider does not accept them)                                                              │
+                 │  ▶ Connection · 127.0.0.1:18612 · no key needed · change it in Settings ▸ Providers & Models                                                                                 │
+                 │  ▶ Request estimate · 0 / 32,000 tokens (assumed; window unknown)                                                                                                            │
+                 │  ▶ Your name in this chat · User (global default)                                                                                                                            │
+                 │                                                                                                                                                                            ▇ │
+                 │ ▼ more — scroll for the rest                                                                                                                                                 │
+                 │                                                                                                                             Reconnect to the llama.cpp endpoint to continue. │
+                 │                                                                                                                                                                              │
+                 │                                                                        Esc close  Matches saved defaults   Default for new chats (Ctrl+N)   Apply to this chat (Ctrl+Enter)  │
+                 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+                                                                        │                                                                │
+                                                                        └────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+  Ctrl+P palette | Ctrl+Q quit

@@ -1,0 +1,9 @@
+{
+  "old_count": 161,
+  "new_count": 163,
+  "all_old_targets_keep_order": true,
+  "added": [
+    "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_media_controller.py]",
+    "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_media_controller.py]"
+  ]
+}

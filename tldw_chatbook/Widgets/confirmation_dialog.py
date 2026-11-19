@@ -5,13 +5,14 @@
 import asyncio
 import inspect
 from typing import Any, Optional, Callable
+from weakref import ReferenceType, ref
 
 #
 # 3rd-Party Imports
 from loguru import logger
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Container
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Label, Static
 
@@ -36,6 +37,7 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         Binding("escape", "request_safe_cancel", "Cancel", show=False),
     ]
     SAFE_MODAL_CONTENT = "#confirmation-dialog"
+    AUTO_FOCUS = "#cancel-button"
 
     # CSS for styling
     DEFAULT_CSS = """
@@ -43,7 +45,8 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         align: center middle;
     }
     
-    ConfirmationDialog > Container {
+    ConfirmationDialog > Container,
+    ConfirmationDialog > .confirmation-scroll {
         width: 60;
         height: auto;
         border: thick $accent;
@@ -111,6 +114,8 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         self.confirm_callback = confirm_callback
         self.cancel_callback = cancel_callback
         self.result: bool | None = None
+        # Only the quit flow sets this; never retain its dismissed source.
+        self._quit_owner_ref: ReferenceType[Screen] | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the dialog UI."""
@@ -122,7 +127,7 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         # "Delete stored Full captures" confirmation never appeared at all.
         # Callers therefore must NOT pre-escape; the ones that did were
         # changed in the same commit.
-        with Container(id="confirmation-dialog"):
+        with VerticalScroll(id="confirmation-dialog", classes="confirmation-scroll"):
             yield Static(self.title, classes="dialog-title", markup=False)
             yield Label(self.message, classes="dialog-message", markup=False)
 
@@ -182,13 +187,29 @@ def quit_confirmation_screens(app: Any) -> list[Any]:
     the one the user is actually in. Screens below that one are not
     consulted, exactly as when no modal is open.
 
+    One screen is asked without being open: Settings keeps its drafts in
+    ``app.screen_state_store`` after the user leaves it (TASK-33007, ruling
+    C-N1), so while it holds unsaved changes a stand-in for Settings is
+    asked last.
+
     Args:
         app: The running app (or a quit-flow harness exposing ``screen``).
 
     Returns:
         The active screen first, then -- only when it is modal -- each screen
-        beneath it down to and including the topmost non-modal screen.
+        beneath it down to and including the topmost non-modal screen, then
+        the Settings stand-in when a kept draft needs it.
     """
+    from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+        kept_settings_draft,
+    )
+
+    screens = _screens_down_to_the_destination(app)
+    stand_in = kept_settings_draft(app, screens)
+    return screens if stand_in is None else [*screens, stand_in]
+
+
+def _screens_down_to_the_destination(app: Any) -> list[Any]:
     current = app.screen
     screens = [current]
     if not getattr(current, "is_modal", False):
@@ -341,10 +362,18 @@ def _closed_but_still_stacked(screen: Any) -> bool:
     """Whether ``screen``'s own dismiss already delivered a result.
 
     Textual 8.2.8 gives every push a ``ResultCallback`` whose future is
-    resolved only by that screen's ``dismiss``. Resolved -- not cancelled,
-    which a cancelled ``push_screen_wait`` waiter does to a screen still
-    legitimately open -- while the screen is still on the stack means its
-    pop went to the screen that was above it.
+    resolved only by that screen's ``dismiss``. Textual never cancels it,
+    and ``push_screen_wait`` awaits it through ``asyncio.shield``, so a
+    cancelled waiter leaves it pending. Resolved while the screen is still
+    on the stack means its pop went to the screen that was above it.
+
+    A cancelled future is excluded: only a caller cancelled while awaiting a
+    bare ``push_screen(..., wait_for_dismiss=True)`` future (or timing out on
+    one) cancels it, and that screen was never dismissed, so it is still
+    legitimately open. No package code does that any more:
+    ``test_no_unshielded_dismiss_waits`` fails on a new bare wait, and the
+    one allowed site, ``await_quit_prompt``, waits with ``asyncio.wait``,
+    which never cancels. The exclusion is kept as a guard, not a live path.
     """
     callbacks = getattr(screen, "_result_callbacks", None)
     if not callbacks:
@@ -397,16 +426,14 @@ async def confirm_quit_discarding_edits(
         True when the user chose to quit; False to stay, including when the
         prompt vanished before it was answered.
     """
-    choice = await await_quit_prompt(
-        screen.app,
-        ConfirmationDialog(
-            title=title,
-            message=message,
-            confirm_label=confirm_label,
-            cancel_label=cancel_label,
-        ),
-        no_answer=False,
+    prompt = ConfirmationDialog(
+        title=title,
+        message=message,
+        confirm_label=confirm_label,
+        cancel_label=cancel_label,
     )
+    prompt._quit_owner_ref = ref(screen)
+    choice = await await_quit_prompt(screen.app, prompt, no_answer=False)
     return choice is True
 
 

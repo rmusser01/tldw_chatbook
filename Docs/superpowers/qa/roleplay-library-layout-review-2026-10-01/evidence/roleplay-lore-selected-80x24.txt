@@ -1,0 +1,24 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                     │
+│  Ready                                                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+Lore — world facts injected on keywords · 3
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────┐
+│╭──────────────╮╭──────────────────────────────────────╮┌────────────────────┐│
+││  Library  <  ││                                      ││  Inspector     >   ││
+││  Search...   ││                                      ││ Selected:          ││
+││     New      ││  Entries  Settings  Attachments      ││ Aetheria Atlas     ││
+││    Import    ││                                      ││ Type: lore         ││
+││    Duplic    ││ Try it — injection preview           ││ Validation: OK     ││
+││              ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ Readiness          ││
+││  Aetheria…   ││ ▊                                  ▎ ││ Console chat is    ││
+││  10 entri… ▄ ││ ▊                                  ▎ ││ for characters   ▆ ││
+││  Night Ma…   ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││ and personas.      ││
+││              ││ ▊▔▔▔▔▔▔▔▔▎Include recent turns (soon ││      Delete        ││
+│╰──────────────╯╰──────────────────────────────────────╯└────────────────────┘│
+└──────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | f6 pane | F1 · Ctrl+P · Ctrl+Q

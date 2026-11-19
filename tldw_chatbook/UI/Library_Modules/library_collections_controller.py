@@ -28,6 +28,7 @@ import re
 import webbrowser
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
@@ -45,7 +46,11 @@ from ...Library.collections_capture_models import (
 )
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_COLLECTIONS
 from ...Third_Party.textual_fspicker import FileSave
-from ...Utils.adaptive_reader_state import resolve_adaptive_reader_layout
+from ...Utils.adaptive_reader_state import (
+    AdaptiveReaderEffectiveLayout,
+    list_holds_the_stage,
+    resolve_adaptive_reader_layout,
+)
 from ...Utils.input_validation import (
     validate_navigation_context_text,
     validate_text_input,
@@ -84,10 +89,12 @@ def _validated_quick_capture_fields(
     ):
         raise ValueError("Note is invalid")
     return title, tags, note
-from ...Utils.path_validation import validate_path_simple
 from ...Widgets.Library import (
     CollectionsCaptureReaderPresentation,
     LibraryAdaptiveReaderShell,
+)
+from ...Widgets.Library.library_collections_capture_reader import (
+    recompose_capture_panes,
 )
 from .library_collections_capture_controller import (
     CollectionsCaptureControllerState,
@@ -153,6 +160,7 @@ class LibraryCollectionsController:
         self._set_library_collections_capture_controller_fn = (
             set_library_collections_capture_controller
         )
+        self._pane_sync_lock = asyncio.Lock()
 
     # -- framework services: live-read properties, never snapshotted -----
 
@@ -237,14 +245,24 @@ class LibraryCollectionsController:
         if width <= 0 or not self._library_adaptive_reader_allocation_is_current(shell):
             return
         previous = self._library_collections_reader_layout
-        if (
-            previous.reader_width == 0
-            and previous.library_width == 0
-            and previous.items_width == 0
-        ):
+        if not (previous.reader_width or previous.library_width or previous.items_width):
             previous = None
+        layout = self._resolve_library_collections_reader_layout(
+            width, previous=previous, priority=priority
+        )
+        shell.sync_layout(layout)
+        self._library_collections_reader_layout = layout
+
+    def _resolve_library_collections_reader_layout(
+        self,
+        width: int,
+        *,
+        previous: AdaptiveReaderEffectiveLayout | None = None,
+        priority: Literal["library", "items"] | None = None,
+    ) -> AdaptiveReaderEffectiveLayout:
+        """Resolve the Collections reader layout for ``width`` shell cells."""
         capture_controller = self._library_collections_capture_controller
-        layout = resolve_adaptive_reader_layout(
+        return resolve_adaptive_reader_layout(
             width,
             self._library_collections_reader_preferences,
             LIBRARY_COLLECTIONS_READER_PROFILE,
@@ -258,8 +276,22 @@ class LibraryCollectionsController:
                 and capture_controller.state.selected_identity is not None
             ),
         )
-        shell.sync_layout(layout)
-        self._library_collections_reader_layout = layout
+
+    def _seed_library_collections_reader_layout(self) -> AdaptiveReaderEffectiveLayout:
+        """TASK-41130: a first visit composes from the screen's measured width.
+
+        The width-0 placeholder closed and disabled the Library pane in the
+        first frame, so the route's focus restore could not land on the
+        Collections row. The shell's first layout sync still refines it.
+        """
+        layout = self._library_collections_reader_layout
+        width = self._screen.size.width
+        if width > 0 and not (
+            layout.reader_width or layout.library_width or layout.items_width
+        ):
+            layout = self._resolve_library_collections_reader_layout(width)
+            self._library_collections_reader_layout = layout
+        return layout
 
     def _mirror_library_collections_reader_preference(
         self,
@@ -398,7 +430,16 @@ class LibraryCollectionsController:
         return request
 
     def _refresh_library_collections_capture_reader(self) -> None:
-        """Recompose the destination-owned capture panes from controller state."""
+        """TASK-41126: repaint the panes in place once the current message is done."""
+        if (
+            self.is_mounted
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
+        ):
+            self._capture_reader_annotation_draft()
+            self._screen.call_next(self._sync_library_collections_capture_panes)
+
+    def _recompose_library_collections_screen(self) -> None:
+        """Recompose the whole screen: the fallback when no panes are mounted."""
         if (
             self.is_mounted
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS
@@ -415,6 +456,29 @@ class LibraryCollectionsController:
             self.call_after_refresh(
                 lambda: self.call_after_refresh(reveal_current_focus)
             )
+
+    async def _sync_library_collections_capture_panes(self) -> None:
+        """TASK-40328: re-render the capture panes in place (whole screen without)."""
+        # One sync at a time: the entry worker's and the actions' must never
+        # recompose one pane at once (TASK-41126).
+        async with self._pane_sync_lock:
+            self._capture_reader_annotation_draft()
+            if self._library_collections_quick_capture_open:
+                # The mounted fields, not their still-queued Changed events.
+                try:
+                    self._capture_library_collection_quick_capture_draft()
+                except (NoMatches, QueryError):
+                    pass
+            presentation = self._library_collections_capture_presentation()
+            if not await recompose_capture_panes(self._screen, presentation):
+                self._recompose_library_collections_screen()
+            elif (rail := self._screen._active_library_rail()) is not None:
+                # The rail row and Details read the count this load produced; the
+                # retired whole-screen recompose used to repaint them (r14ls-rev1).
+                self._screen._sync_library_rail_state(rail)
+        self.call_after_refresh(
+            self._sync_library_collections_reader_layout_from_shell
+        )
 
     def _capture_reader_annotation_draft(self) -> None:
         """Retain only live, editable fields under their painted capture identity."""
@@ -457,13 +521,10 @@ class LibraryCollectionsController:
     async def _load_library_collections_capture_entry(self) -> None:
         """Adopt app authority, load bounded rail data, page, and first detail."""
         controller = self._ensure_library_collections_capture_controller()
-        if controller is None:
-            self._refresh_library_collections_capture_reader()
-            return
-        controller.adopt_active_authority()
-        self._refresh_library_collections_capture_reader()
-
-        if controller.state.authority_key is None:
+        if controller is not None:
+            controller.adopt_active_authority()
+        await self._sync_library_collections_capture_panes()
+        if controller is None or controller.state.authority_key is None:
             return
         scope = controller.scope_service
         try:
@@ -489,7 +550,7 @@ class LibraryCollectionsController:
                 self._library_collections_legacy_recovery_rows = legacy.total
         request = self._library_collections_capture_request()
         if request is None:
-            self._refresh_library_collections_capture_reader()
+            await self._sync_library_collections_capture_panes()
             return
         await controller.load_page(request)
         self._library_collections_requested_page = (
@@ -497,10 +558,10 @@ class LibraryCollectionsController:
             if controller.state.applied_scope is not None
             else request.page
         )
-        self._refresh_library_collections_capture_reader()
+        await self._sync_library_collections_capture_panes()
         if controller.state.selected_identity is not None:
             await controller.load_selected_now()
-        self._refresh_library_collections_capture_reader()
+        await self._sync_library_collections_capture_panes()
 
     def _ensure_library_collections_capture_controller(
         self,
@@ -571,6 +632,15 @@ class LibraryCollectionsController:
             )
         except CollectionsCaptureError as exc:
             self._notify_library_collections_warning(exc.reason)
+            return
+        layout = self._library_collections_reader_layout
+        if list_holds_the_stage(layout):
+            # TASK-38981 review: a capture picked from the list holding the
+            # stage takes the stage back instead of loading behind it.
+            self._library_collections_reader_layout = dataclasses.replace(
+                layout, priority_pane=None
+            )
+            self._sync_library_collections_reader_layout_from_shell()
 
     @on(Button.Pressed, ".library-collections-scope-row")
     async def select_library_collection_capture_scope(
@@ -623,11 +693,12 @@ class LibraryCollectionsController:
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_COLLECTIONS
         ):
             return
-        try:
-            rows = self.query_one("#library-collections-scopes")
-        except (NoMatches, QueryError):
-            return
-        await rows.show_page(self._library_collections_capture_presentation(), opener)
+        async with self._pane_sync_lock:  # serialized with the pane syncs
+            try:
+                rows = self.query_one("#library-collections-scopes")
+            except (NoMatches, QueryError):
+                return
+            await rows.show_page(self._library_collections_capture_presentation(), opener)
 
     @on(Input.Submitted, "#library-collections-filter")
     async def filter_library_collection_captures(
@@ -834,6 +905,8 @@ class LibraryCollectionsController:
         self._library_collections_action_content = ""
         self._refresh_library_collections_capture_reader()
         try:
+            from tldw_chatbook.Utils.egress import UrlProvenance
+
             outcome = await controller.scope_service.save_capture(
                 CaptureSaveRequest(
                     controller.state.authority_key,
@@ -841,6 +914,7 @@ class LibraryCollectionsController:
                     title=title or None,
                     tags=tags,
                     freeform_note=note or None,
+                    url_provenance=UrlProvenance.USER_ENTERED,
                 )
             )
         except CollectionsCaptureError as exc:
@@ -997,6 +1071,11 @@ class LibraryCollectionsController:
     ) -> None:
         event.stop()
         request = self._library_collection_capture_filter_request(clear=True)
+        # A repaint keeps unsubmitted text (TASK-41126); Clear empties it.
+        for field in self._screen.query(
+            "#library-collections-filters-form Input, #library-collections-filter"
+        ):
+            field.value = ""
         if request is not None:
             await self._apply_library_collection_capture_request(request)
 
@@ -1160,9 +1239,11 @@ class LibraryCollectionsController:
     ) -> None:
         """Choose a destination for a complete coherent legacy JSON export."""
         event.stop()
+        from .library_file_export import library_export_picker_location  # lazy, TASK-34000.3
+
         await self.app.push_screen(
             FileSave(
-                location=str(Path.home()),
+                location=library_export_picker_location(self.app),
                 title="Export Legacy Collections Recovery",
                 default_file="legacy-collections-recovery.json",
             ),
@@ -1174,41 +1255,15 @@ class LibraryCollectionsController:
     async def _export_library_collection_legacy_recovery(
         self, selected_path: Path | None
     ) -> None:
-        """Validate and publish a complete recovery snapshot off the UI loop."""
-        if selected_path is None:
-            return
-        recovery = getattr(
-            self.app_instance, "collections_legacy_recovery_service", None
-        )
-        if recovery is None:
-            return
-        try:
-            destination = validate_path_simple(
-                selected_path,
-                require_exists=False,
-            )
-            if destination.suffix.casefold() != ".json":
-                destination = destination.with_suffix(".json")
-            overwrite_identity = None
-            if destination.exists():
-                metadata = destination.lstat()
-                overwrite_identity = (metadata.st_dev, metadata.st_ino)
-            await asyncio.to_thread(
-                recovery.export_json,
-                destination,
-                overwrite_identity=overwrite_identity,
-            )
-        except Exception as exc:
-            reason = str(getattr(exc, "reason", "legacy_export_failed"))
-            self._library_collections_action_status = (
-                f"Legacy export failed: {reason.replace('_', ' ')}."
-            )
-            self._notify_library_collections_warning(reason)
-        else:
-            self._library_collections_action_status = (
-                "Legacy recovery export complete."
-            )
-        self._refresh_library_collections_capture_reader()
+        """Validate and publish a complete recovery snapshot off the UI loop.
+
+        The body lives in ``library_file_export`` (TASK-34000.3): it asks
+        before replacing an existing file, then publishes through the
+        recovery service's own atomic, identity-guarded writer.
+        """
+        from .library_file_export import export_library_collections_recovery
+
+        await export_library_collections_recovery(self, selected_path)
 
     async def _update_selected_library_collection_capture(
         self,
@@ -1419,6 +1474,10 @@ class LibraryCollectionsController:
             return
         self._library_collections_action_status = f"Linked Note {note_id}."
         self._library_collections_action_content = ""
+        # A landed link clears its ID; a repaint would keep it (TASK-41126).
+        for field in self._screen.query("#library-collections-linked-note-id"):
+            if field.value.strip() == note_id:
+                field.value = ""
         self._refresh_library_collections_capture_reader()
 
     @on(Button.Pressed, ".library-collections-linked-note-unlink")
@@ -1602,7 +1661,15 @@ class LibraryCollectionsController:
         if detail is None or not controller.state.identity_actions_enabled:
             return
         try:
-            webbrowser.open(detail.capture.canonical_url)
+            # TASK-34937: OS spawn off the UI thread. Follow-up note:
+            # a spawn failure is swallowed by exit_on_error=False here
+            # (no toast); the except below only covers pre-spawn reads.
+            self._screen.run_worker(
+                partial(webbrowser.open, detail.capture.canonical_url),
+                thread=True,
+                exit_on_error=False,
+                name="open-capture-url",
+            )
         except Exception:
             self._notify_library_collections_warning(
                 "Could not open the original capture URL."

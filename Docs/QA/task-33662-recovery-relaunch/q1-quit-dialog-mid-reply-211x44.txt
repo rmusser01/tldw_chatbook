@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                  Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | first question                                                                                                                                     │
+                         Context ◂  │         Chat 1         ✕   ● first question    ✕    New tab     Temporary                                                                                         │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                                     ✕  │
+ Workspaces                    ▸    │  ▊ Assistant                                                                                                                                                      │
+ ─────────────────────────────────  │  ▊                                                                                                                                                                │
+ Conversations                 ▾    │  ▊  Stub reply #2 from the scratch stub.                                                                                                                          │
+        Archive this chat           │  ▊                                   █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█                                                                 │
+          Archived chats            │  ▊                                   █                                                          █                                                                 │
+        Search all chats…           │  ────────────────────────────────────█                      Quit Chatbook?                      █──────────────────────────────────────────────────────────────   │
+   first question                   │   User                               █                                                          █                                                                 │
+                                    │   third question                     █        Quitting Chatbook will cancel or discard:         █                                                                 │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                      █                                                          █                                                              ▁  │
+  ▊  Filter visible     ▎           │    Copy  Edit  Fork  ♻   --->  More… █                    Live agent runs: 1                    █                                                                 │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                      █                   Delegated agents: 0                    █                                                                 │
+                                    │   Guide: j/k select · c Copy · e Edit█             Sessions with queued prompts: 0              █                                                                 │◂ Inspect
+  Chats                        ▾    │                                      █                 Unsent queued prompts: 0                 █                                                                 │
+   first question             ⟳     │  ────────────────────────────────────█                                                          █──────────────────────────────────────────────────────────────   │
+   Chat 1                     💬    │  ▊ Assistant                         █                      Quit Chatbook?                      █                                                                 │
+                                    │  ▊                                   █                                                          █                                                                 │
+ ─────────────────────────────────  │  ▊  Stub reply #3 from the scratch st█                                                          █                                                                 │
+ Character · No chats          ▸    │  ▊                                   █                    Stay         Quit                     █                                                                 │
+ ─────────────────────────────────  │  ▊                                   █                                                          █                                                                 │
+ Model                         ▸    │  ────────────────────────────────────█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█──────────────────────────────────────────────────────────────   │
+ ─────────────────────────────────  │   User                                                                                                                                                            │
+ Agent                         ▸    │   fourth question                                                                                                                                                 │
+ ─────────────────────────────────  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ Details                       ▸    │  ▊ Assistant  Generating…                                                                                                                                         │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │ running
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                                    Type to queue      Queue         Dictate   Redirect  Stop
+
+  Ctrl+G stop run | Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

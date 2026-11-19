@@ -1,0 +1,8 @@
+# v-full-track-steps-1, re-run after app restart (Settings > Diagnostics > Run Setup Wizard), 120x40.
+# On-disk config at the time: [tools] read_file_enabled = true, glob_files_enabled = true (seeded before launch).
+# Switch state read from `tmux capture-pane -p -e` ANSI: an ON switch renders its knob in green (38;2;78;191;113);
+# Read file row: no green knob -> OFF (identical escape sequence to List directory, which is off).
+# Control: clicking List directory turned its knob green (ON); clicked again to revert before Next.
+# Result: the re-run Tools step showed Read file OFF although config had it ON.
+# Then the Summary (which reloads the full TOML) read "✓ Tools — 2 enabled" (see 22-...).
+# Root cause probe (same HOME): load_settings() -> "tools" in app_config: False; read_wizard_prefill(...) -> tool_gates=(), card_selection=''.

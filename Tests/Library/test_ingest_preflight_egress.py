@@ -392,9 +392,16 @@ def test_the_worker_translates_allow_probe_into_the_analyze_path_keyword(
     monkeypatch.setattr(
         library_screen_module,
         "analyze_path",
-        lambda path, **kwargs: seen.append(kwargs) or PreflightResult(
-            type_groups={}, warnings=[], errors=[], total_size=0,
-            truncated=False, total_files=0,
+        lambda path, **kwargs: (
+            seen.append(kwargs)
+            or PreflightResult(
+                type_groups={},
+                warnings=[],
+                errors=[],
+                total_size=0,
+                truncated=False,
+                total_files=0,
+            )
         ),
     )
     run = LibraryScreen._run_library_ingest_preflight.__wrapped__
@@ -573,7 +580,9 @@ def test_policy_check_failure_does_not_log_the_credential_or_query(
     rendered = "\n".join(messages)
     assert rendered, "expected the policy-check-failed line to be logged at all"
     for secret in ("sneaky_user", "hunter2", "SECRET_TOKEN_VALUE", "api_key"):
-        assert secret not in rendered, f"credential/secret leaked into log: {rendered!r}"
+        assert secret not in rendered, (
+            f"credential/secret leaked into log: {rendered!r}"
+        )
     assert "/report" not in rendered, f"URL path leaked into log: {rendered!r}"
     assert _CREDENTIAL_URL not in rendered, f"raw URL leaked into log: {rendered!r}"
     # Still diagnostic: the exception type distinguishes "policy evaluation

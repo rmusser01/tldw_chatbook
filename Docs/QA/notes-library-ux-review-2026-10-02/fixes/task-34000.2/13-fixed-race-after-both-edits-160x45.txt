@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved 13:53 in Notes · ⚠ Sync needs attention · Next: Open Manage sync folders.    │
+│   a  │ Library notes · ⚠ A sync folder needs attention              │  o      ‹ Notes      quotes                                                            │
+│   v  │ Notes (132)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In a synced folder · ⚠ Sync needs attention · /private…quotes.md                  │
+│      │ copy or keep a folder synced, choose Add from files.         │     S                                                                                  │
+│      │                                                              │              Edit           Preview            Info               Save         Use in  │
+│      │ Filter                                                       │                                                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                              │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ quotes                                                                         ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Select                           │                                                                                        │
+│ ---> │    Add from files…     Export     Manage sync folders        │     Keywords                                                                           │
+│      │ Folders & placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     ○ Move note              │     ▊ Comma-separated keywords                                                       ▎ │
+│      │    ○ Remove placement                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │                                                                                        │
+│      │                                                              │<--- Body                                                                               │
+│      │  ▸ Agent_Lessons                                             │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Journal                                                   │     ┃ > The best time to plant a tree was 20 years ago.                              ┃ │
+│      │  ▸ Meetings                                                  │     ┃                                                                                ┃ │
+│      │  ▸ Projects                                                  │     ┃ > Writing is thinking.                                                         ┃ │
+│ ---> │  ▸ Recipes                                                   │     ┃ second edit line and more tail two                                             ┃ │
+│      │  ▸ Research                                                  │     ┃ from the vault                                                                 ┃ │
+│      │  ▸ Study                                                     │     ┃ | riley-app | 1 | app2                                                         ┃ │
+│      │  ▾ VSync  ⚠ Needs attention                                  │     ┃                                                                                ┃ │
+│      │    quotes · now                                              │     ┃                                                                                ┃ │
+│      │    ideas · 5m                                                │     ┃                                                                                ┃ │
+│      │    travel lisbon · 5m                                        │     ┃                                                                                ┃ │
+│      │    meeting 2026-09-30 · 5m                                   │     ┃                                                                                ┃ │
+│      │    books to read · 5m                                        │     ┃                                                                                ┃ │
+│      │    shopping · 5m                                             │     ┃                                                                                ┃ │
+│      │    README.txt · 5m                                           │     ┃                                                                                ┃ │
+│      │    recipe pancakes · 5m                                      │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │    passwords-hint · 5m                                       │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                       32 words · 6:23  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

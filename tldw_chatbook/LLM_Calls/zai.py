@@ -13,17 +13,18 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from tldw_chatbook.Chat.Chat_Deps import (
+from tldw_chatbook.Provider_Contract import (
+    ChatConfigurationError,
     ChatProviderError,
 )
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     ContinuationCall,
     ContinuationRound,
     ContinuationRestoreTarget,
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     parse_provider_continuation_json,
-    validate_continuation_restore,
+    validate_continuation_execution_target,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     ProviderPayloadValidators,
@@ -70,6 +71,9 @@ class ZAIResolution:
     retries: int
     retry_delay: float
     streaming: bool
+
+
+_record_terminal_usage = None  # deferred-import cache (issue #365, ADR-097 boot census)
 
 
 class ZAIFinishPolicy:
@@ -129,7 +133,20 @@ class ZAIStream(Iterator[dict[str, Any]]):
         return self
 
     def __next__(self) -> dict[str, Any]:
-        event = deepcopy(next(self._stream))
+        try:
+            # HostedChatStream hands out a fresh copy per event; mutate in place.
+            event = next(self._stream)
+        except StopIteration:
+            # Session ledger boundary tap (issue #365): terminal-turn usage
+            # records only at natural exhaustion; a consumer Stop skips it
+            # (cancelled streams undercount by policy). Never raises.
+            global _record_terminal_usage
+            if _record_terminal_usage is None:
+                from tldw_chatbook.Chat.session_usage import (
+                    record_stream_terminal_usage as _record_terminal_usage,  # deferred: boot census
+                )
+            _record_terminal_usage(self._stream)
+            raise
         for choice in event.get("choices", ()):
             if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):
                 delta = choice["delta"]
@@ -610,7 +627,12 @@ def _resolve_base_url(explicit: object, settings: Mapping[str, object]) -> str:
     try:
         return normalize_hosted_chat_base_url(candidate, default=_DEFAULT_BASE_URL)
     except ValueError:
-        raise _configuration_error("Z.ai API base URL is invalid.") from None
+        # Status-less: nothing was sent (TASK-41522 review r16cu-rev1).
+        raise ChatConfigurationError(
+            provider="zai",
+            message="Z.ai API base URL is invalid.",
+            status_code=None,
+        ) from None
 
 
 
@@ -748,7 +770,7 @@ def _apply_continuations(
     cursor = 0
     for checkpoint in checkpoints:
         try:
-            validate_continuation_restore(
+            validate_continuation_execution_target(
                 checkpoint,
                 ContinuationRestoreTarget(
                     provider="zai",

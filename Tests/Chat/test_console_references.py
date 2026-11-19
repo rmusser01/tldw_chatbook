@@ -177,6 +177,40 @@ def test_resolver_refuses_binary(tmp_path):
     assert kind == "refused" and "binary" in payload
 
 
+def test_resolver_accepts_cjk_markdown(tmp_path):
+    """TASK-38599: a valid UTF-8 file whose first 8 KB are >30% non-ASCII
+    (CJK) is text, not binary; it must be injected."""
+    body = "# 笔记标题\n" + ("这是一段中文笔记内容，用于验证非 ASCII 文本不会被误判为二进制。\n" * 400)
+    assert len(body.encode("utf-8")) > 8192  # sample window fully covered
+    (tmp_path / "cjk.md").write_text(body, encoding="utf-8")
+    kind, payload, rng = resolve_reference("cjk.md", roots=(tmp_path,))
+    assert kind == "file" and "笔记标题" in payload
+
+
+def test_resolver_accepts_cyrillic_text(tmp_path):
+    """TASK-38599: same for Cyrillic — valid UTF-8 means text at any ratio."""
+    body = "Это плотно не-ASCII кириллический текст. " * 300
+    (tmp_path / "ru.txt").write_text(body, encoding="utf-8")
+    kind, payload, rng = resolve_reference("ru.txt", roots=(tmp_path,))
+    assert kind == "file" and "кириллический" in payload
+
+
+def test_resolver_still_refuses_gif_header_blob(tmp_path):
+    """TASK-38599: the fallback heuristic still refuses actual binary."""
+    blob = b"GIF89a" + bytes(range(256)) * 40
+    (tmp_path / "img.gif").write_bytes(blob)
+    kind, payload, rng = resolve_reference("img.gif", roots=(tmp_path,))
+    assert kind == "refused" and "binary" in payload
+
+
+def test_resolver_still_refuses_null_bytes(tmp_path):
+    """Null bytes remain an immediate binary refusal (they are valid UTF-8,
+    so the decode-first check alone would not catch them)."""
+    (tmp_path / "nul.bin").write_bytes(b"text\x00with\x00nulls" * 10)
+    kind, payload, rng = resolve_reference("nul.bin", roots=(tmp_path,))
+    assert kind == "refused" and "binary" in payload
+
+
 def test_resolver_refuses_oversized(tmp_path):
     (tmp_path / "big.txt").write_text("A" * (MAX_REFERENCE_BYTES + 1))
     kind, payload, rng = resolve_reference("big.txt", roots=(tmp_path,))

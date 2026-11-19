@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_auto_speak import (
     decide_auto_speak,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
         ConsoleTTSDestination,
@@ -79,9 +80,14 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
         width: 68;
         max-width: 95%;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
+    }
+
+    #console-auto-speak-consent-modal Static {
+        color: $text;
     }
 
     #console-auto-speak-consent-actions {
@@ -98,19 +104,43 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
 
     def __init__(
         self,
-        provider_label: str,
-        sanitized_destination: str,
+        provider_label: str | None,
+        sanitized_destination: str | None,
         charges_may_apply: bool,
         *,
         scope_label: str | None = None,
+        hands_free: bool = False,
     ) -> None:
+        """Build the consent.
+
+        Args:
+            provider_label: Who speaks replies. ``None`` (Hands-free only)
+                means no TTS destination resolved: replies are not spoken.
+            sanitized_destination: Where reply text goes. ``None`` (Hands-free
+                only) omits the line; the realtime engine has no TTS URL.
+            charges_may_apply: Whether to warn about provider charges.
+            scope_label: Buddy scope, for the Buddy queue variant.
+            hands_free: TASK-33626.1: ask before Hands-free starts the
+                microphone, naming the same reply-speech provider.
+        """
         super().__init__()
-        self.provider_label = _safe_label(provider_label, fallback="TTS provider")
-        self.sanitized_destination = sanitize_auto_speak_destination(
-            sanitized_destination
+        self.hands_free = hands_free is True
+        self.provider_label = (
+            None
+            if provider_label is None and self.hands_free
+            else _safe_label(provider_label, fallback="TTS provider")
+        )
+        self.sanitized_destination = (
+            None
+            if sanitized_destination is None and self.hands_free
+            else sanitize_auto_speak_destination(sanitized_destination)
         )
         self.charges_may_apply = charges_may_apply is True
-        self.scope_label = _safe_label(scope_label, fallback="the selected Buddy scope") if scope_label is not None else None
+        self.scope_label = (
+            _safe_label(scope_label, fallback="the selected Buddy scope")
+            if scope_label is not None
+            else None
+        )
 
     def __repr__(self) -> str:
         return (
@@ -122,27 +152,48 @@ class AutoSpeakConsentModal(SafeModalDismissMixin, ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-auto-speak-consent-modal"):
-            yield Static("Speak new replies automatically?", markup=False)
             yield Static(
-                f"Provider: {self.provider_label}",
-                id="console-auto-speak-consent-provider",
+                "Turn on Hands-free?"
+                if self.hands_free
+                else "Speak new replies automatically?",
                 markup=False,
             )
-            yield Static(
-                f"Destination: {self.sanitized_destination}",
-                id="console-auto-speak-consent-destination",
-                markup=False,
-            )
+            if self.provider_label is None:
+                yield Static(
+                    "Replies will not be spoken: no TTS destination is "
+                    "available. Review Speech settings.",
+                    id="console-auto-speak-consent-provider",
+                    markup=False,
+                )
+            else:
+                yield Static(
+                    f"Provider: {self.provider_label}",
+                    id="console-auto-speak-consent-provider",
+                    markup=False,
+                )
+            if self.sanitized_destination is not None:
+                yield Static(
+                    f"Destination: {self.sanitized_destination}",
+                    id="console-auto-speak-consent-destination",
+                    markup=False,
+                )
             if self.charges_may_apply:
                 yield Static(
                     "Provider charges may apply.",
                     id="console-auto-speak-consent-charges",
                     markup=False,
                 )
-            yield Static(
-                (f"Buddy will speak queued updates for {self.scope_label}." if self.scope_label is not None else "Only new replies in this conversation will be spoken."),
-                markup=False,
-            )
+            if self.hands_free:
+                scope_copy = (
+                    "Hands-free listens on your microphone, sends what you say "
+                    "after a pause, and speaks each reply in this conversation. "
+                    "Esc exits."
+                )
+            elif self.scope_label is not None:
+                scope_copy = f"Buddy will speak queued updates for {self.scope_label}."
+            else:
+                scope_copy = "Only new replies in this conversation will be spoken."
+            yield Static(scope_copy, markup=False)
             with Horizontal(id="console-auto-speak-consent-actions"):
                 yield Button("Cancel", id="console-auto-speak-consent-cancel")
                 yield Button(
@@ -173,13 +224,13 @@ class ConsoleAutoSpeakCoordinator:
         self,
         *,
         store_accessor: Callable[[], ConsoleChatStore],
-        resolve_destination: Callable[[str | None, object | None], Awaitable[ConsoleTTSDestination | None]],
+        resolve_destination: Callable[
+            [str | None, object | None], Awaitable[ConsoleTTSDestination | None]
+        ],
         issue_message_speech: Callable[
             [str, Callable[[bool], None], str | None, bool], Awaitable[bool]
         ],
-        open_consent: Callable[
-            [AutoSpeakConsentModal, Callable[[bool], None]], None
-        ],
+        open_consent: Callable[[AutoSpeakConsentModal, Callable[[bool], None]], None],
         hands_free_active: Callable[[], bool],
         sync_controls: Callable[[bool, bool, bool], None],
         notify: Callable[[str, str], None],
@@ -198,13 +249,12 @@ class ConsoleAutoSpeakCoordinator:
         self._modal_generation = 0
         self._modal_open = False
         self._modal_callback_consumed = False
+        self._hands_free_modal_generation: int | None = None
         self._operation_generation = 0
         self._enable_operation_generation: int | None = None
         self._next_dispatch_generation = 1
         self._inflight_dispatches: dict[tuple[str, str], tuple[int, int]] = {}
-        self._pending_completions: dict[
-            tuple[str, str], tuple[int, int, int]
-        ] = {}
+        self._pending_completions: dict[tuple[str, str], tuple[int, int, int]] = {}
         self._observed_completion_generations: dict[tuple[str, str], int] = {}
         self.failed_message_ids: dict[str, str] = {}
 
@@ -257,6 +307,20 @@ class ConsoleAutoSpeakCoordinator:
         """
         return self._modal_open and not self._modal_callback_consumed
 
+    @property
+    def hands_free_consent_pending(self) -> bool:
+        """Whether the open, unanswered consent is the Hands-free one.
+
+        TASK-33626.1: the Console keeps a live one-shot capture running under
+        this modal (it suspends the screen, which otherwise abandons the
+        capture), so accepting adopts it as the loop's first turn and
+        declining leaves the dictation as it was.
+        """
+        return (
+            self.modal_result_pending
+            and self._hands_free_modal_generation == self._modal_generation
+        )
+
     def _schedule_work(
         self,
         coroutine: Coroutine[Any, Any, Any],
@@ -299,9 +363,7 @@ class ConsoleAutoSpeakCoordinator:
         if enabled and paused and session is not None and failed_message_id:
             try:
                 retry_available = (
-                    self._store_accessor().session_id_for_message(
-                        failed_message_id
-                    )
+                    self._store_accessor().session_id_for_message(failed_message_id)
                     == session.id
                 )
             except (KeyError, ValueError):
@@ -340,6 +402,97 @@ class ConsoleAutoSpeakCoordinator:
         active_epoch = self._store_accessor().active_session_epoch()
         self._schedule_work(self._disable(generation, active_epoch))
 
+    def request_hands_free_consent(
+        self,
+        on_accepted: Callable[[], None],
+        on_declined: Callable[[], None],
+        *,
+        realtime_label: str | None = None,
+    ) -> bool:
+        """Ask before Hands-free starts, with the consent Speak replies uses.
+
+        TASK-33626.1: Hands-free speaks replies through the same TTS
+        destination, but turning it on started the microphone, audio and the
+        speech-model load with no question. The destination resolves exactly
+        as for Speak replies and shows in the same modal. Nothing persists:
+        each turn-on asks, as Speak replies does.
+
+        Args:
+            on_accepted: Runs once after Enable, while the request is current.
+            on_declined: Runs once otherwise (Cancel, Esc, a conversation
+                switch, or a modal that could not open).
+            realtime_label: Provider label when the realtime engine will run;
+                its replies come from that provider, not the TTS destination.
+
+        Returns:
+            False when no consent was raised (not mounted, no conversation,
+            or another speech question is open); neither callback runs.
+        """
+        if (
+            not self._mounted
+            or self._modal_open
+            or self._enable_operation_generation is not None
+        ):
+            return False
+        session = self._active_session()
+        if session is None:
+            return False
+        generation = self._reserve_operation()
+        active_epoch = self._store_accessor().active_session_epoch()
+        return self._schedule_work(
+            self._show_hands_free_consent(
+                session, generation, active_epoch, on_accepted, on_declined,
+                realtime_label,
+            ),
+            on_rejected=on_declined,
+        )
+
+    async def _show_hands_free_consent(
+        self,
+        session,
+        generation: int,
+        active_epoch: int,
+        on_accepted: Callable[[], None],
+        on_declined: Callable[[], None],
+        realtime_label: str | None,
+    ) -> None:
+        if realtime_label is not None:
+            provider, destination_copy, charges = realtime_label, None, True
+        else:
+            destination = await self._current_destination(
+                session, generation, active_epoch
+            )
+            provider = getattr(destination, "provider_label", None)
+            destination_copy = getattr(destination, "sanitized_destination", None)
+            charges = bool(getattr(destination, "charges_may_apply", False))
+        if not self._operation_is_current(generation, session.id, active_epoch):
+            on_declined()
+            return
+        modal_generation = self._begin_modal()
+        self._hands_free_modal_generation = modal_generation
+
+        async def finish(accepted: bool) -> None:
+            self._finish_modal(modal_generation)
+            if accepted and self._operation_is_current(
+                generation, session.id, active_epoch
+            ):
+                on_accepted()
+            else:
+                on_declined()
+
+        self._open_modal(
+            AutoSpeakConsentModal(
+                provider, destination_copy, charges, hands_free=True
+            ),
+            self._modal_callback(modal_generation, finish),
+            modal_generation=modal_generation,
+            operation_generation=generation,
+            active_epoch=active_epoch,
+            session_id=session.id,
+        )
+        if not self._modal_open:
+            on_declined()
+
     def request_resume(self) -> None:
         """Persistently resume auto-speak after a speech failure."""
         if not self._mounted:
@@ -376,10 +529,7 @@ class ConsoleAutoSpeakCoordinator:
             )
         except KeyError:
             return
-        if (
-            completion_generation
-            <= self._observed_completion_generations.get(token, 0)
-        ):
+        if completion_generation <= self._observed_completion_generations.get(token, 0):
             return
         self._observed_completion_generations[token] = completion_generation
         if self._modal_open:
@@ -481,9 +631,7 @@ class ConsoleAutoSpeakCoordinator:
             generation, session.id, active_epoch
         ):
             return
-        _session, persisted = self._store_accessor().set_auto_speak(
-            session.id, False
-        )
+        _session, persisted = self._store_accessor().set_auto_speak(session.id, False)
         if self._operation_is_current(generation, session.id, active_epoch):
             if not persisted:
                 self._notify(
@@ -499,17 +647,13 @@ class ConsoleAutoSpeakCoordinator:
         active_epoch: int,
     ) -> None:
         try:
-            if not self._operation_is_current(
-                generation, session_id, active_epoch
-            ):
+            if not self._operation_is_current(generation, session_id, active_epoch):
                 return
             session = self._active_session()
             destination = await self._current_destination(
                 session, generation, active_epoch
             )
-            if not self._operation_is_current(
-                generation, session_id, active_epoch
-            ):
+            if not self._operation_is_current(generation, session_id, active_epoch):
                 return
             if destination is None:
                 self._notify(
@@ -636,11 +780,8 @@ class ConsoleAutoSpeakCoordinator:
                         )
                     return
                 _session, persisted = store.set_auto_speak(session_id, True)
-                if (
-                    not persisted
-                    and self._operation_is_current(
-                        operation_generation, session_id, active_epoch
-                    )
+                if not persisted and self._operation_is_current(
+                    operation_generation, session_id, active_epoch
                 ):
                     self._notify(
                         "Speak replies could not be enabled. Try again.",
@@ -677,12 +818,9 @@ class ConsoleAutoSpeakCoordinator:
         disposition, destination, preference_epoch = await self._disposition(
             token, operation_generation, active_epoch
         )
-        if (
-            not self._operation_is_current(
-                operation_generation, token[0], active_epoch
-            )
-            or not self._completion_is_current(token, completion_generation)
-        ):
+        if not self._operation_is_current(
+            operation_generation, token[0], active_epoch
+        ) or not self._completion_is_current(token, completion_generation):
             return
         if disposition is AutoSpeakDisposition.SPEAK:
             await self._dispatch(
@@ -780,9 +918,7 @@ class ConsoleAutoSpeakCoordinator:
                     or not self._operation_is_current(
                         operation_generation, token[0], active_epoch
                     )
-                    or not self._completion_is_current(
-                        token, completion_generation
-                    )
+                    or not self._completion_is_current(token, completion_generation)
                 ):
                     return
                 store = self._store_accessor()
@@ -850,12 +986,9 @@ class ConsoleAutoSpeakCoordinator:
         expected_preference_epoch: int | None = None,
         revalidated: bool = False,
     ) -> None:
-        if (
-            not self._operation_is_current(
-                operation_generation, token[0], active_epoch
-            )
-            or not self._completion_is_current(token, completion_generation)
-        ):
+        if not self._operation_is_current(
+            operation_generation, token[0], active_epoch
+        ) or not self._completion_is_current(token, completion_generation):
             return
         inflight = self._inflight_dispatches.get(token)
         if inflight is not None:
@@ -877,9 +1010,7 @@ class ConsoleAutoSpeakCoordinator:
                 or not self._operation_is_current(
                     operation_generation, token[0], active_epoch
                 )
-                or not self._completion_is_current(
-                    token, completion_generation
-                )
+                or not self._completion_is_current(token, completion_generation)
             ):
                 return
         if destination is None:
@@ -962,9 +1093,7 @@ class ConsoleAutoSpeakCoordinator:
         session_id, message_id = token
         try:
             session = next(
-                session
-                for session in store.sessions()
-                if session.id == session_id
+                session for session in store.sessions() if session.id == session_id
             )
             if store.speech_preference_epoch(session_id) != preference_epoch:
                 return
@@ -1046,8 +1175,7 @@ class ConsoleAutoSpeakCoordinator:
         if (
             current_preferences.auto_speak is not True
             or current_preferences.paused is not True
-            or current_preferences.consent_destination
-            != destination.fingerprint
+            or current_preferences.consent_destination != destination.fingerprint
         ):
             return
 
@@ -1063,8 +1191,7 @@ class ConsoleAutoSpeakCoordinator:
                 return (
                     active is not None
                     and active.id == session_id
-                    and store.speech_preference_epoch(session_id)
-                    == preference_epoch
+                    and store.speech_preference_epoch(session_id) == preference_epoch
                     and self.failed_message_ids.get(session_id) == message_id
                     and active.speech_preferences.auto_speak is True
                     and active.speech_preferences.paused is True

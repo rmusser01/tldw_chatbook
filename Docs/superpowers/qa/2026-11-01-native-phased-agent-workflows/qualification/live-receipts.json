@@ -1,0 +1,1841 @@
+[
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 18,
+    "frozen_driver": {
+      "bytes": 27137,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-media-diagnostic.py",
+      "sha256": "0bcd10ed1a6832a91ae6bc8432991e353324c25cb36a600c8b832ff79976dd46"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8328,
+        "gzip_sha256": "5b3c2b53c59cca915dbb7ae8dd495416629eeae38dfb0e404956d34b1c4fad08",
+        "source_sha256": "23f4fbae0a55eacce9d9cc334257faf643b33be47c45bc3bb6c5440306f8a24e"
+      },
+      "pre.json": {
+        "count": 8328,
+        "gzip_sha256": "5b3c2b53c59cca915dbb7ae8dd495416629eeae38dfb0e404956d34b1c4fad08",
+        "source_sha256": "23f4fbae0a55eacce9d9cc334257faf643b33be47c45bc3bb6c5440306f8a24e"
+      }
+    },
+    "name": "inspect1",
+    "outcomes": [
+      {
+        "event": "restart-inert",
+        "pid": 768,
+        "results": 3,
+        "spend": {
+          "child_launch": 3,
+          "generation": 5,
+          "model_call": 10,
+          "tokens": 21959
+        },
+        "status": "completed",
+        "time": 1793853720.138004
+      },
+      {
+        "event": "completed-history-inert",
+        "pid": 768,
+        "result_count": 3,
+        "spend": {
+          "child_launch": 3,
+          "generation": 5,
+          "model_call": 10,
+          "tokens": 21959
+        },
+        "time": 1793853720.1381068
+      },
+      {
+        "event": "original-media-after-executor-join",
+        "handles": [],
+        "operations": [],
+        "pid": 768,
+        "time": 1793853720.607641
+      },
+      {
+        "event": "monitor-released",
+        "pid": 768,
+        "time": 1793853720.607821
+      },
+      {
+        "event": "creators-returned",
+        "pid": 768,
+        "time": 1793853720.610804
+      }
+    ],
+    "pid": 768,
+    "primary": 0,
+    "seconds": 8.498600959777832,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 360,
+    "event_count": 23,
+    "frozen_driver": {
+      "bytes": 27809,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-media-diagnostic.py",
+      "sha256": "cc870400bd8281710ac25df173068ed2d9151fa1e59e9cc91614bfba8970e7d4"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8328,
+        "gzip_sha256": "9a7958bc53bae417c4cecc7e8c917ff655c4606f17906cea3159b44be9b7dd04",
+        "source_sha256": "d921e1cd62c3e26cecb1c70a088c6ba04d2cdd97d9102304b381ed04df77117d"
+      },
+      "pre.json": {
+        "count": 8328,
+        "gzip_sha256": "9a7958bc53bae417c4cecc7e8c917ff655c4606f17906cea3159b44be9b7dd04",
+        "source_sha256": "d921e1cd62c3e26cecb1c70a088c6ba04d2cdd97d9102304b381ed04df77117d"
+      }
+    },
+    "name": "inspect2",
+    "outcomes": [
+      {
+        "event": "restart-inert",
+        "pid": 2118,
+        "results": 3,
+        "spend": {
+          "child_launch": 3,
+          "generation": 5,
+          "model_call": 10,
+          "tokens": 21959
+        },
+        "status": "completed",
+        "time": 1793853788.145888
+      },
+      {
+        "event": "completed-history-inert",
+        "pid": 2118,
+        "result_count": 3,
+        "spend": {
+          "child_launch": 3,
+          "generation": 5,
+          "model_call": 10,
+          "tokens": 21959
+        },
+        "time": 1793853788.146197
+      },
+      {
+        "event": "original-media-after-executor-join",
+        "handles": [
+          {
+            "connection": 4661560912,
+            "lease_live": true,
+            "thread": "asyncio_2",
+            "thread_alive": false
+          }
+        ],
+        "operations": [],
+        "pid": 2118,
+        "time": 1793853850.014184
+      },
+      {
+        "event": "monitor-released",
+        "pid": 2118,
+        "time": 1793853850.014411
+      },
+      {
+        "event": "creator-refused",
+        "kind": "AssertionError",
+        "pid": 2118,
+        "reason": "{'fixture_creator_not_settled': 'db.media.primary', 'participant_closed': False, 'handles': [{'thread': 'asyncio_2', 'transaction': False, 'live_lease': True}]}",
+        "time": 1793853850.0146
+      }
+    ],
+    "pid": 2118,
+    "primary": 1,
+    "seconds": 70.31759905815125,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 24,
+    "frozen_driver": {
+      "bytes": 27809,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-media-diagnostic.py",
+      "sha256": "cc870400bd8281710ac25df173068ed2d9151fa1e59e9cc91614bfba8970e7d4"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8328,
+        "gzip_sha256": "4f02c91a1ddb08a2bb88e96803e8626fdad9eafcb4bc610d2df213a9b92e50d5",
+        "source_sha256": "a8790385b59ec83cb9d03284e0edeb1b030726bb6a27b5c3a4642fbadfd8bad3"
+      },
+      "pre.json": {
+        "count": 8328,
+        "gzip_sha256": "4f02c91a1ddb08a2bb88e96803e8626fdad9eafcb4bc610d2df213a9b92e50d5",
+        "source_sha256": "a8790385b59ec83cb9d03284e0edeb1b030726bb6a27b5c3a4642fbadfd8bad3"
+      }
+    },
+    "name": "inspect3",
+    "outcomes": [
+      {
+        "event": "restart-inert",
+        "pid": 17441,
+        "results": 3,
+        "spend": {
+          "child_launch": 3,
+          "generation": 5,
+          "model_call": 10,
+          "tokens": 21959
+        },
+        "status": "completed",
+        "time": 1793854171.4956632
+      },
+      {
+        "event": "completed-history-inert",
+        "pid": 17441,
+        "result_count": 3,
+        "spend": {
+          "child_launch": 3,
+          "generation": 5,
+          "model_call": 10,
+          "tokens": 21959
+        },
+        "time": 1793854171.4959118
+      },
+      {
+        "event": "original-media-after-executor-join",
+        "handles": [],
+        "operations": [],
+        "pid": 17441,
+        "time": 1793854229.050076
+      },
+      {
+        "event": "monitor-released",
+        "pid": 17441,
+        "time": 1793854229.050312
+      },
+      {
+        "event": "creators-returned",
+        "pid": 17441,
+        "time": 1793854229.053628
+      }
+    ],
+    "pid": 17441,
+    "primary": 0,
+    "seconds": 87.78776717185974,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 360,
+    "event_count": 0,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "222697f8e5e203bf8f7b8dfffcfc2f5ff72adef4d22d9200d64f247d13750557",
+        "source_sha256": "e762b07046e1e2df307282276d510a097a5ace3af53b4b1223c10374204ae768"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "222697f8e5e203bf8f7b8dfffcfc2f5ff72adef4d22d9200d64f247d13750557",
+        "source_sha256": "e762b07046e1e2df307282276d510a097a5ace3af53b4b1223c10374204ae768"
+      }
+    },
+    "name": "plan1",
+    "outcomes": [],
+    "pid": 2165,
+    "primary": 1,
+    "seconds": 39.928436040878296,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 21,
+    "frozen_driver": {
+      "bytes": 24642,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+      "sha256": "cb0a8f36328b36db85834b17fb2fcd0c0366d2cfcd5b681aaebeced45670a356"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8327,
+        "gzip_sha256": "83d2df10aa6f7f75b47e0a41c0ad4f07a376a9b38c286ee899163ea098d39a1b",
+        "source_sha256": "80903331e77f0b56669241ab6dd49fc539df67cf20404d6f71dee62ab4803e34"
+      },
+      "pre.json": {
+        "count": 8327,
+        "gzip_sha256": "83d2df10aa6f7f75b47e0a41c0ad4f07a376a9b38c286ee899163ea098d39a1b",
+        "source_sha256": "80903331e77f0b56669241ab6dd49fc539df67cf20404d6f71dee62ab4803e34"
+      }
+    },
+    "name": "plan10",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 91648,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4794
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793853343.5062149,
+        "workflow": "27061b38-fb42-4f92-ba75-79b1a4ec3931"
+      },
+      {
+        "event": "monitor-released",
+        "pid": 91648,
+        "time": 1793853344.2980402
+      },
+      {
+        "event": "creators-returned",
+        "pid": 91648,
+        "time": 1793853344.304461
+      }
+    ],
+    "pid": 91648,
+    "primary": 0,
+    "seconds": 37.32993721961975,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 360,
+    "event_count": 3,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "dbfcd7c880260059780ac21281b8c880c4b931ca1ba0a130a0efa3100e5e0d99",
+        "source_sha256": "7c5806ec33e480a9e9da873b497efa287c850d76cd4d7a0abd05fe1836db5cf7"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "dbfcd7c880260059780ac21281b8c880c4b931ca1ba0a130a0efa3100e5e0d99",
+        "source_sha256": "7c5806ec33e480a9e9da873b497efa287c850d76cd4d7a0abd05fe1836db5cf7"
+      }
+    },
+    "name": "plan2",
+    "outcomes": [],
+    "pid": 4656,
+    "primary": 1,
+    "seconds": 38.024933099746704,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 360,
+    "event_count": 12,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "084124b0bb3f3f1d34702a4330de818d5dccb494d0b61bf688a517ea377cb50e",
+        "source_sha256": "8696e7a25d3e299a366056a94d479605e223319159718ad20d0675b8b211f5fe"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "084124b0bb3f3f1d34702a4330de818d5dccb494d0b61bf688a517ea377cb50e",
+        "source_sha256": "8696e7a25d3e299a366056a94d479605e223319159718ad20d0675b8b211f5fe"
+      }
+    },
+    "name": "plan3",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 7141,
+        "plans": 0,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 2,
+          "tokens": 15100
+        },
+        "status": "awaiting_plan",
+        "time": 1793849375.431813,
+        "workflow": "65555e0b-ab3d-48b3-87ee-e63fc08d90ff"
+      }
+    ],
+    "pid": 7141,
+    "primary": 1,
+    "seconds": 202.43012404441833,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 360,
+    "event_count": 6,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "d3410bb80a80d7d1a4ce5037392e44d3a5ed6a5d6215767376553e52d5fc9282",
+        "source_sha256": "4df7635946cca4c581054643c8c1edf0c5dd18f69ec86d6c0cc9b32063769b75"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "d3410bb80a80d7d1a4ce5037392e44d3a5ed6a5d6215767376553e52d5fc9282",
+        "source_sha256": "4df7635946cca4c581054643c8c1edf0c5dd18f69ec86d6c0cc9b32063769b75"
+      }
+    },
+    "name": "plan4",
+    "outcomes": [
+      {
+        "event": "creators-returned",
+        "pid": 19387,
+        "time": 1793849552.43496
+      }
+    ],
+    "pid": 19387,
+    "primary": 1,
+    "seconds": 18.354761838912964,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 20,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "27ff647238dd00c97ab44c7631ed3e58e1c693675914158877276ff75f1f74ec",
+        "source_sha256": "e47f386d254351028e5cdd69f28dea3f76b375d158a6a69071751b35866bd70c"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "27ff647238dd00c97ab44c7631ed3e58e1c693675914158877276ff75f1f74ec",
+        "source_sha256": "e47f386d254351028e5cdd69f28dea3f76b375d158a6a69071751b35866bd70c"
+      }
+    },
+    "name": "plan5",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 20637,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4806
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793849655.9101539,
+        "workflow": "5520aad0-2605-414b-bd71-20117aedf417"
+      },
+      {
+        "event": "creators-returned",
+        "pid": 20637,
+        "time": 1793849656.6651251
+      }
+    ],
+    "pid": 20637,
+    "primary": 0,
+    "seconds": 32.54833006858826,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 20,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "0d1ac9f3ca60d1a109eaedbfbdeea75b25f4d7d5d0c67bc03f6dfedccdddd53a",
+        "source_sha256": "12acee985b0490a2b182e038db441d2847793f66a2ffde31ca583bc0589c3640"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "0d1ac9f3ca60d1a109eaedbfbdeea75b25f4d7d5d0c67bc03f6dfedccdddd53a",
+        "source_sha256": "12acee985b0490a2b182e038db441d2847793f66a2ffde31ca583bc0589c3640"
+      }
+    },
+    "name": "plan6",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 31600,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4796
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793850452.4652102,
+        "workflow": "23de818d-2534-4d9d-9658-c365f1528421"
+      },
+      {
+        "event": "creators-returned",
+        "pid": 31600,
+        "time": 1793850453.033851
+      }
+    ],
+    "pid": 31600,
+    "primary": 0,
+    "seconds": 31.261160373687744,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 20,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "a46ebcbca32b21e249f4444d1c536227ece45d77907f344e8b4472bb4c0058d8",
+        "source_sha256": "ab79dcc14ed816b8671a078609d5ceeff41ee0403e1da70c5f383170709ac533"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "a46ebcbca32b21e249f4444d1c536227ece45d77907f344e8b4472bb4c0058d8",
+        "source_sha256": "ab79dcc14ed816b8671a078609d5ceeff41ee0403e1da70c5f383170709ac533"
+      }
+    },
+    "name": "plan7",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 34900,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4787
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793850762.479757,
+        "workflow": "ba84ac8a-d3bc-4327-8b12-8cbdd07f130a"
+      },
+      {
+        "event": "creators-returned",
+        "pid": 34900,
+        "time": 1793850763.2985542
+      }
+    ],
+    "pid": 34900,
+    "primary": 0,
+    "seconds": 37.95111918449402,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 20,
+    "frozen_driver": {
+      "bytes": 23161,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+      "sha256": "d237b40c95adc481aa4a7c42da78d0800fc5ebd05d59cfdcb93dc14999172f83"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "41371293ee2aa3966ebef0cb89af187c404405c593b82769e23d4b7051c33ee0",
+        "source_sha256": "06e158c3d90f40d692b1588bb3cacaa362959e439ec31c503728d7fb6ecddca8"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "41371293ee2aa3966ebef0cb89af187c404405c593b82769e23d4b7051c33ee0",
+        "source_sha256": "06e158c3d90f40d692b1588bb3cacaa362959e439ec31c503728d7fb6ecddca8"
+      }
+    },
+    "name": "plan8",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 38507,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4793
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793851036.2499242,
+        "workflow": "961dfe2c-71eb-47a4-b54b-bbf3228c122c"
+      },
+      {
+        "event": "creators-returned",
+        "pid": 38507,
+        "time": 1793851036.959765
+      }
+    ],
+    "pid": 38507,
+    "primary": 0,
+    "seconds": 33.999836921691895,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 20,
+    "frozen_driver": {
+      "bytes": 23486,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+      "sha256": "a2ecfd89e5c34710314c08c197e3a3c2d6ec24e5176bc03831a486f2f6997512"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "2b83600802f591476e023eae41b4d40fbac391eb1502e68c7f782dff14be7f23",
+        "source_sha256": "662840bd3fded400da9168e4bae6daa691a3d8d3f8fcd049b2b6d53832c46488"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "2b83600802f591476e023eae41b4d40fbac391eb1502e68c7f782dff14be7f23",
+        "source_sha256": "662840bd3fded400da9168e4bae6daa691a3d8d3f8fcd049b2b6d53832c46488"
+      }
+    },
+    "name": "plan9",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 42144,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4792
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793851310.5926678,
+        "workflow": "e8ba8b5f-c206-416a-adf8-037895752410"
+      },
+      {
+        "event": "creators-returned",
+        "pid": 42144,
+        "time": 1793851311.435328
+      }
+    ],
+    "pid": 42144,
+    "primary": 0,
+    "seconds": 36.25535535812378,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 360,
+    "event_count": 1,
+    "frozen_driver": {
+      "bytes": 25628,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+      "sha256": "f627bca2534a17c3135cdf11b9544d60e3d16b6423a21a977b39bc8d22911157"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8327,
+        "gzip_sha256": "c710658d0041e2db75910d35520094c77b06dc79cd08b62f5181a08c211b5842",
+        "source_sha256": "a686f01768cd2034d8d2ef85f91b184fd07b06ae57c101914b8b5bf597828fc2"
+      },
+      "pre.json": {
+        "count": 8327,
+        "gzip_sha256": "c710658d0041e2db75910d35520094c77b06dc79cd08b62f5181a08c211b5842",
+        "source_sha256": "a686f01768cd2034d8d2ef85f91b184fd07b06ae57c101914b8b5bf597828fc2"
+      }
+    },
+    "name": "read1",
+    "outcomes": [
+      {
+        "event": "creators-returned",
+        "pid": 58454,
+        "time": 1793851820.143994
+      }
+    ],
+    "pid": 58454,
+    "primary": 1,
+    "seconds": 4.798314809799194,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 360,
+    "event_count": 44,
+    "frozen_driver": {
+      "bytes": 26262,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+      "sha256": "291390166ebfe3f59620e24a2ae079a045bc8b5482ddc649e5996513494107cb"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8327,
+        "gzip_sha256": "2a7d8ac63d697fb48d33a8959775763397f9c79723b78ec39feeed21020f7133",
+        "source_sha256": "ff7c8f0ddaf4e96c7471f93283d03d143d039d6cb7240537c57f0e68a9bc67ff"
+      },
+      "pre.json": {
+        "count": 8327,
+        "gzip_sha256": "f517804ab9e7b218f5591ba518a2551ed07c18631eab47a60d0fc8095e421806",
+        "source_sha256": "cf1080403455418f81c781e57412b4b078aad9c96b29124a43af4a556914932b"
+      }
+    },
+    "name": "read2",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 60033,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4083
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793851931.707662,
+        "workflow": "f705d137-066e-4aaf-a53b-2726bd109f62"
+      },
+      {
+        "event": "stage-failed",
+        "kind": "TimeoutError",
+        "label": "native diagnostic read",
+        "message": "",
+        "pid": 60033,
+        "screen": "ConsoleWorkflowStatus",
+        "time": 1793851986.8964522
+      },
+      {
+        "event": "stop-after-stage-failure",
+        "label": "native diagnostic read",
+        "pid": 60033,
+        "time": 1793851987.58023
+      },
+      {
+        "event": "monitor-released",
+        "pid": 60033,
+        "time": 1793851987.8096561
+      },
+      {
+        "event": "creator-refused",
+        "kind": "AssertionError",
+        "pid": 60033,
+        "reason": "{'fixture_creator_not_settled': 'db.media.primary', 'participant_closed': False, 'handles': [{'thread': 'asyncio_1', 'transaction': False, 'live_lease': True}]}",
+        "time": 1793851987.810339
+      }
+    ],
+    "pid": 60033,
+    "primary": 1,
+    "seconds": 87.90664291381836,
+    "source_deltas": [
+      "Tests/Chat/test_workflow_native_journeys.py"
+    ]
+  },
+  {
+    "actual_wait": 1,
+    "bound": 360,
+    "event_count": 51,
+    "frozen_driver": {
+      "bytes": 27419,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+      "sha256": "8ee4d87a615990522fff2bc4ec0436af67d86f6fdfc60584530bdccff6e6f44c"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8327,
+        "gzip_sha256": "1722277fd6cbb6c43381744a96e26e2a6c36bc21bda352664b97a0138d30bdab",
+        "source_sha256": "e78b8d13052f09f5f32990dcc0d77332c6cb8e35fe63ce2e56de0db803dd988a"
+      },
+      "pre.json": {
+        "count": 8327,
+        "gzip_sha256": "1722277fd6cbb6c43381744a96e26e2a6c36bc21bda352664b97a0138d30bdab",
+        "source_sha256": "e78b8d13052f09f5f32990dcc0d77332c6cb8e35fe63ce2e56de0db803dd988a"
+      }
+    },
+    "name": "read3",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 66029,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4049
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793852190.249184,
+        "workflow": "01f534da-7811-4977-ad47-f42b0d31a071"
+      },
+      {
+        "event": "stage-failed",
+        "kind": "TimeoutError",
+        "label": "native diagnostic read",
+        "message": "",
+        "pid": 66029,
+        "screen": "ConsoleWorkflowStatus",
+        "time": 1793852245.438457
+      },
+      {
+        "event": "stop-after-stage-failure",
+        "label": "native diagnostic read",
+        "pid": 66029,
+        "time": 1793852246.050648
+      },
+      {
+        "event": "monitor-released",
+        "pid": 66029,
+        "time": 1793852246.246929
+      },
+      {
+        "event": "creator-refused",
+        "kind": "AssertionError",
+        "pid": 66029,
+        "reason": "{'fixture_creator_not_settled': 'db.media.primary', 'participant_closed': False, 'handles': [{'thread': 'asyncio_6', 'transaction': False, 'live_lease': True}]}",
+        "time": 1793852246.247137
+      }
+    ],
+    "pid": 66029,
+    "primary": 1,
+    "seconds": 85.23330307006836,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 51,
+    "frozen_driver": {
+      "bytes": 28951,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+      "sha256": "21225ff682e0a37880d859f45ce9cbbcd0de7fecb2c23fa1e1c45662c92eafb4"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8327,
+        "gzip_sha256": "9326a973347a58d054dd2f0b04efae3b263becf403e57dc5248ce73276c6a0ae",
+        "source_sha256": "82eb5e6d8497ee8ce1963016994907fa13750fa11ef91bc3d377e85c87fc8a55"
+      },
+      "pre.json": {
+        "count": 8327,
+        "gzip_sha256": "9326a973347a58d054dd2f0b04efae3b263becf403e57dc5248ce73276c6a0ae",
+        "source_sha256": "82eb5e6d8497ee8ce1963016994907fa13750fa11ef91bc3d377e85c87fc8a55"
+      }
+    },
+    "name": "read4",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 70022,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4066
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793852361.712103,
+        "workflow": "4da62cc5-1d57-4ffb-9e3b-c9950875d3f5"
+      },
+      {
+        "event": "read-probe-result",
+        "pid": 70022,
+        "result": {
+          "attempt_id": "6ea5629b46184b93ad0fc41ee6639f83",
+          "checks": [],
+          "handoff": "The read was refused by the environment with the error:\n\n`ERROR: automatic tool call refused: workflow_task_effectful_hooks_unsupported`\n\nI was unable to read `value.txt` from `folder-a4dd71d51cf6` because the tool call was blocked before execution. No files were modified.\n\nIf you'd like, I can retry the read, or you can grant the session the necessary authority to proceed.",
+          "run_id": "42f8e0ec892c45ec8ab7ab48b5dfc687",
+          "status": "completed",
+          "summary": "The read was refused by the environment with the error:\n\n`ERROR: automatic tool call refused: workflow_task_effectful_hooks_unsupported`\n\nI was unable to read `value.txt` from `folder-a4dd71d51cf6` because the tool call was blocked before execution. No files were modified.\n\nIf you'd like, I can retry the read, or you can grant the session the necessary authority to proceed.",
+          "workflow_id": "4da62cc5-1d57-4ffb-9e3b-c9950875d3f5"
+        },
+        "time": 1793852371.739518
+      },
+      {
+        "event": "monitor-released",
+        "pid": 70022,
+        "time": 1793852372.8424032
+      },
+      {
+        "event": "creators-returned",
+        "pid": 70022,
+        "time": 1793852372.846356
+      }
+    ],
+    "pid": 70022,
+    "primary": 0,
+    "seconds": 39.183330059051514,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 360,
+    "event_count": 95,
+    "frozen_driver": {
+      "bytes": 30885,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+      "sha256": "1b6d77341b8b6b31f558c2ad85b912dd53a11fa0834f5e7114d7bda9eaf2815b"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8327,
+        "gzip_sha256": "efddaad2b99d789ef731a4dd97fd3fb953a190d471c2c592bbbbee9aefdd4a39",
+        "source_sha256": "423c1b5937dfd764b06a0a1e2e7c5d570f2910d58f365c85b33ad9c9effadba6"
+      },
+      "pre.json": {
+        "count": 8327,
+        "gzip_sha256": "efddaad2b99d789ef731a4dd97fd3fb953a190d471c2c592bbbbee9aefdd4a39",
+        "source_sha256": "423c1b5937dfd764b06a0a1e2e7c5d570f2910d58f365c85b33ad9c9effadba6"
+      }
+    },
+    "name": "read5",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 79896,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4058
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793852741.7931688,
+        "workflow": "5279df8f-c978-45fb-8a41-2f764bb7d709"
+      },
+      {
+        "event": "stage-failed",
+        "kind": "TimeoutError",
+        "label": "native diagnostic read",
+        "message": "",
+        "pid": 79896,
+        "screen": "ConsoleWorkflowStatus",
+        "time": 1793852796.967424
+      },
+      {
+        "event": "stop-after-stage-failure",
+        "label": "native diagnostic read",
+        "pid": 79896,
+        "time": 1793852797.580857
+      },
+      {
+        "event": "monitor-released",
+        "pid": 79896,
+        "time": 1793852797.855555
+      },
+      {
+        "event": "creator-refused",
+        "kind": "AssertionError",
+        "pid": 79896,
+        "reason": "{'fixture_creator_not_settled': 'db.media.primary', 'participant_closed': False, 'handles': [{'thread': 'asyncio_1', 'transaction': False, 'live_lease': True}]}",
+        "time": 1793852797.855752
+      }
+    ],
+    "pid": 79896,
+    "primary": 1,
+    "seconds": 86.12561297416687,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 0,
+    "bound": 360,
+    "event_count": 133,
+    "frozen_driver": {
+      "bytes": 31275,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+      "sha256": "09148383606a143d68acc78edff0326c4726e860a40f1a0d5284bd55fa310274"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8327,
+        "gzip_sha256": "711d208fdf5e847a889d381ef948453f4b1f5614e43db71c8f9d09b4aa9189b8",
+        "source_sha256": "af38383d7ba536d2cd486ae829f0c134d1c536f0b2d2a5e4be17553d5b54bf0f"
+      },
+      "pre.json": {
+        "count": 8327,
+        "gzip_sha256": "711d208fdf5e847a889d381ef948453f4b1f5614e43db71c8f9d09b4aa9189b8",
+        "source_sha256": "af38383d7ba536d2cd486ae829f0c134d1c536f0b2d2a5e4be17553d5b54bf0f"
+      }
+    },
+    "name": "read6",
+    "outcomes": [
+      {
+        "event": "plan-disposition",
+        "pid": 90020,
+        "plans": 1,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4061
+        },
+        "status": "awaiting_phase_review",
+        "time": 1793853225.006664,
+        "workflow": "6ca68685-f296-44f6-a1f5-a3b1bf094194"
+      },
+      {
+        "event": "read-probe-result",
+        "original_read_success": true,
+        "pid": 90020,
+        "result": {
+          "attempt_id": "b2207f4da89b4b52b86fe8fb42586fb6",
+          "checks": [],
+          "handoff": "The two lines read from value.txt are:\n\n1. `user edit`\n2. `original`",
+          "run_id": "a2397c1597824f3ab3ee1a663d5919fb",
+          "status": "completed",
+          "summary": "The two lines read from value.txt are:\n\n1. `user edit`\n2. `original`",
+          "workflow_id": "6ca68685-f296-44f6-a1f5-a3b1bf094194"
+        },
+        "time": 1793853236.4890938
+      },
+      {
+        "event": "monitor-released",
+        "pid": 90020,
+        "time": 1793853237.826489
+      },
+      {
+        "event": "creators-returned",
+        "pid": 90020,
+        "time": 1793853237.832005
+      }
+    ],
+    "pid": 90020,
+    "primary": 0,
+    "seconds": 40.84732103347778,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 720,
+    "event_count": 5,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "90bf2c261a06accab049154ac278e98b7fe4048e210077a2bf013d193ec9de2b",
+        "source_sha256": "7e2c65f0148ec0a63c597724172bb96103ef0d176d7300b00ae23a912c5571bc"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "90bf2c261a06accab049154ac278e98b7fe4048e210077a2bf013d193ec9de2b",
+        "source_sha256": "7e2c65f0148ec0a63c597724172bb96103ef0d176d7300b00ae23a912c5571bc"
+      }
+    },
+    "name": "restart1",
+    "outcomes": [
+      {
+        "event": "creators-returned",
+        "pid": 22790,
+        "time": 1793849816.717837
+      }
+    ],
+    "pid": 22790,
+    "primary": 1,
+    "seconds": 5.791200876235962,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 720,
+    "event_count": 4,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "be3f0a6f545aecfa8f2c085bc6f43edac588f5a2857edfef27391142f7d87ebe",
+        "source_sha256": "641094a7418815aff6eb301bfb0438921fb18697d0d683e60c38711cdd0c9a55"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "be3f0a6f545aecfa8f2c085bc6f43edac588f5a2857edfef27391142f7d87ebe",
+        "source_sha256": "641094a7418815aff6eb301bfb0438921fb18697d0d683e60c38711cdd0c9a55"
+      }
+    },
+    "name": "restart2",
+    "outcomes": [
+      {
+        "event": "creators-returned",
+        "pid": 25581,
+        "time": 1793849993.793042
+      }
+    ],
+    "pid": 25581,
+    "primary": 1,
+    "seconds": 47.82900094985962,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": -9,
+    "bound": 720,
+    "event_count": 37,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "a46ebcbca32b21e249f4444d1c536227ece45d77907f344e8b4472bb4c0058d8",
+        "source_sha256": "ab79dcc14ed816b8671a078609d5ceeff41ee0403e1da70c5f383170709ac533"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "90bf2c261a06accab049154ac278e98b7fe4048e210077a2bf013d193ec9de2b",
+        "source_sha256": "7e2c65f0148ec0a63c597724172bb96103ef0d176d7300b00ae23a912c5571bc"
+      }
+    },
+    "name": "restart3",
+    "outcomes": [
+      {
+        "event": "restart-inert",
+        "pid": 26888,
+        "results": 0,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4806
+        },
+        "status": "paused",
+        "time": 1793850082.33289
+      },
+      {
+        "checkpoint": {
+          "attempt_id": "34209511e2d14a1daf3279616b80a4b0",
+          "change_review_disclosure": "Existing consented windows only; exclusions, capture failures and concurrent attribution remain governed by Change Review. No per-task diff or rollback guarantee.",
+          "change_window_refs": [],
+          "input_manifest": "d7d4b67c44d9fcc774fad827fc9c5246e8fb4d69b2912512990a5edd93094ea6",
+          "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+          "result_digest": "e412124a60db6af09dfe2f35300afb9c8e723c9b19f5cb763cefc24cd0c81928",
+          "run_id": "df81c2da127a42c596627166bf26ea3f",
+          "submitted_digest": "08644049e6ba1299139c49e1e388b26ae3b86f05084ecb5fa30c3b27ffde0321",
+          "verifiers": [
+            {
+              "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "cleanup_proven": true,
+              "complete": true,
+              "exit_code": 7,
+              "fresh": true,
+              "input_manifest": "d7d4b67c44d9fcc774fad827fc9c5246e8fb4d69b2912512990a5edd93094ea6",
+              "invocation_id": "turn-1-call-0",
+              "output_digest": "5e253af543acda876922e6ea0e60324eefe1c66fc349eebb57251ebff525cc1e",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+              "shell_path": "/bin/bash",
+              "stderr": "",
+              "stdout": "",
+              "verifier_id": "value-check",
+              "verifier_sha256": "33725290e878b5f1c29077b83296f2673583445c2cd9efc8faa462b87ffe0cf4"
+            }
+          ],
+          "workflow_id": "5520aad0-2605-414b-bd71-20117aedf417"
+        },
+        "event": "actual-failed",
+        "pid": 26888,
+        "result": {
+          "attempt_id": "34209511e2d14a1daf3279616b80a4b0",
+          "checks": [
+            {
+              "arguments": [],
+              "exit_code": 7,
+              "id": "value-check",
+              "input_manifest": "d7d4b67c44d9fcc774fad827fc9c5246e8fb4d69b2912512990a5edd93094ea6",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "reason": "native_evidence_unavailable",
+              "status": "failed",
+              "verifier": "value-check"
+            }
+          ],
+          "handoff": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits performed.",
+          "run_id": "df81c2da127a42c596627166bf26ea3f",
+          "status": "failed",
+          "summary": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits performed.",
+          "workflow_id": "5520aad0-2605-414b-bd71-20117aedf417"
+        },
+        "time": 1793850091.727478
+      }
+    ],
+    "pid": 26888,
+    "primary": 124,
+    "seconds": 720.271154165268,
+    "source_deltas": [
+      "Tests/Chat/test_workflow_native_journeys.py",
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py"
+    ]
+  },
+  {
+    "actual_wait": -9,
+    "bound": 720,
+    "event_count": 51,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "41371293ee2aa3966ebef0cb89af187c404405c593b82769e23d4b7051c33ee0",
+        "source_sha256": "06e158c3d90f40d692b1588bb3cacaa362959e439ec31c503728d7fb6ecddca8"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "f1a866b489226b03ca809eabb99d823e7eb4c73c914a27b51c3d371cb5dc38f6",
+        "source_sha256": "c0fc4198cb90f0b887c9201378cf10f92c2c8f7ccd3a8c64ad941b3ac6da946d"
+      }
+    },
+    "name": "restart4",
+    "outcomes": [
+      {
+        "event": "restart-inert",
+        "pid": 32109,
+        "results": 0,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4796
+        },
+        "status": "paused",
+        "time": 1793850477.201222
+      },
+      {
+        "checkpoint": {
+          "attempt_id": "6b9196bf649d49afaf8a8139c43cb957",
+          "change_review_disclosure": "Existing consented windows only; exclusions, capture failures and concurrent attribution remain governed by Change Review. No per-task diff or rollback guarantee.",
+          "change_window_refs": [],
+          "input_manifest": "3b68f391448da847563e9c9211312bd0206c30c0817041cfd2b5756523440672",
+          "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+          "result_digest": "bd13aabfb2874c795d73f853a9bd308bc65c14fb98d4cae2ac020ccdc548f977",
+          "run_id": "54b440775a454effb9c3406aee8d430f",
+          "submitted_digest": "2a2a68d4f85f3df92af8e196b9b079f786ef8df51cb936366bae2988e8f8d9a3",
+          "verifiers": [
+            {
+              "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "cleanup_proven": true,
+              "complete": true,
+              "exit_code": 7,
+              "fresh": true,
+              "input_manifest": "3b68f391448da847563e9c9211312bd0206c30c0817041cfd2b5756523440672",
+              "invocation_id": "turn-1-call-0",
+              "output_digest": "5e253af543acda876922e6ea0e60324eefe1c66fc349eebb57251ebff525cc1e",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+              "shell_path": "/bin/bash",
+              "stderr": "",
+              "stdout": "",
+              "verifier_id": "value-check",
+              "verifier_sha256": "33725290e878b5f1c29077b83296f2673583445c2cd9efc8faa462b87ffe0cf4"
+            }
+          ],
+          "workflow_id": "23de818d-2534-4d9d-9658-c365f1528421"
+        },
+        "event": "actual-failed",
+        "pid": 32109,
+        "result": {
+          "attempt_id": "6b9196bf649d49afaf8a8139c43cb957",
+          "checks": [
+            {
+              "arguments": [],
+              "exit_code": 7,
+              "id": "value-check",
+              "input_manifest": "3b68f391448da847563e9c9211312bd0206c30c0817041cfd2b5756523440672",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "reason": "native_evidence_unavailable",
+              "status": "failed",
+              "verifier": "value-check"
+            }
+          ],
+          "handoff": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits made.",
+          "run_id": "54b440775a454effb9c3406aee8d430f",
+          "status": "failed",
+          "summary": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits made.",
+          "workflow_id": "23de818d-2534-4d9d-9658-c365f1528421"
+        },
+        "time": 1793850486.0903308
+      }
+    ],
+    "pid": 32109,
+    "primary": 124,
+    "seconds": 720.2927210330963,
+    "source_deltas": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py"
+    ]
+  },
+  {
+    "actual_wait": -9,
+    "bound": 720,
+    "event_count": 47,
+    "frozen_driver": null,
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "2b83600802f591476e023eae41b4d40fbac391eb1502e68c7f782dff14be7f23",
+        "source_sha256": "662840bd3fded400da9168e4bae6daa691a3d8d3f8fcd049b2b6d53832c46488"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "a46ebcbca32b21e249f4444d1c536227ece45d77907f344e8b4472bb4c0058d8",
+        "source_sha256": "ab79dcc14ed816b8671a078609d5ceeff41ee0403e1da70c5f383170709ac533"
+      }
+    },
+    "name": "restart5",
+    "outcomes": [
+      {
+        "event": "restart-inert",
+        "pid": 35796,
+        "results": 0,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4787
+        },
+        "status": "paused",
+        "time": 1793850830.781535
+      },
+      {
+        "checkpoint": {
+          "attempt_id": "14ffbdf2cfdf4cbcb94a25f1af33e23d",
+          "change_review_disclosure": "Existing consented windows only; exclusions, capture failures and concurrent attribution remain governed by Change Review. No per-task diff or rollback guarantee.",
+          "change_window_refs": [],
+          "input_manifest": "b5abae6d6eacfbc6fd7c60ec0c1db7d2f1e7a8b5e918e346439281f7bd0f77ca",
+          "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+          "result_digest": "be645d60613d12288469253f5c5a6b6624250390a3d1a2f59777f6be640117e7",
+          "run_id": "8b10eff11dfa44e7a0aee5538bf8b509",
+          "submitted_digest": "0628eca6d0c79a319a0e0ea6501758121e4702eb1a7a2bb13a440d92b6de039e",
+          "verifiers": [
+            {
+              "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "cleanup_proven": true,
+              "complete": true,
+              "exit_code": 7,
+              "fresh": true,
+              "input_manifest": "b5abae6d6eacfbc6fd7c60ec0c1db7d2f1e7a8b5e918e346439281f7bd0f77ca",
+              "invocation_id": "turn-1-call-0",
+              "output_digest": "5e253af543acda876922e6ea0e60324eefe1c66fc349eebb57251ebff525cc1e",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+              "shell_path": "/bin/bash",
+              "stderr": "",
+              "stdout": "",
+              "verifier_id": "value-check",
+              "verifier_sha256": "33725290e878b5f1c29077b83296f2673583445c2cd9efc8faa462b87ffe0cf4"
+            }
+          ],
+          "workflow_id": "ba84ac8a-d3bc-4327-8b12-8cbdd07f130a"
+        },
+        "event": "actual-failed",
+        "pid": 35796,
+        "result": {
+          "attempt_id": "14ffbdf2cfdf4cbcb94a25f1af33e23d",
+          "checks": [
+            {
+              "arguments": [],
+              "exit_code": 7,
+              "id": "value-check",
+              "input_manifest": "b5abae6d6eacfbc6fd7c60ec0c1db7d2f1e7a8b5e918e346439281f7bd0f77ca",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "reason": "native_evidence_unavailable",
+              "status": "failed",
+              "verifier": "value-check"
+            }
+          ],
+          "handoff": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits performed.",
+          "run_id": "8b10eff11dfa44e7a0aee5538bf8b509",
+          "status": "failed",
+          "summary": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits performed.",
+          "workflow_id": "ba84ac8a-d3bc-4327-8b12-8cbdd07f130a"
+        },
+        "time": 1793850839.980761
+      },
+      {
+        "event": "stage-failed",
+        "kind": "RuntimeError",
+        "label": "real corrected check",
+        "pid": 35796,
+        "screen": "ChatScreen",
+        "time": 1793850875.942451
+      },
+      {
+        "event": "stage-failed",
+        "kind": "TimeoutError",
+        "label": "#console-workflow-line",
+        "pid": 35796,
+        "screen": "ChatScreen",
+        "time": 1793850887.9436438
+      }
+    ],
+    "pid": 35796,
+    "primary": 124,
+    "seconds": 721.3412120342255,
+    "source_deltas": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py"
+    ]
+  },
+  {
+    "actual_wait": 1,
+    "bound": 720,
+    "event_count": 61,
+    "frozen_driver": {
+      "bytes": 23161,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+      "sha256": "d237b40c95adc481aa4a7c42da78d0800fc5ebd05d59cfdcb93dc14999172f83"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "41371293ee2aa3966ebef0cb89af187c404405c593b82769e23d4b7051c33ee0",
+        "source_sha256": "06e158c3d90f40d692b1588bb3cacaa362959e439ec31c503728d7fb6ecddca8"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "41371293ee2aa3966ebef0cb89af187c404405c593b82769e23d4b7051c33ee0",
+        "source_sha256": "06e158c3d90f40d692b1588bb3cacaa362959e439ec31c503728d7fb6ecddca8"
+      }
+    },
+    "name": "restart6",
+    "outcomes": [
+      {
+        "event": "restart-inert",
+        "pid": 39996,
+        "results": 0,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4793
+        },
+        "status": "paused",
+        "time": 1793851108.002932
+      },
+      {
+        "checkpoint": {
+          "attempt_id": "5066fe804fa3427e9287523917e03c45",
+          "change_review_disclosure": "Existing consented windows only; exclusions, capture failures and concurrent attribution remain governed by Change Review. No per-task diff or rollback guarantee.",
+          "change_window_refs": [],
+          "input_manifest": "d5edd80e42297522db7640d8d68b7159690b381212748b5c45cbd2185b817d8a",
+          "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+          "result_digest": "c689093622a2c05ec1f1f3cc67948b901353769aa7a2b411de230c2dbd8a9bfa",
+          "run_id": "d592a40fad104827bed15bca69bb2707",
+          "submitted_digest": "0bc60c1dfa0c6a66d56acee37b36237fd061889c5031b38a3816a2cbd2fc1662",
+          "verifiers": [
+            {
+              "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "cleanup_proven": true,
+              "complete": true,
+              "exit_code": 7,
+              "fresh": true,
+              "input_manifest": "d5edd80e42297522db7640d8d68b7159690b381212748b5c45cbd2185b817d8a",
+              "invocation_id": "turn-1-call-0",
+              "output_digest": "5e253af543acda876922e6ea0e60324eefe1c66fc349eebb57251ebff525cc1e",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+              "shell_path": "/bin/bash",
+              "stderr": "",
+              "stdout": "",
+              "verifier_id": "value-check",
+              "verifier_sha256": "33725290e878b5f1c29077b83296f2673583445c2cd9efc8faa462b87ffe0cf4"
+            }
+          ],
+          "workflow_id": "961dfe2c-71eb-47a4-b54b-bbf3228c122c"
+        },
+        "event": "actual-failed",
+        "pid": 39996,
+        "result": {
+          "attempt_id": "5066fe804fa3427e9287523917e03c45",
+          "checks": [
+            {
+              "arguments": [],
+              "exit_code": 7,
+              "id": "value-check",
+              "input_manifest": "d5edd80e42297522db7640d8d68b7159690b381212748b5c45cbd2185b817d8a",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "reason": "native_evidence_unavailable",
+              "status": "failed",
+              "verifier": "value-check"
+            }
+          ],
+          "handoff": "Result: verify.sh exited with code 7 (nonzero). No stdout or stderr output. No edits made.",
+          "run_id": "d592a40fad104827bed15bca69bb2707",
+          "status": "failed",
+          "summary": "Result: verify.sh exited with code 7 (nonzero). No stdout or stderr output. No edits made.",
+          "workflow_id": "961dfe2c-71eb-47a4-b54b-bbf3228c122c"
+        },
+        "time": 1793851116.81382
+      },
+      {
+        "event": "stage-failed",
+        "kind": "TimeoutError",
+        "label": "#console-workflow-line",
+        "message": "",
+        "pid": 39996,
+        "screen": "ChatScreen",
+        "time": 1793851165.362158
+      },
+      {
+        "event": "stage-failed",
+        "kind": "TimeoutError",
+        "label": "real corrected check",
+        "message": "",
+        "pid": 39996,
+        "screen": "ChatScreen",
+        "time": 1793851165.379425
+      },
+      {
+        "event": "stage-failed",
+        "kind": "TimeoutError",
+        "label": "#console-workflow-line",
+        "message": "",
+        "pid": 39996,
+        "screen": "ChatScreen",
+        "time": 1793851178.1496801
+      }
+    ],
+    "pid": 39996,
+    "primary": 1,
+    "seconds": 77.76645994186401,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 720,
+    "event_count": 57,
+    "frozen_driver": {
+      "bytes": 23486,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+      "sha256": "a2ecfd89e5c34710314c08c197e3a3c2d6ec24e5176bc03831a486f2f6997512"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8326,
+        "gzip_sha256": "2b83600802f591476e023eae41b4d40fbac391eb1502e68c7f782dff14be7f23",
+        "source_sha256": "662840bd3fded400da9168e4bae6daa691a3d8d3f8fcd049b2b6d53832c46488"
+      },
+      "pre.json": {
+        "count": 8326,
+        "gzip_sha256": "2b83600802f591476e023eae41b4d40fbac391eb1502e68c7f782dff14be7f23",
+        "source_sha256": "662840bd3fded400da9168e4bae6daa691a3d8d3f8fcd049b2b6d53832c46488"
+      }
+    },
+    "name": "restart7",
+    "outcomes": [
+      {
+        "event": "restart-inert",
+        "pid": 46111,
+        "results": 0,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4792
+        },
+        "status": "paused",
+        "time": 1793851392.106483
+      },
+      {
+        "checkpoint": {
+          "attempt_id": "5ddbef6e89b045debc509fa0a87d51e0",
+          "change_review_disclosure": "Existing consented windows only; exclusions, capture failures and concurrent attribution remain governed by Change Review. No per-task diff or rollback guarantee.",
+          "change_window_refs": [],
+          "input_manifest": "f9d63bfe4cffe1db7163e1bed01811fc13175297fd5a3371f1a2c5d2f528052c",
+          "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+          "result_digest": "19ec7d410a40ebe960b29763b8fd0b1e692743b2e6b48f34119e408ee6610044",
+          "run_id": "572a992a039a4c21a77901228d1cc210",
+          "submitted_digest": "20947912ea91022dbe1574f44578eef83d9b5a9e61e290cd6c525710030baf78",
+          "verifiers": [
+            {
+              "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "cleanup_proven": true,
+              "complete": true,
+              "exit_code": 7,
+              "fresh": true,
+              "input_manifest": "f9d63bfe4cffe1db7163e1bed01811fc13175297fd5a3371f1a2c5d2f528052c",
+              "invocation_id": "turn-1-call-0",
+              "output_digest": "5e253af543acda876922e6ea0e60324eefe1c66fc349eebb57251ebff525cc1e",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+              "shell_path": "/bin/bash",
+              "stderr": "",
+              "stdout": "",
+              "verifier_id": "value-check",
+              "verifier_sha256": "33725290e878b5f1c29077b83296f2673583445c2cd9efc8faa462b87ffe0cf4"
+            }
+          ],
+          "workflow_id": "e8ba8b5f-c206-416a-adf8-037895752410"
+        },
+        "event": "actual-failed",
+        "pid": 46111,
+        "result": {
+          "attempt_id": "5ddbef6e89b045debc509fa0a87d51e0",
+          "checks": [
+            {
+              "arguments": [],
+              "exit_code": 7,
+              "id": "value-check",
+              "input_manifest": "f9d63bfe4cffe1db7163e1bed01811fc13175297fd5a3371f1a2c5d2f528052c",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "reason": "native_evidence_unavailable",
+              "status": "failed",
+              "verifier": "value-check"
+            }
+          ],
+          "handoff": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits made.",
+          "run_id": "572a992a039a4c21a77901228d1cc210",
+          "status": "failed",
+          "summary": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits made.",
+          "workflow_id": "e8ba8b5f-c206-416a-adf8-037895752410"
+        },
+        "time": 1793851404.473523
+      },
+      {
+        "event": "stage-failed",
+        "kind": "TimeoutError",
+        "label": "real corrected check",
+        "message": "",
+        "pid": 46111,
+        "screen": "ConsoleWorkflowStatus",
+        "time": 1793851600.709993
+      },
+      {
+        "event": "stop-after-stage-failure",
+        "label": "real corrected check",
+        "pid": 46111,
+        "time": 1793851601.386401
+      },
+      {
+        "event": "creator-refused",
+        "kind": "AssertionError",
+        "pid": 46111,
+        "reason": "{'fixture_creator_not_settled': 'db.media.primary', 'participant_closed': False, 'handles': [{'thread': 'asyncio_3', 'transaction': False, 'live_lease': True}]}",
+        "time": 1793851601.6169841
+      }
+    ],
+    "pid": 46111,
+    "primary": 1,
+    "seconds": 220.53141927719116,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 720,
+    "event_count": 10,
+    "frozen_driver": {
+      "bytes": 24642,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+      "sha256": "cb0a8f36328b36db85834b17fb2fcd0c0366d2cfcd5b681aaebeced45670a356"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8327,
+        "gzip_sha256": "83d2df10aa6f7f75b47e0a41c0ad4f07a376a9b38c286ee899163ea098d39a1b",
+        "source_sha256": "80903331e77f0b56669241ab6dd49fc539df67cf20404d6f71dee62ab4803e34"
+      },
+      "pre.json": {
+        "count": 8327,
+        "gzip_sha256": "83d2df10aa6f7f75b47e0a41c0ad4f07a376a9b38c286ee899163ea098d39a1b",
+        "source_sha256": "80903331e77f0b56669241ab6dd49fc539df67cf20404d6f71dee62ab4803e34"
+      }
+    },
+    "name": "restart8",
+    "outcomes": [
+      {
+        "event": "monitor-released",
+        "pid": 93072,
+        "time": 1793853394.362369
+      },
+      {
+        "event": "creators-returned",
+        "pid": 93072,
+        "time": 1793853394.399141
+      }
+    ],
+    "pid": 93072,
+    "primary": 1,
+    "seconds": 12.417105913162231,
+    "source_deltas": []
+  },
+  {
+    "actual_wait": 1,
+    "bound": 720,
+    "event_count": 114,
+    "frozen_driver": {
+      "bytes": 24750,
+      "pre_map_key": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+      "sha256": "c129af64bd4c016388376fc1783071826620593ba73d2965dc59fb0956169d32"
+    },
+    "maps": {
+      "post.json": {
+        "count": 8327,
+        "gzip_sha256": "67bcd9f26913e62294694d3fdc4abadaf95bc1eca16d1df8025555c3004ff77c",
+        "source_sha256": "4cddf63f423cde5fe818402612368dc680ced9ff5c4f486092cfc30152d9bf9b"
+      },
+      "pre.json": {
+        "count": 8327,
+        "gzip_sha256": "876e15d769e336d04b52154dc3773b61dcdc049b7dda11b5462ae7d811723c28",
+        "source_sha256": "4442e3547f9dbd89a6a30886cbf10987f30f91e9f5d103a03510606b7cd7a0fc"
+      }
+    },
+    "name": "restart9",
+    "outcomes": [
+      {
+        "event": "restart-inert",
+        "pid": 94902,
+        "results": 0,
+        "spend": {
+          "child_launch": 0,
+          "generation": 1,
+          "model_call": 1,
+          "tokens": 4794
+        },
+        "status": "paused",
+        "time": 1793853476.652382
+      },
+      {
+        "checkpoint": {
+          "attempt_id": "7a39acdd723949c58893f1799cfee91b",
+          "change_review_disclosure": "Existing consented windows only; exclusions, capture failures and concurrent attribution remain governed by Change Review. No per-task diff or rollback guarantee.",
+          "change_window_refs": [],
+          "input_manifest": "b03f49abb28c669a2cc8791264264850fa42833c437ebe9aaa74fb4a2f1302b0",
+          "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+          "result_digest": "54225304c11ab71d7e5ac9ae71d595444e39fdfa6a26e34797edf78bade60ffe",
+          "run_id": "2319bf021f6a4006b4997e7de2e74900",
+          "submitted_digest": "e0b345788b5d5b2354d1efaaab8ce51911d46d8597ccd5142a01abbcc6c254f0",
+          "verifiers": [
+            {
+              "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "cleanup_proven": true,
+              "complete": true,
+              "exit_code": 7,
+              "fresh": true,
+              "input_manifest": "b03f49abb28c669a2cc8791264264850fa42833c437ebe9aaa74fb4a2f1302b0",
+              "invocation_id": "turn-1-call-0",
+              "output_digest": "5e253af543acda876922e6ea0e60324eefe1c66fc349eebb57251ebff525cc1e",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+              "shell_path": "/bin/bash",
+              "stderr": "",
+              "stdout": "",
+              "verifier_id": "value-check",
+              "verifier_sha256": "33725290e878b5f1c29077b83296f2673583445c2cd9efc8faa462b87ffe0cf4"
+            }
+          ],
+          "workflow_id": "27061b38-fb42-4f92-ba75-79b1a4ec3931"
+        },
+        "event": "actual-failed",
+        "pid": 94902,
+        "result": {
+          "attempt_id": "7a39acdd723949c58893f1799cfee91b",
+          "checks": [
+            {
+              "arguments": [],
+              "exit_code": 7,
+              "id": "value-check",
+              "input_manifest": "b03f49abb28c669a2cc8791264264850fa42833c437ebe9aaa74fb4a2f1302b0",
+              "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+              "reason": "native_evidence_unavailable",
+              "status": "failed",
+              "verifier": "value-check"
+            }
+          ],
+          "handoff": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits performed.",
+          "run_id": "2319bf021f6a4006b4997e7de2e74900",
+          "status": "failed",
+          "summary": "Result: verify.sh exited with code 7 (no stdout/stderr). No edits performed.",
+          "workflow_id": "27061b38-fb42-4f92-ba75-79b1a4ec3931"
+        },
+        "time": 1793853487.0486789
+      },
+      {
+        "checkpoint": {
+          "attempt_id": "e7651c093e654bd3baf471daf9441bbf",
+          "change_review_disclosure": "Existing consented windows only; exclusions, capture failures and concurrent attribution remain governed by Change Review. No per-task diff or rollback guarantee.",
+          "change_window_refs": [],
+          "input_manifest": "1057d5edc362493836b242efb5eac04c81dc14d34cb5b243dc8fc85a3c9ce0ea",
+          "output_manifest": "1057d5edc362493836b242efb5eac04c81dc14d34cb5b243dc8fc85a3c9ce0ea",
+          "result_digest": "511aa88d4ab070a159ccb3b996f475027c022b211d9c4aa97c1bf4077917e2fe",
+          "run_id": "311ce1cb96934365be70d8e0d47df6c1",
+          "submitted_digest": "f72cea38ae0152dfd1de45db4d59ecf384427daea329e0f0f1b7a702b022c69e",
+          "verifiers": [
+            {
+              "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+              "cleanup_proven": true,
+              "complete": true,
+              "exit_code": 0,
+              "fresh": true,
+              "input_manifest": "1057d5edc362493836b242efb5eac04c81dc14d34cb5b243dc8fc85a3c9ce0ea",
+              "invocation_id": "turn-3-call-0",
+              "output_digest": "2727d1e6708bb29f2b89ef354f6ec3ddf59e19d4f054486e26461d226ebf93f0",
+              "output_manifest": "1057d5edc362493836b242efb5eac04c81dc14d34cb5b243dc8fc85a3c9ce0ea",
+              "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+              "shell_path": "/bin/bash",
+              "stderr": "",
+              "stdout": "verified\n",
+              "verifier_id": "value-check",
+              "verifier_sha256": "33725290e878b5f1c29077b83296f2673583445c2cd9efc8faa462b87ffe0cf4"
+            }
+          ],
+          "workflow_id": "27061b38-fb42-4f92-ba75-79b1a4ec3931"
+        },
+        "event": "actual-passed",
+        "pid": 94902,
+        "result": {
+          "attempt_id": "e7651c093e654bd3baf471daf9441bbf",
+          "checks": [
+            {
+              "arguments": [],
+              "exit_code": 0,
+              "id": "value-check",
+              "input_manifest": "1057d5edc362493836b242efb5eac04c81dc14d34cb5b243dc8fc85a3c9ce0ea",
+              "output_manifest": "1057d5edc362493836b242efb5eac04c81dc14d34cb5b243dc8fc85a3c9ce0ea",
+              "reason": "native_evidence",
+              "status": "passed",
+              "verifier": "value-check"
+            }
+          ],
+          "handoff": "Done.\n\n- Read `value.txt`: it contained `user edit` (line 1) and `original` (line 2).\n- Edited `value.txt` with `fs_edit`: replaced `original` \u2192 `corrected`, preserving the `user edit` line exactly.\n- Ran the verifier with `shell_exec` (bash) using the exact absolute command `[local path withheld]\n\nObserved result:\n- exit_code: 0\n- stdout: `verified`\n- stderr: (none)",
+          "run_id": "311ce1cb96934365be70d8e0d47df6c1",
+          "status": "completed",
+          "summary": "Done.\n\n- Read `value.txt`: it contained `user edit` (line 1) and `original` (line 2).\n- Edited `value.txt` with `fs_edit`: replaced `original` \u2192 `corrected`, preserving the `user edit` line exactly.\n- Ran the verifier with `shell_exec` (bash) using the exact absolute command `[local path withheld]\n\nObserved result:\n- exit_code: 0\n- stdout: `verified`\n- stderr: (none)",
+          "workflow_id": "27061b38-fb42-4f92-ba75-79b1a4ec3931"
+        },
+        "time": 1793853550.312374
+      },
+      {
+        "event": "review-result",
+        "original_read_success": true,
+        "pid": 94902,
+        "result": {
+          "attempt_id": "4eea7101d4ae4cd79934bc8da74f02be",
+          "checks": [],
+          "handoff": "Verified.\n\n- Line 1: `user edit` \u2014 present and unaltered.\n- Line 2: `corrected` \u2014 present.\n\nBoth expected lines are in `value.txt`, and the user edit line was not modified.",
+          "run_id": "d639947150e248ce95e70ed606f6cd16",
+          "status": "completed",
+          "summary": "Verified.\n\n- Line 1: `user edit` \u2014 present and unaltered.\n- Line 2: `corrected` \u2014 present.\n\nBoth expected lines are in `value.txt`, and the user edit line was not modified.",
+          "workflow_id": "27061b38-fb42-4f92-ba75-79b1a4ec3931"
+        },
+        "time": 1793853564.8982432
+      },
+      {
+        "event": "completed",
+        "pid": 94902,
+        "result_count": 3,
+        "spend": {
+          "child_launch": 3,
+          "generation": 5,
+          "model_call": 10,
+          "tokens": 21959
+        },
+        "time": 1793853565.823943
+      },
+      {
+        "event": "monitor-released",
+        "pid": 94902,
+        "time": 1793853566.509583
+      },
+      {
+        "event": "creator-refused",
+        "kind": "AssertionError",
+        "pid": 94902,
+        "reason": "{'fixture_creator_not_settled': 'db.media.primary', 'participant_closed': False, 'handles': [{'thread': 'asyncio_10', 'transaction': False, 'live_lease': True}]}",
+        "time": 1793853566.509856
+      }
+    ],
+    "pid": 94902,
+    "primary": 1,
+    "seconds": 99.43250918388367,
+    "source_deltas": [
+      "Tests/Chat/test_workflow_native_journeys.py",
+      "Tests/Agents/test_native_legacy_hooks.py"
+    ]
+  }
+]

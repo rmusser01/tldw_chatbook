@@ -75,7 +75,4 @@ def test_daily_report_demo_service_is_wired_on_the_single_db():
     # The dispatch seam must be the same notification service the rest of
     # the wiring hands to the reminder/briefing handlers, so demo
     # completion notifications flow through the real dispatch path.
-    assert (
-        app.daily_report_demo_service._dispatch
-        is app.notification_dispatch_service
-    )
+    assert app.daily_report_demo_service._dispatch is app.notification_dispatch_service

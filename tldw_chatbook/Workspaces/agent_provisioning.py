@@ -92,9 +92,9 @@ class WorkspaceAgentProvisioner:
                 assistant_id=str(record["id"]), tool_policy_profile_id=profile_id
             )
         except Exception as exc:
-            logger.warning(
-                "Workspace agent provisioning failed; error_type={}",
-                type(exc).__name__,
+            # TASK-39060: constant message; the forwarder appends the class.
+            logger.bind(exception_type=type(exc).__name__).warning(
+                "Workspace agent provisioning failed"
             )
             return None
 
@@ -160,7 +160,10 @@ def run_workspace_agent_backfill(
     for record in registry.list_workspaces():
         if record.archived or record.workspace_id == DEFAULT_WORKSPACE_ID:
             continue
-        if record.assistant_defaults is not None or record.assistant_defaults_explicit_none:
+        if (
+            record.assistant_defaults is not None
+            or record.assistant_defaults_explicit_none
+        ):
             continue
         defaults = provisioner.provision(record)
         if defaults is None:
@@ -171,9 +174,8 @@ def run_workspace_agent_backfill(
                 record.workspace_id, defaults, confirm_read_write=True
             )
         except Exception as exc:
-            logger.warning(
-                "Workspace agent backfill could not persist defaults; error_type={}",
-                type(exc).__name__,
+            logger.bind(exception_type=type(exc).__name__).warning(
+                "Workspace agent backfill could not persist defaults"
             )
             failed = True
             continue

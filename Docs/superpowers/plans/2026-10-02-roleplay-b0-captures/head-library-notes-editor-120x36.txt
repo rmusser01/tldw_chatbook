@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save         │
+│   a  │ Library notes · Ready                                  │  o  automatically.                                   │
+│   v  │ Notes (5)                                              │  t      ‹ Notes      Aetheria session 12 prep        │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │      In the Library database only — no file on disk  │
+│      │ from files.                                            │     S                                                │
+│      │                                                        │              Edit           Preview            Info  │
+│      │ Filter                                                 │                                                      │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                            │
+│      │ ▊ Aetheria                                           ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Aetheria session 12 prep                     ▎ │
+│      │                                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     ○ Sort: Newest     Select                   │<---                                                  │
+│      │    Add from files…     Export                          │     Keywords                                         │
+│      │ Folders & placement                                    │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     Move note          │     ▊ Comma-separated keywords                     ▎ │
+│      │    ○ Remove placement                                  │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │ Sort unavailable — clear the filter                    │                                                      │
+│      │ filter: Aetheria · 1 result                            │     Body                                             │
+│      │                                                        │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │   Clear filter                                         │     ┃ # Session 12                                 ┃ │
+│      │  ▾ Unfiled                                             │     ┃                                              ┃ │
+│      │    Aetheria session 12 prep · Unfiled · 45m            │     ┃ - Gates of Emberfall at dusk              ▂▂ ┃ │
+│      │                                                        │     ┃ - Ash Council suspicious of the party        ┃ │
+│      │                                                        │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │                                                        │                                                      │
+│      └────────────────────────────────────────────────────────┘                                      19 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

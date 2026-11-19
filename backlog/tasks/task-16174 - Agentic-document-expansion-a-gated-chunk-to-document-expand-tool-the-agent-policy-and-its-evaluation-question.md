@@ -416,4 +416,7 @@ untouched by this wave's scope.
   baseline.` — `Tests/RAG_Eval` **307 passed**. A payload addition after
   retrieval cannot move retrieval, and did not.
 - Ruff clean on every file this wave touched.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/mcp.md`: Docs pass against code and tests, not a live screen.
 <!-- SECTION:NOTES:END -->

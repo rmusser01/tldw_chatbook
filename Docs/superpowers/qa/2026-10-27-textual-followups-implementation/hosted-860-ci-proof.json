@@ -1,0 +1,1360 @@
+{
+  "head": "860d9b58d8255dda2f52a729c7563201016d5456",
+  "snapshot_time": "2026-10-28T06:40:02.962330+00:00",
+  "runs": [
+    {
+      "id": 40633745286,
+      "name": "TASK-19637 pinned workspace platform evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "jobs": {
+        "skipped": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40633745331,
+      "name": "TASK-32011 one-off Linux storage evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "jobs": {
+        "skipped": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40633745278,
+      "name": "Perf Guard",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": {
+        "success": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40633745249,
+      "name": "Derived Artifacts",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": {
+        "success": 25
+      },
+      "failures": []
+    }
+  ],
+  "jobs": [
+    {
+      "id": 122635844488,
+      "name": "UI latency guardrails",
+      "run": 40633745278,
+      "conclusion": "success",
+      "seconds": 445.0,
+      "log_sha256": "f78591a9d09670375536677bd1857362779ad59b1b0bcd0a257f76fecc957953",
+      "summaries": [
+        "2026-10-28T05:17:19.9707959Z ======================== 13 passed in 92.20s (0:01:32) =========================",
+        "2026-10-28T05:17:48.1219817Z ============================= 27 passed in 26.24s ==============================",
+        "2026-10-28T05:19:26.2164444Z ============= 27 passed, 2 skipped, 4 warnings in 96.22s (0:01:36) =============",
+        "2026-10-28T05:19:31.9767932Z ======================== 26 passed, 1 xfailed in 4.01s =========================",
+        "2026-10-28T05:20:56.0730554Z ========================= 3 passed in 82.16s (0:01:22) =========================",
+        "2026-10-28T05:22:14.6235634Z ========================= 2 passed in 76.72s (0:01:16) ========================="
+      ],
+      "keystroke_nodes": [
+        "test_typing_never_snapshots_the_transcript",
+        "test_keystroke_work_does_not_scale_with_transcript_length",
+        "test_typing_census_excludes_elapsed_draft_pause_work"
+      ],
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/setup-python@v5",
+          "conclusion": "success"
+        },
+        {
+          "name": "Install package (test deps only path)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run latency guardrails",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run GC policy and idle re-freeze tests",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run boot budget ratchets",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run Console tab-publication and voice gates",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run Console keystroke work census",
+          "conclusion": "success"
+        },
+        {
+          "name": "Run Console storage-unit ratchet",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/setup-python@v5",
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "id": 122635844325,
+      "name": "PR Fast Lane (admission-sensitive 2)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 754.0,
+      "log_sha256": "14bc2bca2ba094fbe8cbedfe09cd013fd4ac7ccd39f063c71126f0ed260f76d7",
+      "summaries": [
+        "2026-10-28T05:20:30.4638731Z ======================= 1068 passed in 689.75s (0:11:29) ======================="
+      ]
+    },
+    {
+      "id": 122635844577,
+      "name": "Dreams tracking tests",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 446.0,
+      "log_sha256": "87faeb15433142147bd909e35e97b7d64a2429009a8482b82f3863d767c0a765",
+      "summaries": [
+        "2026-10-28T05:17:26.7860733Z ======================= 253 passed in 392.08s (0:06:32) ========================"
+      ]
+    },
+    {
+      "id": 122635844585,
+      "name": "Dreams and Guardian boundary contracts",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 327.0,
+      "log_sha256": "aacae0235642e8469f1001f522360ac7cd0756923622984912adfca36e866ef2",
+      "summaries": [
+        "2026-10-28T05:24:36.7653620Z ======================== 164 passed in 89.03s (0:01:29) ========================",
+        "2026-10-28T05:27:41.3164922Z ======================= 110 passed in 181.01s (0:03:01) ========================"
+      ]
+    },
+    {
+      "id": 122635844605,
+      "name": "PR Fast Lane",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1711.0,
+      "log_sha256": "4b16daeaa714c36e636c0362279a1a93936b11c0bea73cdf82812ffb5ae377df",
+      "summaries": [
+        "2026-10-28T05:50:40.2096433Z =========== 3183 passed, 3 skipped, 2 warnings in 1651.72s (0:27:31) ==========="
+      ]
+    },
+    {
+      "id": 122635844619,
+      "name": "Console P0 regression gate",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 707.0,
+      "log_sha256": "8c76b31802a9e3086961cdfc69f3379d3756a4253a984f0f9357c53c5dec2459",
+      "summaries": [
+        "2026-10-28T05:38:12.6153144Z ======================= 164 passed in 177.70s (0:02:57) ========================",
+        "2026-10-28T05:46:10.8738009Z ======================= 238 passed in 473.59s (0:07:53) ========================"
+      ]
+    },
+    {
+      "id": 122635844666,
+      "name": "UI Fast Lane (17)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1035.0,
+      "log_sha256": "70e067557ee34d434b31804c16630f520ca68f81fac55eb7c51c549d56ab04e9",
+      "summaries": [
+        "2026-10-28T05:51:20.3700466Z ======================= 174 passed in 976.17s (0:16:16) ========================"
+      ]
+    },
+    {
+      "id": 122635844684,
+      "name": "PR Fast Lane (admission-sensitive)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1451.0,
+      "log_sha256": "710dd848e781fe4ab88e04d79d8ced4c305e10b7f94c8f9282d5680d3b4c76b1",
+      "summaries": [
+        "2026-10-28T06:02:04.2666982Z =========== 674 passed, 2 xfailed, 24 warnings in 1393.60s (0:23:13) ==========="
+      ]
+    },
+    {
+      "id": 122635844691,
+      "name": "UI Fast Lane (2)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 998.0,
+      "log_sha256": "b9a660565fb89c812b50b9023e5fb395e77a855bb846f10beaeebeecbd8ea660",
+      "summaries": [
+        "2026-10-28T05:47:45.1403658Z ======================= 202 passed in 938.55s (0:15:38) ========================"
+      ]
+    },
+    {
+      "id": 122635844698,
+      "name": "UI Fast Lane (6)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1076.0,
+      "log_sha256": "76f0b5671dfb81b3c22d2dfb47d7d117ff4b6aa3de942d5b0fab0a475fc7cdd2",
+      "summaries": [
+        "2026-10-28T05:51:49.9736118Z ======================= 372 passed in 1004.80s (0:16:44) ======================="
+      ]
+    },
+    {
+      "id": 122635844736,
+      "name": "UI Fast Lane (13)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1005.0,
+      "log_sha256": "063e128b4b4d3a4a23dafc59fe6a5395b6220d9670cd5d02f23ceef72d4e2ea4",
+      "summaries": [
+        "2026-10-28T05:45:22.5370005Z ================= 197 passed, 2 warnings in 949.28s (0:15:49) =================="
+      ]
+    },
+    {
+      "id": 122635844745,
+      "name": "UI Fast Lane (15)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 796.0,
+      "log_sha256": "1454932748c7c544afe9c82792d300514ee5a05ddebc7e00ed4bfbc2461f4a44",
+      "summaries": [
+        "2026-10-28T05:34:23.2625687Z ================= 190 passed, 2 warnings in 725.89s (0:12:05) =================="
+      ]
+    },
+    {
+      "id": 122635844757,
+      "name": "UI Fast Lane (8)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1030.0,
+      "log_sha256": "6a524a3710428aff8d30ab3142a0bb4a16cfb9ec9d03297ecc7d316d92bc2231",
+      "summaries": [
+        "2026-10-28T06:02:34.7341420Z ================= 117 passed, 2 warnings in 972.21s (0:16:12) =================="
+      ]
+    },
+    {
+      "id": 122635844761,
+      "name": "UI Fast Lane (9)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1064.0,
+      "log_sha256": "7790c7b64291ce7276e8ce853c5f9f4baf8fb90b08882f7e900e0f7936868892",
+      "summaries": [
+        "2026-10-28T05:51:31.5136405Z ================= 489 passed, 2 warnings in 1010.51s (0:16:50) ================="
+      ]
+    },
+    {
+      "id": 122635844804,
+      "name": "UI Fast Lane (7)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1113.0,
+      "log_sha256": "da968e9b34de2dfa5a849907446657f1a93d62422b3d2438685dfc4b4c48dd62",
+      "summaries": [
+        "2026-10-28T06:02:48.0033675Z ======================= 370 passed in 1056.69s (0:17:36) ======================="
+      ]
+    },
+    {
+      "id": 122635844808,
+      "name": "UI Fast Lane (14)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 964.0,
+      "log_sha256": "bad19f1b4d58244b597e574fa5207b439f76055ab490f93baa0b69ccb13b4403",
+      "summaries": [
+        "2026-10-28T05:52:34.0433181Z ======================= 174 passed in 903.15s (0:15:03) ========================"
+      ]
+    },
+    {
+      "id": 122635844824,
+      "name": "UI Fast Lane (1)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1033.0,
+      "log_sha256": "2043d6793178522be844d01d0f5a37f78c39132f6efdd5ea3d905d60825d7e65",
+      "summaries": [
+        "2026-10-28T06:06:01.7912599Z ======================= 157 passed in 977.98s (0:16:17) ========================"
+      ]
+    },
+    {
+      "id": 122635844850,
+      "name": "UI Fast Lane (11)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1075.0,
+      "log_sha256": "e4741d5d5102cdfb7f5452d1894caa4c06c4aa23b141b1f9ed07f4c0f6ef1920",
+      "summaries": [
+        "2026-10-28T05:53:32.4140978Z ================= 165 passed, 2 warnings in 1015.34s (0:16:55) ================="
+      ]
+    },
+    {
+      "id": 122635844858,
+      "name": "UI Fast Lane (5)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1037.0,
+      "log_sha256": "d0ea0f47207b15f75bd083547528da17c248c2c86ddae8dce8317b6a43e1be8b",
+      "summaries": [
+        "2026-10-28T05:54:35.1996082Z ================== 239 passed, 1 warning in 980.24s (0:16:20) =================="
+      ]
+    },
+    {
+      "id": 122635844910,
+      "name": "UI Fast Lane (4)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1139.0,
+      "log_sha256": "6661dfdd8d6c6b16b097c42ce9bda1d4b2bc5018c0243bf19801fd4304ab8a55",
+      "summaries": [
+        "2026-10-28T06:09:00.0746113Z ================= 147 passed, 1 warning in 1076.84s (0:17:56) =================="
+      ]
+    },
+    {
+      "id": 122635844940,
+      "name": "UI Fast Lane (12)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1106.0,
+      "log_sha256": "c918fe1de9b8993c7fe24710c866d5eb57c0b488528e395575a5326a4b8c6163",
+      "summaries": [
+        "2026-10-28T06:08:46.6889986Z ================ 282 passed, 11 warnings in 1050.59s (0:17:30) ================="
+      ]
+    },
+    {
+      "id": 122635845083,
+      "name": "UI Fast Lane (16)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 1078.0,
+      "log_sha256": "15793f08e6742627505e57eb8245bd49ecaecaf6c26c04a3d91fddf63a0cccbd",
+      "summaries": [
+        "2026-10-28T06:08:41.3890938Z ================= 130 passed, 1 warning in 1018.69s (0:16:58) =================="
+      ]
+    },
+    {
+      "id": 122635845286,
+      "name": "UI Fast Lane (10)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 968.0,
+      "log_sha256": "1cdded740af7e560f463942dc19e16f091c677b92818129c7680b76ad7887781",
+      "summaries": [
+        "2026-10-28T06:09:45.8137808Z ======================= 235 passed in 910.71s (0:15:10) ========================"
+      ]
+    },
+    {
+      "id": 122635845676,
+      "name": "UI Fast Lane (3)",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 937.0,
+      "log_sha256": "5780b7d6e3bce8f31d436fe0a7df99d819a733015d9f3545f6bb121d4810d771",
+      "summaries": [
+        "2026-10-28T06:10:57.7721506Z ======================= 183 passed in 881.83s (0:14:41) ========================"
+      ]
+    },
+    {
+      "id": 122663037832,
+      "name": "Derived artifacts reproduce from their sources",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 322.0,
+      "log_sha256": "c42d2f864ecfbf1b8a08fd7a918844f606a54f7c0ac8f0d12d8b8dfae8b0016f",
+      "summaries": []
+    },
+    {
+      "id": 122668494064,
+      "name": "Merge queue tick",
+      "run": 40633745249,
+      "conclusion": "success",
+      "seconds": 36.0,
+      "log_sha256": "001781dd15ceed67e15a4f87d06e0636d7be3a17ae4b5c11efc9ca9e4752f14e",
+      "summaries": []
+    }
+  ],
+  "ui_shards": 17,
+  "max_ui_job_seconds": 1139.0,
+  "covered_task_selectors": {
+    "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[server:1-toggle]": [
+      {
+        "seconds": 10.23,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[server:1-toggle]",
+        "job": 122635844804
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[replace]": [
+      {
+        "seconds": 15.92,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[replace]",
+        "job": 122635844761
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-create]": [
+      {
+        "seconds": 17.28,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-create]",
+        "job": 122635844940
+      }
+    ],
+    "Tests/UI/test_speech_footer_scope.py::test_footer_and_rail_actions_follow_playground_effects_return": [
+      {
+        "seconds": 9.97,
+        "node": "Tests/UI/test_speech_footer_scope.py::test_footer_and_rail_actions_follow_playground_effects_return",
+        "job": 122635844910
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-ordinary]": [
+      {
+        "seconds": 15.26,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-ordinary]",
+        "job": 122635844910
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_mixed_success_refusal_and_failure_reports_actual_count[delete]": [
+      {
+        "seconds": 11.2,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_mixed_success_refusal_and_failure_reports_actual_count[delete]",
+        "job": 122635844761
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-held-writer]": [
+      {
+        "seconds": 13.68,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-held-writer]",
+        "job": 122635845676
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_surfaces_share_fresh_local_dependency_snapshot": [
+      {
+        "seconds": 1.67,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_surfaces_share_fresh_local_dependency_snapshot",
+        "job": 122635844698
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[write_failure]": [
+      {
+        "seconds": 13.11,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[write_failure]",
+        "job": 122635844761
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[cancel]": [
+      {
+        "seconds": 15.71,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[cancel]",
+        "job": 122635844940
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[local-delete]": [
+      {
+        "seconds": 9.23,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[local-delete]",
+        "job": 122635844850
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-held-writer]": [
+      {
+        "seconds": 15.88,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-held-writer]",
+        "job": 122635844761
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-prompt]": [
+      {
+        "seconds": 7.89,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-prompt]",
+        "job": 122635844736
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-prompt]": [
+      {
+        "seconds": 8.08,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-prompt]",
+        "job": 122635844808
+      }
+    ],
+    "Tests/UI/test_speech_effects_placeholder.py::test_the_rail_entry_is_reachable": [
+      {
+        "seconds": 2.66,
+        "node": "Tests/UI/test_speech_effects_placeholder.py::test_the_rail_entry_is_reachable",
+        "job": 122635844850
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[ordinary]": [
+      {
+        "seconds": 8.8,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[ordinary]",
+        "job": 122635845083
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-create]": [
+      {
+        "seconds": 17.53,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-create]",
+        "job": 122635844940
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[acknowledged]": [
+      {
+        "seconds": 12.75,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[acknowledged]",
+        "job": 122635844910
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_the_playground_view_mounts_a_playground": [
+      {
+        "seconds": 2.29,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_the_playground_view_mounts_a_playground",
+        "job": 122635844808
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-ordinary]": [
+      {
+        "seconds": 15.85,
+        "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-ordinary]",
+        "job": 122635844910
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[deleted]": [
+      {
+        "seconds": 11.7,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[deleted]",
+        "job": 122635844804
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_saving_a_bench_deleted_elsewhere_renders_an_error_not_a_false_success": [
+      {
+        "seconds": 1.23,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_saving_a_bench_deleted_elsewhere_renders_an_error_not_a_false_success",
+        "job": 122635844666
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[server:1-delete]": [
+      {
+        "seconds": 10.11,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[server:1-delete]",
+        "job": 122635844745
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-light-size0]": [
+      {
+        "seconds": 9.93,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-light-size0]",
+        "job": 122635844804
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[local-toggle]": [
+      {
+        "seconds": 8.8,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_ordinary_batch_completes_and_clears_its_marks[local-toggle]",
+        "job": 122635844850
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[during-refresh]": [
+      {
+        "seconds": 8.72,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[during-refresh]",
+        "job": 122635845083
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_one_time]": [
+      {
+        "seconds": 13.37,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_one_time]",
+        "job": 122635845676
+      }
+    ],
+    "Tests/UI/test_speech_effects_placeholder.py::test_opening_it_states_that_it_is_not_built_and_where_it_is_going": [
+      {
+        "seconds": 2.77,
+        "node": "Tests/UI/test_speech_effects_placeholder.py::test_opening_it_states_that_it_is_not_built_and_where_it_is_going",
+        "job": 122635844808
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_screen_level_clear_text_mirror_reaches_the_mounted_pane": [
+      {
+        "seconds": 1.77,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_screen_level_clear_text_mirror_reaches_the_mounted_pane",
+        "job": 122635844698
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[offline]": [
+      {
+        "seconds": 12.65,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[offline]",
+        "job": 122635844940
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-legacy]": [
+      {
+        "seconds": 6.69,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-legacy]",
+        "job": 122635844736
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_recurring]": [
+      {
+        "seconds": 10.68,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_recurring]",
+        "job": 122635844757
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-dark-size1]": [
+      {
+        "seconds": 7.66,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-dark-size1]",
+        "job": 122635844850
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-recipe]": [
+      {
+        "seconds": 7.61,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-recipe]",
+        "job": 122635844804
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-edit]": [
+      {
+        "seconds": 13.31,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-edit]",
+        "job": 122635844761
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure-pending]": [
+      {
+        "seconds": 7.23,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure-pending]",
+        "job": 122635844736
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-light-size1]": [
+      {
+        "seconds": 7.56,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-light-size1]",
+        "job": 122635844850
+      }
+    ],
+    "Tests/UI/test_on_mount_mro_convention.py::test_base_on_mount_fires_once_under_mro": [
+      {
+        "seconds": 0.05,
+        "node": "Tests/UI/test_on_mount_mro_convention.py::test_base_on_mount_fires_once_under_mro",
+        "job": 122635844691
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-screen]": [
+      {
+        "seconds": 3.79,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-screen]",
+        "job": 122635844808
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-dark-size0]": [
+      {
+        "seconds": 9.77,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_failures_keep_editor_ready_for_retry[textual-dark-size0]",
+        "job": 122635844745
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-recipe]": [
+      {
+        "seconds": 8.68,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-recipe]",
+        "job": 122635844804
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-edit]": [
+      {
+        "seconds": 14.1,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-edit]",
+        "job": 122635844745
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_rail_exposes_and_opens_voice_profiles": [
+      {
+        "seconds": 2.54,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_rail_exposes_and_opens_voice_profiles",
+        "job": 122635845083
+      }
+    ],
+    "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[211]": [
+      {
+        "seconds": 0.13,
+        "node": "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[211]",
+        "job": 122635844858
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[audiobook]": [
+      {
+        "seconds": 4.11,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[audiobook]",
+        "job": 122635844824
+      }
+    ],
+    "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[transfer]": [
+      {
+        "seconds": 9.78,
+        "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[transfer]",
+        "job": 122635845676
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[settings]": [
+      {
+        "seconds": 4.26,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[settings]",
+        "job": 122635845083
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-prompt]": [
+      {
+        "seconds": 6.81,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[other-prompt]",
+        "job": 122635844745
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_screen_mounts_rail_rows_exactly_once": [
+      {
+        "seconds": 2.03,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_screen_mounts_rail_rows_exactly_once",
+        "job": 122635845083
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-legacy]": [
+      {
+        "seconds": 9.31,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-legacy]",
+        "job": 122635844824
+      }
+    ],
+    "Tests/UI/test_speech_footer_scope.py::test_recompose_hides_cached_hints_and_rejects_old_window": [
+      {
+        "seconds": 9.73,
+        "node": "Tests/UI/test_speech_footer_scope.py::test_recompose_hides_cached_hints_and_rejects_old_window",
+        "job": 122635844736
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[playground]": [
+      {
+        "seconds": 2.75,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[playground]",
+        "job": 122635844850
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-recipe]": [
+      {
+        "seconds": 7.76,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-recipe]",
+        "job": 122635844824
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_reminder_form_submits_when_valid_one_time": [
+      {
+        "seconds": 0.45,
+        "node": "Tests/UI/test_reminder_form.py::test_reminder_form_submits_when_valid_one_time",
+        "job": 122635844858
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-legacy]": [
+      {
+        "seconds": 8.43,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size0-legacy]",
+        "job": 122635844824
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_stts_window_explains_missing_local_speech_dependencies": [
+      {
+        "seconds": 1.7,
+        "node": "Tests/UI/test_stts_capability_state.py::test_stts_window_explains_missing_local_speech_dependencies",
+        "job": 122635845286
+      }
+    ],
+    "Tests/UI/test_schedules_bulk_admission.py::test_mixed_success_refusal_and_failure_reports_actual_count[toggle]": [
+      {
+        "seconds": 9.61,
+        "node": "Tests/UI/test_schedules_bulk_admission.py::test_mixed_success_refusal_and_failure_reports_actual_count[toggle]",
+        "job": 122635844736
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_bench_run_completion_does_not_yank_a_dirty_bench_editor": [
+      {
+        "seconds": 1.18,
+        "node": "Tests/UI/test_evals_screen.py::test_bench_run_completion_does_not_yank_a_dirty_bench_editor",
+        "job": 122635845286
+      }
+    ],
+    "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[100]": [
+      {
+        "seconds": 0.11,
+        "node": "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[100]",
+        "job": 122635844858
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_save_with_capture_continuations_toggled_on_via_the_ui_persists_the_flip": [
+      {
+        "seconds": 1.57,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_save_with_capture_continuations_toggled_on_via_the_ui_persists_the_flip",
+        "job": 122635844666
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[browse-list]": [
+      {
+        "seconds": 5.13,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_export_result_after_navigation_preserves_current_status[browse-list]",
+        "job": 122635844736
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_reminder_form_requires_title": [
+      {
+        "seconds": 0.52,
+        "node": "Tests/UI/test_reminder_form.py::test_reminder_form_requires_title",
+        "job": 122635844666
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-recipe]": [
+      {
+        "seconds": 10.28,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size0-recipe]",
+        "job": 122635844745
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_capability_summary_stays_visible_at_minimum_terminal": [
+      {
+        "seconds": 1.54,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_capability_summary_stays_visible_at_minimum_terminal",
+        "job": 122635844808
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-prompt]": [
+      {
+        "seconds": 8.48,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-dark-size1-prompt]",
+        "job": 122635845083
+      }
+    ],
+    "Tests/UI/test_schedules_transfer_actions.py::test_clearing_the_lifecycle_lock_restores_the_buttons": [
+      {
+        "seconds": 0.19,
+        "node": "Tests/UI/test_schedules_transfer_actions.py::test_clearing_the_lifecycle_lock_restores_the_buttons",
+        "job": 122635844858
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure]": [
+      {
+        "seconds": 7.69,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure]",
+        "job": 122635844824
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_screen_level_random_text_mirror_reaches_the_mounted_pane": [
+      {
+        "seconds": 1.77,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_screen_level_random_text_mirror_reaches_the_mounted_pane",
+        "job": 122635844698
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_revert_discards_unsaved_edits_and_reloads_from_storage": [
+      {
+        "seconds": 1.41,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_revert_discards_unsaved_edits_and_reloads_from_storage",
+        "job": 122635845286
+      }
+    ],
+    "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[30]": [
+      {
+        "seconds": 0.12,
+        "node": "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[30]",
+        "job": 122635844858
+      }
+    ],
+    "Tests/UI/test_speech_effects_placeholder.py::test_effects_is_no_longer_a_non_view": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_effects_placeholder.py::test_effects_is_no_longer_a_non_view",
+        "job": 122635844691
+      }
+    ],
+    "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[60]": [
+      {
+        "seconds": 0.11,
+        "node": "Tests/UI/test_app_footer_shortcut_context.py::test_a_global_key_the_screen_lists_as_unavailable_is_left_out[60]",
+        "job": 122635844858
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-legacy]": [
+      {
+        "seconds": 7.79,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-legacy]",
+        "job": 122635844804
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_bench_run_completion_does_not_yank_a_bench_editor_with_unsaved_mini_form_text": [
+      {
+        "seconds": 1.17,
+        "node": "Tests/UI/test_evals_screen.py::test_bench_run_completion_does_not_yank_a_bench_editor_with_unsaved_mini_form_text",
+        "job": 122635845286
+      }
+    ],
+    "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[later-input]": [
+      {
+        "seconds": 8.49,
+        "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[later-input]",
+        "job": 122635844804
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_the_body_owns_view_switching": [
+      {
+        "seconds": 2.99,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_the_body_owns_view_switching",
+        "job": 122635845083
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[dictation]": [
+      {
+        "seconds": 4.9,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_each_rail_entry_switches_the_view[dictation]",
+        "job": 122635844824
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_renaming_to_a_taken_name_renders_the_conflict_callout": [
+      {
+        "seconds": 1.11,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_renaming_to_a_taken_name_renders_the_conflict_callout",
+        "job": 122635845286
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_every_bound_action_exists": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_every_bound_action_exists[clear_text]",
+        "job": 122635844691
+      },
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_every_bound_action_exists[generate_tts]",
+        "job": 122635844691
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_reminder_form_requires_run_at_for_one_time": [
+      {
+        "seconds": 0.54,
+        "node": "Tests/UI/test_reminder_form.py::test_reminder_form_requires_run_at_for_one_time",
+        "job": 122635844666
+      }
+    ],
+    "Tests/UI/test_speech_rail_navigation.py::test_rail_navigation_honors_cancel_then_discard_for_dirty_studio": [
+      {
+        "seconds": 1.39,
+        "node": "Tests/UI/test_speech_rail_navigation.py::test_rail_navigation_honors_cancel_then_discard_for_dirty_studio",
+        "job": 122635844698
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_blank_name_save_failure_renders_the_db_rejection_callout": [
+      {
+        "seconds": 1.23,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_blank_name_save_failure_renders_the_db_rejection_callout",
+        "job": 122635844666
+      }
+    ],
+    "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-prompt]": [
+      {
+        "seconds": 7.59,
+        "node": "Tests/UI/test_library_prompt_export_journeys.py::test_copy_and_export_round_trip_through_visible_actions[textual-light-size1-prompt]",
+        "job": 122635844824
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_reminder_form_rejects_invalid_cron": [
+      {
+        "seconds": 0.65,
+        "node": "Tests/UI/test_reminder_form.py::test_reminder_form_rejects_invalid_cron",
+        "job": 122635844666
+      }
+    ],
+    "Tests/UI/test_reminder_form.py::test_runs_on_is_disabled_when_editing_an_existing_task": [
+      {
+        "seconds": 0.25,
+        "node": "Tests/UI/test_reminder_form.py::test_runs_on_is_disabled_when_editing_an_existing_task",
+        "job": 122635844858
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_speech_capability_detail_names_each_ready_local_capability": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_stts_capability_state.py::test_speech_capability_detail_names_each_ready_local_capability",
+        "job": 122635844691
+      }
+    ],
+    "Tests/UI/test_stts_capability_state.py::test_visible_capability_refresh_ignores_stale_stt_cache": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_stts_capability_state.py::test_visible_capability_refresh_ignores_stale_stt_cache",
+        "job": 122635844691
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_pressing_delete_then_confirming_in_the_real_dialog_deletes_the_bench": [
+      {
+        "seconds": 1.44,
+        "node": "Tests/UI/test_evals_screen.py::test_pressing_delete_then_confirming_in_the_real_dialog_deletes_the_bench",
+        "job": 122635844698
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_sample_bench_completion_does_not_yank_a_dirty_bench_editor": [
+      {
+        "seconds": 1.27,
+        "node": "Tests/UI/test_evals_screen.py::test_sample_bench_completion_does_not_yank_a_dirty_bench_editor",
+        "job": 122635844698
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_readiness_rows_with_several_continuations_paint_inside_the_inspector_viewport": [
+      {
+        "seconds": 0.96,
+        "node": "Tests/UI/test_evals_screen.py::test_readiness_rows_with_several_continuations_paint_inside_the_inspector_viewport",
+        "job": 122635844666
+      }
+    ],
+    "Tests/UI/test_schedules_transfer_actions.py::test_workbench_locks_lifecycle_for_a_transferring_row": [
+      {
+        "seconds": 2.06,
+        "node": "Tests/UI/test_schedules_transfer_actions.py::test_workbench_locks_lifecycle_for_a_transferring_row",
+        "job": 122635844698
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_pane_does_not_shadow_reserved_or_terminal_shortcuts": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_pane_does_not_shadow_reserved_or_terminal_shortcuts",
+        "job": 122635844691
+      }
+    ],
+    "Tests/UI/test_evals_bench_editor.py::test_top_k_parse_failure_renders_the_pinned_callout_and_keeps_typed_state": [
+      {
+        "seconds": 1.12,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_top_k_parse_failure_renders_the_pinned_callout_and_keeps_typed_state",
+        "job": 122635845286
+      }
+    ],
+    "Tests/UI/test_schedules_transfer_actions.py::test_key_bound_edit_refuses_on_a_transferring_row": [
+      {
+        "seconds": 1.82,
+        "node": "Tests/UI/test_schedules_transfer_actions.py::test_key_bound_edit_refuses_on_a_transferring_row",
+        "job": 122635844808
+      }
+    ],
+    "Tests/UI/test_speech_shortcuts.py::test_each_supported_pane_shortcut_is_bound": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_each_supported_pane_shortcut_is_bound[ctrl+g-generate_tts]",
+        "job": 122635844691
+      },
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_speech_shortcuts.py::test_each_supported_pane_shortcut_is_bound[ctrl+l-clear_text]",
+        "job": 122635844691
+      }
+    ]
+  },
+  "task_selectors_expected": 95,
+  "concrete_task_cases": 97,
+  "covered_settings_cases": {
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees": [
+      {
+        "seconds": 14.49,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees",
+        "job": 122635844757
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_choice_with_no_option_reads_saved_and_names_its_value": [
+      {
+        "seconds": 15.79,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_choice_with_no_option_reads_saved_and_names_its_value",
+        "job": 122635844910
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_fallback_shows_the_value_and_word_a_new_chat_resolves": [
+      {
+        "seconds": 11.67,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_hand_edited_fallback_shows_the_value_and_word_a_new_chat_resolves",
+        "job": 122635844757
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_shown_negative_integer_can_be_backspaced_away": [
+      {
+        "seconds": 13.18,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_shown_negative_integer_can_be_backspaced_away",
+        "job": 122635844757
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_a_value_chat_defaults_does_not_hold_reads_built_in_like_model_defaults": [
+      {
+        "seconds": 14.81,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_a_value_chat_defaults_does_not_hold_reads_built_in_like_model_defaults",
+        "job": 122635844910
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_an_unset_streaming_fallback_can_be_pinned_on_and_reverted": [
+      {
+        "seconds": 14.77,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_an_unset_streaming_fallback_can_be_pinned_on_and_reverted",
+        "job": 122635845676
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[legacy-off-only]": [
+      {
+        "seconds": 19.86,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[legacy-off-only]",
+        "job": 122635845676
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[saved-off]": [
+      {
+        "seconds": 20.07,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[saved-off]",
+        "job": 122635844757
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[unset]": [
+      {
+        "seconds": 20.43,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[unset]",
+        "job": 122635844757
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_default_after_an_option_stops_sending_a_choice_with_no_option": [
+      {
+        "seconds": 14.94,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_default_after_an_option_stops_sending_a_choice_with_no_option",
+        "job": 122635844940
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_each_fallback_says_its_source_and_a_blank_says_what_it_sends": [
+      {
+        "seconds": 15.39,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_each_fallback_says_its_source_and_a_blank_says_what_it_sends",
+        "job": 122635844761
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[211x44]": [
+      {
+        "seconds": 13.96,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[211x44]",
+        "job": 122635845676
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[235x52]": [
+      {
+        "seconds": 16.38,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_every_fallback_row_paints_its_whole_help[235x52]",
+        "job": 122635844745
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_fallbacks_use_model_defaults_rows_core_first_then_closed_sampling": [
+      {
+        "seconds": 14.1,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_fallbacks_use_model_defaults_rows_core_first_then_closed_sampling",
+        "job": 122635844910
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_legacy_enable_streaming_is_still_read_and_shown": [
+      {
+        "seconds": 11.6,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_legacy_enable_streaming_is_still_read_and_shown",
+        "job": 122635845676
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_reverting_streaming_restores_the_saved_value_word_and_a_clean_draft": [
+      {
+        "seconds": 15.51,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_reverting_streaming_restores_the_saved_value_word_and_a_clean_draft",
+        "job": 122635844761
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_sampling_state_names_what_fits_and_counts_the_rest": [
+      {
+        "seconds": 0.0,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_sampling_state_names_what_fits_and_counts_the_rest",
+        "job": 122635844745
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults": [
+      {
+        "seconds": 22.83,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults",
+        "job": 122635844757
+      }
+    ],
+    "Tests/UI/test_settings_console_fallback_rows.py::test_the_streaming_key_fact_lives_in_the_inspector_config_key_disclosure": [
+      {
+        "seconds": 13.84,
+        "node": "Tests/UI/test_settings_console_fallback_rows.py::test_the_streaming_key_fact_lives_in_the_inspector_config_key_disclosure",
+        "job": 122635844940
+      }
+    ]
+  },
+  "settings_cases_expected": 19,
+  "new_scenarios": [
+    {
+      "seconds": 9.73,
+      "node": "Tests/UI/test_speech_footer_scope.py::test_recompose_hides_cached_hints_and_rejects_old_window",
+      "job": 122635844736
+    },
+    {
+      "seconds": 7.23,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure-pending]",
+      "job": 122635844736
+    },
+    {
+      "seconds": 14.1,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-edit]",
+      "job": 122635844745
+    },
+    {
+      "seconds": 10.68,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_recurring]",
+      "job": 122635844757
+    },
+    {
+      "seconds": 15.92,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[replace]",
+      "job": 122635844761
+    },
+    {
+      "seconds": 15.88,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-held-writer]",
+      "job": 122635844761
+    },
+    {
+      "seconds": 13.31,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-edit]",
+      "job": 122635844761
+    },
+    {
+      "seconds": 13.11,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[write_failure]",
+      "job": 122635844761
+    },
+    {
+      "seconds": 11.7,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[deleted]",
+      "job": 122635844804
+    },
+    {
+      "seconds": 8.49,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[later-input]",
+      "job": 122635844804
+    },
+    {
+      "seconds": 7.69,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[departure]",
+      "job": 122635844824
+    },
+    {
+      "seconds": 15.85,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[replace-ordinary]",
+      "job": 122635844910
+    },
+    {
+      "seconds": 15.26,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-ordinary]",
+      "job": 122635844910
+    },
+    {
+      "seconds": 12.75,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[acknowledged]",
+      "job": 122635844910
+    },
+    {
+      "seconds": 9.97,
+      "node": "Tests/UI/test_speech_footer_scope.py::test_footer_and_rail_actions_follow_playground_effects_return",
+      "job": 122635844910
+    },
+    {
+      "seconds": 17.53,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[serial-create]",
+      "job": 122635844940
+    },
+    {
+      "seconds": 17.28,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_forms_keep_both_accepted_saves[overlap-create]",
+      "job": 122635844940
+    },
+    {
+      "seconds": 15.71,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_racing_file_requires_an_explicit_answer[cancel]",
+      "job": 122635844940
+    },
+    {
+      "seconds": 12.65,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_same_reminder_saves_settle_before_the_next_update[offline]",
+      "job": 122635844940
+    },
+    {
+      "seconds": 8.8,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[ordinary]",
+      "job": 122635845083
+    },
+    {
+      "seconds": 8.72,
+      "node": "Tests/UI/test_evals_bench_save_publication.py::test_save_publication_retains_later_editing_context[during-refresh]",
+      "job": 122635845083
+    },
+    {
+      "seconds": 13.68,
+      "node": "Tests/UI/test_library_prompt_export_responsiveness.py::test_prompt_export_dispatches_app_key_before_destination_release[new-held-writer]",
+      "job": 122635845676
+    },
+    {
+      "seconds": 13.37,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[offline_one_time]",
+      "job": 122635845676
+    },
+    {
+      "seconds": 9.78,
+      "node": "Tests/UI/test_schedules_reminder_form_saves.py::test_full_form_refusal_failure_and_offline_outcomes[transfer]",
+      "job": 122635845676
+    }
+  ],
+  "new_scenarios_expected": 24,
+  "evals_uncertainty_controls": {
+    "Tests/UI/test_evals_bench_editor.py::test_save_with_capture_continuations_toggled_on_via_the_ui_persists_the_flip": [
+      {
+        "seconds": 1.57,
+        "node": "Tests/UI/test_evals_bench_editor.py::test_save_with_capture_continuations_toggled_on_via_the_ui_persists_the_flip",
+        "job": 122635844666
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_pressing_delete_then_confirming_in_the_real_dialog_deletes_the_bench": [
+      {
+        "seconds": 1.44,
+        "node": "Tests/UI/test_evals_screen.py::test_pressing_delete_then_confirming_in_the_real_dialog_deletes_the_bench",
+        "job": 122635844698
+      }
+    ],
+    "Tests/UI/test_evals_screen.py::test_readiness_rows_with_several_continuations_paint_inside_the_inspector_viewport": [
+      {
+        "seconds": 0.96,
+        "node": "Tests/UI/test_evals_screen.py::test_readiness_rows_with_several_continuations_paint_inside_the_inspector_viewport",
+        "job": 122635844666
+      }
+    ]
+  },
+  "qualification": "Fully completed Derived/Perf PR workflows on860; all25 Derived jobs, including housekeeping, succeeded. Historical source qualification, not successor-head CI."
+}

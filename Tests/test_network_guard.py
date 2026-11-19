@@ -212,7 +212,9 @@ def test_socketpair_exemption_does_not_escape_to_another_thread(monkeypatch) -> 
         assert release.wait(timeout=5), "test did not release held socketpair"
         return real_socketpair(*args, **kwargs)
 
-    monkeypatch.setattr(network_guard, "_real_socketpair", held_socketpair, raising=False)
+    monkeypatch.setattr(
+        network_guard, "_real_socketpair", held_socketpair, raising=False
+    )
 
     def run_socketpair() -> None:
         try:
@@ -243,6 +245,7 @@ def test_socketpair_exemption_does_not_escape_to_another_thread(monkeypatch) -> 
 
 def test_socketpair_exception_restores_network_denial(monkeypatch) -> None:
     """Catch an exception path that leaves the dynamic socketpair exemption set."""
+
     class SocketpairFailure(RuntimeError):
         pass
 
@@ -345,25 +348,19 @@ def test_repeated_install_keeps_one_guarded_socketpair_wrapper() -> None:
 
 
 def test_loopback_destination_classification_is_numeric_and_family_specific() -> None:
-    assert network_guard.is_loopback_destination(
-        socket.AF_INET, ("127.0.0.1", 80)
-    )
+    assert network_guard.is_loopback_destination(socket.AF_INET, ("127.0.0.1", 80))
     assert network_guard.is_loopback_destination(
         socket.AF_INET, ("127.255.255.254", 80)
     )
     assert not network_guard.is_loopback_destination(
         socket.AF_INET, ("126.255.255.255", 80)
     )
-    assert not network_guard.is_loopback_destination(
-        socket.AF_INET, ("localhost", 80)
-    )
+    assert not network_guard.is_loopback_destination(socket.AF_INET, ("localhost", 80))
     assert network_guard.is_loopback_destination(socket.AF_INET6, ("::1", 80))
     assert not network_guard.is_loopback_destination(
         socket.AF_INET6, ("::ffff:127.0.0.1", 80)
     )
-    assert not network_guard.is_loopback_destination(
-        socket.AF_INET6, ("localhost", 80)
-    )
+    assert not network_guard.is_loopback_destination(socket.AF_INET6, ("localhost", 80))
 
 
 def test_network_mode_rejects_conflicting_loopback_and_allow_all_markers() -> None:

@@ -155,7 +155,9 @@ def resident():
 """.format(deferred=DEFERRED_MODULES)
 
 
-_APP_IMPORT_SNIPPET = _RESIDENT_HELPER + """
+_APP_IMPORT_SNIPPET = (
+    _RESIDENT_HELPER
+    + """
 EXPECTED_BOOT_MEMBERS = {expected!r}
 
 import tldw_chatbook.app  # noqa: F401
@@ -174,6 +176,7 @@ validate_source_operation_id("rsop-0123456789abcdef0123456789abcdef")
 assert not resident(), f"validating an id woke the deferred tree: {{resident()}}"
 print("APP_CLOSURE_OK")
 """.format(expected=EXPECTED_BOOT_MEMBERS)
+)
 
 
 def test_app_import_does_not_execute_research_workspace_eager_reexports(
@@ -313,7 +316,9 @@ def test_server_adapter_reads_the_owner_rows_bound_without_the_schema_module(
     assert "SERVER_ADAPTER_LIMITS_OK" in result.stdout
 
 
-_DEFERRED_SCREEN_SNIPPET = _RESIDENT_HELPER + """
+_DEFERRED_SCREEN_SNIPPET = (
+    _RESIDENT_HELPER
+    + """
 import asyncio
 
 #: Screen-leg members that must stay absent through _ui_ready. The adapter/
@@ -370,6 +375,7 @@ async def main() -> None:
 
 asyncio.run(main())
 """
+)
 
 
 @pytest.mark.integration
@@ -431,7 +437,10 @@ async def main() -> None:
 
         # First use: the deferred import failure lands here, not at boot.
         await app.handle_screen_navigation(NavigateToScreen("research_workspace"))
-        await asyncio.sleep(0)
+        # notify() posts to the app queue; a loop yield is not publication.
+        notified = asyncio.Event()
+        assert app.call_later(notified.set)
+        await notified.wait()
 
         # Legible, not fatal: the app is alive, the user stayed on the
         # current screen, and was TOLD -- not left staring at an unchanged

@@ -64,6 +64,25 @@ class BuddyCharacterCreateRequested(Message):
         super().__init__()
 
 
+class PersonaVisualBuddyManageRequested(Message):
+    """Open existing Buddy management from one exact saved-pack inventory."""
+
+    def __init__(
+        self,
+        browser: PersonasPersonaVisualPackWidget,
+        inventory: PersonaVisualDraftInventory,
+    ) -> None:
+        """Capture the browser and immutable inventory that requested management.
+
+        Args:
+            browser: Mounted browser emitting this request.
+            inventory: Saved inventory visible when the action was activated.
+        """
+        self.browser = browser
+        self.inventory = inventory
+        super().__init__()
+
+
 class PersonaVisualSaveRequested(Message):
     """Ask the screen to publish its current isolated draft exactly once."""
 
@@ -300,6 +319,12 @@ class PersonasPersonaVisualPackWidget(Vertical):
             )
 
             yield Button(
+                "Manage Buddy…",
+                id="personas-persona-visual-buddy",
+                classes="console-action-secondary",
+                tooltip="Open Buddy management. Artwork changes require Apply.",
+            )
+            yield Button(
                 "Create character…",
                 id="personas-persona-visual-create-character",
                 classes="console-action-secondary",
@@ -344,6 +369,23 @@ class PersonasPersonaVisualPackWidget(Vertical):
         """Return the current local/server authoring availability."""
 
         return self._availability
+
+    @property
+    def saved_inventory(self) -> PersonaVisualDraftInventory | None:
+        """Return the saved inventory currently eligible to open management.
+
+        Returns:
+            Current complete local inventory while idle and clean, else None.
+        """
+        if (
+            self._availability == "available"
+            and self._busy is None
+            and not self._dirty
+            and self._inventory is not None
+            and self._inventory.activatable
+        ):
+            return self._inventory
+        return None
 
     def set_availability(self, availability: PersonaVisualAvailability) -> None:
         """Show one honest authoring eligibility state."""
@@ -503,6 +545,9 @@ class PersonasPersonaVisualPackWidget(Vertical):
         self.query_one("#personas-persona-visual-save", Button).disabled = not (
             available and idle and self._dirty and activatable
         )
+        self.query_one("#personas-persona-visual-buddy", Button).disabled = (
+            self.saved_inventory is None
+        )
         self.query_one(
             "#personas-persona-visual-create-character", Button
         ).disabled = not (available and idle and not self._dirty and activatable)
@@ -577,6 +622,13 @@ class PersonasPersonaVisualPackWidget(Vertical):
         event.stop()
         self.post_message(PersonaVisualExportRequested())
 
+    @on(Button.Pressed, "#personas-persona-visual-buddy")
+    def _manage_buddy(self, event: Button.Pressed) -> None:
+        event.stop()
+        inventory = self.saved_inventory
+        if inventory is not None:
+            self.post_message(PersonaVisualBuddyManageRequested(self, inventory))
+
     @on(Button.Pressed, "#personas-persona-visual-create-character")
     def _create_character_pressed(self, event: Button.Pressed) -> None:
         event.stop()
@@ -601,6 +653,7 @@ class PersonasPersonaVisualPackWidget(Vertical):
 __all__ = [
     "BuddyCharacterCreateRequested",
     "PersonaVisualAddCustomRequested",
+    "PersonaVisualBuddyManageRequested",
     "PersonaVisualCancelRequested",
     "PersonaVisualClearRequested",
     "PersonaVisualCustomStateDialog",

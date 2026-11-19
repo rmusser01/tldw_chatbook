@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 from tldw_chatbook.Agents.fleet_messages import MessageError
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -127,8 +129,9 @@ def test_bridge_replacement_revokes_old_progress(setup):
 
 
 @pytest.mark.parametrize("existing", [False, True])
+@private_profile_test
 def test_real_bridge_toolless_disclosure_does_not_create_an_inbox(
-    tmp_path, monkeypatch, existing
+    tmp_path, monkeypatch, existing, request
 ):
     from dataclasses import replace
 
@@ -157,8 +160,9 @@ def test_real_bridge_toolless_disclosure_does_not_create_an_inbox(
         assert prompt.count(READ_INSTRUCTIONS) == 1
 
 
+@private_profile_test
 def test_existing_progress_remains_readable_when_fleet_is_disabled(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, request
 ):
     from Tests.Agents.conftest import pin_agent_settings
     from Tests.Agents.test_agent_service import fence
@@ -184,8 +188,9 @@ def test_existing_progress_remains_readable_when_fleet_is_disabled(
     assert len(bridge._fleet_coordinators["conv-1"].snapshot()) == 1
 
 
+@private_profile_test
 def test_live_and_restored_rail_markers_are_body_free_with_capture_off(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, request
 ):
     import json
 

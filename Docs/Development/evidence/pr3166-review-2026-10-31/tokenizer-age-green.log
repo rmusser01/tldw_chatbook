@@ -1,0 +1,98 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 48 items
+
+Tests/UI/test_console_checked_display_scope.py::test_actual_warm_display_opens_no_redundant_native_scope PASSED [  2%]
+Tests/UI/test_console_checked_display_scope.py::test_default_config_sync_still_enters_real_native_scope PASSED [  4%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_nested_disk_reader_keeps_its_own_fresh_scope PASSED [  6%]
+Tests/UI/test_console_checked_display_scope.py::test_genuine_display_expiry_defers_until_fresh_checked_read[False] PASSED [  8%]
+Tests/UI/test_console_checked_display_scope.py::test_genuine_display_expiry_defers_until_fresh_checked_read[True] PASSED [ 10%]
+Tests/UI/test_console_checked_display_scope.py::test_direct_coalesced_control_bar_queues_checked_refresh_without_native_entry PASSED [ 12%]
+Tests/UI/test_console_checked_display_scope.py::test_expired_display_submission_failure_defers_and_remains_retryable PASSED [ 14%]
+Tests/UI/test_console_checked_display_scope.py::test_unqualified_display_uses_fresh_native_lifetime[custom] PASSED [ 16%]
+Tests/UI/test_console_checked_display_scope.py::test_unqualified_display_uses_fresh_native_lifetime[copied_proof] PASSED [ 18%]
+Tests/UI/test_console_checked_display_scope.py::test_unqualified_display_uses_fresh_native_lifetime[changed_reader] PASSED [ 20%]
+Tests/UI/test_console_checked_display_scope.py::test_unqualified_display_uses_fresh_native_lifetime[alias] PASSED [ 22%]
+Tests/UI/test_console_checked_display_scope.py::test_foreign_ui_loop_retains_fresh_native_scope PASSED [ 25%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_refuses_changed_native_owner_before_body[closed] PASSED [ 27%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_refuses_changed_native_owner_before_body[pause] PASSED [ 29%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_refuses_changed_native_owner_before_body[participant] PASSED [ 31%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_refuses_changed_native_owner_before_body[module] PASSED [ 33%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_rejects_post_body_owner_change[session] PASSED [ 35%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_rejects_post_body_owner_change[workspace] PASSED [ 37%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_rejects_post_body_owner_change[mapping] PASSED [ 39%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_rejects_post_body_owner_change[source] PASSED [ 41%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_rejects_post_body_owner_change[closed] PASSED [ 43%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_rejects_post_body_owner_change[pause] PASSED [ 45%]
+Tests/UI/test_console_checked_display_scope.py::test_actual_concurrent_saved_generation_invalidates_display PASSED [ 47%]
+Tests/UI/test_console_checked_display_scope.py::test_warm_display_body_error_retains_identity_and_native_failure_state PASSED [ 50%]
+Tests/UI/test_console_checked_display_scope.py::test_actual_cold_screen_defers_body_until_checked_worker_settles PASSED [ 52%]
+Tests/UI/test_console_checked_display_scope.py::test_closed_screen_refuses_warm_display_acceptance[before] PASSED [ 54%]
+Tests/UI/test_console_checked_display_scope.py::test_closed_screen_refuses_warm_display_acceptance[after] PASSED [ 56%]
+Tests/UI/test_console_checked_display_scope.py::test_unexpected_post_display_failure_chains_original_body_error PASSED [ 58%]
+Tests/UI/test_console_checked_display_scope.py::test_permissive_alias_equality_cannot_retain_display_proof PASSED [ 60%]
+Tests/UI/test_console_checked_display_scope.py::test_borrowed_same_class_key_requires_original_native_lifetime PASSED [ 62%]
+Tests/UI/test_console_checked_display_scope.py::test_permissive_owner_equality_never_accepts_changed_receiver[app] PASSED [ 64%]
+Tests/UI/test_console_checked_display_scope.py::test_permissive_owner_equality_never_accepts_changed_receiver[database] PASSED [ 66%]
+Tests/UI/test_console_checked_display_scope.py::test_permissive_owner_equality_never_accepts_changed_receiver[store] PASSED [ 68%]
+Tests/UI/test_console_checked_display_scope.py::test_arbitrary_injected_proof_stays_on_fresh_native_route[unhashable] PASSED [ 70%]
+Tests/UI/test_console_checked_display_scope.py::test_arbitrary_injected_proof_stays_on_fresh_native_route[unexpected_hash] PASSED [ 72%]
+Tests/UI/test_console_checked_display_scope.py::test_borrowed_standard_projection_defers_actual_other_screen PASSED [ 75%]
+Tests/UI/test_console_checked_display_scope.py::test_retargeted_projection_cannot_reuse_original_screen_proof PASSED [ 77%]
+Tests/UI/test_console_checked_display_scope.py::test_spoofed_bound_key_attributes_retain_fresh_native_scope PASSED [ 79%]
+Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[False] PASSED [ 81%]
+Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[True] PASSED [ 83%]
+Tests/UI/test_console_tokenizer_preparation.py::test_tokenizer_preparation_is_coalesced_off_loop PASSED [ 85%]
+Tests/UI/test_console_tokenizer_preparation.py::test_changed_owner_cannot_publish_tokenizer_readiness[model] PASSED [ 87%]
+Tests/UI/test_console_tokenizer_preparation.py::test_changed_owner_cannot_publish_tokenizer_readiness[source] PASSED [ 89%]
+Tests/UI/test_console_tokenizer_preparation.py::test_changed_owner_cannot_publish_tokenizer_readiness[settings] PASSED [ 91%]
+Tests/UI/test_console_tokenizer_preparation.py::test_changed_owner_cannot_publish_tokenizer_readiness[close] PASSED [ 93%]
+Tests/UI/test_console_tokenizer_preparation.py::test_tokenizer_cancel_waits_for_physical_retirement PASSED [ 95%]
+Tests/UI/test_console_tokenizer_preparation.py::test_failed_backend_stays_unavailable_without_a_refresh_loop PASSED [ 97%]
+Tests/UI/test_console_tokenizer_preparation.py::test_custom_backend_keeps_direct_path PASSED [100%]
+
+============================== warnings summary ===============================
+Tests/UI/test_console_checked_display_scope.py::test_actual_warm_display_opens_no_redundant_native_scope
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+5.15s call     Tests/UI/test_console_checked_display_scope.py::test_direct_coalesced_control_bar_queues_checked_refresh_without_native_entry
+4.26s call     Tests/UI/test_console_checked_display_scope.py::test_expired_display_submission_failure_defers_and_remains_retryable
+4.13s call     Tests/UI/test_console_checked_display_scope.py::test_unexpected_post_display_failure_chains_original_body_error
+4.08s call     Tests/UI/test_console_checked_display_scope.py::test_genuine_display_expiry_defers_until_fresh_checked_read[True]
+4.00s call     Tests/UI/test_console_checked_display_scope.py::test_genuine_display_expiry_defers_until_fresh_checked_read[False]
+3.94s call     Tests/UI/test_console_checked_display_scope.py::test_permissive_owner_equality_never_accepts_changed_receiver[app]
+3.75s call     Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[True]
+3.13s call     Tests/UI/test_console_checked_display_scope.py::test_arbitrary_injected_proof_stays_on_fresh_native_route[unhashable]
+3.00s call     Tests/UI/test_console_checked_display_scope.py::test_permissive_alias_equality_cannot_retain_display_proof
+2.96s call     Tests/UI/test_console_checked_display_scope.py::test_closed_screen_refuses_warm_display_acceptance[before]
+2.95s call     Tests/UI/test_console_checked_display_scope.py::test_warm_display_nested_disk_reader_keeps_its_own_fresh_scope
+2.92s call     Tests/UI/test_console_checked_display_scope.py::test_borrowed_same_class_key_requires_original_native_lifetime
+2.91s call     Tests/UI/test_console_checked_display_scope.py::test_default_config_sync_still_enters_real_native_scope
+2.86s call     Tests/UI/test_console_checked_display_scope.py::test_arbitrary_injected_proof_stays_on_fresh_native_route[unexpected_hash]
+2.86s call     Tests/UI/test_console_checked_display_scope.py::test_actual_cold_screen_defers_body_until_checked_worker_settles
+2.86s call     Tests/UI/test_console_checked_display_scope.py::test_unqualified_display_uses_fresh_native_lifetime[custom]
+2.80s call     Tests/UI/test_console_checked_display_scope.py::test_permissive_owner_equality_never_accepts_changed_receiver[database]
+2.78s call     Tests/UI/test_console_checked_display_scope.py::test_spoofed_bound_key_attributes_retain_fresh_native_scope
+2.78s call     Tests/UI/test_console_checked_display_scope.py::test_unqualified_display_uses_fresh_native_lifetime[alias]
+2.62s call     Tests/UI/test_console_checked_display_scope.py::test_warm_display_rejects_post_body_owner_change[source]
+2.61s call     Tests/UI/test_console_checked_display_scope.py::test_actual_concurrent_saved_generation_invalidates_display
+2.60s call     Tests/UI/test_console_checked_display_scope.py::test_tokenizer_wait_never_renews_original_checked_display[False]
+2.59s call     Tests/UI/test_console_checked_display_scope.py::test_warm_display_rejects_post_body_owner_change[mapping]
+2.58s call     Tests/UI/test_console_checked_display_scope.py::test_permissive_owner_equality_never_accepts_changed_receiver[store]
+2.56s call     Tests/UI/test_console_checked_display_scope.py::test_unqualified_display_uses_fresh_native_lifetime[copied_proof]
+================== 48 passed, 1 warning in 133.27s (0:02:13) ==================

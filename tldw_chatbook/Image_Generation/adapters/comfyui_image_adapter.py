@@ -86,7 +86,9 @@ _EXPECTED_INPUT_KEYS = {
     "129": frozenset({"unet_name", "weight_dtype"}),
     "130": frozenset({"clip_name", "device", "type"}),
     "131": frozenset({"noise_seed"}),
-    "133": frozenset({"clip", "first_frame", "height", "length", "prompt", "vae", "width"}),
+    "133": frozenset(
+        {"clip", "first_frame", "height", "length", "prompt", "vae", "width"}
+    ),
     "139": frozenset({"value"}),
     "140": frozenset({"image"}),
     "141": frozenset({"image", "megapixels", "resolution_steps", "upscale_method"}),
@@ -228,7 +230,11 @@ def _nonempty(value: Any) -> bool:
 
 def _request_reference_dimensions(request: ImageGenRequest) -> tuple[int, int]:
     reference = request.reference_image
-    if reference is None or type(reference.content) is not bytes or not reference.content:
+    if (
+        reference is None
+        or type(reference.content) is not bytes
+        or not reference.content
+    ):
         raise ComfyUIImageEditError("request_validation")
     if reference.mime_type not in _REFERENCE_EXTENSION:
         raise ComfyUIImageEditError("request_validation")
@@ -732,7 +738,11 @@ def _match_type_template(input_schema: Any) -> tuple[str, frozenset[str]]:
         raise ValueError
     template_id = template.get("template_id")
     allowed = template.get("allowed_types")
-    if not isinstance(template_id, str) or not template_id or not isinstance(allowed, str):
+    if (
+        not isinstance(template_id, str)
+        or not template_id
+        or not isinstance(allowed, str)
+    ):
         raise ValueError
     allowed_types = allowed.split(",")
     if (
@@ -1019,7 +1029,9 @@ def _stream_png(
     declared = _declared_length(response)
     if declared is not None and declared > max_bytes:
         raise ValueError("PNG response exceeds limit")
-    content_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    content_type = (
+        (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    )
     if content_type != "image/png":
         raise ValueError("invalid PNG content type")
     collected = bytearray()
@@ -1063,16 +1075,18 @@ class ComfyUIImageAdapter:
         client_factory: Callable[[], httpx.Client] | None = None,
     ) -> None:
         self.config = config or get_image_generation_config()
-        self.origin = normalize_comfyui_image_origin(
-            self.config.comfyui_image_base_url
-        )
+        self.origin = normalize_comfyui_image_origin(self.config.comfyui_image_base_url)
         self._trusted_host = host_of(self.origin)
         if not self._trusted_host:
             raise ValueError("invalid ComfyUI origin")
         self._client_factory = client_factory or httpx.Client
 
     def _endpoint(self, path: str) -> str:
-        if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
+        if (
+            not isinstance(path, str)
+            or not path.startswith("/")
+            or path.startswith("//")
+        ):
             raise ValueError("invalid ComfyUI endpoint")
         url = f"{self.origin}{path}"
         if not same_origin(self.origin, url):
@@ -1272,7 +1286,9 @@ class ComfyUIImageAdapter:
         outputs = record.get("outputs")
         if isinstance(outputs, dict):
             node_output = outputs.get("165")
-            images = node_output.get("images") if isinstance(node_output, dict) else None
+            images = (
+                node_output.get("images") if isinstance(node_output, dict) else None
+            )
             if isinstance(images, list) and any(
                 isinstance(item, dict) and item.get("type") == "output"
                 for item in images

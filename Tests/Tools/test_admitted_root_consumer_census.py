@@ -27,6 +27,21 @@ _RECEIVER_MARKERS = ("authority", "selection", "admitted")
 
 #: "path::function" -> number of ``.root`` reads, as of TASK-33009 follow-ups.
 _PINNED: dict[str, int] = {
+    # PR3346 rebase: existing reviewed readers on dev, not new authority.
+    # ReviewSourceAuthority.scope refuses RemoteRoot before local_root_path;
+    # review-service reads compare identities under that same guarded scope.
+    "tldw_chatbook/Agents/code_review_service.py::read": 1,
+    "tldw_chatbook/Agents/code_review_service.py::_authorize_verification_sources": 1,
+    "tldw_chatbook/Agents/code_review_source.py::scope": 2,
+    # Index composition skips RemoteRoot; preparation uses local_root_path.
+    "tldw_chatbook/Agents/local_tool_provider.py::_project_index_spec": 2,
+    "tldw_chatbook/Chat/console_project_index_preparation.py::_prepare_project_index_scopes_owned": 2,
+    # ProjectIndexAuthority validates LocalRoot; transport serializes that
+    # descriptor, and search compares it without accessing a remote path.
+    "tldw_chatbook/Tools/project_index_scan_protocol.py::initialization": 1,
+    "tldw_chatbook/Workspaces/project_index/models.py::__post_init__": 1,
+    "tldw_chatbook/Workspaces/project_index/scanner.py::_worker": 1,
+    "tldw_chatbook/Workspaces/project_index/service.py::_search_owned": 1,
     # Agent worktrees are local git checkouts (git_* is refused on remote
     # bindings), read through the ``source = self._worktree_repo_authority`` alias.
     "tldw_chatbook/Agents/agent_service.py::_admit_agent_worktree": 3,
@@ -43,7 +58,7 @@ _PINNED: dict[str, int] = {
     "tldw_chatbook/Agents/virtual_cli_provider.py::execute": 3,
     "tldw_chatbook/Chat/console_agent_bridge.py::_read_run_log_page": 1,
     "tldw_chatbook/Chat/console_agent_bridge.py::load_run_log_text": 1,
-    "tldw_chatbook/Chat/console_chat_controller.py::_build_personal_context_snapshot": 2,
+    "tldw_chatbook/Chat/console_personal_context.py::_build_personal_context_snapshot": 2,
     "tldw_chatbook/Chat/console_chat_controller.py::_build_project_instruction_preview_for_session": 5,
     "tldw_chatbook/Chat/console_chat_controller.py::_compose_agent_request_providers": 1,
     "tldw_chatbook/Chat/console_chat_controller.py::_default_remote_instruction_executor": 1,
@@ -51,7 +66,7 @@ _PINNED: dict[str, int] = {
     "tldw_chatbook/Chat/console_chat_controller.py::_project_instruction_excluded_dirs": 1,
     "tldw_chatbook/Chat/console_chat_controller.py::_remote_instruction_io_for_selection": 2,
     "tldw_chatbook/Chat/console_chat_controller.py::_resolve_remote_project_instruction_startup": 1,
-    "tldw_chatbook/Chat/console_chat_controller.py::_run_agent_reply": 4,
+    "tldw_chatbook/Chat/console_agent_reply.py::_run_agent_reply": 4,
     "tldw_chatbook/Chat/console_chat_controller.py::_workspace_binding_authority_is_current": 1,
     "tldw_chatbook/Chat/console_chat_controller.py::capture_run_admitted_workspace_roots": 6,
     "tldw_chatbook/Chat/console_chat_controller.py::resolve_project_instruction_binding": 1,

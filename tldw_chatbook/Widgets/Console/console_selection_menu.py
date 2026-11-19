@@ -27,23 +27,143 @@ stays reachable).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial, wraps
+from inspect import iscoroutinefunction
+from typing import TYPE_CHECKING, Any, ClassVar
 from weakref import WeakSet
 
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
-from textual.dom import NoScreen
+from textual.dom import DOMNode, NoScreen
 from textual.events import Click, Key, Resize
 from textual.geometry import Offset, Region
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from textual.screen import Screen
     from textual.signal import Signal
+
+# --- Transcript input ownership (ADR-365) -----------------------------------
+# Lives here, not in its own module, to keep the UI-ready module census
+# (ADR-097) flat: this module is already resident with every importer.
+
+
+@dataclass(eq=False)
+class TranscriptInputVisit:
+    """One published view of a store activation."""
+
+    published_at: float
+    is_current: Callable[[], bool]
+
+
+def _managed_transcript(node: object) -> Any:
+    while isinstance(node, DOMNode):
+        if getattr(node, "_transcript_surface", None) is not None:
+            return node
+        if (owner := getattr(node, "_transcript_input_owner", None)) is not None:
+            node = owner
+        else:
+            node = node.parent
+    return None
+
+
+def _current_visit(owner: Any) -> TranscriptInputVisit | None:
+    visit = getattr(owner, "_transcript_input_visit", None)
+    return visit if visit is not None and visit.is_current() else None
+
+
+def transcript_action_current(message: Message, receiver: Widget | None = None) -> bool:
+    """Check the input's original visit, including after it bubbles."""
+    origin = getattr(message, "_transcript_input_visit", None)
+    if origin is not None:
+        return origin.is_current()
+    owner = (
+        _managed_transcript(message._sender)
+        or _managed_transcript(message.control)
+        or _managed_transcript(receiver)
+    )
+    if owner is None:
+        return True
+    visit = _current_visit(owner)
+    if visit is None or message.time < visit.published_at:
+        return False
+    message._transcript_input_visit = visit
+    return True
+
+
+def transcript_callback(
+    node: Widget, callback: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Callable[[], Any]:
+    """Preserve the visit when Textual schedules a transcript effect."""
+    invoke = partial(callback, *args, **kwargs)
+    owner = _managed_transcript(node)
+    if owner is None:
+        return invoke
+    visit = _current_visit(owner)
+
+    def run() -> Any:
+        if visit is not None and visit.is_current():
+            return invoke()
+        return None
+
+    return run
+
+
+def guard_transcript_action(method):
+    """Check a Console handler before it consumes a queued action."""
+
+    def allowed(widget: Widget, message: Message) -> bool:
+        if transcript_action_current(message, widget):
+            return True
+        # Mid-switch no visit is published: skip only this handler and let the
+        # key reach screen bindings (the transcript's own are off in
+        # ``check_action``). Known edge, accepted: a key still bubbling when
+        # the next visit publishes can reach a transcript binding, which then
+        # acts on the newly projected session.
+        if not isinstance(message, Key) or _current_visit(_managed_transcript(widget)):
+            message.stop().prevent_default()
+        return False
+
+    if iscoroutinefunction(method):
+
+        @wraps(method)
+        async def handle(widget, message):
+            if allowed(widget, message):
+                return await method(widget, message)
+            return None
+    else:
+
+        @wraps(method)
+        def handle(widget, message):
+            if allowed(widget, message):
+                return method(widget, message)
+            return None
+
+    return handle
+
+
+def transcript_focus(
+    node: Widget, target: Widget, *, scroll_visible: bool = True
+) -> None:
+    """Defer focus only while the requesting transcript visit is current."""
+    if _managed_transcript(node) is None:
+        target.focus(scroll_visible=scroll_visible)
+        return
+    screen = node.screen
+
+    def set_focus() -> None:
+        if target.is_attached and target.display:
+            screen.set_focus(target, scroll_visible=scroll_visible)
+
+    node.app.call_later(transcript_callback(node, set_focus))
+
 
 #: Every constructed, not-yet-collected selection menu (TASK-21119).
 #:
@@ -124,19 +244,43 @@ class ConsoleSideChatRequested(Message):
         self.mode = mode
 
 
+class ConsoleTraceCopyRequested(Message):
+    """Copy a captured response target, or its entire source chat."""
+
+    def __init__(
+        self,
+        session_id: str,
+        *,
+        message_id: str | None = None,
+        source_message_ids: tuple[str, ...] | None = None,
+    ) -> None:
+        super().__init__()
+        self.session_id = session_id
+        self.message_id = message_id
+        self.source_message_ids = source_message_ids
+
+
 class ConsoleSelectionNoteRequested(Message):
     """Bubbled when the user saves the active selection as a note.
 
     task-18156 Task 6 (maintainer request): the transcript posts this after
     the menu's "Create note" action; the owning ``ChatScreen`` derives a
-    title from the quote and writes the note off-thread through the store's
-    persistence DB. Available for EVERY selection -- notes are not review
+    title from the full selection and writes it through the Notes service.
+    Available for EVERY selection -- notes are not review
     feedback, so there is no row-kind or run gating.
     """
 
-    def __init__(self, quote: str) -> None:
+    def __init__(
+        self,
+        quote: str,
+        *,
+        source_session_id: str | None = None,
+        open_note: bool = False,
+    ) -> None:
         super().__init__()
         self.quote = quote
+        self.source_session_id = source_session_id
+        self.open_note = open_note
 
 
 class ConsoleSelectionFeedbackRequested(Message):
@@ -214,10 +358,14 @@ class ConsoleSelectionMenu(Vertical):
        end up disabled, and every action must stay one row in every state
        and color mode. */
     ConsoleSelectionMenu #console-selection-copy,
+    ConsoleSelectionMenu #console-selection-copy-all,
+    ConsoleSelectionMenu #console-selection-copy-all-messages,
+    ConsoleSelectionMenu #console-selection-full-message,
     ConsoleSelectionMenu #console-selection-add-to-chat,
     ConsoleSelectionMenu #console-selection-more-details,
     ConsoleSelectionMenu #console-selection-ask-side-chat,
     ConsoleSelectionMenu #console-selection-create-note,
+    ConsoleSelectionMenu #console-selection-create-note-go,
     ConsoleSelectionMenu #console-selection-request-changes,
     ConsoleSelectionMenu #console-selection-lgm,
     ConsoleSelectionMenu #console-selection-comment {
@@ -248,6 +396,31 @@ class ConsoleSelectionMenu(Vertical):
     class CopySelection(Message):
         """User chose 'Copy selection' for the active selection."""
 
+    class CopyAll(Message):
+        """Copy the source captured by this menu, independent of later selection."""
+
+        def __init__(
+            self,
+            session_id: str | None,
+            message_id: str | None,
+            source_message_ids: tuple[str, ...] | None = None,
+        ) -> None:
+            super().__init__()
+            self.session_id = session_id
+            self.message_id = message_id
+            self.source_message_ids = source_message_ids
+
+    class CopyAllMessages(CopyAll):
+        """Copy the whole captured source chat."""
+
+    class SelectFullMessage(Message):
+        """Extend only the message-body selection that opened this menu."""
+
+        def __init__(self, row_id: str | None, session_id: str | None) -> None:
+            super().__init__()
+            self.row_id = row_id
+            self.session_id = session_id
+
     class AddToChat(Message):
         """User chose 'Add to chat' for the active selection."""
 
@@ -259,6 +432,18 @@ class ConsoleSelectionMenu(Vertical):
 
     class CreateNote(Message):
         """User chose 'Create note' for the active selection."""
+
+        def __init__(
+            self,
+            *,
+            row_id: str | None = None,
+            session_id: str | None = None,
+            open_note: bool = False,
+        ) -> None:
+            super().__init__()
+            self.row_id = row_id
+            self.session_id = session_id
+            self.open_note = open_note
 
     class RequestChanges(Message):
         """User chose 'Request changes' review feedback for the selection.
@@ -283,6 +468,14 @@ class ConsoleSelectionMenu(Vertical):
         feedback_available: bool = False,
         run_active: bool = False,
         selection_top: int | None = None,
+        has_copy_all: bool = False,
+        has_copy_all_messages: bool = False,
+        has_select_full_message: bool = False,
+        source_session_id: str | None = None,
+        source_message_ids: tuple[str, ...] | None = None,
+        response_message_id: str | None = None,
+        selection_row_id: str | None = None,
+        note_disabled_reason: str = "",
     ) -> None:
         """Anchor the menu at screen coordinates.
 
@@ -309,14 +502,32 @@ class ConsoleSelectionMenu(Vertical):
                 hops entirely above the row so its highlight strip stays
                 visible); NOT part of the anchor. ``None`` (no row, or its
                 region unmeasured) keeps the plain bottom-pinned clamp.
+            has_copy_all: Offer copying the enclosing response trace.
+            has_copy_all_messages: Offer copying the complete source chat.
+            has_select_full_message: Offer selecting the complete message body.
+            source_session_id: Owning chat identity captured when the menu opens.
+            source_message_ids: User/assistant path captured when the menu opens.
+            response_message_id: Enclosing assistant response identity.
+            selection_row_id: Original selectable body widget identifier.
+            note_disabled_reason: Source policy restriction for both note actions.
         """
         super().__init__(id="console-selection-menu")
         self._anchor = (screen_x, screen_y)
         self._owner = owner
+        self._transcript_input_owner = owner
+        self._restore_focus = transcript_callback(self, self._restore_previous_focus)
         self._has_add_to_chat = has_add_to_chat
         self._feedback_available = feedback_available
         self._run_active = run_active
         self._selection_top = selection_top
+        self._has_copy_all = has_copy_all
+        self._has_copy_all_messages = has_copy_all_messages
+        self._has_select_full_message = has_select_full_message
+        self._source_session_id = source_session_id
+        self._source_message_ids = source_message_ids
+        self._response_message_id = response_message_id
+        self._selection_row_id = selection_row_id
+        self._note_disabled_reason = note_disabled_reason
         self._clamp_bounds: Region | None = None
         self._layout_refresh_signal: Signal[Screen] | None = None
         #: Widget holding focus before the menu grabbed it (captured in
@@ -324,6 +535,9 @@ class ConsoleSelectionMenu(Vertical):
         #: nothing was focused (or the capture raced teardown), so unmount
         #: falls back to the composer.
         self._previous_focus: Widget | None = None
+        #: False once a dismissal says focus has already moved on deliberately
+        #: (`dismiss_menu`); unmount then leaves it where it is.
+        self._restore_focus_on_unmount = True
         # TASK-21119: register BEFORE any mount can happen. Textual delivers
         # ``Mount`` asynchronously (the widget's own message pump), so an
         # ``on_mount`` registration would leave a window in which the menu is
@@ -337,11 +551,47 @@ class ConsoleSelectionMenu(Vertical):
             Action buttons and the no-run hint when feedback is available.
         """
         yield Button("Copy selection", id="console-selection-copy", variant="primary")
+        if self._has_copy_all:
+            button = Button("Copy all", id="console-selection-copy-all")
+            button.tooltip = (
+                "Copy this response's thinking, tools, full results, and answer."
+            )
+            yield button
+        if self._has_copy_all_messages:
+            button = Button(
+                "Copy all messages", id="console-selection-copy-all-messages"
+            )
+            button.tooltip = (
+                "Copy this chat's active branch, including every response trace."
+            )
+            yield button
+        if self._has_select_full_message:
+            button = Button("Select full message", id="console-selection-full-message")
+            button.tooltip = (
+                "Select the complete message body, including offscreen text."
+            )
+            yield button
         if self._has_add_to_chat:
             yield Button("Add to chat", id="console-selection-add-to-chat")
         yield Button("More Details", id="console-selection-more-details")
         yield Button("Ask in Side Chat", id="console-selection-ask-side-chat")
-        yield Button("Create note", id="console-selection-create-note")
+        for label, button_id, help_text in (
+            (
+                "Create Note",
+                "console-selection-create-note",
+                "Save the complete selection and stay in Console.",
+            ),
+            (
+                "Create+Go to Note",
+                "console-selection-create-note-go",
+                "Create a note from the selection and open it in Library > Notes.",
+            ),
+        ):
+            button = Button(
+                label, id=button_id, disabled=bool(self._note_disabled_reason)
+            )
+            button.tooltip = self._note_disabled_reason or help_text
+            yield button
         if self._feedback_available:
             gated = not self._run_active
             request = Button(
@@ -389,9 +639,9 @@ class ConsoleSelectionMenu(Vertical):
             # scroll_visible=False: focusing must not scroll the screen to
             # the menu (it shifted the transcript out from under the
             # selection when the menu mounted).
-            buttons[0].focus(scroll_visible=False)
+            transcript_focus(self, buttons[0], scroll_visible=False)
         else:
-            self.focus(scroll_visible=False)
+            transcript_focus(self, self, scroll_visible=False)
 
     def on_resize(self, _event: Resize) -> None:
         """Re-clamp after late CSS measurement changes the menu's extent.
@@ -503,6 +753,7 @@ class ConsoleSelectionMenu(Vertical):
             # absolute_offset is not reactive; update painting and hit tests.
             self.refresh(layout=True)
 
+    @guard_transcript_action
     def on_key(self, event: Key) -> None:
         """Keyboard navigation: arrows cycle actions; Escape closes.
 
@@ -531,50 +782,112 @@ class ConsoleSelectionMenu(Vertical):
             focused = next((b for b in buttons if b.has_focus), buttons[0])
             index = buttons.index(focused)
             step = 1 if event.key == "down" else -1
-            buttons[(index + step) % len(buttons)].focus()
+            transcript_focus(self, buttons[(index + step) % len(buttons)])
 
     def _post(self, message: Message) -> None:
         (self._owner if self._owner is not None else self).post_message(message)
 
     @on(Button.Pressed, "#console-selection-copy")
-    def _copy_selection(self) -> None:
+    @guard_transcript_action
+    def _copy_selection(self, _event: Button.Pressed) -> None:
         self._post(self.CopySelection())
 
+    @on(Button.Pressed, "#console-selection-copy-all")
+    def _copy_all(self) -> None:
+        self._post(
+            self.CopyAll(
+                self._source_session_id,
+                self._response_message_id,
+                self._source_message_ids,
+            )
+        )
+
+    @on(Button.Pressed, "#console-selection-copy-all-messages")
+    def _copy_all_messages(self) -> None:
+        self._post(
+            self.CopyAllMessages(
+                self._source_session_id, None, self._source_message_ids
+            )
+        )
+
+    @on(Button.Pressed, "#console-selection-full-message")
+    def _select_full_message(self) -> None:
+        self._post(
+            self.SelectFullMessage(self._selection_row_id, self._source_session_id)
+        )
+
     @on(Button.Pressed, "#console-selection-add-to-chat")
-    def _add_to_chat(self) -> None:
+    @guard_transcript_action
+    def _add_to_chat(self, _event: Button.Pressed) -> None:
         self._post(self.AddToChat())
 
     @on(Button.Pressed, "#console-selection-more-details")
-    def _more_details(self) -> None:
+    @guard_transcript_action
+    def _more_details(self, _event: Button.Pressed) -> None:
         self._post(self.MoreDetails())
 
     @on(Button.Pressed, "#console-selection-ask-side-chat")
-    def _ask_side_chat(self) -> None:
+    @guard_transcript_action
+    def _ask_side_chat(self, _event: Button.Pressed) -> None:
         self._post(self.AskInSideChat())
 
     @on(Button.Pressed, "#console-selection-create-note")
-    def _create_note(self) -> None:
-        self._post(self.CreateNote())
+    @guard_transcript_action
+    def _create_note(self, _event: Button.Pressed) -> None:
+        self._post(
+            self.CreateNote(
+                row_id=self._selection_row_id, session_id=self._source_session_id
+            )
+        )
+
+    @on(Button.Pressed, "#console-selection-create-note-go")
+    @guard_transcript_action
+    def _create_note_go(self, _event: Button.Pressed) -> None:
+        self._post(
+            self.CreateNote(
+                row_id=self._selection_row_id,
+                session_id=self._source_session_id,
+                open_note=True,
+            )
+        )
 
     @on(Button.Pressed, "#console-selection-request-changes")
-    def _request_changes(self) -> None:
+    @guard_transcript_action
+    def _request_changes(self, _event: Button.Pressed) -> None:
         self._post(self.RequestChanges())
 
     @on(Button.Pressed, "#console-selection-lgm")
-    def _lgm(self) -> None:
+    @guard_transcript_action
+    def _lgm(self, _event: Button.Pressed) -> None:
         self._post(self.Lgm())
 
     @on(Button.Pressed, "#console-selection-comment")
-    def _comment(self) -> None:
+    @guard_transcript_action
+    def _comment(self, _event: Button.Pressed) -> None:
         self._post(self.Comment())
 
     class Dismissed(Message):
         """Escape dismissal: the owning transcript clears the selection UI."""
 
     def action_dismiss(self) -> None:
+        self.dismiss_menu()
+
+    def dismiss_menu(self, *, restore_focus: bool = True) -> None:
+        """Close the menu and clear the selection UI, as Escape does.
+
+        Same keyword as the row menus' ``dismiss_menu``, so a caller can fold
+        any focus-taking Console menu the same way.
+
+        Args:
+            restore_focus: False when focus has already moved on deliberately
+                -- a typed letter took it to the draft (TASK-33622.3) -- so
+                unmount must not pull it back to the pre-menu holder.
+        """
+        self._restore_focus_on_unmount = restore_focus
         self._post(self.Dismissed())
         self.remove()
 
+    @guard_transcript_action
     def _on_click(self, event: Click) -> None:
         event.stop()  # clicks inside the menu must not clear anything
         # A click on the menu that did NOT land on one of its action
@@ -597,7 +910,8 @@ class ConsoleSelectionMenu(Vertical):
         # ``selection_menus_on_screen`` re-checks attachment, and the weak
         # reference expires on its own if this hook is skipped in teardown.
         _LIVE_SELECTION_MENUS.discard(self)
-        self._restore_previous_focus()
+        if self._restore_focus_on_unmount:
+            self._restore_focus()
 
     def _restore_previous_focus(self) -> None:
         """Return focus to the widget that held it before the menu mounted.
@@ -621,10 +935,10 @@ class ConsoleSelectionMenu(Vertical):
         if previous is not None and previous is not self and previous.is_mounted:
             try:
                 if previous.screen is screen:
-                    previous.focus(scroll_visible=False)
+                    transcript_focus(self, previous, scroll_visible=False)
                     return
             except Exception:  # noqa: BLE001, S110 - previous detached during teardown
                 pass
         for composer in screen.query("#console-native-composer"):
-            composer.focus(scroll_visible=False)
+            transcript_focus(self, composer, scroll_visible=False)
             return

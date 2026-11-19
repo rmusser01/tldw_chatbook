@@ -60,9 +60,13 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
     SEMANTIC_SCORE_KIND_KEY,
     SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY,
     format_local_evidence_context,
+    format_unrecorded_console_evidence,
     normalize_local_result,
 )
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
+from tldw_chatbook.RAG_Search import scope_evidence as se
+from tldw_chatbook.app_services import ProfileStorage
+from Tests.app_services_doubles import AliasServices, with_alias_services
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
 from tldw_chatbook.RAG_Search.pipeline_types import SearchResult
 
@@ -595,6 +599,34 @@ def test_formatter_truncates_multibyte_snapshot_inside_utf8_and_character_budget
     assert formatted.omitted_candidate_ranks == ()
 
 
+def test_unrecorded_evidence_keeps_the_canonical_per_block_byte_cap():
+    """TASK-33620.8: an unlabelled send carries no more than a labelled one.
+
+    With no citation record (records off, or no key), evidence goes out
+    without [S#] headers. Each block keeps the canonical formatter's UTF-8
+    cap, truncated on a whole codepoint with an ellipsis.
+    """
+    header = "MEDIA — Title\n"
+    at_cap = _multibyte_content_for_snapshot_bytes(header, SNAPSHOT_TEXT_UTF8_BYTES_MAX)
+    exact = normalize_local_result(_result(content=at_cap), candidate_rank=1)
+    oversized = normalize_local_result(
+        _result(result_id="m2", content=at_cap + ("é" * 2048)), candidate_rank=2
+    )
+    small = normalize_local_result(
+        _result(result_id="m3", title="Other", content="short body"), candidate_rank=3
+    )
+
+    text = format_unrecorded_console_evidence([exact, oversized, small])
+
+    blocks = text.split("\n\n", 1)[1].split("\n---\n")
+    assert blocks[0] == header + at_cap  # exactly at the cap: kept whole
+    assert len(blocks[0].encode("utf-8")) == SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    assert len(blocks[1].encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    assert blocks[1].startswith(header) and blocks[1].endswith("…")
+    assert blocks[2] == "MEDIA — Other\nshort body"
+    assert not any(block.startswith("[S") for block in blocks)
+
+
 @pytest.mark.parametrize(
     ("result_count", "expected_entries", "expected_omitted"),
     [
@@ -741,6 +773,11 @@ async def test_citation_semantic_result_keeps_shape_and_governed_source():
 
 
 def _install_flashrank(monkeypatch, *, ranked=None, init_error=None, run_error=None):
+    # Each test installs a DIFFERENT fake flashrank backend; the ranker is
+    # a process-wide singleton now, so drop the cached instance or later
+    # tests would keep reusing the previous test's ranker.
+    pfs._reset_flashrank_ranker_for_tests()
+
     class _Ranker:
         def __init__(self, **_kwargs):
             if init_error is not None:
@@ -765,7 +802,9 @@ def _install_flashrank(monkeypatch, *, ranked=None, init_error=None, run_error=N
 def test_successful_flashrank_overwrite_writes_final_score_marker(monkeypatch):
     _install_flashrank(
         monkeypatch,
-        ranked=[SimpleNamespace(index=0, score=-1.25)],
+        # Real flashrank 0.2.10 contract: the input passage dicts come
+        # back with a "score" key added (mapped through the passage "id").
+        ranked=[{"id": 0, "text": "t", "score": -1.25}],
     )
     result = _result(
         score=0.5,
@@ -783,7 +822,7 @@ def test_successful_flashrank_overwrite_writes_final_score_marker(monkeypatch):
 def test_invalid_flashrank_score_falls_back_without_marker(monkeypatch):
     _install_flashrank(
         monkeypatch,
-        ranked=[SimpleNamespace(index=0, score=math.nan)],
+        ranked=[{"id": 0, "text": "t", "score": math.nan}],
     )
     result = _result(
         score=0.5,
@@ -805,8 +844,8 @@ def test_flashrank_metadata_validation_is_atomic_across_all_results(monkeypatch)
     _install_flashrank(
         monkeypatch,
         ranked=[
-            SimpleNamespace(index=0, score=0.9),
-            SimpleNamespace(index=1, score=0.8),
+            {"id": 0, "text": "t0", "score": 0.9},
+            {"id": 1, "text": "t1", "score": 0.8},
         ],
     )
     first = _result(result_id="m1", score=0.5, metadata={"producer": "first"})
@@ -827,8 +866,8 @@ def test_flashrank_duplicate_indexes_fallback_without_mutation(monkeypatch):
     _install_flashrank(
         monkeypatch,
         ranked=[
-            SimpleNamespace(index=0, score=0.9),
-            SimpleNamespace(index=0, score=0.8),
+            {"id": 0, "text": "t0", "score": 0.9},
+            {"id": 0, "text": "t0", "score": 0.8},
         ],
     )
     first = _result(result_id="m1", score=0.5, metadata={"producer": "first"})
@@ -881,6 +920,9 @@ def test_flashrank_fallback_never_claims_reranker_and_keeps_prior_semantics(
 ):
     if failure_stage == "import":
         monkeypatch.setitem(sys.modules, "flashrank", None)
+        # Singleton must be empty for the ImportError path to be exercised
+        # rather than a previously-cached ranker silently reused.
+        pfs._reset_flashrank_ranker_for_tests()
     elif failure_stage == "initialization":
         _install_flashrank(monkeypatch, init_error=RuntimeError("init failed"))
     else:
@@ -1007,6 +1049,8 @@ class _CaptureRepository:
 
 
 class _CaptureApp:
+    services = property(AliasServices)
+
     def __init__(self, *, search_mode="plain", repository=None, media_ids=("m1",)):
         self._widgets = {
             "#chat-rag-enable-checkbox": _CaptureWidget(True),
@@ -1107,7 +1151,7 @@ async def test_missing_custom_pipeline_log_includes_safe_context(monkeypatch):
         format="{message}",
     )
     try:
-        results, error = await cre.perform_search_with_pipeline(
+        results, error = await pipeline_builder_simple.perform_search_with_pipeline(
             app=None,
             query="PRIVATE-MISSING-PIPELINE-QUERY",
             sources={"media": True, "conversations": False, "notes": True},
@@ -1183,7 +1227,7 @@ async def test_capture_api_returns_prompt_evidence_set_id_for_every_mode(
     finally:
         loguru_logger.remove(sink_id)
 
-    assert isinstance(captured, cre.LocalRagContextResult)
+    assert isinstance(captured, se.LocalRagContextResult)
     assert captured.context == expected_context
     assert captured.citation_builder is repository.builders[0]
     assert len(captured.citation_builder.evidence_runs) == 1
@@ -1250,7 +1294,7 @@ async def test_pipeline_prompt_evidence_set_id_uses_record_method_return(
 
 
 def test_local_rag_context_result_optional_fields_default_none_and_are_frozen():
-    result = cre.LocalRagContextResult(None, None)
+    result = se.LocalRagContextResult(None, None)
 
     assert result.prompt_evidence_set_id is None
     assert result.citation_repair_contract is None
@@ -1312,6 +1356,7 @@ async def test_console_staged_local_evidence_records_exact_prompt_capture():
         marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
         allowed_ordinals=(1,),
         evidence_context=captured.context,
+        require_markers=False,
     )
     run_payload = captured.citation_builder.evidence_run_payloads[0]
     assert run_payload.raw_query is None
@@ -1390,19 +1435,25 @@ async def test_console_send_adapter_preserves_chunk_lineage_score_and_rank():
     candidates = captured.citation_builder.evidence_run_payloads[0].candidates
     assert len(candidates) == 2
     assert [candidate.rank for candidate in candidates] == [1, 2]
-    assert [
-        candidate.source_identity["source_id"] for candidate in candidates
-    ] == ["m1", "m2"]
+    assert [candidate.source_identity["source_id"] for candidate in candidates] == [
+        "m1",
+        "m2",
+    ]
     assert candidates[0].lineage["chunk_id"] == "chunk-1"
     assert candidates[0].score == 0.0
 
 
 @pytest.mark.asyncio
-async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> None:
+@pytest.mark.parametrize("requested_top_k", [None, 1])
+async def test_console_estimate_stays_pre_authority_while_send_rechecks(
+    tmp_path,
+    requested_top_k,
+) -> None:
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
         title="staged evidence",
         payload={
+            "requested_top_k": requested_top_k,
             "evidence_bundle": EvidenceBundle(
                 bundle_id="bundle-authority-shrink",
                 query="question",
@@ -1427,14 +1478,16 @@ async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> Non
             ).to_payload(),
         },
     )
-    app = _CaptureApp(media_ids=())
+    # TASK-33620.8: [S#] ordinals (and the repair contract) exist only when a
+    # citation record can cover the reply, so this send has a repository.
+    db, repository = _real_capture_repository(tmp_path, "ready")
+    app = _CaptureApp(media_ids=(), repository=repository)
     media_db = _InMemoryMediaDB("m2")
     app.media_db = media_db
     try:
         assert console_prompted_source_count(launch) == 2
         assert console_prompted_evidence_text(launch) == (
-            "[S1] MEDIA — Source 1\nBody 1\n---\n"
-            "[S2] MEDIA — Source 2\nBody 2"
+            "[S1] MEDIA — Source 1\nBody 1\n---\n[S2] MEDIA — Source 2\nBody 2"
         )
         assert media_db.query_count == 0
 
@@ -1444,11 +1497,24 @@ async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> Non
             user_message="question",
         )
         assert media_db.query_count >= 1
+        if requested_top_k == 1:
+            # The surviving rank is still 2. An inconsistent bound must fail
+            # capture, never rewrite the source identity into rank 1.
+            assert captured.citation_builder is None
+            assert captured.prompt_evidence_set_id is None
+            assert captured.citation_repair_contract is None
+            assert "Source 2" in captured.context and "Body 2" in captured.context
+            assert "[S1] MEDIA" not in captured.context
+            assert "Source 1" not in captured.context
+            return
+        assert captured.citation_builder is not None
+        assert captured.prompt_evidence_set_id is not None
         assert captured.context == "[S1] MEDIA — Source 2\nBody 2"
         assert captured.citation_repair_contract is not None
         assert captured.citation_repair_contract.allowed_ordinals == (1,)
     finally:
         media_db.close()
+        db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -1505,8 +1571,12 @@ async def test_console_prompt_evidence_set_id_uses_record_method_return(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
+@pytest.mark.parametrize(
+    "record_method", ["record_retrieval_run", "record_prompt_evidence_set"]
+)
+async def test_console_canonical_capture_failure_sends_unlabelled_without_repair(
     monkeypatch,
+    record_method,
 ):
     query = "CONSOLE_PRIVATE_PROMPT_FAILURE_QUERY_SENTINEL"
     title = "CONSOLE_PRIVATE_PROMPT_FAILURE_TITLE_SENTINEL"
@@ -1541,7 +1611,7 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
 
     monkeypatch.setattr(
         CitationTraceBuilder,
-        "record_prompt_evidence_set",
+        record_method,
         _raise_recording_failure,
     )
     captured_logs = []
@@ -1559,17 +1629,12 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
     finally:
         loguru_logger.remove(sink_id)
 
-    expected_context = f"[S1] MEDIA — {title}\n{content}"
-    assert captured == cre.LocalRagContextResult(
-        context=expected_context,
-        citation_builder=None,
-        citation_repair_contract=CitationRepairContract(
-            schema_version=1,
-            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
-            allowed_ordinals=(1,),
-            evidence_context=expected_context,
-        ),
-    )
+    assert title in captured.context and content in captured.context
+    assert "[S1] MEDIA" not in captured.context
+    assert "- Use [S#] labels" not in captured.context
+    assert "Refer to each one by its title" in captured.context
+    assert captured.citation_builder is None
+    assert captured.citation_repair_contract is None
     assert captured.prompt_evidence_set_id is None
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert "reason=canonical_capture_failure" in rendered_logs
@@ -1580,7 +1645,71 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
 
 
 @pytest.mark.asyncio
-async def test_console_builder_unavailable_returns_exact_repair_contract():
+@pytest.mark.parametrize("adapter", ["staged", "automatic"])
+@pytest.mark.parametrize("failure", ["scope_exception", "incomplete_rows"])
+async def test_console_authority_failure_never_formats_or_captures_evidence(
+    monkeypatch,
+    adapter,
+    failure,
+):
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+    bundle = EvidenceBundle(
+        bundle_id="failed-authority",
+        query="Question",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="m1",
+                source_type="media",
+                title="Private title",
+                snippet="Private body",
+                authority_label="local",
+            ),
+        ),
+    )
+
+    async def scope_error(*args, **kwargs):
+        raise RuntimeError("authority unavailable")
+
+    async def incomplete_rows(*args, **kwargs):
+        return None
+
+    if failure == "scope_exception":
+        monkeypatch.setattr(se, "resolve_scope_for_session", scope_error)
+    else:
+        monkeypatch.setattr(se, "_current_local_evidence_ids", incomplete_rows)
+    if adapter == "staged":
+        launch = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Evidence",
+            payload={"evidence_bundle": bundle.to_payload()},
+        )
+        result = await cre.capture_console_staged_evidence_for_chat(
+            app,
+            launch,
+            user_message="Question",
+        )
+    else:
+        result = await cre.capture_console_prepared_evidence_for_chat(
+            app,
+            bundle,
+            user_message="Question",
+        )
+    assert result.context is None
+    assert result.citation_builder is None
+    assert result.prompt_evidence_set_id is None
+    assert result.citation_repair_contract is None
+    assert repository.builders == []
+
+
+@pytest.mark.asyncio
+async def test_console_builder_unavailable_sends_evidence_without_labels():
+    """TASK-33620.8 (AC#4): no citation record can cover this reply.
+
+    The evidence still goes to the model, by title and without [S#] labels
+    nobody could trace, and no repair contract asks for markers.
+    """
     title = "Legacy staged source"
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
@@ -1612,16 +1741,15 @@ async def test_console_builder_unavailable_returns_exact_repair_contract():
         user_message="ordinary prompt",
     )
 
-    assert captured == cre.LocalRagContextResult(
-        context="[S1] MEDIA — Legacy staged source\nlegacy body",
+    from tldw_chatbook.Chat.answer_citations import unrecorded_evidence_text
+
+    assert captured == se.LocalRagContextResult(
+        context=unrecorded_evidence_text(["MEDIA — Legacy staged source\nlegacy body"]),
         citation_builder=None,
-        citation_repair_contract=CitationRepairContract(
-            schema_version=1,
-            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
-            allowed_ordinals=(1,),
-            evidence_context="[S1] MEDIA — Legacy staged source\nlegacy body",
-        ),
+        citation_repair_contract=None,
     )
+    assert "[S1] MEDIA" not in captured.context
+    assert "not saved as citations for this reply" in captured.context
     assert captured.prompt_evidence_set_id is None
 
 
@@ -1651,7 +1779,7 @@ async def test_builder_unavailable_pipeline_normalizes_authorizes_and_formats(
     captured = await cre.get_rag_context_capture_for_chat(app, "query")
 
     expected_context = "[S1] MEDIA — Current source\nexact current body"
-    assert captured == cre.LocalRagContextResult(
+    assert captured == se.LocalRagContextResult(
         context=expected_context,
         citation_builder=None,
         citation_repair_contract=CitationRepairContract(
@@ -1702,7 +1830,7 @@ async def test_builder_unavailable_repository_states_return_exact_repair_contrac
         captured = await cre.get_rag_context_capture_for_chat(app, "query")
 
         expected_context = "[S1] MEDIA — Title\nbody"
-        assert captured == cre.LocalRagContextResult(
+        assert captured == se.LocalRagContextResult(
             context=expected_context,
             citation_builder=None,
             citation_repair_contract=CitationRepairContract(
@@ -1770,7 +1898,7 @@ async def test_current_authority_exclusion_does_not_revive_legacy_without_builde
 
     captured = await cre.get_rag_context_capture_for_chat(app, "query")
 
-    assert captured == cre.LocalRagContextResult(None, None)
+    assert captured == se.LocalRagContextResult(None, None)
     assert captured.citation_repair_contract is None
 
 
@@ -1790,10 +1918,10 @@ async def test_prompt_authority_failure_returns_no_context_builder_or_prompt_id(
     )
 
     async def _fail_authority(*_args, **_kwargs):
-        return cre._PromptAuthorizationResult((), False)
+        return se._PromptAuthorizationResult((), False)
 
     monkeypatch.setattr(
-        cre,
+        se,
         "_authorize_local_results_for_prompt",
         _fail_authority,
     )
@@ -1808,7 +1936,7 @@ async def test_prompt_authority_failure_returns_no_context_builder_or_prompt_id(
     finally:
         loguru_logger.remove(sink_id)
 
-    assert captured == cre.LocalRagContextResult(None, None)
+    assert captured == se.LocalRagContextResult(None, None)
     assert captured.prompt_evidence_set_id is None
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert "reason=prompt_authority_failure" in rendered_logs
@@ -1840,7 +1968,7 @@ async def test_pipeline_exception_returns_no_context_or_builder_and_sanitizes_lo
     finally:
         loguru_logger.remove(sink_id)
 
-    assert captured == cre.LocalRagContextResult(
+    assert captured == se.LocalRagContextResult(
         context=None,
         citation_builder=None,
     )
@@ -2010,7 +2138,7 @@ async def test_pipeline_canonical_capture_failure_keeps_exact_repair_contract(
             loguru_logger.remove(sink_id)
 
         expected_context = "[S1] MEDIA — Title\nbody"
-        assert captured == cre.LocalRagContextResult(
+        assert captured == se.LocalRagContextResult(
             context=expected_context,
             citation_builder=None,
             citation_repair_contract=CitationRepairContract(
@@ -2057,7 +2185,7 @@ async def test_legacy_raw_pipeline_fallback_never_gets_repair_contract(monkeypat
 
     captured = await cre.get_rag_context_capture_for_chat(_CaptureApp(), "query")
 
-    assert captured == cre.LocalRagContextResult(raw_context, None)
+    assert captured == se.LocalRagContextResult(raw_context, None)
     assert captured.citation_repair_contract is None
 
 
@@ -2076,7 +2204,7 @@ def test_repair_contract_ordinals_follow_formatted_entries_not_context_reparse()
         max_length=1_000,
     )
 
-    contract = cre._repair_contract_for_local_evidence(formatted)
+    contract = se._repair_contract_for_local_evidence(formatted)
 
     assert contract is not None
     assert contract.allowed_ordinals == tuple(range(1, len(formatted.entries) + 1))
@@ -2091,7 +2219,7 @@ def test_empty_formatted_evidence_has_no_repair_contract():
         omitted_candidate_ranks=(),
     )
 
-    assert cre._repair_contract_for_local_evidence(formatted) is None
+    assert se._repair_contract_for_local_evidence(formatted) is None
 
 
 def test_repair_contract_limit_failure_is_safe_and_logs_no_evidence():
@@ -2113,7 +2241,7 @@ def test_repair_contract_limit_failure_is_safe_and_logs_no_evidence():
         format="{message}",
     )
     try:
-        contract = cre._repair_contract_for_local_evidence(formatted)
+        contract = se._repair_contract_for_local_evidence(formatted)
     finally:
         loguru_logger.remove(sink_id)
 
@@ -2135,12 +2263,12 @@ def test_unsupported_namespace_has_no_repair_contract(monkeypatch):
         omitted_candidate_ranks=(),
     )
     monkeypatch.setattr(
-        cre,
+        se,
         "MarkerNamespace",
         SimpleNamespace(CHATBOOK_S_V1=object()),
     )
 
-    assert cre._repair_contract_for_local_evidence(formatted) is None
+    assert se._repair_contract_for_local_evidence(formatted) is None
 
 
 def test_sensitive_real_database_reads_do_not_log_source_identities(tmp_path):
@@ -2152,7 +2280,7 @@ def test_sensitive_real_database_reads_do_not_log_source_identities(tmp_path):
         tmp_path / "sensitive-chacha.sqlite",
         client_id="sensitive-chacha",
     )
-    app = SimpleNamespace(media_db=media_db, chachanotes_db=chacha_db)
+    storage = ProfileStorage(media=media_db, chachanotes=chacha_db)
     captured_logs = []
     sink_id = loguru_logger.add(
         captured_logs.append,
@@ -2161,30 +2289,30 @@ def test_sensitive_real_database_reads_do_not_log_source_identities(tmp_path):
     )
     try:
         assert (
-            cre._existing_ids_sync(
-                app,
-                cre.SOURCE_TYPE_MEDIA,
+            se._existing_ids_sync(
+                storage,
+                se.SOURCE_TYPE_MEDIA,
                 frozenset({media_sentinel}),
             )
             == frozenset()
         )
         assert (
-            cre._existing_ids_sync(
-                app,
-                cre.SOURCE_TYPE_NOTE,
+            se._existing_ids_sync(
+                storage,
+                se.SOURCE_TYPE_NOTE,
                 frozenset({note_sentinel}),
             )
             == frozenset()
         )
         assert (
-            cre._current_media_evidence_ids_sync(
+            se._current_media_evidence_ids_sync(
                 media_db,
                 frozenset({media_sentinel}),
             )
             == frozenset()
         )
         assert (
-            cre._current_chacha_evidence_ids_sync(
+            se._current_chacha_evidence_ids_sync(
                 chacha_db,
                 frozenset({note_sentinel}),
                 frozenset({conversation_sentinel}),
@@ -2216,7 +2344,7 @@ async def test_fresh_persisted_scope_read_does_not_log_conversation_identity(
             "title": "Private identity log regression",
         }
     )
-    app = SimpleNamespace(chachanotes_db=chacha_db, media_db=None)
+    app = with_alias_services(SimpleNamespace(chachanotes_db=chacha_db, media_db=None))
     session = SimpleNamespace(
         id="session-log-regression",
         persisted_conversation_id=conversation_sentinel,
@@ -2282,7 +2410,7 @@ async def test_request_start_cached_scope_read_does_not_log_conversation_identit
         chacha_db.close_connection()
 
     expected_context = "[S1] MEDIA — Title\nbody"
-    assert captured == cre.LocalRagContextResult(
+    assert captured == se.LocalRagContextResult(
         expected_context,
         None,
         citation_repair_contract=CitationRepairContract(
@@ -2339,7 +2467,7 @@ async def test_cached_scope_read_preserves_guarded_unscoped_semantics(
         (raw_metadata, conversation_id),
     )
     connection.commit()
-    app = SimpleNamespace(chachanotes_db=chacha_db, media_db=None)
+    app = with_alias_services(SimpleNamespace(chachanotes_db=chacha_db, media_db=None))
     session = SimpleNamespace(
         id="cached-guarded-session",
         persisted_conversation_id=conversation_id,

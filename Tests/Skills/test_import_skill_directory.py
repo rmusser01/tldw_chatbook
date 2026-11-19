@@ -22,7 +22,7 @@ async def test_import_skill_directory_faithful(tmp_path):
     assert (d / "scripts" / "run.sh").read_bytes() == b"#!/bin/sh\necho hi\n"
     assert d.joinpath("scripts", "run.sh").stat().st_mode & stat.S_IXUSR
     assert (d / "assets" / "logo.png").read_bytes() == b"\x89PNG\x00bin"
-    assert not (d / ".git").exists()          # junk pruned
+    assert not (d / ".git").exists()  # junk pruned
     skill = await svc.get_skill("demo")
     assert skill["trust_status"] != "trusted"  # trust-pending
 
@@ -45,9 +45,9 @@ async def test_import_skill_directory_narrows_exec_bit_widening_to_owner_only(tm
     await svc.import_skill_directory(src, name="demo")
     d = svc._skill_dir("demo")
     dest_mode = (d / "run.sh").stat().st_mode
-    assert dest_mode & stat.S_IXUSR        # owner-exec preserved
-    assert not dest_mode & stat.S_IXGRP    # group-exec NOT widened
-    assert not dest_mode & stat.S_IXOTH    # other-exec NOT widened
+    assert dest_mode & stat.S_IXUSR  # owner-exec preserved
+    assert not dest_mode & stat.S_IXGRP  # group-exec NOT widened
+    assert not dest_mode & stat.S_IXOTH  # other-exec NOT widened
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset():
     from tldw_chatbook.Image_Generation import adapter_registry as r
+
     r.reset_registry()
     yield
     r.reset_registry()
@@ -13,24 +14,42 @@ def _reset():
 
 def test_resolve_backend_requires_enabled():
     from tldw_chatbook.Image_Generation.adapter_registry import ImageAdapterRegistry
-    reg = ImageAdapterRegistry(config_override={"enabled_backends": ["swarmui"], "default_backend": "swarmui"})
+
+    reg = ImageAdapterRegistry(
+        config_override={"enabled_backends": ["swarmui"], "default_backend": "swarmui"}
+    )
     assert reg.resolve_backend("swarmui") == "swarmui"
-    assert reg.resolve_backend("novita") is None      # not enabled
-    assert reg.resolve_backend(None) == "swarmui"     # default
+    assert reg.resolve_backend("novita") is None  # not enabled
+    assert reg.resolve_backend(None) == "swarmui"  # default
 
 
 def test_nothing_enabled_by_default():
     from tldw_chatbook.Image_Generation.adapter_registry import ImageAdapterRegistry
-    reg = ImageAdapterRegistry(config_override={"enabled_backends": [], "default_backend": "swarmui"})
+
+    reg = ImageAdapterRegistry(
+        config_override={"enabled_backends": [], "default_backend": "swarmui"}
+    )
     assert reg.resolve_backend("swarmui") is None
 
 
 def test_default_adapters_point_at_local_package():
     from tldw_chatbook.Image_Generation.adapter_registry import DEFAULT_ADAPTERS
+
     assert set(DEFAULT_ADAPTERS) == {
-        "stable_diffusion_cpp", "swarmui", "openrouter", "novita", "together", "modelstudio", "gemini", "fal", "comfyui"
+        "stable_diffusion_cpp",
+        "swarmui",
+        "openrouter",
+        "novita",
+        "together",
+        "modelstudio",
+        "gemini",
+        "fal",
+        "comfyui",
     }
-    assert all(v.startswith("tldw_chatbook.Image_Generation.adapters.") for v in DEFAULT_ADAPTERS.values())
+    assert all(
+        v.startswith("tldw_chatbook.Image_Generation.adapters.")
+        for v in DEFAULT_ADAPTERS.values()
+    )
 
 
 def test_comfyui_adapter_spec_is_lazy(monkeypatch):
@@ -76,9 +95,7 @@ def test_listing_then_worker_share_refreshed_registry_and_config_snapshot(monkey
             constructed_with.append(self.config)
 
         def generate(self, request):
-            return ImageGenResult(
-                content=b"png", content_type="image/png", bytes_len=3
-            )
+            return ImageGenResult(content=b"png", content_type="image/png", bytes_len=3)
 
     monkeypatch.setattr(
         image_config,
@@ -358,9 +375,7 @@ def test_concurrent_first_registry_callers_share_one_instance(monkeypatch):
             construction_started.set()
             assert release_construction.wait(5)
 
-    monkeypatch.setattr(
-        registry, "_IMAGE_GENERATION_RUNTIME_LOCK", InstrumentedLock()
-    )
+    monkeypatch.setattr(registry, "_IMAGE_GENERATION_RUNTIME_LOCK", InstrumentedLock())
     monkeypatch.setattr(registry, "ImageAdapterRegistry", BlockingRegistry)
     returned = []
     first = threading.Thread(

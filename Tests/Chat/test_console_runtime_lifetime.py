@@ -42,6 +42,40 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
 
 
+def test_view_hook_slot_keeps_canonical_model_and_historical_runtime_identity() -> None:
+    from dataclasses import FrozenInstanceError, fields
+    import pickle
+
+    from tldw_chatbook.Chat import console_chat_models as models
+    from tldw_chatbook.Chat import console_runtime as runtime
+
+    canonical = models.ConsoleViewHookSlot
+    assert runtime.ConsoleViewHookSlot is canonical
+    assert [field.name for field in fields(canonical)] == [
+        "name",
+        "target",
+        "viewless_default",
+        "why",
+    ]
+    slot = runtime.ConsoleViewHookSlot("qa_hook", "controller")
+    assert (slot.name, slot.target, slot.viewless_default, slot.why) == (
+        "qa_hook",
+        "controller",
+        None,
+        "",
+    )
+    assert all(
+        isinstance(value, canonical) for value in runtime.CONSOLE_VIEW_HOOK_SLOTS
+    )
+    assert (
+        pickle.loads(b"ctldw_chatbook.Chat.console_runtime\nConsoleViewHookSlot\n.")
+        is canonical
+    )
+    assert pickle.loads(pickle.dumps(slot)) == slot
+    with pytest.raises(FrozenInstanceError):
+        slot.name = "changed"
+
+
 def test_runtime_composes_one_shared_canvas_owner_into_real_store(tmp_path) -> None:
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
@@ -188,7 +222,7 @@ class _StalledGateway:
 class _ThreadApp:
     """The app surface `request_mcp_approvals` needs to reach its poll loop.
 
-    **Not decoration.** ADR-067 added a no-`app` guard to
+    **Not decoration.** ADR-314 added a no-`app` guard to
     `request_mcp_approvals` that denies every name on the spot when
     `controller.app is None` -- so the two approval-round tests below,
     written before that guard existed, stopped exercising the poll loop
@@ -339,11 +373,100 @@ async def test_archive_reservation_and_recovery_follow_actual_custody(
         assert runtime._app._conversation_send_inflight == {}
         recovery = runtime._turn_recoveries[turn_id]
         assert recovery.draft == request.draft
-        assert recovery.attachments == attachments
+        assert recovery.attachments == ()
+        assert tuple(store.pending_attachments(session.id)) == attachments
+        assert all(
+            actual is original
+            for actual, original in zip(
+                store.pending_attachments(session.id), attachments, strict=True
+            )
+        )
     finally:
         release.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_native_post_transfer_cancellation_recovers_same_attachment():
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_prompt_queue_coordinator import SequencedGateway
+    from Tests.Chat.test_console_received_custody import _case
+
+    runtime, store, session, request = _case()
+    attachment = PendingAttachment(
+        "/received-image",
+        "image.png",
+        "image",
+        "attachment",
+        data=b"image",
+        mime_type="image/png",
+    )
+    assert store.add_pending_attachment(session.id, attachment)
+    request = replace(
+        request,
+        attachment_ids=(attachment.attachment_id,),
+        configuration=ConsoleTurnConfigurationSnapshot.capture(
+            session_id=session.id,
+            provider_selection=ConsoleProviderSelection(
+                provider="llama_cpp", explicit_model="test-model"
+            ),
+            capabilities={"vision": True, "max_history_images": 1},
+        ),
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    owners, drains = [], []
+
+    class HeldResolution(SequencedGateway):
+        async def resolve_for_send(self, selection):
+            record = runtime._turn_custody[request.turn_id]
+            assert record.received_claim is store.received_turn_for_session(session.id)
+            assert record.inputs.attachments_transferred
+            assert record.inputs.attachments == (attachment,)
+            assert record.inputs.attachments[0] is attachment
+            assert store.pending_attachments(session.id) == []
+            with runtime.execution_capacity._lock:
+                owners.extend(runtime.execution_capacity._owners.values())
+            assert owners
+            for owner in owners:
+                owner.on_drained(
+                    lambda positive, owner=owner: drains.append((owner, positive))
+                )
+            entered.set()
+            await release.wait()
+            return await super().resolve_for_send(selection)
+
+    gateway = HeldResolution()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    runtime.set_provider_gateway(gateway)
+    runtime.set_chat_controller(controller)
+    task = None
+    try:
+        turn = runtime.accept_turn(request)
+        task = runtime._turn_custody[turn].task
+        await asyncio.wait_for(entered.wait(), 5)
+        task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+        recovery = runtime._turn_recoveries[turn]
+        assert recovery.attachments == (attachment,)
+        assert recovery.attachments[0] is attachment
+        assert store.pending_attachments(session.id) == []
+        assert gateway.user_turns == []
+    finally:
+        release.set()
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await runtime.dispose()
+    assert len(drains) == len(owners) and all(positive for _, positive in drains)
+    assert all(not owner.is_admitted for owner in owners)
+    assert runtime.execution_capacity.snapshot().executions == ()
 
 
 @pytest.mark.asyncio
@@ -569,13 +692,14 @@ async def test_custody_task_creation_failure_releases_registration(monkeypatch):
     def fail_create_task(coroutine):
         raise RuntimeError("scheduler unavailable")
 
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_runtime.asyncio.create_task",
-        fail_create_task,
-    )
-
-    with pytest.raises(RuntimeError, match="scheduler unavailable"):
-        runtime.accept_turn(request)
+    with monkeypatch.context() as scheduling:
+        scheduling.setattr(
+            runtime,
+            "_create_custody_task",
+            fail_create_task,
+        )
+        with pytest.raises(RuntimeError, match="scheduler unavailable"):
+            runtime.accept_turn(request)
 
     assert runtime._turn_custody == {}
     restored = store.pending_attachments(request.session_id)
@@ -590,12 +714,14 @@ async def test_custody_task_creation_failure_releases_registration(monkeypatch):
     assert request.staged_evidence_launch.payload == {
         "evidence": "sensitive recovery payload"
     }
+    await runtime.dispose()
 
 
 # -- Navigation is a pure view detach ---------------------------------------
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_leaving_console_preserves_stream_queue_and_controller_state():
     """Navigation clears the view without mutating app-owned work."""
     gateway = _StalledGateway()
@@ -727,17 +853,25 @@ async def test_leaving_console_does_not_cancel_an_in_flight_wake_turn():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_the_wake_exemption_never_outlives_its_turn():
     """A wake turn that finishes leaves nothing exempt behind."""
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
-    with pytest.raises(PermissionError):
-        # No coordinator-issued token -> refused before anything runs, which
-        # is enough to prove the registry is not populated by the attempt.
-        await controller.submit_draft(
-            "notice", origin=ConsoleSubmissionOrigin.AGENT_WAKE
-        )
-    assert controller._agent_wake_turn_sessions == set()
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_provider_gateway(controller.provider_gateway)
+    runtime.set_chat_controller(controller)
+    try:
+        with pytest.raises(PermissionError):
+            # No coordinator-issued token -> refused before anything runs, which
+            # is enough to prove the registry is not populated by the attempt.
+            await controller.submit_draft(
+                "notice", origin=ConsoleSubmissionOrigin.AGENT_WAKE
+            )
+        assert controller._agent_wake_turn_sessions == set()
+    finally:
+        await runtime.dispose()
 
 
 # -- the per-visit Event, captured at ARM time -----------------------------
@@ -848,6 +982,7 @@ async def test_the_prompt_queue_admits_again_on_the_next_visit():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_runtime_closes_its_thread_local_db_after_coordinator_disposal(tmp_path):
     app = SimpleNamespace(
         chachanotes_db=SimpleNamespace(db_path=tmp_path / "chatbook.db")

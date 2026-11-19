@@ -1,0 +1,34 @@
+{
+  "time": 1791067173.40265,
+  "argv": [
+    "git",
+    "for-each-ref",
+    "--format=%(objectname)"
+  ],
+  "unique_ref_trees": 464,
+  "worktrees": 93,
+  "head": "3c4c522b40091901514959061c29c092033bb874",
+  "origin_dev": "efea5e45cf2348dd0da50fedac215cd849143822",
+  "max_task_id_all_refs_worktrees": 34212,
+  "provisional_block": [
+    34213,
+    34214,
+    34215
+  ],
+  "duplicates": {},
+  "selected_roots": [
+    34201,
+    34202,
+    34203
+  ],
+  "selected_expected_filenames": [
+    "task-34201 - Design-Console-chat-destinations-and-bounded-agent-starts.md",
+    "task-34202 - Console-shared-automatic-allowances-and-chat-start-attempts.md",
+    "task-34203 - Console-workspace-or-casual-chats-with-bounded-background-starts.md",
+    "task-34203.1 - Clear-recorded-Console-baseline-test-failures-before-PR.md",
+    "task-34203.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md"
+  ],
+  "selected_foreign_filenames": [
+    "task-34201 - Settings-control-to-sign-in-to-Anthropic-with-the-Claude-subscription.md"
+  ]
+}

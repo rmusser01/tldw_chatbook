@@ -263,9 +263,7 @@ async def _run_audio_turn(ws) -> None:
 
     while True:
         try:
-            raw = await asyncio.wait_for(
-                ws.recv(), timeout=_AUDIO_TURN_GRACE_SECONDS
-            )
+            raw = await asyncio.wait_for(ws.recv(), timeout=_AUDIO_TURN_GRACE_SECONDS)
         except (TimeoutError, asyncio.TimeoutError):
             if response_done_seen:
                 print("(grace period elapsed; closing)")
@@ -328,7 +326,9 @@ async def _run_probe(*, audio_mode: bool) -> None:
     api_key = _read_api_key()
     headers = {"Authorization": f"Bearer {api_key}"}
 
-    print(f"Connecting to {REALTIME_URL} ({'audio' if audio_mode else 'text'} mode) ...")
+    print(
+        f"Connecting to {REALTIME_URL} ({'audio' if audio_mode else 'text'} mode) ..."
+    )
     async with websockets.connect(REALTIME_URL, additional_headers=headers) as ws:
         print("Connected. Sending session.update ...")
         if audio_mode:
@@ -345,7 +345,11 @@ def main() -> None:
     """
     audio_mode = "--audio" in sys.argv[1:]
     try:
-        asyncio.run(asyncio.wait_for(_run_probe(audio_mode=audio_mode), timeout=PROBE_TIMEOUT_SECONDS))
+        asyncio.run(
+            asyncio.wait_for(
+                _run_probe(audio_mode=audio_mode), timeout=PROBE_TIMEOUT_SECONDS
+            )
+        )
     except Exception as exc:  # noqa: BLE001 - probe script, want to see everything
         print(f"Probe failed: {type(exc).__name__}: {exc}")
         raise

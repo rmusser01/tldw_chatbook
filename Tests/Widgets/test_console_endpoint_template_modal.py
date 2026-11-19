@@ -1,4 +1,4 @@
-"""Component tests for the Console "New endpoint from template" modal (ADR-146)."""
+"""Component tests for the Console "New endpoint from template" modal (ADR-343)."""
 
 import os
 import threading
@@ -111,7 +111,8 @@ async def test_template_modal_shows_validation_inline(request, tmp_path):
         # Unpacked for the same multi-char press limitation as above.
         await pilot.press("ctrl+a", *"ftp://192.168.1.9:8080")
         error = app.screen.query_one("#endpoint-template-error", Static)
-        assert "http(s)" in error.renderable
+        # TASK-40300 review M1: the endpoint contract's own reason.
+        assert "Start the address with http:// or https://" in error.renderable
         create = app.screen.query_one("#endpoint-template-create", Button)
         assert create.disabled is True
         assert app.created_provider_id is None
@@ -210,7 +211,8 @@ async def test_template_modal_shows_error_banner_after_first_edit(request, tmp_p
         await pilot.pause()
         error = app.screen.query_one("#endpoint-template-error", Static)
         assert error.display is True
-        assert "http(s)" in str(error.renderable)
+        # TASK-40300 review M1: the endpoint contract's own reason.
+        assert str(error.renderable) == "Enter an endpoint URL."
         create = app.screen.query_one("#endpoint-template-create", Button)
         assert create.disabled is True
 

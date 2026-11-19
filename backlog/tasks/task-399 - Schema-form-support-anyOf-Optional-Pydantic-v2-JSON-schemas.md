@@ -1,7 +1,7 @@
 ---
 id: TASK-399
 title: 'Schema form: support anyOf/Optional (Pydantic v2) JSON schemas'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-21 02:16'
 labels:
@@ -17,5 +17,12 @@ ATHF UAT found ~half of a real third-party server's 21 tools fall back to raw-JS
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An anyOf:[{type:string},{type:null}] property renders as an optional string field, not raw fallback,A tool schema mixing renderable + anyOf-Optional properties renders a form (not raw),Genuinely unrenderable shapes still trigger the honest raw fallback
+- [x] #1 An anyOf:[{type:string},{type:null}] property renders as an optional string field, not raw fallback,A tool schema mixing renderable + anyOf-Optional properties renders a form (not raw),Genuinely unrenderable shapes still trigger the honest raw fallback
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Commit c4c7d221a7 'feat(mcp-hub): render Pydantic v2 Optional[T] schemas as forms' implements the anyOf:[T,null] handling, hardened by 012499e018 'harden path-literal secret guard; respect required list for nullable fields'; UI/MCP_Modules/mcp_schema_form.py documents the Optional[T] idiom at lines 8/78/123/145.

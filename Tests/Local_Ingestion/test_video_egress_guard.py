@@ -14,8 +14,10 @@ ingest entry point behave identically:
 
 * a URL the user typed may resolve privately (an intranet media server is
   a legitimate ingest source, and `config.py`'s `[web_security]` contract
-  says configured URLs may be private) -- so the entry URL is its own
-  trusted origin, exactly as in the audio arm;
+  says configured URLs may be private) -- so a USER-ENTERED entry URL is
+  its own trusted origin, exactly as in the audio arm. TASK-20973 moved
+  that decision into an explicit `url_provenance` parameter (default
+  `UNKNOWN`, fail closed); these pins pass the typed-URL fact explicitly;
 * a cloud metadata endpoint is refused **regardless** of that trust, which
   is `Utils/egress.py`'s one hard rule;
 * a non-http(s) scheme is refused -- yt-dlp itself is happy to hand
@@ -43,6 +45,7 @@ from tldw_chatbook.Local_Ingestion.video_processing import (
     LocalVideoProcessor,
     VideoDownloadError,
 )
+from tldw_chatbook.Utils.egress import UrlProvenance
 
 METADATA_URL = "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
 PRIVATE_URL = "http://10.255.255.1:8080/clip.mp4"
@@ -109,9 +112,7 @@ def test_download_video_refuses_a_cloud_metadata_endpoint(
     processor = LocalVideoProcessor(None)
     with pytest.raises(VideoDownloadError):
         processor.download_video(METADATA_URL, str(tmp_path))
-    assert recording_ytdlp == [], (
-        f"an unchecked URL reached yt-dlp: {recording_ytdlp}"
-    )
+    assert recording_ytdlp == [], f"an unchecked URL reached yt-dlp: {recording_ytdlp}"
 
 
 def test_download_video_refuses_a_non_http_scheme(
@@ -131,9 +132,18 @@ def test_download_video_still_allows_a_user_typed_private_url(
 
     Without this the guard would break intranet media ingest, which
     `config.py`'s `[web_security]` contract explicitly permits.
+
+    (TASK-20973) The typed-URL fact is now an explicit parameter rather
+    than the function's unconditional behaviour; the default (omitted
+    provenance) blocks -- pinned in ``test_video_url_provenance.py``.
     """
     processor = LocalVideoProcessor(None)
-    processor.download_video(PRIVATE_URL, str(tmp_path), download_video_flag=True)
+    processor.download_video(
+        PRIVATE_URL,
+        str(tmp_path),
+        download_video_flag=True,
+        url_provenance=UrlProvenance.USER_ENTERED,
+    )
     assert recording_ytdlp == [PRIVATE_URL, PRIVATE_URL]  # probe + download
 
 
@@ -154,7 +164,12 @@ def test_extract_metadata_still_allows_a_user_typed_private_url(
     recording_ytdlp: List[str],
 ) -> None:
     processor = LocalVideoProcessor(None)
-    assert processor.extract_metadata(PRIVATE_URL) is not None
+    assert (
+        processor.extract_metadata(
+            PRIVATE_URL, url_provenance=UrlProvenance.USER_ENTERED
+        )
+        is not None
+    )
     assert recording_ytdlp == [PRIVATE_URL]
 
 
@@ -168,10 +183,15 @@ def test_video_processing_references_the_egress_policy() -> None:
 
     The task's own finding was phrased as "contains zero references to the
     egress helpers"; this keeps that phrasing checkable.
+
+    (TASK-20973) The self-trust decision moved into ``trusted_origins_for``
+    -- ``origin_set`` itself no longer appears in this module's source, so
+    the pin follows the decision symbols instead.
     """
     source = Path(video_processing.__file__).read_text(encoding="utf-8")
     assert "check_url_or_raise" in source
-    assert "origin_set" in source
+    assert "trusted_origins_for" in source
+    assert "UrlProvenance" in source
 
 
 # --- task-32902 (tier-2 review, slice S11 P3) --------------------------------

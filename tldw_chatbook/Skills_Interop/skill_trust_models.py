@@ -2,9 +2,33 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
+
+
+_skill_trust_publisher = ContextVar("console_skill_trust_publisher", default=None)
+
+
+@dataclass(slots=True)
+class _SkillTrustPublisher:
+    preparation: Any = field(repr=False)
+    thread_id: int
+    task: Any = field(repr=False)
+    guard: Any = field(repr=False)
+    candidate: Any = field(default=None, repr=False)
+    active: bool = True
+
+
+def _skill_publisher_identity():
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return threading.get_ident(), task
 
 
 TRUST_STATUS_TRUSTED = "trusted"

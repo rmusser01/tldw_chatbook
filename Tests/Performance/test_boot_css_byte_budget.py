@@ -114,6 +114,13 @@ from tldw_chatbook.css import build_css
 #: and indexed subjects. Parsed token parity and retained ownership banners
 #: establish that no rule-bearing sources were dropped: measured 583,097 B.
 #: Bank the saving at measured + 25,000 B, rounded down to ten bytes.
+#: RE-MEASURED 2026-10-23 (TASK-36386), limit unchanged: the generated
+#: class-default sheets stopped copying each block's Python indentation, and
+#: FileNotesHistoryDialog's rules moved to a modal-owned split sheet.
+#: 605,868 -> 583,354 B on dev ae85e59e8f (headroom 2,222 -> 24,736). The
+#: tightening convention does not fire: the 22,514 B shed is under the
+#: 25,000 B slack, and 583,354 + 25,000 = 608,354 is above this limit, so
+#: "lowering" would raise it.
 MAX_BOOT_PARSED_CSS_BYTES = 608_090
 
 #: Anti-vacuity floor: the app bundle alone is ~470 KB post-split, so a
@@ -200,16 +207,16 @@ def _boot_parsed_css_segment_census() -> dict[str, int]:
         labels = ["(header)"] + [m.group("label").strip() for m in matches]
         for label, start, end in zip(labels, boundaries[:-1], boundaries[1:]):
             key = f"{name}::{label}"
-            segments[key] = segments.get(key, 0) + len(
-                text[start:end].encode("utf-8")
-            )
+            segments[key] = segments.get(key, 0) + len(text[start:end].encode("utf-8"))
     return segments
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 @private_profile_test
-def test_boot_parsed_css_bytes_stay_within_budget(ratchet, request: pytest.FixtureRequest) -> None:
+def test_boot_parsed_css_bytes_stay_within_budget(
+    ratchet, request: pytest.FixtureRequest
+) -> None:
     """Total bytes of boot-parsed CSS stay within the pinned budget.
 
     Args:

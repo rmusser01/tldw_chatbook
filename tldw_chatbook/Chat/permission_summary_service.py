@@ -1,4 +1,4 @@
-"""ADR-090: external fast-LLM summaries for Console approval rounds.
+"""ADR-332: external fast-LLM summaries for Console approval rounds.
 
 Advisory-only by construction: this module resolves config, builds one
 bounded prompt per approval round, and returns a normalized line of text
@@ -11,8 +11,8 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call, chat_reply_text
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
-    TOOL_DESCRIPTION_CAPTURE_CAP,
+from tldw_chatbook.Chat.approval_constants import TOOL_DESCRIPTION_CAPTURE_CAP
+from tldw_chatbook.Chat.approval_formatting import (
     format_context_line,
     summarize_arguments,
 )
@@ -46,8 +46,10 @@ class PermissionSummaryResolution:
         api_key: Explicit config key, the provider's resolved key, or None
             for keyless local providers.
         model: Configured model, or None to let the provider default apply.
+        api_base_url: The configured endpoint the call pins once the endpoint
+            contract accepts it (TASK-40300), or None for the adapter default.
         timeout_seconds/max_tokens/tail_max_chars/system_prompt: Call
-            parameters; defaults per ADR-090.
+            parameters; defaults per ADR-332.
     """
 
     mode: str
@@ -59,6 +61,7 @@ class PermissionSummaryResolution:
     dispatch_name: str = ""
     api_key: Optional[str] = None
     model: Optional[str] = None
+    api_base_url: Optional[str] = None
 
 
 def resolve_permission_summary(
@@ -116,12 +119,60 @@ def resolve_permission_summary(
     explicit_key = str(section.get("api_key") or "").strip()
     if not (readiness.ready or explicit_key):
         return base
+    endpoint = _summary_endpoint(config, dispatch)
+    if endpoint is None:
+        return base
     return replace(
         base,
         active=True,
         dispatch_name=dispatch,
         api_key=readiness.api_key or explicit_key or None,
+        api_base_url=endpoint or None,
     )
+
+
+def _summary_endpoint(config: Mapping, dispatch: str) -> Optional[str]:
+    """The endpoint a summary call pins, or None when there is none or the
+    endpoint contract refuses it (TASK-40300 review r14ep-rev2 I2: a
+    ``127.1``, ``-bad.corp`` or ``?token=`` endpoint was sent to).
+
+    Always pinned: unpinned, an adapter reads its own table, which is not
+    always the one looked up here (review r14ep-rev3 I-1: Local LLM, Custom
+    OpenAI API, Oobabooga and MLX-LM sent to refused URLs).
+    """
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        ADAPTER_ONLY_ENDPOINT_KEYS,
+        adapter_api_base_url,
+        adapter_own_endpoint,
+        effective_provider_endpoint,
+        first_configured_endpoint,
+    )
+    from tldw_chatbook.config import provider_settings_for_key
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+    )
+
+    from tldw_chatbook.Chat.console_provider_support import (
+        _EXECUTION_TO_READINESS_ALIASES,
+    )
+
+    try:
+        # TASK-41143: the provider's own table, as readiness and Console read
+        # it (Custom OpenAI API 2's endpoint is ``[api_settings.custom_2]``,
+        # not a table named after its handler).
+        settings = provider_settings_for_key(
+            config.get("api_settings"), _EXECUTION_TO_READINESS_ALIASES.get(dispatch, dispatch)
+        )
+    except Exception:  # noqa: BLE001 -- a malformed table means no summary
+        return None
+    effective = (
+        None
+        if first_configured_endpoint(settings) and dispatch not in ADAPTER_ONLY_ENDPOINT_KEYS
+        else adapter_own_endpoint(dispatch, config)
+    ) or effective_provider_endpoint(dispatch, None, settings)
+    if not effective or endpoint_refusal(dispatch, effective):
+        return None
+    return adapter_api_base_url(dispatch, effective)
 
 
 _USER_ASSISTANT_ROLES = frozenset({"user", "assistant"})
@@ -132,7 +183,7 @@ def build_messages_tail(
 ) -> list[dict[str, str]]:
     """Project stored conversation messages into the bounded summary tail.
 
-    ADR-090 egress bound: user/assistant visible text ONLY -- tool results,
+    ADR-332 egress bound: user/assistant visible text ONLY -- tool results,
     system messages, and anything else never egress. Newest messages are
     kept; the oldest are dropped first once the budget is exceeded. Every
     retained message is HARD-capped at ``tail_max_chars`` (Qodo review #5):
@@ -196,7 +247,7 @@ def pending_calls_info_from_payload(
 #: Qodo review #8: aggregate cap on the tool section of the summarizer
 #: prompt. Per-row caps (descriptions, redacted argument summaries) bound
 #: each row, but a large batch could still egress unboundedly in total --
-#: the whole point of the ADR-090 bounded-egress design.
+#: the whole point of the ADR-332 bounded-egress design.
 TOOL_PROMPT_MAX_CHARS = 6000
 
 
@@ -257,7 +308,7 @@ def summarize_pending_round(
     pending_calls_info: list[dict[str, str]],
     call_fn: Callable[..., Any] = chat_api_call,
 ) -> Optional[str]:
-    """One advisory summary for one approval round; never raises (ADR-090).
+    """One advisory summary for one approval round; never raises (ADR-332).
 
     Args:
         resolution: An ACTIVE resolution (inactive -> None, no call).
@@ -278,6 +329,7 @@ def summarize_pending_round(
                 tail, pending_calls_info, resolution.system_prompt
             ),
             api_key=resolution.api_key,
+            api_base_url=resolution.api_base_url,
             model=resolution.model,
             streaming=False,
             temp=0.0,

@@ -4,7 +4,7 @@ Status: Accepted
 Date: 2026-09-09
 Related task: TASK-32111
 Extends: [ADR-023](023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md) and
-[ADR-039](039-global-and-studio-tts-settings-ownership.md)
+[ADR-304](304-global-and-studio-tts-settings-ownership.md)
 
 ## Context
 

@@ -267,7 +267,9 @@ async def test_assigned_character_freezes_one_exact_request_without_preflight() 
 
 
 @pytest.mark.asyncio
-async def test_assigned_character_freezes_exact_reference_under_profile_fences() -> None:
+async def test_assigned_character_freezes_exact_reference_under_profile_fences() -> (
+    None
+):
     character_ref = _character_ref()
     reference = _reference()
     service = _FakeProfileService(

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from tldw_chatbook.Chat.provider_continuation import (
+from tldw_chatbook.Provider_Contract.provider_continuation import (
     dump_provider_continuation_json,
     read_provider_continuation_json,
 )
-from tldw_chatbook.Chat.assistant_generation_state import (
+from tldw_chatbook.DB.assistant_generation_state import (
     AssistantGenerationState,
     normalize_assistant_generation_state,
 )
@@ -231,7 +231,10 @@ class _ContinuationValidatingChatStore:
         claimed_payload_hash: str,
         payload: dict[str, Any] | None,
     ) -> None:
-        self.store = store
+        from tldw_chatbook.Sync_Interop.chat_sync_source import chat_sync_source_for
+
+        # A CharactersRAGDB local store applies Chat through its sync adapter.
+        self.store = chat_sync_source_for(store) or store
         self.warning: str | None = None
         if (
             payload is not None

@@ -354,8 +354,9 @@ async def test_candidate_native_shell_initializes_private_runtime_and_disables_t
                     for row in candidate_snapshot.profiles
                 ),
             )
+            # The gateway imports the loader at call time (ADR-097 census).
             monkeypatch.setattr(
-                "tldw_chatbook.Canvas.gateway.load_profile_snapshot", lambda: revoked
+                "tldw_chatbook.Canvas.profiles.load_profile_snapshot", lambda: revoked
             )
             await page.reload()
             # Whole-page refresh intentionally needs a fresh one-use opening;
@@ -540,6 +541,7 @@ def _chromium_executable(browser_type: object) -> str:
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_native_console_create_publication_automatically_opens_browser(
     tmp_path, monkeypatch
 ):
@@ -1147,6 +1149,7 @@ async def test_real_tool_publication_keeps_same_revision_pin_until_follow() -> N
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_imported_archive_reopens_exact_branch_after_source_purge(
     tmp_path: Path,
     candidate_snapshot,

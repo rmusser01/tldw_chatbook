@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="221.317" timestamp="2026-10-21T21:56:28.514361-07:00" hostname="DESKTOP-BISU2HE"><testcase classname="Tests.Workspaces.test_project_index_service" name="test_history_keeps_live_retired_supervisor_until_cancelled_close_joins" time="220.570"><failure message="AssertionError: history discarded the still-running supervisor's shutdown join record&#10;assert None is _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='wo...time.BindingLifetime object at 0x000001B774B43020&gt;, read_admission=&lt;contextlib.ExitStack object at 0x000001B7747E55E0&gt;)&#10; +  where None = &lt;built-in method get of dict object at 0x000001B7749DEDC0&gt;('2c9cddb0079f4c9cae85f6055c436add')&#10; +    where &lt;built-in method get of dict object at 0x000001B7749DEDC0&gt; = {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20&gt;, read_admission=&lt;contextlib.ExitStack object at 0x000001B774B7A300&gt;), ...}.get&#10; +      where {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20&gt;, read_admission=&lt;contextlib.ExitStack object at 0x000001B774B7A300&gt;), ...} = &lt;tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490&gt;._runs&#10; +        where &lt;tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490&gt; = &lt;Tests.Workspaces.test_project_index_service.Rig object at 0x000001B7747E4CB0&gt;.service">tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/workspace-project-guidance/tldw_tui/.superpowers/sdd/2026-10-22-keyw...of-GDesktop-1/pytest-0/test_history_keeps_live_retire0/private-profile-process/pytest/test_history_keeps_live_retire0')
+request = &lt;FixtureRequest for &lt;Coroutine test_history_keeps_live_retired_supervisor_until_cancelled_close_joins&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000001B773843950&gt;
+
+    @private_profile_test
+    async def test_history_keeps_live_retired_supervisor_until_cancelled_close_joins(
+        tmp_path, request, monkeypatch
+    ):
+        rig = Rig(tmp_path)
+        entered, release = threading.Event(), threading.Event()
+        bind = rig.service._bind
+        first = closing = None
+    
+        @contextmanager
+        def hold_first_supervisor_tail(pin):
+            with bind(pin):
+                yield
+            if (
+                threading.current_thread().name == "project-index-owner"
+                and not entered.is_set()
+            ):
+                entered.set()
+                release.wait()
+    
+        monkeypatch.setattr(rig.service, "_bind", hold_first_supervisor_tail)
+        try:
+            rig.enable()
+            first_job = rig.refresh()
+            first = rig.service._runs[first_job]
+            assert await asyncio.to_thread(entered.wait, 15)
+            assert first.native_retired and first.supervisor.is_alive()
+            assert not first.writer.is_alive()
+            for _ in range(20):
+                job = await asyncio.to_thread(rig.refresh)
+                run = rig.service._runs[job]
+                await asyncio.to_thread(run.supervisor.join, 15)
+                assert run.native_retired and not run.supervisor.is_alive()
+    
+&gt;           assert rig.service._runs.get(first_job) is first, (
+                "history discarded the still-running supervisor's shutdown join record"
+            )
+E           AssertionError: history discarded the still-running supervisor's shutdown join record
+E           assert None is _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_authority_id='test', workspace_id='wo...time.BindingLifetime object at 0x000001B774B43020&gt;, read_admission=&lt;contextlib.ExitStack object at 0x000001B7747E55E0&gt;)
+E            +  where None = &lt;built-in method get of dict object at 0x000001B7749DEDC0&gt;('2c9cddb0079f4c9cae85f6055c436add')
+E            +    where &lt;built-in method get of dict object at 0x000001B7749DEDC0&gt; = {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20&gt;, read_admission=&lt;contextlib.ExitStack object at 0x000001B774B7A300&gt;), ...}.get
+E            +      where {'03a52eab0a6944e58546dec64bbe34d9': _Run(claim=ProjectIndexJobClaim(scope=ProjectIndexScope(key=ProjectIndexKey(data_...indingLifetime object at 0x000001B774B7BF20&gt;, read_admission=&lt;contextlib.ExitStack object at 0x000001B774B7A300&gt;), ...} = &lt;tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490&gt;._runs
+E            +        where &lt;tldw_chatbook.Workspaces.project_index.service.ProjectIndexService object at 0x000001B773E7D490&gt; = &lt;Tests.Workspaces.test_project_index_service.Rig object at 0x000001B7747E4CB0&gt;.service
+
+Tests\Workspaces\test_project_index_service.py:1672: AssertionError</failure></testcase></testsuite></testsuites>

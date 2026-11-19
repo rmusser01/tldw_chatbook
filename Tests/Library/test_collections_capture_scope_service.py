@@ -340,7 +340,7 @@ async def test_local_extraction_heartbeat_prevents_same_authority_recovery(
     extraction_started = threading.Event()
     extraction_release = threading.Event()
 
-    def extractor(_url: str) -> dict[str, str]:
+    def extractor(_url: str, *, url_provenance) -> dict[str, str]:
         extraction_started.set()
         assert extraction_release.wait(timeout=10)
         return {"content": "Extracted body", "title": "Extracted title"}
@@ -385,7 +385,7 @@ async def test_local_extraction_survives_reading_state_revision_changes(
 ) -> None:
     authority, database, repository, service = _local_service(
         tmp_path,
-        extractor=lambda _url: {"content": "Extracted after metadata update"},
+        extractor=lambda _url, *, url_provenance: {"content": "Extracted after metadata update"},
     )
 
     outcome = await service.save_capture(
@@ -488,7 +488,7 @@ async def test_cancel_extractions_actually_settles_the_capture(tmp_path: Path) -
     started = threading.Event()
     release = threading.Event()
 
-    def extractor(_url: str) -> dict[str, str]:
+    def extractor(_url: str, *, url_provenance) -> dict[str, str]:
         started.set()
         release.wait(timeout=10)
         return {"content": "never delivered"}

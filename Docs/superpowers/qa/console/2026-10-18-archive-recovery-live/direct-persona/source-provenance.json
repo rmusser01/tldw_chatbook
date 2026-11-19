@@ -1,0 +1,15 @@
+{
+  "head": "20f3f3e24b5c9ba5a58f6793af1cad0ad76034ce",
+  "capture": true,
+  "direct_library_tools": true,
+  "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+  "endpoint": "http://127.0.0.1:8010",
+  "consumed_before_run": 15,
+  "total_cap": 20,
+  "persona_narrowing": "Existing product policy permits only archive search and exact restore request; all normal gates remain.",
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "128f9efc12e430ea085b08cc82475e85226da6e7a6eb491fd282f28f0c218b13",
+    "tldw_chatbook/Chat/console_agent_bridge.py": "6496825e63066a05541d900a01e1dd4f790bcd04dfee5af17e630a1ce71bb912",
+    "tldw_chatbook/Chat/console_trace_service.py": "2e769ebbbb4e7b5917e4a8e84f47e3b0c38ce87033444c202eaeca298b6b213e"
+  }
+}

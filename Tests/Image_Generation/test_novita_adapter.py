@@ -29,13 +29,27 @@ def test_novita_submit_then_poll(monkeypatch):
             return {"task_id": "t1"}
         # Poll phase: GET task-result returns status and image
         step["n"] += 1
-        return {"status": "succeeded",
-                "images": [{"image_url": "data:image/png;base64," + _b64()}]}
+        return {
+            "status": "succeeded",
+            "images": [{"image_url": "data:image/png;base64," + _b64()}],
+        }
 
     monkeypatch.setattr(m, "fetch_json", fake_fetch_json)
 
-    req = ImageGenRequest(backend="novita", prompt="whale", negative_prompt=None, width=512, height=512,
-                          steps=20, cfg_scale=7.0, seed=-1, sampler=None, model=None, format="png", extra_params={})
+    req = ImageGenRequest(
+        backend="novita",
+        prompt="whale",
+        negative_prompt=None,
+        width=512,
+        height=512,
+        steps=20,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="png",
+        extra_params={},
+    )
     res = m.NovitaImageAdapter().generate(req)
     assert res.bytes_len > 0
 
@@ -57,11 +71,26 @@ def test_novita_blocks_api_returned_private_ip_image_url(monkeypatch):
     def fake_fetch_json(method, url, **kw):
         if method.upper() == "POST":
             return {"task_id": "t1"}
-        return {"status": "succeeded", "images": [{"image_url": "http://192.168.1.50/steal.png"}]}
+        return {
+            "status": "succeeded",
+            "images": [{"image_url": "http://192.168.1.50/steal.png"}],
+        }
 
     monkeypatch.setattr(m, "fetch_json", fake_fetch_json)
 
-    req = ImageGenRequest(backend="novita", prompt="whale", negative_prompt=None, width=512, height=512,
-                          steps=20, cfg_scale=7.0, seed=-1, sampler=None, model=None, format="png", extra_params={})
+    req = ImageGenRequest(
+        backend="novita",
+        prompt="whale",
+        negative_prompt=None,
+        width=512,
+        height=512,
+        steps=20,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="png",
+        extra_params={},
+    )
     with pytest.raises(ImageGenerationError):
         m.NovitaImageAdapter().generate(req)

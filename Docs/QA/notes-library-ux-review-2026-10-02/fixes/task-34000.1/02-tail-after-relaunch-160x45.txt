@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                            │
+│   a  │ Library notes · Ready                                        │  o      ‹ Notes      Ideas inbox                                                       │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     S                                                                                  │
+│      │                                                              │              Edit           Preview            Info               Save         Use in  │
+│      │ Filter                                                       │                                                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                              │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Ideas inbox                                                                    ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Select                           │                                                                                        │
+│ ---> │    Add from files…     Export                                │     Keywords                                                                           │
+│      │ Folders & placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     Move note                │     ▊ ideas                                                                          ▎ │
+│      │    ○ Remove placement                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │                                                                                        │
+│      │                                                              │<--- Body                                                                               │
+│      │  ▸ Agent_Lessons                                             │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Journal                                                   │     ┃ - Build a [[Someday project]] dashboard                                        ┃ │
+│      │  ▸ Meetings                                                  │     ┃ - Try spaced repetition for the Japanese vocab                                 ┃ │
+│      │  ▸ Projects                                                  │     ┃ - See [[Advisor meeting 2026-09-24#Action items]] for thesis TODOs             ┃ │
+│ ---> │  ▸ Recipes                                                   │     ┃  VERIFYTAILN01                                                                 ┃ │
+│      │  ▸ Research                                                  │     ┃                                                                                ┃ │
+│      │  ▸ Study                                                     │     ┃                                                                                ┃ │
+│      │  ▾ Unfiled                                                   │     ┃                                                                                ┃ │
+│      │    Ideas inbox · now                                         │     ┃                                                                                ┃ │
+│      │    Reading list · 14h                                        │     ┃                                                                                ┃ │
+│      │    Index — start here · 1d                                   │     ┃                                                                                ┃ │
+│      │    Meeting Notes 2026-09-30 · 2d                             │     ┃                                                                                ┃ │
+│      │    Gardening log · 4d                                        │     ┃                                                                                ┃ │
+│      │    📚 Reading queue 2026 ✨ · 1w                             │     ┃                                                                                ┃ │
+│      │    A very long note title that keeps going so we can test …  │     ┃                                                                                ┃ │
+│      │    Daily log 2026-09-21 · 1w                                 │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │    Daily log 2026-09-20 · 1w                                 │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                        24 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

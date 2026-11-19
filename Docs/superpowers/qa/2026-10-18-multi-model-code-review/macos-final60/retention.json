@@ -1,0 +1,11 @@
+{
+  "archive_path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/macos-final60-evidence.tar.gz",
+  "archive_sha256": "b04a74aec0f422aa1bf56edb25b2d61e44ff5aa64e37c764ecdd1df891dcb505",
+  "archive_bytes": 681126,
+  "member_count": 124,
+  "source_packet": "/private/tmp/task35582-macos-final60/attempt-f_yrr5n4",
+  "retained": "Reviewed runner/helpers, immutable authority and all-workflow CI receipts, transport/observer/report packets, independent outcome review, source fixture and fresh SQLite backups.",
+  "excluded": "Temporary home/configuration, caches and generated source Git metadata; original packet remains untouched.",
+  "credential_scan": "No configured provider-key bytes in selected retained files.",
+  "sqlite_snapshots": "SQLite backup API from read-only source connections after runner exit; exact schema readback and archived-byte hashes verified. Standalone integrity_check was unavailable because the app-defined canvas_revision_payload_valid function was not registered; no integrity success is claimed."
+}

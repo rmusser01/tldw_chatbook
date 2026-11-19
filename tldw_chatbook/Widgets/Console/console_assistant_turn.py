@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from time import monotonic
 
@@ -10,6 +11,7 @@ from rich.text import Text
 from textual import events
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
+from textual.geometry import Size
 from textual.message import Message
 from textual.timer import Timer
 from textual.widget import Widget
@@ -22,10 +24,29 @@ from tldw_chatbook.Chat.console_chat_models import (
     RawCliPresentation,
     console_activity_status_word,
 )
-
+from tldw_chatbook.UI.Navigation.surface_swap_guard import finish_removal
 
 _RAW_CLI_ELAPSED_STATES = frozenset({"running", "stopping"})
 _RAW_CLI_ELAPSED_TICK_SECONDS = 0.1
+
+
+class TranscriptCompositionMixin:
+    """Keep native transcript row mounts responsive and avoid repeat layout."""
+
+    async def mount_composed_widgets(self, widgets: list[Widget]) -> None:
+        if widgets:
+            await asyncio.sleep(0)
+            if not self._closing and not self._pruning and self.is_attached:
+                await super().mount_composed_widgets(widgets)
+
+    def _size_updated(
+        self, size: Size, virtual_size: Size, container_size: Size, layout: bool = True
+    ) -> bool:
+        # Native layout has already placed these rows. Hidden overflow has no
+        # scrollbar transition requiring another parent layout.
+        if self.styles.overflow_x == self.styles.overflow_y == "hidden":
+            layout = False
+        return super()._size_updated(size, virtual_size, container_size, layout)
 
 
 def raw_cli_status_copy(
@@ -55,8 +76,7 @@ def raw_cli_status_copy(
     ):
         elapsed = max(
             elapsed,
-            (monotonic() if now is None else now)
-            - presentation.started_at_monotonic,
+            (monotonic() if now is None else now) - presentation.started_at_monotonic,
         )
     copy = f"{labels[presentation.lifecycle_state]} · {elapsed:.1f}s"
     if (
@@ -207,9 +227,7 @@ class ConsoleActivityHeader(Horizontal):
     @property
     def renderable(self) -> Content:
         """Retain the former combined-text inspection seam for callers/tests."""
-        return Content(
-            f"{self._label_content().plain} {self._status_content().plain}"
-        )
+        return Content(f"{self._label_content().plain} {self._status_content().plain}")
 
     def on_mount(self) -> None:
         """Own the elapsed repaint cadence for this command activity row."""
@@ -343,6 +361,7 @@ class ConsoleActivityDisclosure(Vertical):
             raw_cli_presentation=raw_cli_presentation,
             tool_presentation=tool_presentation,
         )
+        self.feedback_notice = Static("", classes="console-approval-feedback", markup=False)
         self.preview = ConsoleToolPreview(activity_message_id)
         self.approval_button = Button(
             "Review approval",
@@ -361,7 +380,7 @@ class ConsoleActivityDisclosure(Vertical):
         )
         super().__init__(
             self.header,
-            *((self.preview, self.approval_button) if tool_presentation else ()),
+            *((self.feedback_notice, self.preview, self.approval_button) if tool_presentation else ()),
             self.action_stack,
             self.detail_stack,
             id=f"console-activity-disclosure-{activity_message_id}",
@@ -373,6 +392,17 @@ class ConsoleActivityDisclosure(Vertical):
         self.set_class(self.selected, "console-activity-disclosure-selected")
         self.set_class(self.expanded, "console-activity-disclosure-expanded")
         tool = self.tool_presentation
+        from tldw_chatbook.Chat.console_approval_feedback import (
+            format_approval_feedback,
+        )
+
+        feedback = (
+            format_approval_feedback(tool.approval_feedback, tool_status=tool.status)
+            if tool is not None and tool.approval_feedback is not None
+            else ""
+        )
+        self.feedback_notice.update(feedback)
+        self.feedback_notice.display = bool(feedback)
         self.preview.display = bool(
             tool is not None and tool.result_preview is not None and not self.expanded
         )
@@ -392,11 +422,29 @@ class ConsoleActivityDisclosure(Vertical):
 
     async def replace_detail_widgets(self, detail_widgets: Iterable[Widget]) -> None:
         """Replace lazy detail children without replacing the disclosure."""
+
+        def detail_is_live() -> bool:
+            return (
+                not self._closing
+                and not self._pruning
+                and self.is_attached
+                and self.detail_stack.parent is self
+                and not self.detail_stack._closing
+                and not self.detail_stack._pruning
+                and self.detail_stack.is_attached
+            )
+
+        if not detail_is_live():
+            return
         replacements = tuple(detail_widgets)
         if self.detail_stack.children:
-            await self.detail_stack.remove_children()
+            await finish_removal(self.detail_stack.remove_children())
+            if not detail_is_live():
+                return
         if replacements:
             await self.detail_stack.mount(*replacements)
+            if not detail_is_live():
+                return
         self._has_detail = bool(replacements)
         self.header.sync_header(
             self.label,
@@ -451,7 +499,7 @@ class ConsoleActivityDisclosure(Vertical):
         self._sync_visibility()
 
 
-class ConsoleAssistantTurnWidget(Vertical):
+class ConsoleAssistantTurnWidget(TranscriptCompositionMixin, Vertical):
     """Stable Assistant header/activity/answer/adjunct presentation shell."""
 
     def __init__(
@@ -465,31 +513,58 @@ class ConsoleAssistantTurnWidget(Vertical):
         self.assistant_message_id = assistant_message_id
         self.header_widget = header_widget
         self.answer_widget = answer_widget
-        self.activity_stack = Vertical(
-            *tuple(activity_widgets),
-            id=f"console-assistant-activities-{assistant_message_id}",
-            classes="console-assistant-activity-stack",
+        activities = tuple(activity_widgets)
+        adjuncts = tuple(adjunct_widgets)
+        self.activity_stack = (
+            self._build_stack(*activities, activity=True) if activities else None
         )
-        self.adjunct_stack = Vertical(
-            *tuple(adjunct_widgets),
-            id=f"console-assistant-adjuncts-{assistant_message_id}",
-            classes="console-assistant-adjunct-stack",
+        self.adjunct_stack = (
+            self._build_stack(*adjuncts, activity=False) if adjuncts else None
         )
+        children = [header_widget]
+        if self.activity_stack is not None:
+            children.append(self.activity_stack)
+        children.append(answer_widget)
+        if self.adjunct_stack is not None:
+            children.append(self.adjunct_stack)
         super().__init__(
-            header_widget,
-            self.activity_stack,
-            answer_widget,
-            self.adjunct_stack,
+            *children,
             id=f"console-assistant-turn-{assistant_message_id}",
             classes="console-assistant-turn",
         )
+
+    def _build_stack(self, *children: Widget, activity: bool) -> Vertical:
+        kind = "activity" if activity else "adjunct"
+        slot = "activities" if activity else "adjuncts"
+        return Vertical(
+            *children,
+            id=f"console-assistant-{slot}-{self.assistant_message_id}",
+            classes=f"console-assistant-{kind}-stack",
+        )
+
+    async def mount_stack_children(self, *children: Widget, activity: bool) -> Vertical:
+        """Attach the owned stack with its first content in native display order."""
+        stack = self.activity_stack if activity else self.adjunct_stack
+        if stack is None:
+            stack = self._build_stack(activity=activity)
+            if activity:
+                self.activity_stack = stack
+            else:
+                self.adjunct_stack = stack
+        if stack.parent is self:
+            await stack.mount(*children)
+        else:
+            for child in children:
+                stack.compose_add_child(child)
+            await self.mount(stack, before=self.answer_widget if activity else None)
+        return stack
 
     async def replace_activity_widgets(
         self, activity_widgets: Iterable[Widget]
     ) -> None:
         """Replace only mounted activity children, retaining turn identity."""
         replacements = tuple(activity_widgets)
-        if self.activity_stack.children:
+        if self.activity_stack is not None and self.activity_stack.children:
             await self.activity_stack.remove_children()
         if replacements:
-            await self.activity_stack.mount(*replacements)
+            await self.mount_stack_children(*replacements, activity=True)

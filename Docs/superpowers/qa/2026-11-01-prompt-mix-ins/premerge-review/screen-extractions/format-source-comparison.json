@@ -1,0 +1,87 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py",
+    "format": [
+      {
+        "version": "before",
+        "already_formatted": true,
+        "changed_input_lines": 0,
+        "changed_output_lines": 0
+      },
+      {
+        "version": "current",
+        "already_formatted": true,
+        "changed_input_lines": 0,
+        "changed_output_lines": 0
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/library_screen.py",
+    "format": [
+      {
+        "version": "before",
+        "already_formatted": false,
+        "changed_input_lines": 31,
+        "changed_output_lines": 70
+      },
+      {
+        "version": "current",
+        "already_formatted": false,
+        "changed_input_lines": 31,
+        "changed_output_lines": 70
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "format": [
+      {
+        "version": "before",
+        "already_formatted": false,
+        "changed_input_lines": 64,
+        "changed_output_lines": 168
+      },
+      {
+        "version": "current",
+        "already_formatted": false,
+        "changed_input_lines": 64,
+        "changed_output_lines": 168
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Library_Modules/screen_helpers.py",
+    "format": [
+      {
+        "version": "before",
+        "already_formatted": false,
+        "changed_input_lines": 0,
+        "changed_output_lines": 1
+      },
+      {
+        "version": "current",
+        "already_formatted": false,
+        "changed_input_lines": 0,
+        "changed_output_lines": 1
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+    "format": [
+      {
+        "version": "before",
+        "already_formatted": true,
+        "changed_input_lines": 0,
+        "changed_output_lines": 0
+      },
+      {
+        "version": "current",
+        "already_formatted": true,
+        "changed_input_lines": 0,
+        "changed_output_lines": 0
+      }
+    ]
+  }
+]

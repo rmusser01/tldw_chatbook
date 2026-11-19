@@ -1,0 +1,22 @@
+{
+  "head": "e021a376b2a8e8230556ca2cb235bd417f7ed951",
+  "source_diff_sha256": "6d4f576237f56a7d51f76f7b6e0d68b5c8f5418bc690a661b8e42856af4cee1a",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/UI/test_console_checked_display_scope.py",
+    "-k",
+    "tokenizer_wait",
+    "-v",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-review-703e94c34752",
+  "exit_code": 1,
+  "seconds": 23.71799999999348
+}

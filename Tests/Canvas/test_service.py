@@ -80,6 +80,43 @@ def _html(text: str) -> str:
     )
 
 
+def test_service_projects_ties_by_uuid_and_keeps_max_sequence(db):
+    from Tests.Canvas.test_repository import _turn_batch
+    from tldw_chatbook.Canvas.repository import CanvasImportBatch
+
+    owner = _conversation(db)
+    origin = _message(db, owner, "origin")
+    canvas, root, low, high = (str(uuid4()) for _ in range(4))
+    low, high = sorted((low, high))
+    batches = [
+        _turn_batch(
+            owner,
+            origin,
+            canvas_id=canvas,
+            revision_id=identity,
+            source="<p>same</p>",
+            sequence=sequence,
+            parent_revision_id=parent,
+        )
+        for identity, sequence, parent in (
+            (high, 2, root),
+            (root, 1, None),
+            (low, 2, root),
+        )
+    ]
+    CanvasRepository(db).import_batch(
+        CanvasImportBatch(
+            owner,
+            batches[1].documents,
+            tuple(batch.revisions[0] for batch in batches),
+        )
+    )
+    service = CanvasService(db)
+    scope = _scope(owner, origin)
+    assert service.list_canvases(scope)[0].revision_id == high
+    assert service.next_revision_sequence(scope, canvas) == 3
+
+
 def test_durable_candidate_upgrade_removal_and_rename(db, candidate_snapshot):
     service = CanvasService(db, profile_snapshot=candidate_snapshot)
     conversation = _conversation(db)
@@ -199,6 +236,7 @@ def test_controller_shared_explicit_snapshot_supports_durable_import_handoff(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "profile", ["canvas-v1", "canvas-v2-mermaid-1", "canvas-v2-mermaid-2", "canvas-v99"]
 )

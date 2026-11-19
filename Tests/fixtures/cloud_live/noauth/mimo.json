@@ -1,0 +1,39 @@
+{
+  "server": "mimo",
+  "base_url": "https://api.xiaomimimo.com/v1",
+  "probe_model": "mimo-v2.6-flash",
+  "listing": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Invalid API Key",
+        "param": "Please provide valid API Key",
+        "code": "401",
+        "type": "invalid_key"
+      }
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Invalid API Key",
+        "param": "Please provide valid API Key",
+        "code": "401",
+        "type": "invalid_key"
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Invalid API Key",
+        "param": "Please provide valid API Key",
+        "code": "401",
+        "type": "invalid_key"
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:19:45+00:00"
+}

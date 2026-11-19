@@ -1,0 +1,18 @@
+{
+  "base": "48ef9bf97dea9d2b01d7f0e6d116d83db42bf779",
+  "production_tests_workflows_unchanged": true,
+  "checker_ast_only_increased_floor": true,
+  "advanced_source_git_blob": "5065adc6754cb665328faad04586ca3346ba4cb5",
+  "qualified_source_head": "cbad96d683f09bab5d67f76e79332322c19aa73e",
+  "collection_runtime_cases": 0,
+  "collection_qualification": "Collection only, not a runtime pass. Exact29local IDs match qualified source cases after one documented pytest9long-id alias; the entire receipt function remains selected.",
+  "collection_log_sha256": "73dc74eb8a5838d7b6b7f8c478062e6f8656633ca3ebac263c34a28b1c4c58c0",
+  "collection_xml_sha256": "d94253e9c0a60217fbf95aca066760392e0b3902b188b2b6f1d355e0324453a3",
+  "ci_contract_cases": 175,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "ci_contract_seconds": 50.76,
+  "ci_contract_xml_sha256": "a20e2d211365ac1a368b43236684f2c75e866e08bb2a8eef61347ee045d61987",
+  "collected_cases": 29
+}

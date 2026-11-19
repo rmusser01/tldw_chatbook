@@ -24,6 +24,9 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 import tldw_chatbook.LLM_Calls.qwencloud as qwencloud
+from tldw_chatbook.LLM_Calls.provider_sessions import (
+    close_all_for_current_thread,
+)
 from tldw_chatbook.LLM_Calls.qwencloud import (
     build_qwencloud_payload,
     chat_with_qwencloud,
@@ -1939,7 +1942,7 @@ def test_nonstream_transport_uses_exact_mode_url_headers_and_timeout(
     response = _TransportResponse(response_payload)
     session = _RecordingSession(response)
     monkeypatch.setattr(
-        qwencloud, "create_default_session", lambda: session, raising=False
+        qwencloud, "create_pooled_default_session", lambda **kwargs: session, raising=False
     )
     monkeypatch.setattr(
         qwencloud,
@@ -1973,7 +1976,9 @@ def test_nonstream_transport_uses_exact_mode_url_headers_and_timeout(
     assert request["timeout"] == 37.0
     assert request["json"]["model"] == "qwen3.8-max"
     assert request["json"]["stream"] is False
-    assert session.closed is True
+    # ADR-222 (TASK-34418): the session is registry-owned and outlives the
+    # call; only the response is closed.
+    assert session.closed is False
     assert response.closed is True
 
 
@@ -2002,7 +2007,7 @@ def test_nonstream_cleanup_failures_never_mask_result_or_provider_error(
         response,
         close_error=RuntimeError("RAW-SESSION-CLOSE-CANARY"),
     )
-    monkeypatch.setattr(qwencloud, "create_default_session", lambda: session)
+    monkeypatch.setattr(qwencloud, "create_pooled_default_session", lambda **kwargs: session)
     monkeypatch.setattr(
         qwencloud,
         "get_runtime_config_snapshot",
@@ -2045,7 +2050,9 @@ def test_nonstream_cleanup_failures_never_mask_result_or_provider_error(
     assert "RAW-RESPONSE-CLOSE-CANARY" not in disclosure
     assert "RAW-SESSION-CLOSE-CANARY" not in disclosure
     assert response.close_calls == 1
-    assert session.close_calls == 1
+    # ADR-222: the registry owns the session; a call never closes it, so a
+    # failing session close can no longer occur on this path.
+    assert session.close_calls == 0
 
 
 def test_streaming_transport_transfers_response_and_session_ownership(
@@ -2062,8 +2069,8 @@ def test_streaming_transport_transfers_response_and_session_ownership(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setattr(
         qwencloud,
@@ -2091,7 +2098,9 @@ def test_streaming_transport_transfers_response_and_session_ownership(
     assert response.closed is False
     assert next(stream)["choices"][0]["delta"]["content"] == "owned"
     assert list(stream) == []
-    assert session.closed is True
+    # ADR-222: the stream closes its response only; the registry owns the
+    # session, so exhausting/closing the stream leaves it open.
+    assert session.closed is False
     assert response.close_calls == 1
 
 
@@ -2110,7 +2119,7 @@ def test_direct_adapter_loads_only_qwencloud_config_when_arguments_are_none(
     )
     session = _RecordingSession(response)
     monkeypatch.setattr(
-        qwencloud, "create_default_session", lambda: session, raising=False
+        qwencloud, "create_pooled_default_session", lambda **kwargs: session, raising=False
     )
     monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-env-lower-priority")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-env-canary")
@@ -2189,8 +2198,8 @@ def test_direct_adapter_loads_alias_only_qwencloud_config_without_mutation_or_le
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setenv("QWEN_ALIAS_KEY", "alias-key-canary")
     source = {
@@ -2264,8 +2273,8 @@ def test_direct_adapter_canonical_qwencloud_config_overrides_alias_in_any_order(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setenv("QWEN_ALIAS_KEY", "alias-key-canary")
     monkeypatch.setenv("QWEN_CANONICAL_KEY", "canonical-key-canary")
@@ -2355,8 +2364,8 @@ def test_direct_adapter_rejects_malformed_canonical_table_without_alias_leakage(
     )
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: pytest.fail("malformed Qwen config must fail before network"),
+        "create_pooled_default_session",
+        lambda **kwargs: pytest.fail("malformed Qwen config must fail before network"),
     )
 
     with _captured_qwencloud_logs() as logs:
@@ -2387,8 +2396,8 @@ def test_direct_adapter_rejects_alias_only_malformed_table_before_network(
     )
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: pytest.fail("malformed Qwen config must fail before network"),
+        "create_pooled_default_session",
+        lambda **kwargs: pytest.fail("malformed Qwen config must fail before network"),
     )
 
     with _captured_qwencloud_logs() as logs:
@@ -2424,8 +2433,8 @@ def test_direct_adapter_ignores_malformed_alias_when_canonical_is_valid(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     canonical = {
         "api_key": "canonical-key",
@@ -2491,7 +2500,7 @@ def test_direct_adapter_rejects_malformed_provider_config_before_network(
 
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
+        "create_pooled_default_session",
         unexpected_session,
     )
     monkeypatch.setattr(
@@ -2528,8 +2537,8 @@ def test_direct_adapter_uses_stripped_lower_key_and_explicit_base_override(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setenv("QWEN_KEY", "  env-fallback-key  ")
     monkeypatch.setattr(
@@ -2573,7 +2582,7 @@ def test_direct_adapter_rejects_unresolved_placeholders_before_network(
 
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
+        "create_pooled_default_session",
         unexpected_session,
     )
     monkeypatch.setenv("DASHSCOPE_API_KEY", " your_key ")
@@ -2769,7 +2778,9 @@ def test_invalid_retry_after_uses_exponential_fallback_without_disclosure(
     assert len(post_urls) == 3
     assert len(returned_responses) == 3
     assert all(id(response) in closed_response_ids for response in returned_responses)
-    assert len(closed_session_ids) == 1
+    # ADR-222: the registry owns the session; retries reuse one session and
+    # it is never closed by the call.
+    assert len(closed_session_ids) == 0
     assert sleeps == [pytest.approx(0.5)]
     rendered = "\n".join(logs)
     assert retry_after_canary not in rendered
@@ -2819,7 +2830,9 @@ def test_truncated_body_retries_once_and_closes_each_attempt(
     assert len(post_urls) == 2
     assert len(returned_responses) == 2
     assert all(id(response) in closed_response_ids for response in returned_responses)
-    assert len(closed_session_ids) == 1
+    # ADR-222 (TASK-34418): both attempts reuse one registry session that
+    # the call never closes; each attempt's response is closed.
+    assert len(closed_session_ids) == 0
     assert _TRUNCATED_BODY_CANARY.decode() not in "\n".join(logs)
 
 
@@ -2853,7 +2866,8 @@ def test_malformed_success_body_is_typed_redacted_and_not_retried(
     assert len(post_urls) == 1
     assert len(returned_responses) == 1
     assert id(returned_responses[0]) in closed_response_ids
-    assert len(closed_session_ids) == 1
+    # ADR-222: registry-owned session is never closed by the call.
+    assert len(closed_session_ids) == 0
     assert exc_info.value.provider == "qwencloud"
     rendered = "\n".join(logs) + "\n" + str(exc_info.value)
     assert "malformed" in rendered.lower()
@@ -2888,11 +2902,15 @@ def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(
     )
     for index, response in enumerate(responses):
         session = _RecordingSession(response)
+        # ADR-222: same base_url across iterations would keep the previous
+        # iteration's registry session; drop it so the patched factory runs.
+        close_all_for_current_thread()
         monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: session,
-    )
+            qwencloud,
+            "create_pooled_default_session",
+            lambda **kwargs: session,
+            raising=False,
+        )
         monkeypatch.setattr(
             qwencloud,
             "get_runtime_config_snapshot",
@@ -2948,7 +2966,8 @@ def test_stalled_nonretryable_400_is_typed_redacted_and_not_retried(
     assert len(post_urls) == 1
     assert len(returned_responses) == 1
     assert id(returned_responses[0]) in closed_response_ids
-    assert len(closed_session_ids) == 1
+    # ADR-222: registry-owned session is never closed by the call.
+    assert len(closed_session_ids) == 0
     assert exc_info.value.provider == "qwencloud"
 
     rendered = "\n".join(logs) + "\n" + str(exc_info.value)
@@ -2977,8 +2996,8 @@ def test_qwencloud_errors_and_logs_redact_private_values(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setattr(
         qwencloud,
@@ -3055,7 +3074,8 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         assert canary not in captured
     assert "qwencloud" in captured.lower()
     assert "status=500" in captured
-    assert session.closed is True
+    # ADR-222: registry-owned session is never closed by the call.
+    assert session.closed is False
     assert response.closed is True
 
     for status_code, expected_type in (
@@ -3069,11 +3089,15 @@ def test_qwencloud_errors_and_logs_redact_private_values(
             text="RAW-BODY-CANARY",
         )
         status_session = _RecordingSession(status_response)
+        # ADR-222: same base_url across loop iterations would keep the
+        # previous iteration's registry session; drop it per iteration.
+        close_all_for_current_thread()
         monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: status_session,
-    )
+            qwencloud,
+            "create_pooled_default_session",
+            lambda **kwargs: status_session,
+            raising=False,
+        )
         with (
             _captured_qwencloud_logs() as status_logs,
             pytest.raises(expected_type) as status_exc,
@@ -3090,7 +3114,8 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         for canary in canaries:
             assert canary not in status_capture
         assert f"status={status_code}" in status_capture
-        assert status_session.closed is True
+        # ADR-222: registry-owned session is never closed by the call.
+        assert status_session.closed is False
         assert status_response.closed is True
 
     for network_error in (
@@ -3098,11 +3123,15 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         requests.exceptions.Timeout("RAW-BODY-CANARY"),
     ):
         network_session = _RecordingSession(_TransportResponse({}), error=network_error)
+        # ADR-222: same base_url across loop iterations would keep the
+        # previous iteration's registry session; drop it per iteration.
+        close_all_for_current_thread()
         monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: network_session,
-    )
+            qwencloud,
+            "create_pooled_default_session",
+            lambda **kwargs: network_session,
+            raising=False,
+        )
         with (
             _captured_qwencloud_logs() as network_logs,
             pytest.raises(ChatProviderError) as network_exc,
@@ -3118,4 +3147,5 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         network_capture = "\n".join(network_logs) + "\n" + str(network_exc.value)
         for canary in canaries:
             assert canary not in network_capture
-        assert network_session.closed is True
+        # ADR-222: registry-owned session is never closed by the call.
+        assert network_session.closed is False

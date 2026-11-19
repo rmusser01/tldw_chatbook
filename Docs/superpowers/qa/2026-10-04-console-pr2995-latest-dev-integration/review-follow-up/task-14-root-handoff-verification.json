@@ -1,0 +1,21 @@
+{
+  "head": "34cf170802c5f724d004538b6b04e091f22d6a0c",
+  "safe_manifest_pins_verified": 69,
+  "actual_source_sha256_pins_verified": 8124,
+  "original_8123_map_unchanged_disclosed": true,
+  "original_exact_count": 8115,
+  "seven_incoming_plus_one_fixture_exceptions": [
+    "Tests/LLM_Calls/test_doc_derived_presets.py",
+    "Tests/LLM_Calls/test_inference_cloud_presets.py",
+    "Tests/LLM_Calls/test_live_capture_replay.py",
+    "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py",
+    "Tests/UI/test_console_runtime_ownership.py",
+    "Tests/fixtures/cloud_live/capture.py",
+    "tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py",
+    "tldw_chatbook/provider_registry.py"
+  ],
+  "pinned_dev_ancestor": true,
+  "clean_status": true,
+  "archive_original_sha256_exact": true,
+  "no_test_or_loading_replay": true
+}

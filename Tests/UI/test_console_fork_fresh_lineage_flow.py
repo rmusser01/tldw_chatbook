@@ -161,7 +161,7 @@ async def test_fresh_saved_pair_opens_the_fork_dialog_from_both_rows():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         await _send(console, pilot, "Reply with exactly: hello there friend")
         store = console._ensure_console_chat_store()
@@ -186,7 +186,7 @@ async def test_help_then_send_then_fork_opens_the_fork_dialog():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         await _submit(console, pilot, "/help")
         for _ in range(80):
@@ -284,7 +284,7 @@ async def test_refused_fork_is_not_advertised_and_names_the_blocking_row():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         store, failed, later = await _failed_turn_then_saved_pair(
             console, pilot, "first question"
         )
@@ -339,7 +339,7 @@ async def test_quoted_row_text_is_painted_literally_not_as_markup():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         _store, _failed, later = await _failed_turn_then_saved_pair(
             console, pilot, question
         )

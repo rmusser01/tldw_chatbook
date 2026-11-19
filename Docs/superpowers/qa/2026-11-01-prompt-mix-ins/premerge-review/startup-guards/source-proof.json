@@ -1,0 +1,18 @@
+{
+  "before": "source-before.json",
+  "after": "source-after.json",
+  "head": "b1108874cab28d23f660aa22c11c863466a84a8e",
+  "path_count": 3450,
+  "manifest_sha256": "dda775a8ba7079a1fe74e5260a7ddee8ac3cf5bfa91d59be96cacba3b3dd86ee",
+  "checks": {
+    "head": true,
+    "cwd": true,
+    "path_roots": true,
+    "paths": true,
+    "manifest_sha256": true,
+    "product_diff_sha256": true,
+    "observing_driver_sha256": true
+  },
+  "source_frozen_for_entire_run": true,
+  "repository_changes_by_agent": false
+}

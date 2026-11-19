@@ -676,7 +676,9 @@ async def test_local_stream_run_events_output_is_unchanged_by_the_offload(tmp_pa
     assert routed == direct
     assert len(routed) > 1, "too few events to distinguish a truncation bug"
 
-    tail_direct = [event async for event in service.stream_run_events(run["id"], after_id=10)]
+    tail_direct = [
+        event async for event in service.stream_run_events(run["id"], after_id=10)
+    ]
     tail_routed = [
         event
         async for event in scope.stream_run_events(run["id"], mode="local", after_id=10)

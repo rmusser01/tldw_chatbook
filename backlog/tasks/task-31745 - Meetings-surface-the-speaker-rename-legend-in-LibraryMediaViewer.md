@@ -23,3 +23,6 @@ After-the-fact speaker rename on a finished meeting is DOM-correct and tested, b
 ## Implementation Notes
 
 The rename functions moved to `Library/meeting_speaker_rename.py` (re-exported from the canvas) and the tested speaker legend is mounted in `LibraryMediaViewer` (height-auto, bounded to 12 rows), with an item-scoped `SpeakerRenamed` refresh that clears the viewer-state memo. The content guard accepts both app-produced transcript shapes (plain and Markdown, including the pre-escape legacy Markdown) and rewrites in the matching shape; ingest-produced content is refused with a one-line explanation, as decided. A failed rename restores the prior `meeting.json` so retries succeed. Landed in PR #2471 (commits 823d961cf, d25190898, 0ec964a4f, 8f01a6bd3, 2491787bc, d43e7ccc1, ddbcd1b3d).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/meetings.md`: Covered only by pilot tests (`Tests/UI/test_library_media_viewer_speaker_rename.py`), not watched in a running app.

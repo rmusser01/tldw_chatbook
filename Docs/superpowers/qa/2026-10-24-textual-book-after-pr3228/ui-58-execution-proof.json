@@ -1,0 +1,369 @@
+{
+  "head": "9a89a23ba1156e48ece70b540202afe81e798303",
+  "run": "40109377531",
+  "new_cases": 58,
+  "all_new_cases_executed_once_positive_call": true,
+  "shards": [
+    {
+      "shard": 1,
+      "job": 120919540692,
+      "conclusion": "success",
+      "raw_sha256": "d4910efe8ccf5604fd53314d46e8e5515b42c7c6513e4f11b284866cdeef0478",
+      "bytes": 114530,
+      "summary": "======================= 125 passed in 820.65s (0:13:40) ========================",
+      "job_wall_seconds": 875.0,
+      "new_case_calls": {
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[False-basic-body-False]": [
+          14.75
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[ordinary]": [
+          14.67
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[reverted-name]": [
+          12.33
+        ]
+      }
+    },
+    {
+      "shard": 2,
+      "job": 120919540640,
+      "conclusion": "success",
+      "raw_sha256": "7895bfa7894edac8ce1b29e00e40c5ad48388f965a21b95d79557b93ba959e1e",
+      "bytes": 137137,
+      "summary": "======================= 175 passed in 618.63s (0:10:18) ========================",
+      "job_wall_seconds": 665.0,
+      "new_case_calls": {
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_dictionary_input_before_save_is_persisted_and_clean": [
+          8.42
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[key-system]": [
+          8.26
+        ]
+      }
+    },
+    {
+      "shard": 3,
+      "job": 120919540716,
+      "conclusion": "success",
+      "raw_sha256": "2014203ab40f8669f0f0c2108b5a814856796f9c86bd68cefb54cf65879fc181",
+      "bytes": 131179,
+      "summary": "======================= 158 passed in 770.51s (0:12:50) ========================",
+      "job_wall_seconds": 825.0,
+      "new_case_calls": {
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[True-basic-queued-body-False]": [
+          15.06
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[provider]": [
+          14.97
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_dictionary_definite_failure_preserves_live_draft_for_retry": [
+          12.44
+        ]
+      }
+    },
+    {
+      "shard": 4,
+      "job": 120919540674,
+      "conclusion": "success",
+      "raw_sha256": "8894df44bf01418feabab8223bc08d272ee6c02806339a71f7de7779ca0837fc",
+      "bytes": 116099,
+      "summary": "================== 124 passed, 1 warning in 730.03s (0:12:10) ==================",
+      "job_wall_seconds": 786.0,
+      "new_case_calls": {
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[False-advanced-queued-body-False]": [
+          13.54
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[precision]": [
+          12.6
+        ]
+      }
+    },
+    {
+      "shard": 5,
+      "job": 120919540733,
+      "conclusion": "success",
+      "raw_sha256": "661a98dfe9a84884604327c8db17d381a5fdf5f455f06f44860b1cf97a239f30",
+      "bytes": 156285,
+      "summary": "================== 214 passed, 1 warning in 803.48s (0:13:23) ==================",
+      "job_wall_seconds": 863.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_preserves_later_draft_and_next_save[none]": [
+          17.65
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[True-advanced-body-False]": [
+          16.14
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[ordinary_override]": [
+          14.7
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[folder]": [
+          13.47
+        ]
+      }
+    },
+    {
+      "shard": 6,
+      "job": 120919540682,
+      "conclusion": "success",
+      "raw_sha256": "6892c3499b3862ff9e93e8560a9ee39d1986b7c7487c08f28f7e4021d5b56aac",
+      "bytes": 197426,
+      "summary": "======================= 308 passed in 753.14s (0:12:33) ========================",
+      "job_wall_seconds": 813.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_preserves_later_draft_and_next_save[palette]": [
+          17.92
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[False-basic-queued-metadata-False]": [
+          12.29
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[source]": [
+          12.07
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[name]": [
+          10.72
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_without_later_edit_becomes_clean": [
+          9.61
+        ]
+      }
+    },
+    {
+      "shard": 7,
+      "job": 120919540781,
+      "conclusion": "success",
+      "raw_sha256": "42232c88313acfd35cb2993799dfaca1a23b0e91bfd26109a1a8fccc9fe374d9",
+      "bytes": 243246,
+      "summary": "======================= 341 passed in 630.65s (0:10:30) ========================",
+      "job_wall_seconds": 685.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_preserves_later_draft_and_next_save[name]": [
+          14.41
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[True-advanced-metadata-False]": [
+          10.96
+        ]
+      }
+    },
+    {
+      "shard": 8,
+      "job": 120919540721,
+      "conclusion": "success",
+      "raw_sha256": "da259f88418fe623d456708cb27df8163128fca3a8564e18188a795cf389bbf1",
+      "bytes": 100821,
+      "summary": "================== 98 passed, 2 warnings in 693.39s (0:11:33) ==================",
+      "job_wall_seconds": 749.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_preserves_later_draft_and_next_save[dark]": [
+          15.07
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[provider_aba]": [
+          11.58
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[True-basic-body-False]": [
+          10.61
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[True-basic-body-True]": [
+          10.55
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[none-system]": [
+          9.71
+        ]
+      }
+    },
+    {
+      "shard": 9,
+      "job": 120919540795,
+      "conclusion": "success",
+      "raw_sha256": "23229accac2c5e0e3cb102548bdd93e2fd139158d0a26aaa294a70ac4bcb3c0f",
+      "bytes": 256440,
+      "summary": "================= 470 passed, 2 warnings in 746.34s (0:12:26) ==================",
+      "job_wall_seconds": 805.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_preserves_later_draft_and_next_save[invalid]": [
+          14.56
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_keeps_newer_input_before_older_semantic_message": [
+          13.74
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[queued_folder]": [
+          12.17
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[none-user]": [
+          11.07
+        ]
+      }
+    },
+    {
+      "shard": 10,
+      "job": 120919540863,
+      "conclusion": "success",
+      "raw_sha256": "7a79bc7e7f31ea26d709f7bd5f0c4d29385e7c4b1bd94d9f081fa323dc48bbd7",
+      "bytes": 156746,
+      "summary": "======================= 213 passed in 788.80s (0:13:08) ========================",
+      "job_wall_seconds": 849.0,
+      "new_case_calls": {
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-existing-system]": [
+          15.64
+        ],
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_preserves_later_draft_and_next_save[empty_name]": [
+          15.43
+        ]
+      }
+    },
+    {
+      "shard": 11,
+      "job": 120919540800,
+      "conclusion": "success",
+      "raw_sha256": "13f6fb88d2e5b07244ecfed221b91c60e5fa1301b1201ead9b2f20effb80dc4f",
+      "bytes": 124421,
+      "summary": "================= 142 passed, 2 warnings in 683.75s (0:11:23) ==================",
+      "job_wall_seconds": 741.0,
+      "new_case_calls": {
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-existing-user]": [
+          12.43
+        ],
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_observes_live_controls_before_queued_changed[palette]": [
+          11.67
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[raw-name]": [
+          9.97
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[key-user]": [
+          9.78
+        ]
+      }
+    },
+    {
+      "shard": 12,
+      "job": 120919540894,
+      "conclusion": "success",
+      "raw_sha256": "f33a6820c52b700e26567d0ab16b748ce5583c7f365ee72e82a488e4ffe9cf26",
+      "bytes": 187223,
+      "summary": "================= 263 passed, 11 warnings in 709.10s (0:11:49) =================",
+      "job_wall_seconds": 766.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_saved_publication_preserves_raw_edit_before_changed_is_delivered": [
+          13.25
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_ack_mount_refreshes_existing_other_lane": [
+          12.92
+        ],
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_observes_live_controls_before_queued_changed[name]": [
+          12.35
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[clear-system]": [
+          10.12
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[description]": [
+          9.93
+        ]
+      }
+    },
+    {
+      "shard": 13,
+      "job": 120919540694,
+      "conclusion": "success",
+      "raw_sha256": "dbdaa8c184e9e214e8f7631771d7a0053b83711d2f5ed840a38aec11acec0c6f",
+      "bytes": 140982,
+      "summary": "======================= 178 passed in 752.79s (0:12:32) ========================",
+      "job_wall_seconds": 814.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_observes_live_controls_before_queued_changed[dark]": [
+          13.91
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[clear-user]": [
+          11.84
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_dictionary_save_survives_library_pane_removed_during_completion": [
+          11.44
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[budget]": [
+          11.19
+        ]
+      }
+    },
+    {
+      "shard": 14,
+      "job": 120919540710,
+      "conclusion": "success",
+      "raw_sha256": "b19315b42ec5495e46ceebb5fa125d0a13491640964c4b03e117de1e68b57472",
+      "bytes": 124646,
+      "summary": "======================= 147 passed in 680.22s (0:11:20) ========================",
+      "job_wall_seconds": 737.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_as_retains_newer_draft_and_saved_identity[False]": [
+          15.27
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-system]": [
+          10.33
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[strategy]": [
+          9.36
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_failure_notification_renders_markup_shaped_text_literally": [
+          5.04
+        ]
+      }
+    },
+    {
+      "shard": 15,
+      "job": 120919540809,
+      "conclusion": "success",
+      "raw_sha256": "bee3963a6cbc6e41236f732f02e4eebd5ff18c07c68bcd78016958f47c024cb1",
+      "bytes": 102862,
+      "summary": "======================== 99 passed in 647.04s (0:10:47) ========================",
+      "job_wall_seconds": 704.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_pending_save_as_retains_newer_draft_and_saved_identity[True]": [
+          16.69
+        ],
+        "Tests/UI/test_parakeet_install_selection_retention.py::test_install_retains_later_selection[batch_provider]": [
+          11.78
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_first_block_mount_keeps_live_input[other-lane-user]": [
+          10.57
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[enabled]": [
+          9.53
+        ]
+      }
+    },
+    {
+      "shard": 16,
+      "job": 120919540622,
+      "conclusion": "success",
+      "raw_sha256": "03405ec56e6b916e3ac8a6ea7e557018f3463e6492e767ed3b751fe0fc455d52",
+      "bytes": 108325,
+      "summary": "================== 107 passed, 1 warning in 762.06s (0:12:42) ==================",
+      "job_wall_seconds": 827.0,
+      "new_case_calls": {
+        "Tests/UI/test_theme_pending_save_drafts.py::test_failed_pending_save_retains_newer_draft_and_original_file": [
+          15.1
+        ],
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[False-basic-none-False]": [
+          12.75
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[queued-name]": [
+          11.64
+        ]
+      }
+    },
+    {
+      "shard": 17,
+      "job": 120919540760,
+      "conclusion": "success",
+      "raw_sha256": "770e13998d42404dfd111a009b6713d75eb5515829929845280cb7dafdab12f9",
+      "bytes": 132634,
+      "summary": "======================= 153 passed in 798.33s (0:13:18) ========================",
+      "job_wall_seconds": 857.0,
+      "new_case_calls": {
+        "Tests/UI/test_library_prompt_pending_drafts.py::test_save_acknowledges_only_submitted_prompt[True-basic-none-False]": [
+          13.6
+        ],
+        "Tests/UI/test_dictionary_settings_pending_save_drafts.py::test_pending_dictionary_save_retains_raw_child_input_and_next_save[valid-budget]": [
+          11.4
+        ]
+      }
+    }
+  ]
+}

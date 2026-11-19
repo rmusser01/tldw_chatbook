@@ -1,0 +1,6 @@
+..........                                                               [100%]
+============================= slowest 25 durations =============================
+2.50s call     Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only
+
+(24 durations < 1s hidden.)
+10 passed in 4.74s

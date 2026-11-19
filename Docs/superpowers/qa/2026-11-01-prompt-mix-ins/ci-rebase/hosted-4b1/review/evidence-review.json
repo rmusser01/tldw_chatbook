@@ -1,0 +1,59 @@
+{
+  "producer_inventory_files": 45,
+  "producer_inventory_bytes": 1921471,
+  "all_producer_inventory_hashes_verified": true,
+  "frozen_source_paths_verified": 3026,
+  "changed_frozen_source_paths": [],
+  "final_junit_cases": 74,
+  "nonpassing_junit_cases": 0,
+  "original_exact_uat_cases": [
+    "test_project_chat_uat[fenced]",
+    "test_project_chat_uat[native]",
+    "test_project_chat_uat[compact-recovery]",
+    "test_project_chat_uat[wrong-family]"
+  ],
+  "receipts": [
+    {
+      "variant": "compact-recovery",
+      "status": "passed",
+      "phase": "complete",
+      "duration_seconds": 33.257,
+      "request_count": 5,
+      "approved_once": null,
+      "model_errors": [],
+      "blocked_destinations": []
+    },
+    {
+      "variant": "fenced",
+      "status": "passed",
+      "phase": "complete",
+      "duration_seconds": 28.501,
+      "request_count": 5,
+      "approved_once": null,
+      "model_errors": [],
+      "blocked_destinations": []
+    },
+    {
+      "variant": "native",
+      "status": "passed",
+      "phase": "complete",
+      "duration_seconds": 31.1,
+      "request_count": 5,
+      "approved_once": null,
+      "model_errors": [],
+      "blocked_destinations": []
+    },
+    {
+      "variant": "wrong-family",
+      "status": "passed",
+      "phase": "complete",
+      "duration_seconds": 41.642,
+      "request_count": 6,
+      "approved_once": "list_directory",
+      "model_errors": [],
+      "blocked_destinations": []
+    }
+  ],
+  "validator_output": "Project-chat UAT: all four cases passed with complete receipts.",
+  "qualification": "Read-only hash/XML/JSON inspection; reviewer did not execute any product app, test or native harness."
+}

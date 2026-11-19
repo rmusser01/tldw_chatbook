@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────┐  P    ‹ Back to list                                   │
+│   a  │ Prompts (4)                                          │  r  Name                                               │
+│   v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  o  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│      │ ▊ Filter prompts… (Enter)                          ▎ │  m  ▊ Roleplay scene setter                         ▎  │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  p  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│      │                                                      │  t                                                     │
+│      │   collection: All prompts                            │  s  Description                                        │
+│      │    sort: Newest        Select                        │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│      │      Import…          Export…                        │     ▊ Opens a scene with sensory detail.            ▎  │
+│      │  Code review checklist                               │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ ---> │  Local · has system and user text                    │                                                        │
+│      │                                                      │          Basic           Advanced           Info       │
+│      │  Explain like I'm five                               │        Use in Console                                  │
+│      │  Local · User only                                   │                                                        │
+│      │                                                      │<--- Instructions                                       │
+│      │ █Roleplay scene setter                            ▂  │     Instructions the model always follows.             │
+│      │ █Local · has system and user text                    │                                                        │
+│      │                                                      │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ ---> │ 1-4 of 4                                             │     ▊ You are a scene-setting narrator.             ▎  │
+│      │                                                      │     ▊                                               ▎▆ │
+│      │                                                      │     ▊                                               ▎  │
+│      │                                                      │     ▊                                               ▎  │
+│      │                                                      │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│      │                                                      │                                                        │
+│      │                                                      │     Message template                                   │
+│      │                                                      │     The message inserted into the composer.            │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      └──────────────────────────────────────────────────────┘                        More actions                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -26,6 +26,26 @@
     min-width: $ds-space-0;
     margin-right: $ds-space-inline;
 }
+/* TASK-34000.23: the Reports empty-state actions sit under the sentence that
+   names them; the consent block is a quiet framed card the CTA opens. Every
+   selector token is Library-owned so the splitter keeps these rules on the
+   Library sheet (ADR-097 boot budget). */
+#library-artifacts-empty-actions {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+}
+#library-artifacts-demo-confirm {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+    border: round $ds-grid-line;
+    padding: $ds-space-0 $ds-space-inset;
+    margin-bottom: $ds-space-stack;
+}
+#library-artifacts-demo-copy {
+    height: $ds-height-auto;
+    width: $ds-width-full;
+    margin-bottom: $ds-space-stack;
+}
 #library-artifacts-list,
 #library-artifacts-body {
     height: $ds-height-fill;

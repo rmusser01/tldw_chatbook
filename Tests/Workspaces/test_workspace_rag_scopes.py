@@ -16,7 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem, SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE
+from tldw_chatbook.Chat.rag_scope import (
+    RagScope,
+    ScopeItem,
+    SOURCE_TYPE_MEDIA,
+    SOURCE_TYPE_NOTE,
+)
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Workspaces.registry_service import WorkspaceNotFound
@@ -59,7 +64,10 @@ class TestTableCreatedIdempotently:
 class TestRoundTrip:
     def test_set_then_get_round_trips(self, registry, workspace_id):
         scope = RagScope(
-            items=(ScopeItem(SOURCE_TYPE_MEDIA, "42"), ScopeItem(SOURCE_TYPE_NOTE, "n1")),
+            items=(
+                ScopeItem(SOURCE_TYPE_MEDIA, "42"),
+                ScopeItem(SOURCE_TYPE_NOTE, "n1"),
+            ),
             updated_at="2026-07-21T00:00:00+00:00",
         )
 
@@ -70,7 +78,9 @@ class TestRoundTrip:
 
     def test_set_persists_across_reload(self, tmp_path):
         registry = build_test_registry(tmp_path)
-        record = registry.create_workspace(workspace_id="ws-reload", name="Reload target")
+        record = registry.create_workspace(
+            workspace_id="ws-reload", name="Reload target"
+        )
         scope = RagScope(items=(ScopeItem(SOURCE_TYPE_NOTE, "n9"),), updated_at="t1")
 
         registry.set_workspace_scope(record.workspace_id, scope)
@@ -180,7 +190,9 @@ class TestCorruptPayloadGuard:
 
 
 class TestWorkspaceDeletionCascades:
-    def test_deleting_the_workspace_row_drops_the_scope_row(self, registry, workspace_id):
+    def test_deleting_the_workspace_row_drops_the_scope_row(
+        self, registry, workspace_id
+    ):
         """The registry has no hard-delete API yet (only archive), but the
         storage layer must not orphan scope rows once one is added -- proven
         directly against the FK cascade the same way workspace_memberships
@@ -190,11 +202,14 @@ class TestWorkspaceDeletionCascades:
         assert registry.get_workspace_scope(workspace_id) is not None
 
         with registry.db.transaction() as conn:
-            conn.execute("DELETE FROM workspace_records WHERE workspace_id = ?", (workspace_id,))
+            conn.execute(
+                "DELETE FROM workspace_records WHERE workspace_id = ?", (workspace_id,)
+            )
 
         with registry.db.connection() as conn:
             row = conn.execute(
-                "SELECT 1 FROM workspace_rag_scopes WHERE workspace_id = ?", (workspace_id,)
+                "SELECT 1 FROM workspace_rag_scopes WHERE workspace_id = ?",
+                (workspace_id,),
             ).fetchone()
         assert row is None
         assert registry.get_workspace_scope(workspace_id) is None

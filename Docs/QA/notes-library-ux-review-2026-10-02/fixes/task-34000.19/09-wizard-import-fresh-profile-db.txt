@@ -1,0 +1,36 @@
+== fresh profile p1a-t5-3 BEFORE wizard import
+notes|0
+conversations|0
+keywords|0
+note_keywords|0
+conversation_keywords|0
+media|0
+MediaKeywords|0
+== wizard run (ChatbookImportWizard, Library ▸ Artifacts ▸ Chatbooks ▸ Manage Chatbook packs… ▸ i): log 13:25:44 'Starting chatbook import' -> imported; a second start at 13:25:45 skipped 147/147 (pre-existing double start; result screen painted the second run)
+== fresh profile p1a-t5-3 AFTER wizard import
+notes|122
+conversations|2
+keywords|17
+note_keywords|123
+conversation_keywords|2
+media|23
+MediaKeywords|46
+== notes (first 6 with keywords)
+[Imported] A very long note title that keeps going so we can test how the tree, the editor header and the Info pane cope with it at every width|test
+[Imported] Advisor meeting 2026-09-10|meeting,thesis
+[Imported] Advisor meeting 2026-09-24|meeting,thesis
+[Imported] Daily log 2026-09-01|daily
+[Imported] Daily log 2026-09-02|daily
+[Imported] Daily log 2026-09-03|daily
+== notes with keywords (count)
+120
+== conversations
+[Imported] Japanese study plan|japanese
+[Imported] Release notes draft v1.0|launch
+== media (first 4)
+A field guide to Markdown tables|article,seed
+Voice memo 2026-09-29|seed,audio
+学習メモ — 日本語の文法|seed,document
+Server logs excerpt 2026-09-27|seed,plaintext
+== media with keywords (count)
+23

@@ -1,0 +1,4495 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "textual": "8.2.8",
+  "profiled": false,
+  "viewport": [
+    170,
+    48
+  ],
+  "routes": [],
+  "typing": [],
+  "attach_poll": true,
+  "temporary_profile": "C:\\Users\\GDesktop-1\\.tmp-windows-perf-fcmej7bq",
+  "loop_clock_resolution_seconds": 0.015625,
+  "probe_poll_seconds": 0.03125,
+  "probe_heartbeat_seconds": 0.03125,
+  "import_ms": 8319.490599998971,
+  "construct_ms": 35515.157699992415,
+  "mount_ready_ms": 58613.26689997804,
+  "startup_phases": {
+    "basic_init": 2.9323130000266246,
+    "attribute_init": 2.0000006770715117e-05,
+    "parallel_init": 17.148749099986162,
+    "total_init": 35.514108000003034
+  },
+  "matching_diagnostic": {
+    "calls": 16960,
+    "matches": 2059,
+    "rules": [
+      {
+        "selector": "App *",
+        "calls": 465,
+        "matches": 16,
+        "ms": 29.558699810877442
+      },
+      {
+        "selector": "*",
+        "calls": 465,
+        "matches": 1,
+        "ms": 25.075800134800375
+      },
+      {
+        "selector": "#worktree-source, #worktree-destination, #worktree-diffstat, #worktree-consequence, .worktree-recovery-context, .worktree-recovery-row Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 8.096300065517426
+      },
+      {
+        "selector": "Button:disabled",
+        "calls": 91,
+        "matches": 19,
+        "ms": 5.652599938912317
+      },
+      {
+        "selector": "Widget",
+        "calls": 405,
+        "matches": 405,
+        "ms": 5.586400016909465
+      },
+      {
+        "selector": "Button:disabled:hover",
+        "calls": 91,
+        "matches": 0,
+        "ms": 4.861699853790924
+      },
+      {
+        "selector": "Button:disabled, Button.-style-default:disabled, Button.-style-flat:disabled",
+        "calls": 91,
+        "matches": 19,
+        "ms": 3.9735000173095614
+      },
+      {
+        "selector": "LibraryNoteImportCanvas Static, LibraryNoteImportCanvas Input, LibraryNoteImportCanvas Button",
+        "calls": 255,
+        "matches": 0,
+        "ms": 3.8291002274490893
+      },
+      {
+        "selector": "Button:ansi.-style-flat, Button:ansi.-style-default",
+        "calls": 91,
+        "matches": 0,
+        "ms": 3.42300022020936
+      },
+      {
+        "selector": "Button:ansi.-style-default:hover",
+        "calls": 91,
+        "matches": 0,
+        "ms": 3.2326999644283205
+      },
+      {
+        "selector": "WorkspacePersonaPicker Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 3.049800085136667
+      },
+      {
+        "selector": ".stts-portability-dialog .stts-portability-actions Button:disabled, STTSProfileLibrary #stts-profile-actions #stts-profile-import-btn:disabled",
+        "calls": 91,
+        "matches": 0,
+        "ms": 3.043800010345876
+      },
+      {
+        "selector": "Static",
+        "calls": 157,
+        "matches": 157,
+        "ms": 2.6904994738288224
+      },
+      {
+        "selector": "#console-prompts-pagination Button, #console-prompts-footer Button, #console-prompts-improve-mode Button, #console-prompts-convert",
+        "calls": 91,
+        "matches": 0,
+        "ms": 2.663400024175644
+      },
+      {
+        "selector": "CuratedView Button:focus, CuratedView CollapsibleTitle:focus, InstalledView Button:focus, InstalledView CollapsibleTitle:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 2.644000167492777
+      },
+      {
+        "selector": "ResearchSourcesRegion Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 2.4480999272782356
+      },
+      {
+        "selector": "_ResearchSourceRowSlot Static, _ResearchSourceReceiptSlot Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 2.4019998672883958
+      },
+      {
+        "selector": "Button.-style-default:hover",
+        "calls": 91,
+        "matches": 0,
+        "ms": 2.1575001010205597
+      },
+      {
+        "selector": "PersonaVisualCustomStateDialog Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.9974999595433474
+      },
+      {
+        "selector": "Button.-style-default:disabled",
+        "calls": 91,
+        "matches": 19,
+        "ms": 1.9183999684173614
+      },
+      {
+        "selector": "Button:focus, Button:focus:hover",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.8785000720527023
+      },
+      {
+        "selector": "ConsolePromptsModal.-narrow #console-prompt-draft-actions Button, ConsolePromptsModal.-narrow #console-prompt-draft-promote-fields Button, ConsolePromptsModal.-narrow #console-prompt-draft-library-name, ConsolePromptsModal.-narrow #console-prompt-draft-library-collection",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.8430999480187893
+      },
+      {
+        "selector": "Button:ansi.-style-default:disabled",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.828900072723627
+      },
+      {
+        "selector": "ProviderContinuationRecoveryCallout Button",
+        "calls": 91,
+        "matches": 2,
+        "ms": 1.797000237274915
+      },
+      {
+        "selector": "Button:ansi.-style-default:disabled:hover",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.789400033885613
+      },
+      {
+        "selector": ".console-bounded-section-viewport:focus, .console-bounded-section-viewport:focus-within",
+        "calls": 18,
+        "matches": 0,
+        "ms": 1.688800024567172
+      },
+      {
+        "selector": "ChatMessage.-tool-result > Vertical",
+        "calls": 58,
+        "matches": 0,
+        "ms": 1.6488000401295722
+      },
+      {
+        "selector": "ConsoleWorkspaceFilesModal.-short #console-workspace-files-filter-row Button, ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.6008997918106616
+      },
+      {
+        "selector": "TraceExportDialog #trace-export-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.5419999544974416
+      },
+      {
+        "selector": "DreamsStoryModal #dsm-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.5416998649016023
+      },
+      {
+        "selector": "SelectDirectory.-compact InputBar Button, FileOpen.-compact InputBar Button, FileSave.-compact InputBar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.5397002280224115
+      },
+      {
+        "selector": "ConsoleSettingsModal Button, ConsoleSettingsModal #console-settings-view-tabs, ConsoleSettingsModal #console-settings-default-recovery-actions",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.48180007818155
+      },
+      {
+        "selector": "Button",
+        "calls": 182,
+        "matches": 182,
+        "ms": 1.4435997873079032
+      },
+      {
+        "selector": "LibraryIngestCanvas Button:disabled",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.4244999329093844
+      },
+      {
+        "selector": "CuratedView Button:disabled, InstalledView Button:disabled",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.4176999393384904
+      },
+      {
+        "selector": "PersonasLibraryPane #personas-library-rows ListItem.personas-library-recovery-row Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 1.3522999070119113
+      },
+      {
+        "selector": "RemoteView.-narrow .remote-completion-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.2916000559926033
+      },
+      {
+        "selector": "Button:hover",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.2367999588605016
+      },
+      {
+        "selector": "PersonasInspectorPane #personas-inspector-actions Button, PersonasInspectorPane #personas-independent-buddy-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.2355000362731516
+      },
+      {
+        "selector": ".console-prompts-primary-action:focus, #console-prompts-modal Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.2330001045484096
+      },
+      {
+        "selector": ".console-prompts-primary-action:disabled, #console-prompts-modal Button:disabled",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.2306000280659646
+      },
+      {
+        "selector": "Vertical",
+        "calls": 58,
+        "matches": 58,
+        "ms": 1.1865000997204334
+      },
+      {
+        "selector": "LibraryFileNotesWorkspace Button:disabled, LibraryFileNotesGitPanel Button:disabled",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.1595999530982226
+      },
+      {
+        "selector": "PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar Button, PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.1449000157881528
+      },
+      {
+        "selector": "RemoteView .remote-completion-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.1341000208631158
+      },
+      {
+        "selector": "Button.-style-default:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.0875999578274786
+      },
+      {
+        "selector": "ChunkingLabScreen #lab-controls Button, ChunkingLabScreen #lab-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.0263999574817717
+      },
+      {
+        "selector": "CuratedView .audio-cpp-actions Button, InstalledView .audio-cpp-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 1.0203000565525144
+      },
+      {
+        "selector": "BackupRestoreScreen .backup-form Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 1.0004001087509096
+      },
+      {
+        "selector": "CuratedView .curated-header Button, InstalledView .installed-header Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.9964999335352331
+      },
+      {
+        "selector": "PersonasLibraryPane #personas-library-toolbar Button, PersonasLibraryPane #personas-library-filterbar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.9951996908057481
+      },
+      {
+        "selector": "Button.-style-default.-textual-compact",
+        "calls": 69,
+        "matches": 68,
+        "ms": 0.9838000114541501
+      },
+      {
+        "selector": "Button.-style-default",
+        "calls": 91,
+        "matches": 91,
+        "ms": 0.9356998198200017
+      },
+      {
+        "selector": "ResearchSourcesRegion Horizontal, ResearchSourcesRegion Vertical",
+        "calls": 102,
+        "matches": 0,
+        "ms": 0.9325000282842666
+      },
+      {
+        "selector": "PersonasLibraryPane #personas-library-rows ListItem Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 0.9247999987564981
+      },
+      {
+        "selector": "VoiceBlendDialog .button-row Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.9058001451194286
+      },
+      {
+        "selector": "PersonasInspectorPane .personas-conversations-tail Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 0.9048999345395714
+      },
+      {
+        "selector": "ConsoleDispatchRecoveryRegion Static",
+        "calls": 157,
+        "matches": 2,
+        "ms": 0.8894001075532287
+      },
+      {
+        "selector": "ChunkingLabScreen #lab-result-choices Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.8834998297970742
+      },
+      {
+        "selector": "EditorRegion Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 0.8772000728640705
+      },
+      {
+        "selector": "SampleRegion Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 0.8648999792058021
+      },
+      {
+        "selector": "LabDialog Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 0.8454999187961221
+      },
+      {
+        "selector": "PersonasInspectorPane .personas-conversation-row Static",
+        "calls": 157,
+        "matches": 0,
+        "ms": 0.8300998306367546
+      },
+      {
+        "selector": "ConsoleExchangeExportDialog #exchange-export-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.8295999723486602
+      },
+      {
+        "selector": "ResponseRulesModal .rr-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.8092999632935971
+      },
+      {
+        "selector": "ConsoleReviewNotesModal .console-review-notes-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.8064001449383795
+      },
+      {
+        "selector": "LibraryScreen #library-collection-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.7982999668456614
+      },
+      {
+        "selector": "PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.7740999280940741
+      },
+      {
+        "selector": "FileExtractionDialog .dialog-buttons Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.7698997796978801
+      },
+      {
+        "selector": "ConsoleTracePrivacyDialog #trace-privacy-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.7674999942537397
+      },
+      {
+        "selector": "PersonasScreen #personas-conversation-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.7588000153191388
+      },
+      {
+        "selector": "ConsoleCapturePolicyDialog #capture-policy-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.7514000753872097
+      },
+      {
+        "selector": "ExternalModelView .external-model-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.7481999637093395
+      },
+      {
+        "selector": "ConsoleSettingsModal.-conversation-settings-compact #console-settings-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.7373999105766416
+      },
+      {
+        "selector": "ProgressStep .completion-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.7257999095600098
+      },
+      {
+        "selector": ".h-1",
+        "calls": 67,
+        "matches": 67,
+        "ms": 0.685499922838062
+      },
+      {
+        "selector": "ConsoleWorkspaceFilesModal.-compact #console-workspace-files-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6798999384045601
+      },
+      {
+        "selector": "ConsoleLibraryAccessModal #console-library-access .console-library-access-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6791999621782452
+      },
+      {
+        "selector": "ConsoleDispatchRecoveryRegion Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6775999499950558
+      },
+      {
+        "selector": "ConsoleMessageMoreMenu Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6753002526238561
+      },
+      {
+        "selector": "FileSystemPickerScreen Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6714001356158406
+      },
+      {
+        "selector": "ConsoleWorkspaceActionMenu Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6676999910268933
+      },
+      {
+        "selector": "ResearchQuickNotesSection Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6634000746998936
+      },
+      {
+        "selector": "PersonasPreviewPane .ds-toolbar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6554000428877771
+      },
+      {
+        "selector": "VerticalScroll",
+        "calls": 42,
+        "matches": 42,
+        "ms": 0.6387999455910176
+      },
+      {
+        "selector": "ConsoleSelectionMenu Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.638100114883855
+      },
+      {
+        "selector": "PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6379999103955925
+      },
+      {
+        "selector": "BuddyCharacterReviewDialog #buddy-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6360999250318855
+      },
+      {
+        "selector": "TraceCallRecoveryCallout Button",
+        "calls": 91,
+        "matches": 3,
+        "ms": 0.6311000615824014
+      },
+      {
+        "selector": "LibraryIngestCanvas Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6290000746957958
+      },
+      {
+        "selector": "RemoteView .remote-machine-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6281000096350908
+      },
+      {
+        "selector": "ConsoleTerminalWorkspace Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.628000037977472
+      },
+      {
+        "selector": "TraceFiltersDialog #trace-filter-dialog-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6208999257069081
+      },
+      {
+        "selector": "Button.-error:focus",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.6185999955050647
+      },
+      {
+        "selector": "LabDialog Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6141000485513359
+      },
+      {
+        "selector": "ToolProfileFirstBindReviewModal #tool-profile-bind-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6098998710513115
+      },
+      {
+        "selector": "FeatureNotAvailableDialog Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6084999477025121
+      },
+      {
+        "selector": "NoteSelectionDialog .button-row Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6062999018467963
+      },
+      {
+        "selector": "ConsoleMessageMoreMenu Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6046000053174794
+      },
+      {
+        "selector": "MCPInspector Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6043997127562761
+      },
+      {
+        "selector": "ConsoleForkChatModal #console-fork-chat-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6018999847583473
+      },
+      {
+        "selector": "ConsoleTerminalWorkspace Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6018999556545168
+      },
+      {
+        "selector": "ResearchSourcesRegion Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.6001000292599201
+      },
+      {
+        "selector": "ConsoleConversationActionMenu Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5975998064968735
+      },
+      {
+        "selector": "ConsoleReactionPickerModal #console-reaction-picker-actions Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5950001068413258
+      },
+      {
+        "selector": "ResultsRegion Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5904999561607838
+      },
+      {
+        "selector": "ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5857001233380288
+      },
+      {
+        "selector": "Horizontal",
+        "calls": 44,
+        "matches": 44,
+        "ms": 0.5772998556494713
+      },
+      {
+        "selector": "LibraryFileNotesGitPanel Button.-style-default:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5767001712229103
+      },
+      {
+        "selector": "ConsoleWorkspaceActionMenu Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5706999218091369
+      },
+      {
+        "selector": "ModelCatalogConsentModal #model-catalog-consent-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5704999784938991
+      },
+      {
+        "selector": "LLMManagementWindow .input_container Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5704998620785773
+      },
+      {
+        "selector": "PersonasLibraryPane #personas-library-pagebar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5694001156371087
+      },
+      {
+        "selector": "CuratedView .curated-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5674998392350972
+      },
+      {
+        "selector": "PersonasPersonaVisualPackWidget #personas-persona-visual-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5619001167360693
+      },
+      {
+        "selector": "CuratedView .audio-cpp-actions, InstalledView ModelActivationControls.audio-cpp-actions, InstalledView ModelActivationControls.audio-cpp-actions Horizontal",
+        "calls": 44,
+        "matches": 0,
+        "ms": 0.5605999322142452
+      },
+      {
+        "selector": "PersonasPersonaVisualPackWidget #personas-persona-visual-actions Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5544000305235386
+      },
+      {
+        "selector": "CuratedView .curated-header Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5460999673232436
+      },
+      {
+        "selector": "InstalledView .installed-import-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.540699838893488
+      },
+      {
+        "selector": "PersonasCharacterTTSWidget .personas-character-tts-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5400002119131386
+      },
+      {
+        "selector": "PersonaProfileCardWidget .ds-toolbar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5381000519264489
+      },
+      {
+        "selector": "Input:ansi > .input--placeholder, Input:ansi > .input--suggestion",
+        "calls": 14,
+        "matches": 0,
+        "ms": 0.5365000397432595
+      },
+      {
+        "selector": "PersonaProfileEditorWidget .ds-toolbar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5340999341569841
+      },
+      {
+        "selector": "ActorPackImportReviewDialog #actor-pack-import-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.53190000471659
+      },
+      {
+        "selector": "PersonasCharacterTTSWidget .personas-character-tts-recovery-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5306000239215791
+      },
+      {
+        "selector": "ConsoleConversationActionMenu Button:focus",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5304999940562993
+      },
+      {
+        "selector": "ConversationSelectionDialog .button-row Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5293001304380596
+      },
+      {
+        "selector": "ResearchQuickNotesSection Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5290000408422202
+      },
+      {
+        "selector": "PersonasScreen #personas-conversation-navigation-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5267999658826739
+      },
+      {
+        "selector": "ToggleButton.-textual-compact:focus",
+        "calls": 69,
+        "matches": 0,
+        "ms": 0.5234000855125487
+      },
+      {
+        "selector": "LLMManagementWindow .button_container Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5216999270487577
+      },
+      {
+        "selector": "LLMManagementWindow .ollama-button-bar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5203000328037888
+      },
+      {
+        "selector": "PersonasCharacterEditorWidget .ds-toolbar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.51819984219037
+      },
+      {
+        "selector": "SetupRecoveryDialog Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5114001105539501
+      },
+      {
+        "selector": "#chat-resume-panel, #chat-skill-install-card, #chat-skill-script-card, #skill-install-buttons, #skill-script-buttons",
+        "calls": 5,
+        "matches": 5,
+        "ms": 0.5095000087749213
+      },
+      {
+        "selector": "PersonasCharacterCardWidget .ds-toolbar Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5085000884719193
+      },
+      {
+        "selector": "Select.-textual-compact:focus",
+        "calls": 69,
+        "matches": 0,
+        "ms": 0.5072000785730779
+      },
+      {
+        "selector": "GlobalFullCaptureConfirmation #global-full-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5063000717200339
+      },
+      {
+        "selector": "InstalledView .installed-header Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5063000426162034
+      },
+      {
+        "selector": "PetdexImportReviewDialog .petdex-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5025000136811286
+      },
+      {
+        "selector": "LibraryScreen #library-notes-source-strip Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.5002998805139214
+      },
+      {
+        "selector": "OptionList.-textual-compact",
+        "calls": 69,
+        "matches": 0,
+        "ms": 0.4865999217145145
+      },
+      {
+        "selector": "ConsoleReactionPickerModal #console-reaction-picker-actions Button",
+        "calls": 91,
+        "matches": 0,
+        "ms": 0.48439973033964634
+      },
+      {
+        "selector": "SelectCurrent.-textual-compact",
+        "calls": 69,
+        "matches": 0,
+        "ms": 0.4792000981979072
+      },
+      {
+        "selector": "ChatMessage.-tool-call > Vertical",
+        "calls": 58,
+        "matches": 0,
+        "ms": 0.4685999301727861
+      },
+      {
+        "selector": "Input:ansi > .input--cursor",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.46809998457320035
+      },
+      {
+        "selector": "ChatMessage.-user > Vertical",
+        "calls": 58,
+        "matches": 0,
+        "ms": 0.4618000239133835
+      },
+      {
+        "selector": "Button:ansi.-style-default.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.4600999818649143
+      },
+      {
+        "selector": "Input.-textual-compact:focus",
+        "calls": 69,
+        "matches": 0,
+        "ms": 0.4589999734889716
+      },
+      {
+        "selector": ".w-fill",
+        "calls": 20,
+        "matches": 20,
+        "ms": 0.4323000612203032
+      },
+      {
+        "selector": "Input.-textual-compact",
+        "calls": 69,
+        "matches": 1,
+        "ms": 0.4234998777974397
+      },
+      {
+        "selector": "Select.-textual-compact",
+        "calls": 69,
+        "matches": 0,
+        "ms": 0.3884000761900097
+      },
+      {
+        "selector": "LibraryNoteFolderTargetDialog > Vertical",
+        "calls": 58,
+        "matches": 0,
+        "ms": 0.38170008338056505
+      },
+      {
+        "selector": "FileExtractionDialog > Vertical",
+        "calls": 58,
+        "matches": 0,
+        "ms": 0.3538999299053103
+      },
+      {
+        "selector": ".console-bounded-section-viewport",
+        "calls": 18,
+        "matches": 18,
+        "ms": 0.3514999116305262
+      },
+      {
+        "selector": "LibraryNoteFolderNameDialog > Vertical",
+        "calls": 58,
+        "matches": 0,
+        "ms": 0.34949989640153944
+      },
+      {
+        "selector": "FeatureNotAvailableDialog > Vertical",
+        "calls": 58,
+        "matches": 0,
+        "ms": 0.34420000156387687
+      },
+      {
+        "selector": "ScrollableContainer",
+        "calls": 34,
+        "matches": 34,
+        "ms": 0.32079993980005383
+      },
+      {
+        "selector": "Input:ansi",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.3055999695789069
+      },
+      {
+        "selector": "Container",
+        "calls": 12,
+        "matches": 12,
+        "ms": 0.30410001636482775
+      },
+      {
+        "selector": "Button:ansi.-style-default.-primary:hover",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.2911000046879053
+      },
+      {
+        "selector": "ChatMessage > Vertical",
+        "calls": 58,
+        "matches": 0,
+        "ms": 0.282000022707507
+      },
+      {
+        "selector": "Button:ansi.-style-default.-error:hover",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.2733000146690756
+      },
+      {
+        "selector": "LabDialog Horizontal",
+        "calls": 44,
+        "matches": 0,
+        "ms": 0.25740001001395285
+      },
+      {
+        "selector": "TaskDetail #scheduling-task-detail-metadata Horizontal",
+        "calls": 44,
+        "matches": 0,
+        "ms": 0.2520000853110105
+      },
+      {
+        "selector": "ResearchQuickNotesSection Horizontal",
+        "calls": 44,
+        "matches": 0,
+        "ms": 0.24070002837106586
+      },
+      {
+        "selector": ".w-3",
+        "calls": 12,
+        "matches": 12,
+        "ms": 0.22470005205832422
+      },
+      {
+        "selector": ".h-auto",
+        "calls": 30,
+        "matches": 30,
+        "ms": 0.22059999173507094
+      },
+      {
+        "selector": ".console-workspace-action",
+        "calls": 22,
+        "matches": 22,
+        "ms": 0.21469997591339052
+      },
+      {
+        "selector": "Button.console-inspector-action:disabled",
+        "calls": 5,
+        "matches": 4,
+        "ms": 0.2145000034943223
+      },
+      {
+        "selector": "Button.console-rail-focus-carrier:focus",
+        "calls": 11,
+        "matches": 0,
+        "ms": 0.20439998479560018
+      },
+      {
+        "selector": "Input > .input--placeholder, Input > .input--suggestion",
+        "calls": 14,
+        "matches": 14,
+        "ms": 0.20369995036162436
+      },
+      {
+        "selector": "GuardianRuleEditModal > VerticalScroll",
+        "calls": 21,
+        "matches": 0,
+        "ms": 0.18470000941306353
+      },
+      {
+        "selector": ".approval-compact Button#approval-approve-all, .approval-compact Button#approval-submit, .approval-compact Button#approval-deny-all",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.18119998276233673
+      },
+      {
+        "selector": ".console-bounded-section-hint",
+        "calls": 19,
+        "matches": 19,
+        "ms": 0.18039997667074203
+      },
+      {
+        "selector": "#console-staged-context-tray, #console-session-context, #console-workspaces-context, #console-workspace-context, #console-run-inspector",
+        "calls": 8,
+        "matches": 8,
+        "ms": 0.17289997776970267
+      },
+      {
+        "selector": "App.-wide-viewport FeedbackDialog > Container",
+        "calls": 12,
+        "matches": 0,
+        "ms": 0.16949998098425567
+      },
+      {
+        "selector": "#profile-interview-answer:focus, .personal-context-review-row Input:focus, .personal-context-review-row Select:focus, .personal-context-proposal-field:focus",
+        "calls": 8,
+        "matches": 0,
+        "ms": 0.15369991888292134
+      },
+      {
+        "selector": "Button.-style-default.-primary:hover",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.15189999248832464
+      },
+      {
+        "selector": "Button:ansi.-style-default.-warning:hover",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.15030003851279616
+      },
+      {
+        "selector": "App.-wide-viewport ChatbookTemplatesWindow > Container",
+        "calls": 12,
+        "matches": 0,
+        "ms": 0.1416000013705343
+      },
+      {
+        "selector": ".destination-action-button",
+        "calls": 17,
+        "matches": 17,
+        "ms": 0.13509998098015785
+      },
+      {
+        "selector": "App.-wide-viewport NoteCreationModal > Container",
+        "calls": 12,
+        "matches": 0,
+        "ms": 0.1336999994236976
+      },
+      {
+        "selector": "App.-wide-viewport DocumentGenerationModal > Container",
+        "calls": 12,
+        "matches": 0,
+        "ms": 0.13369994121603668
+      },
+      {
+        "selector": ".w-full",
+        "calls": 16,
+        "matches": 16,
+        "ms": 0.13350002700462937
+      },
+      {
+        "selector": "LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region .destination-section, LibraryScreen #library-shell-grid.library-notes-compact #library-note-context-region > .library-canvas-action",
+        "calls": 9,
+        "matches": 0,
+        "ms": 0.13349999790079892
+      },
+      {
+        "selector": "App.-wide-viewport EncryptionSetupDialog > Container",
+        "calls": 12,
+        "matches": 0,
+        "ms": 0.1320999872405082
+      },
+      {
+        "selector": "App.-wide-viewport ChatbookExportManagementWindow > Container",
+        "calls": 12,
+        "matches": 0,
+        "ms": 0.1296000264119357
+      },
+      {
+        "selector": "#profile-interview-answer, .personal-context-review-row Input, .personal-context-review-row Select, .personal-context-proposal-field",
+        "calls": 8,
+        "matches": 0,
+        "ms": 0.12730000889860094
+      },
+      {
+        "selector": "Button.-style-default.-error:hover",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.12569999671541154
+      },
+      {
+        "selector": "DreamsStoryModal > VerticalScroll",
+        "calls": 21,
+        "matches": 0,
+        "ms": 0.12550008250400424
+      },
+      {
+        "selector": "LabDialog > VerticalScroll",
+        "calls": 21,
+        "matches": 0,
+        "ms": 0.12469998910091817
+      },
+      {
+        "selector": ".console-rail-section-toggle:focus",
+        "calls": 6,
+        "matches": 0,
+        "ms": 0.12159999459981918
+      },
+      {
+        "selector": ".console-workspace-action-row Button:focus, .console-rail-header Button:focus",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.11649998486973345
+      },
+      {
+        "selector": "#console-left-rail.console-edge-region-focused #console-context-rail-collapse, #console-context-rail-handle.console-edge-region-focused #console-context-rail-open, #console-right-rail.console-edge-region-focused #console-inspector-rail-collapse, #console-inspector-rail-handle.console-edge-region-focused #console-inspector-rail-open",
+        "calls": 4,
+        "matches": 0,
+        "ms": 0.11510000331327319
+      },
+      {
+        "selector": "Input:focus, TextArea:focus",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.11419999646022916
+      },
+      {
+        "selector": "DreamsGoalsModal > VerticalScroll",
+        "calls": 21,
+        "matches": 0,
+        "ms": 0.11149991769343615
+      },
+      {
+        "selector": "OptionList > .option-list--option-highlighted, OptionList:focus > .option-list--option-highlighted, SelectionList > .selection-list--button-highlighted, SelectionList > .selection-list--button-selected, SelectionList > .selection-list--button-selected-highlighted, Tree > .tree--cursor, Tree:focus > .tree--cursor",
+        "calls": 4,
+        "matches": 4,
+        "ms": 0.11139997513964772
+      },
+      {
+        "selector": "#console-shell .workbench-recovery-callout, #console-control-bar, #console-workspace-grid, #console-transcript-region, #console-native-composer",
+        "calls": 5,
+        "matches": 5,
+        "ms": 0.11130006168968976
+      },
+      {
+        "selector": "#home-purpose, #console-purpose, #library-purpose, #artifacts-purpose, #mcp-purpose, #console-status-row, #library-status-row, #console-mode-bar, #artifacts-mode-strip, #personas-mode-strip, #watchlists-header-bar, #schedules-filter-strip, #workflows-mode-strip, #mcp-mode-strip, #acp-purpose, #acp-mode-strip, #skills-mode-strip, #settings-category-strip",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.10459998156875372
+      },
+      {
+        "selector": "LibraryIngestCanvas Input:disabled, LibraryIngestCanvas Select:disabled, LibraryIngestCanvas Checkbox:disabled",
+        "calls": 8,
+        "matches": 0,
+        "ms": 0.1010000123642385
+      },
+      {
+        "selector": ".console-session-tab, #console-new-chat-tab, #console-new-temporary-tab",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.10069998097606003
+      },
+      {
+        "selector": "Input > .input--cursor",
+        "calls": 7,
+        "matches": 7,
+        "ms": 0.09860002319328487
+      },
+      {
+        "selector": "Button.-primary:focus",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.09859999408945441
+      },
+      {
+        "selector": "ScrollView",
+        "calls": 11,
+        "matches": 11,
+        "ms": 0.09489996591582894
+      },
+      {
+        "selector": "SetupRecoveryDialog > Container",
+        "calls": 12,
+        "matches": 0,
+        "ms": 0.09319995297119021
+      },
+      {
+        "selector": ".console-frame-solid, .console-frame-quiet",
+        "calls": 10,
+        "matches": 10,
+        "ms": 0.09169999975711107
+      },
+      {
+        "selector": "Button:ansi.-style-default.-primary",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.08639998850412667
+      },
+      {
+        "selector": "LibraryIngestCanvas Input > .input--placeholder, LibraryIngestCanvas Input:disabled > .input--placeholder",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.08300002082251012
+      },
+      {
+        "selector": "RoleplayDraftNavigationDialog > Container",
+        "calls": 12,
+        "matches": 0,
+        "ms": 0.08229995728470385
+      },
+      {
+        "selector": "Button.-style-flat.-primary:hover",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.08060000254772604
+      },
+      {
+        "selector": "Button:ansi.-style-flat.-error:hover",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.07750000804662704
+      },
+      {
+        "selector": "#console-staged-context-tray.console-frame-quiet, #console-session-context.console-frame-quiet, #console-workspaces-context.console-frame-quiet, #console-workspace-context.console-frame-quiet",
+        "calls": 4,
+        "matches": 3,
+        "ms": 0.07729997741989791
+      },
+      {
+        "selector": "LibraryCharacterRepairDialog > Container",
+        "calls": 12,
+        "matches": 0,
+        "ms": 0.07709997589699924
+      },
+      {
+        "selector": "Input > .input--selection",
+        "calls": 7,
+        "matches": 7,
+        "ms": 0.07579999510198832
+      },
+      {
+        "selector": "SelectCurrent:ansi",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.07389998063445091
+      },
+      {
+        "selector": "ResearchSourcesRegion Input, ResearchSourcesRegion Select",
+        "calls": 8,
+        "matches": 0,
+        "ms": 0.07199996616691351
+      },
+      {
+        "selector": "Button:ansi.-style-flat.-primary:hover",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.07169999298639596
+      },
+      {
+        "selector": "Button:ansi.-style-flat.-primary",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.07130001904442906
+      },
+      {
+        "selector": ".console-workspace-conversation-row:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.07119998917914927
+      },
+      {
+        "selector": ".h-0",
+        "calls": 15,
+        "matches": 15,
+        "ms": 0.06999995093792677
+      },
+      {
+        "selector": "#console-run-inspector-state",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.06809999467805028
+      },
+      {
+        "selector": "EditorRegion Input, EditorRegion Select",
+        "calls": 8,
+        "matches": 0,
+        "ms": 0.06790002225898206
+      },
+      {
+        "selector": "#console-composer-status, .console-composer-recovery, .console-send-disabled-reason, .console-control-label",
+        "calls": 4,
+        "matches": 4,
+        "ms": 0.06730001769028604
+      },
+      {
+        "selector": ".file-notes-git-commit-error, #file-notes-save-status.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.06650001159869134
+      },
+      {
+        "selector": "#capture-policy-status.-error, #exchange-export-status.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.06620000931434333
+      },
+      {
+        "selector": ".w-auto",
+        "calls": 10,
+        "matches": 10,
+        "ms": 0.06590003613382578
+      },
+      {
+        "selector": "Button.-style-default.-primary",
+        "calls": 5,
+        "matches": 5,
+        "ms": 0.06590003613382578
+      },
+      {
+        "selector": "ConsoleSettingsModal Input > .input--cursor",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.06559997564181685
+      },
+      {
+        "selector": ".gguf-source-choice-row Input, .gguf-source-managed-select",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.06389999180100858
+      },
+      {
+        "selector": "ProviderContinuationRecoveryCallout #console-continuation-impact, ProviderContinuationRecoveryCallout #console-continuation-status",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.06349998875521123
+      },
+      {
+        "selector": "Button.-style-default.-warning:hover",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.06250001024454832
+      },
+      {
+        "selector": "TraceCallRecoveryCallout .console-trace-detail, TraceCallRecoveryCallout #console-trace-status",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.062499981140717864
+      },
+      {
+        "selector": "LibraryFileNotesWorkspace Input:focus, LibraryFileNotesWorkspace TextArea:focus",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.061400001868605614
+      },
+      {
+        "selector": "FileOpen.-compact InputBar Input, FileSave.-compact InputBar Input",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.06080002640374005
+      },
+      {
+        "selector": ".w-13",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.0606999674346298
+      },
+      {
+        "selector": "ConsoleInspectorRail .console-inspector-scroll-owner, ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.060499965911731124
+      },
+      {
+        "selector": "Input:focus",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.059600017266348004
+      },
+      {
+        "selector": "ConsoleBoundedSection",
+        "calls": 8,
+        "matches": 8,
+        "ms": 0.058500037994235754
+      },
+      {
+        "selector": "Button:ansi.-style-flat.-warning:hover",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.05629999213851988
+      },
+      {
+        "selector": "Button:ansi.-style-flat.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.055899989092722535
+      },
+      {
+        "selector": "ConsoleSettingsModal Input > .input--selection",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.0557999883312732
+      },
+      {
+        "selector": ".theme-editor-action.-error:enabled",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.05520001286640763
+      },
+      {
+        "selector": ".w-11",
+        "calls": 4,
+        "matches": 4,
+        "ms": 0.055100012104958296
+      },
+      {
+        "selector": ".workbench-action, .workbench-mode",
+        "calls": 6,
+        "matches": 6,
+        "ms": 0.05460003740154207
+      },
+      {
+        "selector": "WorkflowsScreen #workflow-library-search > .input--placeholder",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.05370000144466758
+      },
+      {
+        "selector": "Button.-style-flat.-primary",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.05370000144466758
+      },
+      {
+        "selector": "#console-staged-context-tray, #console-session-context, #console-workspaces-context, #console-workspace-context",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.053099996875971556
+      },
+      {
+        "selector": "Button.-style-default.-error",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.05269999383017421
+      },
+      {
+        "selector": "#console-model-section-temperature .console-model-section-value, #console-model-section-max-tokens .console-model-section-value",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.052099989261478186
+      },
+      {
+        "selector": "LibraryScreen #library-collection-form Input",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.05209996015764773
+      },
+      {
+        "selector": ".theme-editor-action.-primary:enabled",
+        "calls": 5,
+        "matches": 0,
+        "ms": 0.05110001075081527
+      },
+      {
+        "selector": ".console-inspector-section-toggle:focus",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.05050000618211925
+      },
+      {
+        "selector": ".console-inspector-row-ready",
+        "calls": 8,
+        "matches": 8,
+        "ms": 0.050499977078288794
+      },
+      {
+        "selector": ".ds-panel",
+        "calls": 7,
+        "matches": 7,
+        "ms": 0.049600028432905674
+      },
+      {
+        "selector": "ConsoleSettingsModal OptionList > .option-list--option-highlighted, ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted, ConsoleModelPopover OptionList > .option-list--option-highlighted, #settings-providers-models-card OptionList > .option-list--option-highlighted",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.04900002386420965
+      },
+      {
+        "selector": ".console-session-tab-active:hover, .console-session-tab-active:focus:hover",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.04859999171458185
+      },
+      {
+        "selector": "Input",
+        "calls": 7,
+        "matches": 7,
+        "ms": 0.047900015488266945
+      },
+      {
+        "selector": ".console-rail-section-title",
+        "calls": 7,
+        "matches": 7,
+        "ms": 0.04770001396536827
+      },
+      {
+        "selector": "Switch:hover:light",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.04759998410008848
+      },
+      {
+        "selector": ".console-rail-section-body",
+        "calls": 6,
+        "matches": 6,
+        "ms": 0.04680000711232424
+      },
+      {
+        "selector": ".console-inspector-action",
+        "calls": 5,
+        "matches": 5,
+        "ms": 0.04640003317035735
+      },
+      {
+        "selector": ".console-rail-section-toggle",
+        "calls": 6,
+        "matches": 6,
+        "ms": 0.04539996734820306
+      },
+      {
+        "selector": "#console-live-work-section, #console-live-work-header, #console-pending-launch-card",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.04470002022571862
+      },
+      {
+        "selector": "Button.-style-flat.-warning:hover",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.044599990360438824
+      },
+      {
+        "selector": ".w-0",
+        "calls": 10,
+        "matches": 10,
+        "ms": 0.04339998122304678
+      },
+      {
+        "selector": "#console-native-composer.console-composer-has-draft #console-command-visible-text, #console-native-composer:focus-within #console-command-visible-text, #console-command-visible-text:focus",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.042800005758181214
+      },
+      {
+        "selector": "#console-send-message, #console-stop-generation",
+        "calls": 4,
+        "matches": 4,
+        "ms": 0.041899969801306725
+      },
+      {
+        "selector": ".console-action-disabled:hover, .console-action-disabled:focus, .console-action-disabled:focus:hover",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.04169999738223851
+      },
+      {
+        "selector": ".console-workspace-status-label",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.04129999433644116
+      },
+      {
+        "selector": "Button.-warning:focus",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.04129999433644116
+      },
+      {
+        "selector": ".mb-0",
+        "calls": 6,
+        "matches": 6,
+        "ms": 0.041199964471161366
+      },
+      {
+        "selector": ".console-transcript-jump-pill:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.040700018871575594
+      },
+      {
+        "selector": "Button:ansi.-style-default.-warning",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.039600039599463344
+      },
+      {
+        "selector": "#console-inspector-rail-open:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.038700003642588854
+      },
+      {
+        "selector": "#console-tab-overflow-left, #console-tab-overflow-right",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.038200028939172626
+      },
+      {
+        "selector": "Toast.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.03809999907389283
+      },
+      {
+        "selector": "SelectDirectory.-compact InputBar Input",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.0378999684471637
+      },
+      {
+        "selector": "Button.-style-flat.-error:hover",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.037799967685714364
+      },
+      {
+        "selector": "#console-shell.-console-compact #console-native-tab-strip, #console-shell.-console-compact .console-session-tab-strip",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.037699996028095484
+      },
+      {
+        "selector": ".console-setup-modal-action:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.03749996540136635
+      },
+      {
+        "selector": "LLMManagementWindow .input_container Input",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.0371999922208488
+      },
+      {
+        "selector": "#console-inspector-rail-body:focus, #console-right-rail:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.036699988413602114
+      },
+      {
+        "selector": "LibraryIngestCanvas Input:focus",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.03630004357546568
+      },
+      {
+        "selector": ".console-inspector-group-heading",
+        "calls": 6,
+        "matches": 6,
+        "ms": 0.03579998156055808
+      },
+      {
+        "selector": "Select > SelectOverlay > .option-list--option",
+        "calls": 3,
+        "matches": 2,
+        "ms": 0.035400036722421646
+      },
+      {
+        "selector": ".workbench-action",
+        "calls": 4,
+        "matches": 4,
+        "ms": 0.03480000304989517
+      },
+      {
+        "selector": "Switch:hover:light.-on > .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.03470000228844583
+      },
+      {
+        "selector": "MainNavigationBar .nav-button.nav-button-clip-ghost, MainNavigationBar .nav-button.nav-button-clip-ghost:hover, MainNavigationBar .nav-button.nav-button-clip-ghost:focus, MainNavigationBar .nav-button.nav-button-clip-ghost.is-active, MainNavigationBar .nav-button.nav-button-clip-ghost.is-active:focus, MainNavigationBar .nav-button.nav-button-clip-ghost:disabled",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.03440000000409782
+      },
+      {
+        "selector": "ExternalModelView #external-model-operation-status.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.03359999391250312
+      },
+      {
+        "selector": ".console-workspace-status-value",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.0329999893438071
+      },
+      {
+        "selector": "ConsoleCapturePolicyDialog #capture-policy-status.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.032999960239976645
+      },
+      {
+        "selector": "SelectCurrent:ansi:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.032899988582357764
+      },
+      {
+        "selector": "Tree:ansi:nocolor > .tree--cursor",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.032899988582357764
+      },
+      {
+        "selector": "Button:ansi.-style-flat.-warning",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.03279998782090843
+      },
+      {
+        "selector": "OptionList > .option-list--option-disabled",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.03240004298277199
+      },
+      {
+        "selector": "#console-speech-controls, #console-auto-speak-control, #console-hands-free-control",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.03239998477511108
+      },
+      {
+        "selector": "SelectCurrent .arrow",
+        "calls": 4,
+        "matches": 4,
+        "ms": 0.032200070563703775
+      },
+      {
+        "selector": "ConsoleSettingsModal Input:focus",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.03209998249076307
+      },
+      {
+        "selector": ".console-character-group:focus, .console-character-row:focus, .console-character-action:focus, #console-character-retry:focus, #console-character-open-roleplay:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.03190001007169485
+      },
+      {
+        "selector": ".m-0",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.03190001007169485
+      },
+      {
+        "selector": "OptionList > .option-list--option-highlighted",
+        "calls": 6,
+        "matches": 6,
+        "ms": 0.03160000778734684
+      },
+      {
+        "selector": "LabDialog Input",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.03130000550299883
+      },
+      {
+        "selector": "Tree:ansi > .tree--guides",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.03129997639916837
+      },
+      {
+        "selector": "#console-native-tab-strip, .console-session-tab-strip",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.031000003218650818
+      },
+      {
+        "selector": ".console-character-group, .console-character-row, .console-character-action, #console-character-query-handoff, #console-character-retry, #console-character-open-roleplay",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.03090000245720148
+      },
+      {
+        "selector": "#console-shell.-console-compact #console-native-transcript, #console-shell.-console-compact #console-native-transcript:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.03090000245720148
+      },
+      {
+        "selector": "ConsoleSettingsModal Input",
+        "calls": 7,
+        "matches": 0,
+        "ms": 0.030899973353371024
+      },
+      {
+        "selector": "OptionList > .option-list--option-hover, Tree > .tree--highlight-line",
+        "calls": 4,
+        "matches": 4,
+        "ms": 0.030899944249540567
+      },
+      {
+        "selector": "#approval-batch-body, #approval-batch-actions",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.030800001695752144
+      },
+      {
+        "selector": ".w-12",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.030099996365606785
+      },
+      {
+        "selector": "#console-main-column, #console-right-rail",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.02929999027401209
+      },
+      {
+        "selector": ".console-rail-collapse-button",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.029199989512562752
+      },
+      {
+        "selector": "#console-session-context:focus, #console-workspaces-context:focus, #console-workspace-context:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.029099988751113415
+      },
+      {
+        "selector": ".w-1",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.02880001557059586
+      },
+      {
+        "selector": "Button.-style-flat.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.028499984182417393
+      },
+      {
+        "selector": ".console-region",
+        "calls": 4,
+        "matches": 4,
+        "ms": 0.028100039344280958
+      },
+      {
+        "selector": ".console-conversation-compact-row",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0281000102404505
+      },
+      {
+        "selector": "Switch:focus",
+        "calls": 4,
+        "matches": 0,
+        "ms": 0.02780000795610249
+      },
+      {
+        "selector": "#console-right-rail, #console-transcript-region",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.02780000795610249
+      },
+      {
+        "selector": "ConsolePromptQueueRegion #console-prompt-queue-summary",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.027400004910305142
+      },
+      {
+        "selector": "ConsoleActivityOutcomeNotice #console-activity-outcome-mark-seen",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.02720000338740647
+      },
+      {
+        "selector": ".console-character-empty, #console-character-loading, #console-character-error, #console-character-unavailable-reason",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.025699991965666413
+      },
+      {
+        "selector": ".theme-editor-action.-warning:enabled",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.025599991204217076
+      },
+      {
+        "selector": ".console-frame-solid.console-frame-left",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.025399989681318402
+      },
+      {
+        "selector": "#console-workspace-handoff-rows",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.024599983589723706
+      },
+      {
+        "selector": ".console-inspector-section-toggle",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.024599983589723706
+      },
+      {
+        "selector": "Button.-style-default.-warning",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.024500011932104826
+      },
+      {
+        "selector": "OptionList > .option-list--separator",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.024300010409206152
+      },
+      {
+        "selector": ".h-fill",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.024300010409206152
+      },
+      {
+        "selector": "ConsoleExchangeExportDialog #exchange-export-status.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.024299981305375695
+      },
+      {
+        "selector": "#console-agent-progress",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.024100008886307478
+      },
+      {
+        "selector": "TraceExportDialog #trace-export-status.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.024100008886307478
+      },
+      {
+        "selector": "ProviderContinuationRecoveryCallout #console-continuation-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.02409997978247702
+      },
+      {
+        "selector": "#console-inspector-more, #console-inspector-more-body",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.023900007363408804
+      },
+      {
+        "selector": ".console-inspector-disabled-reason",
+        "calls": 4,
+        "matches": 4,
+        "ms": 0.023799948394298553
+      },
+      {
+        "selector": "ProviderContinuationRecoveryCallout #console-continuation-actions",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.02370000584051013
+      },
+      {
+        "selector": "#console-session-context, #console-workspaces-context, #console-workspace-context",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.023600005079060793
+      },
+      {
+        "selector": "#console-transcript-region, #console-session-surface",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.023599975975230336
+      },
+      {
+        "selector": ".ds-status-badge",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.02340000355616212
+      },
+      {
+        "selector": "Toast.-warning",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.02340000355616212
+      },
+      {
+        "selector": ".console-hidden-control",
+        "calls": 7,
+        "matches": 7,
+        "ms": 0.023399974452331662
+      },
+      {
+        "selector": "#home-title, #console-title, #library-title, #artifacts-title, #watchlists-collections-title, #schedules-title, #workflows-title, #mcp-title, #acp-title, #skills-title, #settings-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.023300002794712782
+      },
+      {
+        "selector": ".console-model-section-value",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.023300002794712782
+      },
+      {
+        "selector": "OptionList:focus",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.023299973690882325
+      },
+      {
+        "selector": "MainNavigationBar .nav-button",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.02300000051036477
+      },
+      {
+        "selector": "Screen:ansi",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.022899999748915434
+      },
+      {
+        "selector": ".console-workspace-empty-copy",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.022799998987466097
+      },
+      {
+        "selector": ".console-workspace-conversation-row-selected",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.02269999822601676
+      },
+      {
+        "selector": "#home-dashboard, #console-shell, #library-shell, #artifacts-shell, #personas-shell, #watchlists-collections-shell, #schedules-shell, #mcp-shell, #acp-shell, #skills-shell, #settings-shell",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.022099993657320738
+      },
+      {
+        "selector": "OptionList:focus > .option-list--option-highlighted",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.022099993657320738
+      },
+      {
+        "selector": "#console-transcript-surface",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.022099993657320738
+      },
+      {
+        "selector": ".console-inspector-section-header",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.022099993657320738
+      },
+      {
+        "selector": ".console-inspector-section-body",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.021899992134422064
+      },
+      {
+        "selector": "#console-workspace-conversations:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.021599989850074053
+      },
+      {
+        "selector": ".console-rail-handle-button",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.021299987565726042
+      },
+      {
+        "selector": ".console-live-work-source-row",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.020800012862309813
+      },
+      {
+        "selector": "Tree:ansi",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.02069998299703002
+      },
+      {
+        "selector": "ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.02020000829361379
+      },
+      {
+        "selector": "ConsoleSettingsModal Select > SelectCurrent .arrow",
+        "calls": 4,
+        "matches": 0,
+        "ms": 0.02010003663599491
+      },
+      {
+        "selector": "OptionList.-textual-compact > .option-list--option",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.020100007532164454
+      },
+      {
+        "selector": "ConsoleTracePrivacyDialog #trace-privacy-status.-error",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.020100007532164454
+      },
+      {
+        "selector": ".console-inspector-context-section",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.020100007532164454
+      },
+      {
+        "selector": "#console-speech-controls",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.020000006770715117
+      },
+      {
+        "selector": "OptionList > .option-list--option-hover",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.020000006770715117
+      },
+      {
+        "selector": "#console-main-column",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01990000600926578
+      },
+      {
+        "selector": "Select > SelectOverlay:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.019799976143985987
+      },
+      {
+        "selector": "#console-native-transcript:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.019700004486367106
+      },
+      {
+        "selector": "MainNavigationBar .nav-button:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.01960000372491777
+      },
+      {
+        "selector": "Switch:ansi:hover",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.01960000372491777
+      },
+      {
+        "selector": ".console-workspace-status-pair",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.01930000144056976
+      },
+      {
+        "selector": "Button.-style-flat.-warning",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.01930000144056976
+      },
+      {
+        "selector": "ConsoleActivityOutcomeNotice #console-activity-outcome-dismiss",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01930000144056976
+      },
+      {
+        "selector": "#console-shell.-console-compact .console-transcript-empty-panel",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0192999723367393
+      },
+      {
+        "selector": ".w-21",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.019099999917671084
+      },
+      {
+        "selector": "Screen:ansi:inline",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.01889999839477241
+      },
+      {
+        "selector": ".w-8",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.01889999839477241
+      },
+      {
+        "selector": ".workbench-frame .status-ready",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.018799968529492617
+      },
+      {
+        "selector": ".console-model-section-label",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.018400023691356182
+      },
+      {
+        "selector": "#console-auto-speak, #console-hands-free-switch",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.01829999382607639
+      },
+      {
+        "selector": "Switch:ansi:hover.-on > .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.017999991541728377
+      },
+      {
+        "selector": ".console-settings-row",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.017999991541728377
+      },
+      {
+        "selector": ".console-rail-collapse-button:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.017799990018829703
+      },
+      {
+        "selector": "ProviderContinuationRecoveryCallout",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.017799990018829703
+      },
+      {
+        "selector": ".console-inspector-section-title",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.017799990018829703
+      },
+      {
+        "selector": ".console-agent-drilldown-back",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.017700018361210823
+      },
+      {
+        "selector": "#console-transcript-empty-state, .console-transcript-empty-panel",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01750001683831215
+      },
+      {
+        "selector": ".console-agent-section-line",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.017499987734481692
+      },
+      {
+        "selector": "ConsoleSessionTabButton",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.017499987734481692
+      },
+      {
+        "selector": "Switch:light",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.017400016076862812
+      },
+      {
+        "selector": "MainNavigationBar .nav-button:hover",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.01729998621158302
+      },
+      {
+        "selector": "Select.-expanded > SelectOverlay",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.017000013031065464
+      },
+      {
+        "selector": ".console-rail-handle-button-right",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.016799982404336333
+      },
+      {
+        "selector": ".console-conversation-browser-date-divider",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.016699981642886996
+      },
+      {
+        "selector": "#console-send-authority-summary:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.01659998088143766
+      },
+      {
+        "selector": "TraceCallRecoveryCallout #console-trace-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.016300007700920105
+      },
+      {
+        "selector": ".console-selected-turn-subsection",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.01619997783564031
+      },
+      {
+        "selector": "Switch:hover:light > .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.01610000617802143
+      },
+      {
+        "selector": "#console-transcript-surface #console-native-transcript",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01610000617802143
+      },
+      {
+        "selector": "#console-composer-expanded, #console-composer-collapsed",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.01610000617802143
+      },
+      {
+        "selector": ".console-control-chip-row, .console-control-action-row",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.01580000389367342
+      },
+      {
+        "selector": "Select > SelectCurrent:hover",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.01580000389367342
+      },
+      {
+        "selector": ".console-conversation-actions",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01580000389367342
+      },
+      {
+        "selector": ".console-session-close-button",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01580000389367342
+      },
+      {
+        "selector": "ConsolePromptQueueRegion #console-prompt-queue-manage",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01580000389367342
+      },
+      {
+        "selector": ".console-inspector-section-view-all",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.015500001609325409
+      },
+      {
+        "selector": "Select.-expanded .down-arrow",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.015400000847876072
+      },
+      {
+        "selector": ".m-left-2",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.015400000847876072
+      },
+      {
+        "selector": "#console-character-avatar-frame",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.015300000086426735
+      },
+      {
+        "selector": "#console-watchlists-operation-cards",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.015300000086426735
+      },
+      {
+        "selector": "ConsoleActivityOutcomeNotice #console-activity-outcome-copy",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.015199999324977398
+      },
+      {
+        "selector": ".console-left-rail-section",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.015099998563528061
+      },
+      {
+        "selector": "Switch:ansi:hover > .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.014999997802078724
+      },
+      {
+        "selector": "Select.-expanded .up-arrow",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.014999997802078724
+      },
+      {
+        "selector": "MainNavigationBar .nav-overflow-hint:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.014899997040629387
+      },
+      {
+        "selector": "ConsolePromptQueueRegion #console-prompt-queue-pause",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.014899997040629387
+      },
+      {
+        "selector": ".console-setup-modal-action",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.01479999627918005
+      },
+      {
+        "selector": ".console-control-action:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.014699995517730713
+      },
+      {
+        "selector": ".workbench-command-strip, .workbench-mode-strip",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.014599994756281376
+      },
+      {
+        "selector": "ConsoleTerminalWorkspace#console-main-column",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.014599994756281376
+      },
+      {
+        "selector": "#console-workspace-conversation-search-clear",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.014399993233382702
+      },
+      {
+        "selector": "#console-shell.-console-compact .console-transcript-empty-body",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.014299992471933365
+      },
+      {
+        "selector": "#console-auto-speak-label, #console-hands-free-label",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.01400001929141581
+      },
+      {
+        "selector": "ConsoleActivityOutcomeNotice",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01400001929141581
+      },
+      {
+        "selector": ".console-inspector-rail-handle",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.013999990187585354
+      },
+      {
+        "selector": "#console-workbench-mode-strip, #console-workbench-command-strip",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.013900018529966474
+      },
+      {
+        "selector": "Switch:ansi",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.01379998866468668
+      },
+      {
+        "selector": "Select:focus > SelectCurrent",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.01379998866468668
+      },
+      {
+        "selector": "SelectCurrent.-has-value Static#label",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.01379998866468668
+      },
+      {
+        "selector": "ChoiceModal OptionList",
+        "calls": 3,
+        "matches": 0,
+        "ms": 0.01379998866468668
+      },
+      {
+        "selector": ".h-3",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01379998866468668
+      },
+      {
+        "selector": "ConsoleTranscriptSurface > ConsoleTranscript",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0137000170070678
+      },
+      {
+        "selector": ".console-conversation-browser-section-header",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.013699987903237343
+      },
+      {
+        "selector": "MainNavigationBar .nav-overflow-hint:hover",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.013599987141788006
+      },
+      {
+        "selector": "BuddyManagementModal .buddy-toggle-row Switch",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.013599987141788006
+      },
+      {
+        "selector": "Switch:light .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.013599987141788006
+      },
+      {
+        "selector": "#console-transcript-background-effect",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.013300013961270452
+      },
+      {
+        "selector": "ConsoleTranscriptSurface > ConsoleTranscript > ConsoleBackgroundEffect",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.013299984857439995
+      },
+      {
+        "selector": "#console-auto-speak-retry, #console-auto-speak-resume",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.013199984095990658
+      },
+      {
+        "selector": "OptionList",
+        "calls": 3,
+        "matches": 3,
+        "ms": 0.013199984095990658
+      },
+      {
+        "selector": "ConsoleProjectInstructionStatusRow #console-project-instruction-status-button:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.013199984095990658
+      },
+      {
+        "selector": "Switch:ansi .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.012999982573091984
+      },
+      {
+        "selector": ".console-workspace-conversation-row",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.012999982573091984
+      },
+      {
+        "selector": "SelectOverlay:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.012900010915473104
+      },
+      {
+        "selector": ".console-rail-handle",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.012899981811642647
+      },
+      {
+        "selector": "Select > SelectOverlay",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.012699980288743973
+      },
+      {
+        "selector": "MainNavigationBar .nav-button.is-active:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.012600008631125093
+      },
+      {
+        "selector": "Switch:light.-on .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.012600008631125093
+      },
+      {
+        "selector": "HorizontalScroll",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.012600008631125093
+      },
+      {
+        "selector": "MainNavigationBar .nav-button.is-active",
+        "calls": 2,
+        "matches": 1,
+        "ms": 0.012500007869675756
+      },
+      {
+        "selector": "Tree:light > .tree--guides-hover",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.012399978004395962
+      },
+      {
+        "selector": "SelectCurrent",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.012300006346777081
+      },
+      {
+        "selector": "#console-workspace-tree:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.012300006346777081
+      },
+      {
+        "selector": ".console-transcript-jump-pill",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.012300006346777081
+      },
+      {
+        "selector": "#console-live-work-section",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.012300006346777081
+      },
+      {
+        "selector": "SelectCurrent Static#label",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.012100033927708864
+      },
+      {
+        "selector": "MCPScreen .mcp-mode-chip.is-active:focus, MCPScreen .mcp-mode-chip.is-active:focus:hover",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.012100004823878407
+      },
+      {
+        "selector": "Switch:hover.-on > .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.012100004823878407
+      },
+      {
+        "selector": "#console-composer-expand",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.012100004823878407
+      },
+      {
+        "selector": ".console-pinned-terminal-action:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.01200000406242907
+      },
+      {
+        "selector": ".console-send-authority-row",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.011800031643360853
+      },
+      {
+        "selector": "Tree:light > .tree--guides-selected",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.01170000177808106
+      },
+      {
+        "selector": ".console-agent-section-steps",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.01170000177808106
+      },
+      {
+        "selector": "Select .up-arrow",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.011600001016631722
+      },
+      {
+        "selector": "#console-workbench-header.console-header-inline",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.011500000255182385
+      },
+      {
+        "selector": ".console-inspector-outer-scroll-hint",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.011399999493733048
+      },
+      {
+        "selector": "#console-transcript-region",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.011299998732283711
+      },
+      {
+        "selector": ".console-session-tab-active",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.011299998732283711
+      },
+      {
+        "selector": "#console-task-surface",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.011299998732283711
+      },
+      {
+        "selector": "#console-composer-collapse",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.011299998732283711
+      },
+      {
+        "selector": ".library-source-action.is-active, .library-source-action.is-active:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.011299969628453255
+      },
+      {
+        "selector": ".approval-compact",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.011200027074664831
+      },
+      {
+        "selector": "Select.-textual-compact > SelectCurrent",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.011199997970834374
+      },
+      {
+        "selector": "#console-native-transcript",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.011199997970834374
+      },
+      {
+        "selector": "#console-shell.-console-compact #console-native-composer",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.011100026313215494
+      },
+      {
+        "selector": "MainNavigationBar .nav-overflow-hint",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.011099997209385037
+      },
+      {
+        "selector": "#console-workspace-conversations",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0109999964479357
+      },
+      {
+        "selector": ".w-13fr",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0109999964479357
+      },
+      {
+        "selector": "Switch:hover",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.010899995686486363
+      },
+      {
+        "selector": "Screen > .screen--selection",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.010599993402138352
+      },
+      {
+        "selector": ".destination-workbench-pane",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.010599993402138352
+      },
+      {
+        "selector": "ConsoleWorkspaceTree .conversation-attention-running",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.010499992640689015
+      },
+      {
+        "selector": "TraceCallRecoveryCallout",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.010499992640689015
+      },
+      {
+        "selector": "ConsolePromptQueueRegion.-narrow #console-prompt-queue-preview",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.010300020221620798
+      },
+      {
+        "selector": "Tree:light",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.010299991117790341
+      },
+      {
+        "selector": "#console-workbench-header.console-header-inline .workbench-header-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.010199990356341004
+      },
+      {
+        "selector": "ConsoleWorkspaceTree .conversation-attention-info",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.010099989594891667
+      },
+      {
+        "selector": ".console-conversation-browser-section-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.010099989594891667
+      },
+      {
+        "selector": ".console-workspace-action.console-workspace-conversations-toggle",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.010099989594891667
+      },
+      {
+        "selector": "PersonasScreen .personas-mode-chip.is-active",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.010000047041103244
+      },
+      {
+        "selector": "Switch .switch--slider",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.010000017937272787
+      },
+      {
+        "selector": "Switch.-on .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.00990001717582345
+      },
+      {
+        "selector": "#console-session-surface",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00990001717582345
+      },
+      {
+        "selector": "#console-transcript-title, .console-transcript-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00990001717582345
+      },
+      {
+        "selector": ".w-5",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.009899988071992993
+      },
+      {
+        "selector": "Switch:hover > .switch--slider",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.009899988071992993
+      },
+      {
+        "selector": "#console-workbench-header.console-header-inline .workbench-header-subtitle",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009800016414374113
+      },
+      {
+        "selector": ".h-6",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009799987310543656
+      },
+      {
+        "selector": "ConsoleSettingsModal Select > SelectOverlay",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.00969998654909432
+      },
+      {
+        "selector": "#console-native-composer",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00969998654909432
+      },
+      {
+        "selector": "#console-character-context",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009600014891475439
+      },
+      {
+        "selector": "#console-prompt-improvement-recovery",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009600014891475439
+      },
+      {
+        "selector": ".console-compact-model-bar",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009500014130026102
+      },
+      {
+        "selector": ".console-frame-solid.console-frame-bottom",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009499985026195645
+      },
+      {
+        "selector": "PersonasScreen #personas-workbench .destination-workbench-pane",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.009400013368576765
+      },
+      {
+        "selector": ".w-6",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.009400013368576765
+      },
+      {
+        "selector": ".w-4fr",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009399984264746308
+      },
+      {
+        "selector": "#console-settings-open",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009399984264746308
+      },
+      {
+        "selector": ".console-action-disabled",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.009399984264746308
+      },
+      {
+        "selector": ".console-conversation-browser-row-line",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009300012607127428
+      },
+      {
+        "selector": "TraceCallRecoveryCallout #console-trace-actions",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009299983503296971
+      },
+      {
+        "selector": "Tree:light > .tree--guides",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.009200011845678091
+      },
+      {
+        "selector": ".console-pinned-terminal-action",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009199982741847634
+      },
+      {
+        "selector": ".console-control-action",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009100011084228754
+      },
+      {
+        "selector": "ConsoleProjectInstructionStatusRow",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009100011084228754
+      },
+      {
+        "selector": ".w-16",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.009000010322779417
+      },
+      {
+        "selector": ".console-rail-header",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.00899998121894896
+      },
+      {
+        "selector": "ConsoleWorkspaceTree .conversation-attention-error",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00890000956133008
+      },
+      {
+        "selector": "#console-workspace-tree:focus > .tree--cursor",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.00890000956133008
+      },
+      {
+        "selector": "#console-native-composer:focus",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00890000956133008
+      },
+      {
+        "selector": ".console-control-label, .console-staged-context-row, .console-staged-context-summary, .console-staged-context-recovery",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008899980457499623
+      },
+      {
+        "selector": "ConsoleWorkspaceTree .conversation-attention-ready",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008899980457499623
+      },
+      {
+        "selector": ".approval-compact #approval-batch-actions",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008899980457499623
+      },
+      {
+        "selector": "#console-run-inspector",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008800008799880743
+      },
+      {
+        "selector": ".console-status-arrow:disabled",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008800008799880743
+      },
+      {
+        "selector": ".border-none",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.008799979696050286
+      },
+      {
+        "selector": ".console-retrieval-scope-action",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008700008038431406
+      },
+      {
+        "selector": ".console-status-arrow:hover",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.008700008038431406
+      },
+      {
+        "selector": ".console-frame-solid.console-frame-right",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.00869997893460095
+      },
+      {
+        "selector": "Select",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008600007276982069
+      },
+      {
+        "selector": ".console-transcript-empty-body",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008600007276982069
+      },
+      {
+        "selector": ".console-kb-selection-hint",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008600007276982069
+      },
+      {
+        "selector": "ConsoleDispatchRecoveryRegion",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008600007276982069
+      },
+      {
+        "selector": "Select.-textual-compact:focus > SelectCurrent",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.008500006515532732
+      },
+      {
+        "selector": "#console-workspace-grid",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008500006515532732
+      },
+      {
+        "selector": "#console-active-workspace-value",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008500006515532732
+      },
+      {
+        "selector": "#console-native-tab-strip",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008500006515532732
+      },
+      {
+        "selector": ".p-0",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.008400005754083395
+      },
+      {
+        "selector": "#console-send-authority-summary",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008400005754083395
+      },
+      {
+        "selector": "ConsoleWorkspaceTree .conversation-attention-approval-required",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008399976650252938
+      },
+      {
+        "selector": "FileSave InputBar Select, FileOpen InputBar Select, EnhancedFileDialog InputBar Select",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.008300004992634058
+      },
+      {
+        "selector": ".conversation-attention-info",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008300004992634058
+      },
+      {
+        "selector": ".ds-approval-card",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008300004992634058
+      },
+      {
+        "selector": "#console-composer-status",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008300004992634058
+      },
+      {
+        "selector": "Switch",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.008299975888803601
+      },
+      {
+        "selector": "ConsoleDispatchRecoveryRegion #console-dispatch-recovery-warning",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008299975888803601
+      },
+      {
+        "selector": ".destination-workbench",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008200004231184721
+      },
+      {
+        "selector": "#console-staged-context-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008200004231184721
+      },
+      {
+        "selector": ".console-live-work-source-readiness",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008200004231184721
+      },
+      {
+        "selector": "#console-transcript-region.console-transcript-region-focused #console-transcript-title",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.008199975127354264
+      },
+      {
+        "selector": "LabModeStrip .lab-mode-chip.is-active",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.008100003469735384
+      },
+      {
+        "selector": "LibraryIngestCanvas Select:disabled SelectCurrent Static#label",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.008100003469735384
+      },
+      {
+        "selector": "#console-staged-context-count",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008100003469735384
+      },
+      {
+        "selector": "Tree:focus > .tree--cursor",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.008099974365904927
+      },
+      {
+        "selector": "#console-composer-collapsed-status",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008000002708286047
+      },
+      {
+        "selector": "#console-prompt-improvement-undo",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.008000002708286047
+      },
+      {
+        "selector": ".workbench-header.has-empty-subtitle .workbench-header-subtitle",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.00790000194683671
+      },
+      {
+        "selector": ".workbench-action.is-disabled",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00790000194683671
+      },
+      {
+        "selector": "ConsoleSettingsModal Select > SelectCurrent Static#label",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.00790000194683671
+      },
+      {
+        "selector": "ConsoleProjectInstructionStatusRow #console-project-instruction-status-button",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00790000194683671
+      },
+      {
+        "selector": "ListItem.personas-library-row.is-active",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.007800001185387373
+      },
+      {
+        "selector": "Select:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.007700000423938036
+      },
+      {
+        "selector": "ConsoleSettingsModal Select:focus > SelectCurrent",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.007700000423938036
+      },
+      {
+        "selector": "#console-workspace-selected-conversation.console-workspace-selected-conversation-active",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007700000423938036
+      },
+      {
+        "selector": "#console-staged-context-tray",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007700000423938036
+      },
+      {
+        "selector": "#console-staged-evidence-strip",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007700000423938036
+      },
+      {
+        "selector": "PersonasPreviewPane .ds-toolbar",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.007599999662488699
+      },
+      {
+        "selector": ".conversation-attention-error",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007599999662488699
+      },
+      {
+        "selector": "#console-native-composer.console-composer-focused",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007599999662488699
+      },
+      {
+        "selector": "#console-right-rail",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007499998901039362
+      },
+      {
+        "selector": "ConsolePromptQueueRegion #console-prompt-queue-preview",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007499998901039362
+      },
+      {
+        "selector": "Tree:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.007399998139590025
+      },
+      {
+        "selector": ".console-rail-handle-right",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007399998139590025
+      },
+      {
+        "selector": "MCPScreen .mcp-mode-chip.is-active",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.007299997378140688
+      },
+      {
+        "selector": "#console-workbench-header.console-header-inline .workbench-header-status",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007299997378140688
+      },
+      {
+        "selector": "ConsoleDispatchRecoveryRegion #console-dispatch-recovery-actions",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007299997378140688
+      },
+      {
+        "selector": "Screen",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.007199996616691351
+      },
+      {
+        "selector": "LibraryIngestCanvas Select:disabled SelectCurrent",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.007199996616691351
+      },
+      {
+        "selector": ".conversation-attention-paused",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007199996616691351
+      },
+      {
+        "selector": ".conversation-attention-ready",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007100024959072471
+      },
+      {
+        "selector": ".personas-mode-chip.is-active:focus",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.007099995855242014
+      },
+      {
+        "selector": "ConsolePromptQueueRegion",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.007099995855242014
+      },
+      {
+        "selector": "BaseAppScreen #screen-content",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006999995093792677
+      },
+      {
+        "selector": "Tree:focus > .tree--guides",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.006999995093792677
+      },
+      {
+        "selector": ".personas-mode-chip.is-active",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.00699996598996222
+      },
+      {
+        "selector": "#console-workspace-search",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00689999433234334
+      },
+      {
+        "selector": ".console-settings-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00680002267472446
+      },
+      {
+        "selector": ".density-normal .workbench-header",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006799993570894003
+      },
+      {
+        "selector": ".console-frame-solid.console-frame-top",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006799993570894003
+      },
+      {
+        "selector": "#console-composer-actions",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006799993570894003
+      },
+      {
+        "selector": "#console-workspace-selected-conversation",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006699992809444666
+      },
+      {
+        "selector": "#console-prompt-improvement-status",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006600021151825786
+      },
+      {
+        "selector": ".console-voice-status",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.006599992047995329
+      },
+      {
+        "selector": "LibraryIngestCanvas Select:focus > SelectCurrent",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.006500049494206905
+      },
+      {
+        "selector": ".conversation-attention-running",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006500020390376449
+      },
+      {
+        "selector": ".is-active",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.006499991286545992
+      },
+      {
+        "selector": "Label",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006499991286545992
+      },
+      {
+        "selector": "Tree > .tree--label",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006499991286545992
+      },
+      {
+        "selector": ".console-composer-recovery",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006499991286545992
+      },
+      {
+        "selector": "#console-rail-system-line.console-rail-system-line-dim",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006400019628927112
+      },
+      {
+        "selector": "#console-workbench-header",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006300018867477775
+      },
+      {
+        "selector": ".compact-bar-toggle:hover",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.006299989763647318
+      },
+      {
+        "selector": "Tree > .tree--highlight-line",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006299989763647318
+      },
+      {
+        "selector": "#console-character-search",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006299989763647318
+      },
+      {
+        "selector": ".console-model-section-line",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006299989763647318
+      },
+      {
+        "selector": "#console-send-authority-heading",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006299989763647318
+      },
+      {
+        "selector": "App.-wide-viewport #console-composer-menu",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006299989763647318
+      },
+      {
+        "selector": "ConsoleWorkspaceTree .conversation-attention-paused",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006200018106028438
+      },
+      {
+        "selector": ".console-action-subdued",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006200018106028438
+      },
+      {
+        "selector": "BaseAppScreen",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006199989002197981
+      },
+      {
+        "selector": ".workbench-mode.is-active",
+        "calls": 2,
+        "matches": 1,
+        "ms": 0.006199989002197981
+      },
+      {
+        "selector": ".approval-compact #approval-batch-rows",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006199989002197981
+      },
+      {
+        "selector": "ConsoleSettingsModal Select > SelectCurrent",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.006100017344579101
+      },
+      {
+        "selector": ".console-status-text:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.006100017344579101
+      },
+      {
+        "selector": ".console-agent-section-fleet-summary",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006099988240748644
+      },
+      {
+        "selector": "#console-left-rail-body:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.006099988240748644
+      },
+      {
+        "selector": "Tree:focus > .tree--guides-hover",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.006099988240748644
+      },
+      {
+        "selector": "Tree > .tree--highlight",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.006099988240748644
+      },
+      {
+        "selector": ".workbench-mode",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.006000016583129764
+      },
+      {
+        "selector": ".evals-rail-row.is-active",
+        "calls": 2,
+        "matches": 0,
+        "ms": 0.005999987479299307
+      },
+      {
+        "selector": "Tree > .tree--cursor",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005999987479299307
+      },
+      {
+        "selector": ".console-staged-context-header",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005999987479299307
+      },
+      {
+        "selector": "MainNavigationBar .main-nav",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005900015821680427
+      },
+      {
+        "selector": "Tree:focus > .tree--guides-selected",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.005900015821680427
+      },
+      {
+        "selector": "ChatScreen.-focus #console-workbench-header",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.00589998671784997
+      },
+      {
+        "selector": ".w-4",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.00589998671784997
+      },
+      {
+        "selector": ".conversation-attention-approval-required",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005799985956400633
+      },
+      {
+        "selector": "Tree > .tree--guides",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005799985956400633
+      },
+      {
+        "selector": "#console-inspector-more-toggle",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005799985956400633
+      },
+      {
+        "selector": "SmartContentTree Tree > .tree--cursor",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.005700014298781753
+      },
+      {
+        "selector": "#console-workspace-conversation-search-row",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005700014298781753
+      },
+      {
+        "selector": ".console-inspector-section",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005700014298781753
+      },
+      {
+        "selector": ".console-send-disabled-reason",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005700014298781753
+      },
+      {
+        "selector": "AppFooterStatus",
+        "calls": 2,
+        "matches": 2,
+        "ms": 0.005700014298781753
+      },
+      {
+        "selector": "DestinationHeader",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005699985194951296
+      },
+      {
+        "selector": "#approval-batch-rows",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005699985194951296
+      },
+      {
+        "selector": "#console-inspector-rail-body",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005699985194951296
+      },
+      {
+        "selector": "ConsoleSettingsModal Select",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.005600013537332416
+      },
+      {
+        "selector": "Tree > .tree--guides-selected",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005600013537332416
+      },
+      {
+        "selector": "#console-workspace-conversation-search",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005600013537332416
+      },
+      {
+        "selector": ".workbench-header-subtitle",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005599984433501959
+      },
+      {
+        "selector": "#console-staged-context-empty",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005599984433501959
+      },
+      {
+        "selector": "#console-left-rail:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.005500012775883079
+      },
+      {
+        "selector": "LibraryFileNotesWorkspace Tree:focus > .tree--cursor",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.005499983672052622
+      },
+      {
+        "selector": ".ds-recovery-callout",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005400012014433742
+      },
+      {
+        "selector": "ConsoleWorkspaceTree .conversation-attention-blocked",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005400012014433742
+      },
+      {
+        "selector": "#console-command-input",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005400012014433742
+      },
+      {
+        "selector": "#console-auto-speak-row",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005399982910603285
+      },
+      {
+        "selector": ".console-rail-section-header",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005399982910603285
+      },
+      {
+        "selector": "#console-native-composer.console-composer-setup-blocked #console-command-visible-text",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.005399982910603285
+      },
+      {
+        "selector": "TraceFiltersDialog #trace-filter-dialog Select",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0053000112529844046
+      },
+      {
+        "selector": "#console-auto-speak",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005299982149153948
+      },
+      {
+        "selector": ".workbench-recovery-callout.is-hidden",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005299982149153948
+      },
+      {
+        "selector": "#console-workspace-tree > .tree--cursor",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005299982149153948
+      },
+      {
+        "selector": "#console-command-visible-text",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005299982149153948
+      },
+      {
+        "selector": ".workbench-header-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0052000104915350676
+      },
+      {
+        "selector": ".compact-bar-toggle",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0052000104915350676
+      },
+      {
+        "selector": "Tree",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0052000104915350676
+      },
+      {
+        "selector": "Tree > .tree--guides-hover",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0052000104915350676
+      },
+      {
+        "selector": ".console-send-disabled-reason-idle",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0052000104915350676
+      },
+      {
+        "selector": ".workbench-recovery-body",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0051000097300857306
+      },
+      {
+        "selector": "#console-workspace-tree",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0051000097300857306
+      },
+      {
+        "selector": "#console-rail-system-line",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.005099980626255274
+      },
+      {
+        "selector": "BuddyConversationModal #approval-batch-body",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0050000089686363935
+      },
+      {
+        "selector": ".w-10",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.004999979864805937
+      },
+      {
+        "selector": ".console-workspace-action-row",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0049000082071870565
+      },
+      {
+        "selector": ".h-2",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0049000082071870565
+      },
+      {
+        "selector": "#console-command-popup OptionList",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0049000082071870565
+      },
+      {
+        "selector": ".ds-toolbar",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0048000074457377195
+      },
+      {
+        "selector": "Screen:inline",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.004799978341907263
+      },
+      {
+        "selector": ".workbench-header-status",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0046000059228390455
+      },
+      {
+        "selector": "LibraryIngestCanvas Select:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0046000059228390455
+      },
+      {
+        "selector": "LibraryFileNotesWorkspace Tree:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0046000059228390455
+      },
+      {
+        "selector": ".h-4",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0045000051613897085
+      },
+      {
+        "selector": ".workbench-recovery-callout",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0045000051613897085
+      },
+      {
+        "selector": "#console-retrieval-scope-row",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0045000051613897085
+      },
+      {
+        "selector": "#console-command-popup",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0044000043999403715
+      },
+      {
+        "selector": ".conversation-attention-blocked",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0043000036384910345
+      },
+      {
+        "selector": ".console-settings-header",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0043000036384910345
+      },
+      {
+        "selector": ".workbench-recovery-action",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0042000028770416975
+      },
+      {
+        "selector": "FileSystemPickerScreen #listing-controls Select",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0042000028770416975
+      },
+      {
+        "selector": "#console-left-rail-body",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0042000028770416975
+      },
+      {
+        "selector": "PersonasCharacterEditorWidget .ds-toolbar",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0041000021155923605
+      },
+      {
+        "selector": ".compact-bar-label",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0041000021155923605
+      },
+      {
+        "selector": "#console-prompt-improvement-review",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0041000021155923605
+      },
+      {
+        "selector": ".workbench-recovery-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0040000013541430235
+      },
+      {
+        "selector": ".console-setup-step-pending",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0040000013541430235
+      },
+      {
+        "selector": ".workbench-header",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0039000005926936865
+      },
+      {
+        "selector": "MCPToolsMode #mcp-tools-filter-server-slot Select",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0039000005926936865
+      },
+      {
+        "selector": ".console-settings-summary",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0039000005926936865
+      },
+      {
+        "selector": "#console-status-chip-scroll",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0039000005926936865
+      },
+      {
+        "selector": "PersonasCharacterCardWidget .ds-toolbar",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0037999998312443495
+      },
+      {
+        "selector": ".console-retrieval-scope-label",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0037999998312443495
+      },
+      {
+        "selector": ".console-inspector-session-settings",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0037999998312443495
+      },
+      {
+        "selector": "PersonaProfileEditorWidget .ds-toolbar",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0036999990697950125
+      },
+      {
+        "selector": "#console-collapsed-stop-generation",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0036999990697950125
+      },
+      {
+        "selector": "MainNavigationBar",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0035999983083456755
+      },
+      {
+        "selector": "#console-shell",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0035999983083456755
+      },
+      {
+        "selector": ".workbench-frame",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0035999983083456755
+      },
+      {
+        "selector": "VllmSetupView #vllm-readiness-checklist > Label",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.003500026650726795
+      },
+      {
+        "selector": "ChatScreen.-focus MainNavigationBar",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0034999975468963385
+      },
+      {
+        "selector": "ConsoleSettingsModal Select:focus",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0034999975468963385
+      },
+      {
+        "selector": ".compact-bar-temp",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0034999975468963385
+      },
+      {
+        "selector": ".h-full",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0034999975468963385
+      },
+      {
+        "selector": "#console-setup-modal",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0034999975468963385
+      },
+      {
+        "selector": ".console-setup-step",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0034999975468963385
+      },
+      {
+        "selector": "AppFooterStatus #footer-key-quit",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0034999975468963385
+      },
+      {
+        "selector": ".ds-destination-header",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0033999967854470015
+      },
+      {
+        "selector": "TraceFilterBar #trace-filter-wide > Select",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0033999967854470015
+      },
+      {
+        "selector": ".console-rail-handle-badge",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0033999967854470015
+      },
+      {
+        "selector": ".console-left-rail-section.console-settings-summary",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0033999967854470015
+      },
+      {
+        "selector": "#console-status-chips",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0033999967854470015
+      },
+      {
+        "selector": ".console-control-summary-line",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0032999960239976645
+      },
+      {
+        "selector": "MetricsScreen Label",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.0032999960239976645
+      },
+      {
+        "selector": ".console-setup-modal-title",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0032999960239976645
+      },
+      {
+        "selector": "AppFooterStatus #footer-spacer",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0032999960239976645
+      },
+      {
+        "selector": ".is-disabled",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.003200024366378784
+      },
+      {
+        "selector": ".w-3fr",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.003200024366378784
+      },
+      {
+        "selector": ".console-setup-modal-subtitle",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.003200024366378784
+      },
+      {
+        "selector": "#console-control-bar",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0031999952625483274
+      },
+      {
+        "selector": "AppFooterStatus #internal-db-size-indicator",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0031999952625483274
+      },
+      {
+        "selector": "#console-left-rail",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0030999945010989904
+      },
+      {
+        "selector": ".console-status-text",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0030999945010989904
+      },
+      {
+        "selector": ".console-voice-status-error",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0030999945010989904
+      },
+      {
+        "selector": ".console-setup-modal-card",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0030999945010989904
+      },
+      {
+        "selector": ".console-setup-modal-staged-notice",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0030999945010989904
+      },
+      {
+        "selector": "#internal-db-size-indicator",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0030999945010989904
+      },
+      {
+        "selector": "PersonaProfileCardWidget .ds-toolbar",
+        "calls": 1,
+        "matches": 0,
+        "ms": 0.00300002284348011
+      },
+      {
+        "selector": ".console-status-arrow",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.002900022082030773
+      },
+      {
+        "selector": "#footer-word-count",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.002700020559132099
+      },
+      {
+        "selector": "#footer-key-quit",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0026999914553016424
+      },
+      {
+        "selector": "#footer-token-count",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.002400018274784088
+      },
+      {
+        "selector": "#footer-spacer",
+        "calls": 1,
+        "matches": 1,
+        "ms": 0.0023999891709536314
+      }
+    ]
+  },
+  "console_resume": [
+    {
+      "iteration": 0,
+      "resume_to_input_ms": 1959.8208999959752,
+      "resume_to_attach_ms": 1959.8113999818452,
+      "input_ms": 1544.478199997684,
+      "max_loop_overshoot_ms": 503.1600999936927,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 2894.3193999875803
+    },
+    {
+      "iteration": 1,
+      "resume_to_input_ms": 3670.036600000458,
+      "resume_to_attach_ms": 3670.013299997663,
+      "input_ms": 2801.761400012765,
+      "max_loop_overshoot_ms": 1022.665299999062,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 5069.5023000007495
+    },
+    {
+      "iteration": 2,
+      "resume_to_input_ms": 674.8113999783527,
+      "resume_to_attach_ms": 3364.888099982636,
+      "input_ms": 99.2166000069119,
+      "max_loop_overshoot_ms": 544.3949999753386,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 3376.622999989195
+    },
+    {
+      "iteration": 3,
+      "resume_to_input_ms": 3573.129099997459,
+      "resume_to_attach_ms": 3573.080599977402,
+      "input_ms": 3076.0056000144687,
+      "max_loop_overshoot_ms": 474.09570001764223,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 4296.571499988204
+    },
+    {
+      "iteration": 4,
+      "resume_to_input_ms": 2559.894499980146,
+      "resume_to_attach_ms": 2592.744699999457,
+      "input_ms": 1868.9790999924298,
+      "max_loop_overshoot_ms": 659.500499983551,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 3181.0928999911994
+    },
+    {
+      "iteration": 5,
+      "resume_to_input_ms": 2351.211400004104,
+      "resume_to_attach_ms": 2365.0562000111677,
+      "input_ms": 1669.8020999901928,
+      "max_loop_overshoot_ms": 650.0913000199944,
+      "draft_retained": true,
+      "attach_reconciled": true,
+      "elapsed_ms": 3135.548000020208
+    }
+  ],
+  "final_screen": null,
+  "blocked_network_attempts": 0,
+  "real_profile_refusals": 0
+}

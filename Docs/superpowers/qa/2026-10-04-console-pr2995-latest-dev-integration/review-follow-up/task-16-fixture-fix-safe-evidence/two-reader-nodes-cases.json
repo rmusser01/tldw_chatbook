@@ -1,0 +1,21 @@
+{
+  "actual_cases": 2,
+  "cases": [
+    {
+      "classname": "Tests.UI.test_console_ask_user_typed_answers",
+      "name": "test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+      "outcome": "failure",
+      "time": "0.740"
+    },
+    {
+      "classname": "Tests.UI.test_personas_workbench.TestPreviewIntegration",
+      "name": "test_open_in_console_stages_preview_transcript",
+      "outcome": "passed",
+      "time": "0.854"
+    }
+  ],
+  "outcomes": {
+    "failure": 1,
+    "passed": 1
+  }
+}

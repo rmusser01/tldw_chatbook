@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_light_surface_context_meter.py::test_a_window_too_small_for_the_light_set_counts_what_the_plan_sends",
+    "Tests/Chat/test_console_light_surface_context_meter.py::test_a_local_reasoning_resolution_still_counts_the_light_set",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/meter-final-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/meter-final.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 0,
+  "elapsed": 8.32448925
+}

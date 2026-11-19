@@ -14,6 +14,7 @@ ingest-options functions in ``library_screen.py`` instead.
 from __future__ import annotations
 
 from ...Library.library_conversation_reader_state import LIBRARY_CONVERSATION_PAGE_SIZE
+from ..Screens.study_scope_models import STUDY_MATERIAL_TITLES_NAMED_LIMIT
 from ...Library.library_shell_state import (
     LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -46,10 +47,20 @@ LIBRARY_SKILLS_IMPORT_WORKER_GROUP = "library_skills_import"
 
 
 # All destinations retain the shared five-cell collapse controls.
-LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile()
+# TASK-38981: every destination but File Notes gives an explicitly opened list
+# the stage rather than leave an open item a sliver
+# (``list_stage_over_starved_work``). With nothing open, the list keeps the
+# narrow stage (``list_first_when_empty``): Prompts by TASK-38981 AC#4, and
+# Collections, Conversations and Skills by TASK-34851.
+LIBRARY_CONVERSATION_READER_PROFILE = AdaptiveReaderLayoutProfile(
+    list_first_when_empty=True,
+    list_stage_over_starved_work=True,
+)
 LIBRARY_COLLECTIONS_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_min_width=48,
     work_comfort_width=56,
+    list_first_when_empty=True,
+    list_stage_over_starved_work=True,
 )
 # task-32127: Notes joined Media on `list_grows` and raised its comfort
 # ceiling to 64. At 235 columns the list was pinned at the 40-cell target
@@ -63,6 +74,7 @@ LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(
     # to the list -- applied below the 64-column floor too. Live at 60x24
     # the notes reader laid out 32/18 with nothing in the work pane.
     list_first_when_empty=True,
+    list_stage_over_starved_work=True,
 )
 # task-32614: was ``work_min_width=30`` -- the lowest floor of any Library
 # destination, and the reason a 100-column terminal split this pane 56/34 and
@@ -71,9 +83,15 @@ LIBRARY_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile(
 # 235 and 60 nothing moves. Kept in step with the standalone-harness profile
 # in ``library_file_notes_workspace._apply_responsive_layout``.
 LIBRARY_FILE_NOTES_READER_PROFILE = AdaptiveReaderLayoutProfile()
-LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(work_min_width=48)
+LIBRARY_PROMPTS_READER_PROFILE = AdaptiveReaderLayoutProfile(
+    work_min_width=48,
+    list_first_when_empty=True,
+    list_stage_over_starved_work=True,
+)
 LIBRARY_SKILLS_READER_PROFILE = AdaptiveReaderLayoutProfile(
     work_min_width=48,
+    list_first_when_empty=True,
+    list_stage_over_starved_work=True,
 )
 LIBRARY_CONVERSATION_READER_MAX_CHARS = 8000
 LIBRARY_SOURCE_PAGE_SIZES = {
@@ -175,6 +193,11 @@ LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
 #: arm's own generation check once the user takes control.
 LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS = 0.05
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
+#: TASK-34000.1 (review N-01): the debounce above re-arms on every keystroke,
+#: so one key every 1.2 s was never saved at all. A burst of unsaved typing
+#: is persisted at least this often, measured from its first keystroke
+#: (``library_note_autosave.library_note_autosave_delay``).
+LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS = 10.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 # The literal title a just-created "Blank note" row is seeded with (LIB-14,
 # task-4021). The editor presents it placeholder-only (empty Input,
@@ -208,6 +231,17 @@ LIBRARY_PROMPT_SAVE_STATUS_COPY = {
 LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 LIBRARY_PROMPT_DIRTY_VETO_COPY = (
     "Unsaved Prompt changes — Save or Discard changes first."
+)
+# TASK-34000.22 (ADR-055 Pattern D): the Media reader's two authoring forms
+# refuse every exit (Escape, Back, another row, a rail row, the nav bar)
+# while their typed text differs from the saved value, in the prompt veto's
+# own shape; the copy names the UNSAVED work. Dropped only by the form's own
+# "Discard changes" press (the relabelled Cancel).
+LIBRARY_MEDIA_EDIT_DIRTY_VETO_COPY = (
+    "Unsaved media details — Save or Discard changes first."
+)
+LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY = (
+    "Unsaved analysis — Save or Discard changes first."
 )
 # task-32461: the same veto, refusing a deep link INTO a prompt
 # (``_open_library_item_by_id``, the Search/RAG "Open" and entry-reconcile
@@ -361,8 +395,18 @@ LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = (
 )
 
 # How many carried-forward source titles the handoff canvas names before
-# collapsing the rest into an "and N more" count.
-LIBRARY_STUDY_HANDOFF_TITLES_CAP = 3
+# collapsing the rest into an "and N more" count. TASK-34000.6: the same
+# constant Study's banner uses, so the two descriptions cannot drift.
+LIBRARY_STUDY_HANDOFF_TITLES_CAP = STUDY_MATERIAL_TITLES_NAMED_LIMIT
+
+# Readiness line under the carries-forward line. Local mode cannot generate a
+# study pack from the snapshot (Study's own dashboard says "Source generation
+# requires server mode."), so the canvas must not promise it (S-05).
+LIBRARY_STUDY_HANDOFF_READY_COPY = "Source snapshot is ready."
+LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY = (
+    "Generating a pack from sources needs a tldw server; "
+    "you can still make cards by hand in Study."
+)
 
 
 # Maps a Library navigation-context ``mode`` value to the shell rail row
@@ -400,6 +444,7 @@ LIBRARY_NAV_MODE_TO_ROW_ID = {
     "artifacts-all": "artifacts-all",
     "artifacts-reports": "artifacts-reports",
     "artifacts-chatbooks": "artifacts-chatbooks",
+    "artifacts-dreams": "artifacts-dreams",
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
     "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
     "search": LIBRARY_ROW_BROWSE_SEARCH,
@@ -447,6 +492,16 @@ _LIBRARY_LIST_ROW_CLASSES = (
     # full-width ``library_row_button`` the four above use
     # (``library_conversations_canvas.py``), so Up/Down now walks them too.
     "library-conversation-row",
+    # TASK-34000.28 N-22: the Notes TREE composes its folder rows, note rows
+    # and "more" pagers as siblings under ``#library-notes-list``
+    # (``library_notes_canvas._compose_tree_rows``). Only the note rows were
+    # listed here, so ``g`` landed on a folder row where Down then did
+    # nothing (Textual's Button ignores the key), and the first note was ~17
+    # Tab stops away. Listing the other two kinds makes the tree ONE walk in
+    # visual order; the Right/Left folder rule lives in ``LibraryScreen.
+    # on_key`` beside the Up/Down branch.
+    "library-notes-folder-row",
+    "library-notes-tree-pager",
 )
 
 #: task-32225 (re-review N4): the canvas filters "/" prefers over the rail's
@@ -521,3 +576,60 @@ _MEDIA_VIEW_VIEWER = "viewer"
 # notice, the receipt-fields guard) cannot drift apart from one another.
 _ANALYZE_ORIGIN_MEDIA = "media"
 _ANALYZE_ORIGIN_IMPORT = "import"
+
+
+# --- relocated from ``library_screen.py`` by TASK-36952.3.4: the two Trash
+# --- failure copies the moved Trash bodies read as bare module globals,
+# --- moved verbatim (comment included). ``library_screen.py`` imports them
+# --- back, as it does the four wave-7 constants above.
+
+# task-31220 (Qodo review round, PR #2412 #3): the copy each Trash mutation
+# releases its controller claim with. Named once because both the worker
+# body's own pre-commit failure and the claim seam's rollback (a fence or
+# ``run_worker`` that refused before any worker ran) mean the same thing to
+# the person looking at the row: nothing happened to it.
+_TRASH_PERMANENT_DELETE_FAILURE_COPY = "Could not delete this media item permanently."
+_TRASH_RESTORE_FAILURE_COPY = "Could not restore this media item."
+
+
+# --- relocated from ``library_screen.py`` by TASK-36952.3.5: the three
+# --- bulk-Analyze constants the moved analysis bodies read as bare module
+# --- globals, moved verbatim (comments included). ``library_screen.py``
+# --- imports them back, as it does every name here.
+
+# task-28007 AC#4: ONE exclusive worker group for the Select-mode bulk
+# Analyze run (and its Skip/Overwrite/Retry re-runs), so a second gesture
+# can never interleave two runs over the same ids.
+_ANALYZE_SELECTED_WORKER_GROUP = "library_media_analyze_selected"
+# task-28007 AC#2: the catch-all reason an ``on_item_done`` hook reports for
+# a failed item that raised no exception (fix round 1, I-1: a RAISED
+# exception's own ``str(exc)`` is used instead -- see the loop in
+# ``_analyze_library_media_selection``). Covers the no-exception failure
+# branches inside ``_analyze_one_library_media_item``/
+# ``_generate_library_media_analysis``/``_save_library_media_analysis``
+# (empty content, a provider that returned nothing, a failed save) without a
+# signature change to any of their bool-returning contracts -- all three
+# ultimately mean the same thing from here: no analysis exists for this item
+# now.
+_ANALYZE_ITEM_FAILED_REASON = "analysis did not persist"
+# task-28007 (Qodo review round, PR #2400 #3): the ``on_item_done`` reason
+# recorded for an id the AC#3 partition pass auto-skips (an Import-run id
+# that already carries an analysis) rather than running -- ``_apply_
+# analyze_outcome`` (``library_ingest_state.py``) reads this to paint
+# "already analyzed" instead of the generic "analyzed" receipt.
+_ANALYZE_AUTO_SKIP_REASON = "already analyzed"
+
+
+# --- relocated from ``library_screen.py`` by TASK-36952.3.6: the Reader's
+# --- reading-position restore budget, which the moved restore body reads
+# --- as a bare module global, moved verbatim (comment included).
+# --- ``library_screen.py`` imports it back, as it does every name here.
+
+#: TASK-34000.25: how many LAYOUT-SIGNAL continuations (``LibraryMediaContent
+#: Body.run_when_laid_out`` -- the Raw view's index build, the Markdown's last
+#: mounted batch, or the next refresh once something is laid out) the
+#: Reader's reading-position restore may chain while the body has laid out
+#: NOTHING yet (``max_scroll_y == 0``), before giving up on an item that
+#: never lays out. Separate from task-31968's eight-refresh budget for a
+#: body that is laid out but still growing.
+_MEDIA_PROGRESS_RESTORE_LAYOUT_SIGNALS = 48

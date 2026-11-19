@@ -1,0 +1,293 @@
+unformatted: File would be reformatted
+  --> Tests/Chat/test_console_library_runtime_policy.py:41:66
+   |
+40 | from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
+   - from tldw_chatbook.Library.local_media_chunk_tool_service import LocalMediaChunkToolService
+41 + from tldw_chatbook.Library.local_media_chunk_tool_service import (
+42 +     LocalMediaChunkToolService,
+43 + )
+44 |
+   |
+
+unformatted: File would be reformatted
+    --> tldw_chatbook/Chat/console_runtime.py:146:1
+     |
+145  | from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+146  +
+147  | if TYPE_CHECKING:
+--------------------------------------------------------------------------------
+371  |     request: ConsoleTurnCustodyRequest | None = field(repr=False)
+     -     inputs: _ConsoleTurnCustodyInputs = field(default_factory=_ConsoleTurnCustodyInputs, repr=False)
+372  +     inputs: _ConsoleTurnCustodyInputs = field(
+373  +         default_factory=_ConsoleTurnCustodyInputs, repr=False
+374  +     )
+375  |     task: asyncio.Task[Any] | None = field(default=None, repr=False)
+--------------------------------------------------------------------------------
+503  |     value = (
+     -         console.get("native_tool_calls", True)
+     -         if isinstance(console, Mapping)
+     -         else True
+504  +         console.get("native_tool_calls", True) if isinstance(console, Mapping) else True
+505  |     )
+--------------------------------------------------------------------------------
+598  |             formatted = processor.format_injections(result.get("injections", {}))
+     -             parts = [formatted[key] for key in ("at_start", "before_char") if formatted.get(key)]
+     -             parts.append(text)
+     -             parts.extend(
+599  +             parts = [
+600  |                 formatted[key]
+     -                 for key in ("after_char", "at_end")
+601  +                 for key in ("at_start", "before_char")
+602  |                 if formatted.get(key)
+603  +             ]
+604  +             parts.append(text)
+605  +             parts.extend(
+606  +                 formatted[key] for key in ("after_char", "at_end") if formatted.get(key)
+607  |             )
+--------------------------------------------------------------------------------
+633  |
+     -         return LibraryRagToolProvider(
+     -             getattr(app, "library_rag_search_service", None)
+     -         )
+634  +         return LibraryRagToolProvider(getattr(app, "library_rag_search_service", None))
+635  |
+--------------------------------------------------------------------------------
+681  |     return default_console_session_settings(_provider_config_for_app(app))
+682  +
+683  +
+684  | __all__ = [
+--------------------------------------------------------------------------------
+833  | CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
+     -     ConsoleViewHookSlot("present_results", "archive_recovery", why="Typed results remain app-owned for remount; absent projection is inert."),
+     -     ConsoleViewHookSlot("present_confirmation", "archive_recovery", why="Coordinator fails closed when no mounted confirmation is answerable."),
+     -     ConsoleViewHookSlot("is_answerable", "archive_recovery", why="No view cannot authorize a new recovery effect."),
+     -     ConsoleViewHookSlot("on_settled", "archive_recovery", why="Typed receipts remain app-owned when their view detaches."),
+834  +     ConsoleViewHookSlot(
+835  +         "present_results",
+836  +         "archive_recovery",
+837  +         why="Typed results remain app-owned for remount; absent projection is inert.",
+838  +     ),
+839  +     ConsoleViewHookSlot(
+840  +         "present_confirmation",
+841  +         "archive_recovery",
+842  +         why="Coordinator fails closed when no mounted confirmation is answerable.",
+843  +     ),
+844  +     ConsoleViewHookSlot(
+845  +         "is_answerable",
+846  +         "archive_recovery",
+847  +         why="No view cannot authorize a new recovery effect.",
+848  +     ),
+849  +     ConsoleViewHookSlot(
+850  +         "on_settled",
+851  +         "archive_recovery",
+852  +         why="Typed receipts remain app-owned when their view detaches.",
+853  +     ),
+854  |     # Only disposable screen projections belong here. Domain dependencies
+--------------------------------------------------------------------------------
+1161 |         return None if engine is _UNSET else engine
+1162 +
+1163 |     @property
+--------------------------------------------------------------------------------
+1189 |                 raise RuntimeError("voice_runtime_disposed")
+     -             from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
+1190 +             from tldw_chatbook.Chat.console_voice_supervisor import (
+1191 +                 VoiceDispatchSupervisor,
+1192 +             )
+1193 |
+--------------------------------------------------------------------------------
+1291 |         if approval_lock is None or approval_registry is None:
+     -             return frozenset(
+     -                 getattr(controller, "_announced_pending_decision_ids", ())
+     -             )
+1292 +             return frozenset(getattr(controller, "_announced_pending_decision_ids", ()))
+1293 |         with approval_lock:
+--------------------------------------------------------------------------------
+1446 |             logger.debug(
+     -                 "Console terminal-attention notice failed "
+     -                 "(exception_type={})",
+1447 +                 "Console terminal-attention notice failed (exception_type={})",
+1448 |                 type(exc).__name__,
+--------------------------------------------------------------------------------
+1588 |         ) and (
+     -             view is not attached_view
+     -             or attachment_generation != attached_generation
+1589 +             view is not attached_view or attachment_generation != attached_generation
+1590 |         ):
+--------------------------------------------------------------------------------
+1934 |                 try:
+     -                     call_from_thread(self._project_pending_project_instruction_decisions)
+1935 +                     call_from_thread(
+1936 +                         self._project_pending_project_instruction_decisions
+1937 +                     )
+1938 |                     return
+--------------------------------------------------------------------------------
+2051 |                 for decision in decisions
+     -                 if decision is not head
+     -                 and decision.projected_generation == generation
+2052 +                 if decision is not head and decision.projected_generation == generation
+2053 |             )
+--------------------------------------------------------------------------------
+2242 |             if self._archive_recovery is not None and record.request is not None:
+     -                 self._archive_recovery.release_user_proof(record.request.configuration.recovery_user_origin)
+2243 +                 self._archive_recovery.release_user_proof(
+2244 +                     record.request.configuration.recovery_user_origin
+2245 +                 )
+2246 |             record.request = None
+--------------------------------------------------------------------------------
+2286 |             self._archive_recovery.accept_user_proof(
+     -                 request.configuration.recovery_user_origin, request.session_id, request.turn_id
+2287 +                 request.configuration.recovery_user_origin,
+2288 +                 request.session_id,
+2289 +                 request.turn_id,
+2290 |             )
+--------------------------------------------------------------------------------
+2462 |             console["onboarding"] = onboarding
+     -         if coerce_console_first_send_completed(
+     -             onboarding.get("first_send_completed")
+     -         ):
+2463 +         if coerce_console_first_send_completed(onboarding.get("first_send_completed")):
+2464 |             return
+--------------------------------------------------------------------------------
+2476 |             logger.warning(
+     -                 "Failed to persist Console first-send completion "
+     -                 "(exception_type={})",
+2477 +                 "Failed to persist Console first-send completion (exception_type={})",
+2478 |                 type(exc).__name__,
+--------------------------------------------------------------------------------
+2611 |                     logger.warning(
+     -                         "Console runtime terminal callback failed "
+     -                         "(exception_type={})",
+2612 +                         "Console runtime terminal callback failed (exception_type={})",
+2613 |                         type(exc).__name__,
+--------------------------------------------------------------------------------
+3004 |         )
+     -         self.set_chat_store(ConsoleChatStore(
+     -             persistence=persistence,
+     -             assistant_defaults_provider=self._resolve_new_console_assistant,
+     -             on_assistant_default_notice=lambda notice: self._app.notify(
+     -                 notice, severity="warning"
+     -             ),
+     -             settle_provider_traces_off_thread=True,
+     -             trace_projection=(
+     -                 ConsoleTraceProjection(
+     -                     legacy_reader=db.get_message_exchanges,
+     -                     normalized_reader=(
+     -                         read_normalized_calls if legacy_normalization_enabled else None
+     -                     ),
+     -                     normalized_reads_enabled=lambda: (
+     -                         runtime_capture_policy().normalized_reads_enabled
+     -                     ),
+     -                     normalized_writes_enabled=lambda: (
+     -                         runtime_capture_policy().normalized_writes_enabled
+     -                     ),
+     -                     compatibility_metrics=self.trace_compatibility_metrics,
+     -                 )
+     -                 if db is not None
+     -                 else None
+     -             ),
+     -             workspace_context=workspace_context,
+     -             on_scope_flushed=on_scope_flushed,
+     -             library_policy_coordinator=(
+     -                 ConsoleLibraryPolicyCoordinator(
+     -                     persistence.console_library_policy_repository
+     -                 )
+     -                 if persistence is not None
+     -                 else None
+     -             ),
+     -             library_policy_defaults_provider=lambda: _current_library_policy_defaults(
+     -                 self._app
+     -             ),
+     -             thinking_history_policy_default_provider=lambda: (
+     -                 _current_thinking_history_policy_default(self._app)
+     -             ),
+     -             canvas_promotion_participant=self._canvas_controller,
+     -             canvas_turn_controller=self._canvas_controller,
+     -             on_canvas_context_changed=self._sync_canvas_native_context,
+     -         )
+3005 +         self.set_chat_store(
+3006 +             ConsoleChatStore(
+3007 +                 persistence=persistence,
+3008 +                 assistant_defaults_provider=self._resolve_new_console_assistant,
+3009 +                 on_assistant_default_notice=lambda notice: self._app.notify(
+3010 +                     notice, severity="warning"
+3011 +                 ),
+3012 +                 settle_provider_traces_off_thread=True,
+3013 +                 trace_projection=(
+3014 +                     ConsoleTraceProjection(
+3015 +                         legacy_reader=db.get_message_exchanges,
+3016 +                         normalized_reader=(
+3017 +                             read_normalized_calls
+3018 +                             if legacy_normalization_enabled
+3019 +                             else None
+3020 +                         ),
+3021 +                         normalized_reads_enabled=lambda: (
+3022 +                             runtime_capture_policy().normalized_reads_enabled
+3023 +                         ),
+3024 +                         normalized_writes_enabled=lambda: (
+3025 +                             runtime_capture_policy().normalized_writes_enabled
+3026 +                         ),
+3027 +                         compatibility_metrics=self.trace_compatibility_metrics,
+3028 +                     )
+3029 +                     if db is not None
+3030 +                     else None
+3031 +                 ),
+3032 +                 workspace_context=workspace_context,
+3033 +                 on_scope_flushed=on_scope_flushed,
+3034 +                 library_policy_coordinator=(
+3035 +                     ConsoleLibraryPolicyCoordinator(
+3036 +                         persistence.console_library_policy_repository
+3037 +                     )
+3038 +                     if persistence is not None
+3039 +                     else None
+3040 +                 ),
+3041 +                 library_policy_defaults_provider=lambda: (
+3042 +                     _current_library_policy_defaults(self._app)
+3043 +                 ),
+3044 +                 thinking_history_policy_default_provider=lambda: (
+3045 +                     _current_thinking_history_policy_default(self._app)
+3046 +                 ),
+3047 +                 canvas_promotion_participant=self._canvas_controller,
+3048 +                 canvas_turn_controller=self._canvas_controller,
+3049 +                 on_canvas_context_changed=self._sync_canvas_native_context,
+3050 +             )
+3051 |         )
+--------------------------------------------------------------------------------
+3292 |             self._provider_gateway = ConsoleProviderGateway(
+     -                 config_provider=functools.partial(
+     -                     _provider_config_for_app, self._app
+     -                 ),
+3293 +                 config_provider=functools.partial(_provider_config_for_app, self._app),
+3294 |                 trace_call_boundary_factory=trace_call_boundary_factory,
+--------------------------------------------------------------------------------
+3517 |             ),
+     -             world_info_applier=functools.partial(
+     -                 _apply_world_info_for_app, self._app
+     -             ),
+3518 +             world_info_applier=functools.partial(_apply_world_info_for_app, self._app),
+3519 |             rag_capture_provider=self._capture_frozen_console_staged_rag,
+--------------------------------------------------------------------------------
+3707 |                 )
+     -             finishing = isinstance(payload, Mapping) and payload.get("phase") == "finishing"
+3708 +             finishing = (
+3709 +                 isinstance(payload, Mapping) and payload.get("phase") == "finishing"
+3710 +             )
+3711 |             if mounted and not finishing and session_id and callable(set_answerable):
+--------------------------------------------------------------------------------
+3894 |                 logger.debug(
+     -                     "Pending-decision projection raised at attach "
+     -                     "(exception_type={})",
+3895 +                     "Pending-decision projection raised at attach (exception_type={})",
+3896 |                     type(exc).__name__,
+--------------------------------------------------------------------------------
+3914 |                 logger.debug(
+     -                     "Pending-decision remount raised at attach "
+     -                     "(exception_type={})",
+3915 +                     "Pending-decision remount raised at attach (exception_type={})",
+3916 |                     type(exc).__name__,
+--------------------------------------------------------------------------------
+4603 |                 )
+4604 +
+4605 |         try:
+     |
+
+2 files would be reformatted

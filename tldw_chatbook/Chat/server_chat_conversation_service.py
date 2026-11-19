@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Protocol
 
 from tldw_chatbook.runtime_policy.bootstrap import (
     build_runtime_api_client_provider_from_config,
@@ -16,8 +16,44 @@ if TYPE_CHECKING:
         ChatLoopStartRequest,
         ConversationShareLinkCreateRequest,
         ConversationUpdateRequest,
-        TLDWAPIClient,
     )
+
+
+class ServerChatConversationClient(Protocol):
+    """Client methods ServerChatConversationService calls (TASK-36953.1)."""
+
+    async def approve_chat_loop_call(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def cancel_chat_loop_run(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_character_chat_session(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_chat_conversation_share_link(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def delete_character_chat_session(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_chat_analytics(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_chat_conversation(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_chat_conversation_citations(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def get_chat_conversation_messages_with_context(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def get_chat_conversation_tree(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_commands(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_conversation_share_links(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def list_chat_conversations(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_chat_loop_events(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def reject_chat_loop_call(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def resolve_chat_conversation_share_token(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def revoke_chat_conversation_share_link(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def save_chat_knowledge(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def start_chat_loop_run(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_chat_conversation(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerChatConversationService:
@@ -25,7 +61,7 @@ class ServerChatConversationService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient] = None,
+        client: Optional[ServerChatConversationClient] = None,
         *,
         policy_enforcer: Any | None = None,
         client_provider: Any | None = None,
@@ -55,7 +91,7 @@ class ServerChatConversationService:
     ) -> "ServerChatConversationService":
         return cls(client_provider=provider, policy_enforcer=policy_enforcer)
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerChatConversationClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

@@ -1,0 +1,18 @@
+........................................................................ [ 48%]
+........................................................................ [ 96%]
+......                                                                   [100%]
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-affected1/tests.xml -
+============================= slowest 25 durations =============================
+44.60s call     Tests/Backup_Recovery/test_workflow_recovery_schema.py::test_complete_backup_restore_and_rebackup_preserve_private_workflow_results
+1.38s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-150000-True]
+1.35s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[0-40000-False]
+1.33s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-150000-False]
+1.30s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[0-40000-True]
+1.29s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-40000-True]
+1.29s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_checkpoint_reopens_with_complete_private_output[7-40000-False]
+1.23s call     Tests/Agents/test_workflow_run_service.py::test_native_done_without_approved_verifier_stays_missing_and_blocks_quality_and_next_phase
+1.15s call     Tests/Agents/test_workflow_run_service.py::test_native_verifier_capture_ignores_log_cap_and_honors_own_cap[40000-True]
+1.08s call     Tests/Agents/test_workflow_run_service.py::test_same_phase_outputs_defer_at_approval_but_require_fresh_native_handoff[stale]
+
+(15 durations < 1s hidden.)
+150 passed in 75.20s (0:01:15)

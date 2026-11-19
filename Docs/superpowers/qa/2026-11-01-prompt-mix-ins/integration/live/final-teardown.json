@@ -1,0 +1,11 @@
+{
+  "app_pid": 4076,
+  "app_still_running": false,
+  "private_tmux_present": false,
+  "schemas": {
+    "tldw_chatbook_ChaChaNotes.db": 86,
+    "tldw_chatbook_prompts.db": 6
+  },
+  "source_hashes_unchanged": 79,
+  "exit_code": "not retained by detached terminal; normal Ctrl+Q and absent process/socket observed"
+}

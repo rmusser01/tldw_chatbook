@@ -1,0 +1,28 @@
+{
+  "source": "This turn only; previous preserved drafts and raw repo diagnostics retained",
+  "removed_count": 20,
+  "process_state": "All exact profiling and pytest processes exited before cleanup",
+  "removed_roots": [
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-4phfm0td",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-_cgclaoh",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-dpzte6b8",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-e_ufdxhz",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-hfxdk31w",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-ize4596a",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-oyf_8c3f",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-rnyx6icr",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-1dxj_obb",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-_2k55dro",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-_x43uw0_",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-aihymegr",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-iaf8tt9d",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-idus2y0g",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-ldu_mehn",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-lfbtogl2",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-n8wyvzor",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-orabip78",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-z486lv1m",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-ziimstlw"
+  ],
+  "validation_note": "The initial Split-Path -LiteralPath -Parent call emitted nonterminating parameter errors. Corrected post-verification uses System.IO.Path with terminating errors: all 20 exact targets have the intended user-home parent and disposable prefix, and all are absent. No unexpected target was removed."
+}

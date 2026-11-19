@@ -134,8 +134,11 @@ def test_unknown_order_by_falls_back_to_name(db):
 
 def test_lib_wrapper_shapes_rows(db):
     from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
-        get_character_page_for_ui, count_character_page, list_character_tags,
+        get_character_page_for_ui,
+        count_character_page,
+        list_character_tags,
     )
+
     _add(db, "Zeta", ["x"])
     rows = get_character_page_for_ui(db, limit=10, offset=0)
     # `description` joined the projection so the character library row can show a
@@ -148,8 +151,59 @@ def test_lib_wrapper_shapes_rows(db):
         "created_at",
         "tags",
     }
-    assert count_character_page(db) == len(get_character_page_for_ui(db, limit=1000, offset=0))
+    assert count_character_page(db) == len(
+        get_character_page_for_ui(db, limit=1000, offset=0)
+    )
     assert "x" in list_character_tags(db)
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "kwargs"),
+    [
+        ("get_character_page_for_ui", {"limit": 10, "offset": 0}),
+        (
+            "get_character_page_for_ui",
+            {"limit": 10, "offset": 0, "search_term": '"zet"*', "tag": "x"},
+        ),
+        ("count_character_page", {}),
+        ("count_character_page", {"search_term": '"zet"*'}),
+        ("list_character_tags", {}),
+    ],
+)
+def test_lib_wrappers_raise_a_database_fault_instead_of_an_empty_result(
+    wrapper, kwargs
+):
+    """TASK-38228 AC#1: a database error reaches the caller as an error. On
+    dev the wrappers logged it and answered ``[]`` / ``0``, so Roleplay showed
+    a database fault as an empty library ("No characters yet"); this PR fixes
+    that. The fault is the SQLite engine's own refusal on a real in-memory
+    ChaChaNotes (an authorizer denies reads of ``character_cards``), not a
+    mock that returns an empty list; the same call succeeds once it is lifted.
+    """
+    import sqlite3
+
+    from tldw_chatbook.Character_Chat import Character_Chat_Lib
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDBError
+
+    memory_db = CharactersRAGDB(":memory:", client_id="test")
+    _add(memory_db, "Zeta", ["x"])
+    read = getattr(Character_Chat_Lib, wrapper)
+    assert read(memory_db, **kwargs)  # one row, or a count of 1 or more
+
+    def deny_character_reads(action, table, _column, _schema, _trigger):
+        if action == sqlite3.SQLITE_READ and table == "character_cards":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    connection = memory_db.get_connection()
+    connection.set_authorizer(deny_character_reads)
+    try:
+        with pytest.raises(CharactersRAGDBError, match="prohibited"):
+            read(memory_db, **kwargs)
+    finally:
+        connection.set_authorizer(None)
+    assert read(memory_db, **kwargs)
+    memory_db.close_connection()
 
 
 # --- task-15474: image-free list/picker projections -----------------------
@@ -177,9 +231,7 @@ def test_page_excludes_image_column_by_default_no_search(db):
 
 def test_page_excludes_image_column_by_default_when_searching(db):
     db.add_character_card({"name": "Dragon Imaged", "image": _SAMPLE_IMAGE})
-    rows = db.list_character_cards_page(
-        limit=100, offset=0, search_term='"Dragon"*'
-    )
+    rows = db.list_character_cards_page(limit=100, offset=0, search_term='"Dragon"*')
     assert rows
     for row in rows:
         assert "image" not in row
@@ -223,7 +275,9 @@ def test_page_image_free_projection_does_not_regress_other_fields(db):
         }
     )
     row = next(
-        r for r in db.list_character_cards_page(limit=100, offset=0) if r["id"] == char_id
+        r
+        for r in db.list_character_cards_page(limit=100, offset=0)
+        if r["id"] == char_id
     )
     assert row["description"] == "desc"
     assert row["personality"] == "kind"

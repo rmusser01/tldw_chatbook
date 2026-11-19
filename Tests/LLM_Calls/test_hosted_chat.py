@@ -27,6 +27,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedHTTPTransportConfig,
     HostedChatProtocolError,
     HostedChatStream,
+    HostedChatStreamIncompleteError,
     HostedChatTurn,
     hosted_chat_request,
     normalize_hosted_chat_base_url,
@@ -34,6 +35,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
     owned_json_post,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import (
+    HostedSSEIncompleteError,
     HostedSSEReadError,
     OwnedSSEStream,
     SSERecord,
@@ -217,7 +219,9 @@ def _track_transport_sessions(
         sessions.append(session)
         return session
 
-    monkeypatch.setattr(hosted_chat, "create_default_session", create_session)
+    monkeypatch.setattr(
+        hosted_chat, "create_pooled_default_session", lambda **kwargs: create_session()
+    )
     return sessions
 
 
@@ -663,6 +667,90 @@ def test_hosted_chat_stream_accepts_usage_only_after_terminal_choice() -> None:
     assert stream.terminal_turn.usage == {"total_tokens": 3}
 
 
+def _records_then(records: list[SSERecord], failure: Exception | None):
+    yield from records
+    if failure is not None:
+        raise failure
+
+
+@pytest.mark.parametrize(
+    ("records", "failure", "incomplete"),
+    [
+        pytest.param([], None, True, id="empty-body"),
+        pytest.param(
+            [],
+            HostedSSEIncompleteError("Hosted SSE response was incomplete."),
+            True,
+            id="not-sse-whole-json",
+        ),
+        pytest.param(
+            [SSERecord(event=None, data="[DONE]")], None, True, id="done-only"
+        ),
+        pytest.param(
+            [], HostedSSEReadError("Hosted SSE response read failed."), False,
+            id="read-failure",
+        ),
+        pytest.param([], OSError("connection reset"), False, id="transport-error"),
+        pytest.param(
+            [SSERecord(event=None, data='{"choices": [')], None, False,
+            id="malformed-record",
+        ),
+    ],
+)
+def test_hosted_chat_stream_names_only_an_unusable_ending_incomplete(
+    records: list[SSERecord], failure: Exception | None, incomplete: bool
+) -> None:
+    """TASK-37762 review: Console asks a retried server again for an
+    incomplete stream only, so the type must not cover a broken one.
+
+    A stream that ends with nothing usable (no records, a body that is not
+    SSE, or ``[DONE]`` before any finish reason) raises
+    ``HostedChatStreamIncompleteError``; a failed read or a malformed record
+    stays a plain ``HostedChatProtocolError``.
+    """
+    stream = HostedChatStream(_records_then(records, failure), finish_policy=_POLICY)
+
+    with pytest.raises(HostedChatProtocolError) as raised:
+        list(stream)
+
+    assert isinstance(raised.value, HostedChatStreamIncompleteError) is incomplete
+
+
+class _BodyResponse:
+    def __init__(self, chunks: list[bytes], failure: Exception | None) -> None:
+        self._chunks = chunks
+        self._failure = failure
+
+    def iter_content(self, chunk_size: int):
+        yield from self._chunks
+        if self._failure is not None:
+            raise self._failure
+
+    def close(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("chunks", "failure", "incomplete"),
+    [
+        pytest.param([b'{"id": "chatcmpl-1"}'], None, True, id="json-no-final-newline"),
+        pytest.param([b"data: {\"choi"], None, True, id="record-cut-at-clean-end"),
+        pytest.param([b"data: {\"choi"], OSError("reset"), False, id="read-failure"),
+    ],
+)
+def test_owned_sse_stream_tells_an_unfinished_body_from_a_failed_read(
+    chunks: list[bytes], failure: Exception | None, incomplete: bool
+) -> None:
+    """TASK-37762 review: a body read to its end that stops inside a line is
+    incomplete (``HostedSSEIncompleteError``); a read that fails is not."""
+    stream = OwnedSSEStream(response=_BodyResponse(chunks, failure))
+
+    with pytest.raises(HostedSSEReadError) as raised:
+        list(stream)
+
+    assert isinstance(raised.value, HostedSSEIncompleteError) is incomplete
+
+
 def test_hosted_chat_stream_accepts_terminal_choice_usage() -> None:
     event = {
         "choices": [
@@ -1026,8 +1114,13 @@ def test_transport_config_repr_hides_api_key() -> None:
 
 
 def test_owned_json_post_maps_invalid_base_url_to_redacted_transport_error() -> None:
-    """Map malformed bases to a redacted public transport error."""
-    base_url = "https://user:RAW-URL-CANARY@example.com/v1"
+    """Map malformed bases to a redacted public transport error.
+
+    TASK-41522: a base the endpoint contract refuses (user info, as this
+    test first used) is refused before this mapping, with the contract's
+    reason; one only the transport refuses (a ``/models`` route) maps here.
+    """
+    base_url = "https://example.com/RAW-URL-CANARY/v1/models"
 
     with pytest.raises(ChatProviderError) as exc_info:
         owned_json_post(
@@ -1081,7 +1174,9 @@ def test_owned_json_post_sends_exact_route_headers_payload_and_timeout(
         "Bearer SECRET-TRANSPORT-CANARY"
     )
     assert server.requests[0]["headers"]["Content-Type"] == "application/json"
-    assert sessions[0].close_calls == 1
+    # ADR-222 (TASK-34418): the session is per-thread registry-owned and
+    # outlives the call; only the response is closed, once per attempt.
+    assert sessions[0].close_calls == 0
     assert sessions[0].response_close_calls == [1]
 
 
@@ -1106,8 +1201,11 @@ def test_owned_json_post_retries_statuses_with_one_global_budget(
 
     assert result == {"ok": True}
     assert len(server.requests) == 3
+    # One session for all three attempts (in-call reuse is unchanged), one
+    # response close per attempt; ADR-222: the session itself stays open
+    # for the thread's registry.
     assert sessions[0].response_close_calls == [1, 1, 1]
-    assert sessions[0].close_calls == 1
+    assert sessions[0].close_calls == 0
 
 
 @pytest.mark.allow_network
@@ -1310,7 +1408,10 @@ def test_owned_sse_stream_transfers_ownership_and_closes_exactly_once(
         stream.close()
 
     assert sessions[0].response_close_calls == [1]
-    assert sessions[0].close_calls == 1
+    # ADR-222 (TASK-34418): the stream closes its response exactly once
+    # (idempotent double close above); the registry owns the session, so
+    # it is never closed by the stream or the call.
+    assert sessions[0].close_calls == 0
 
 
 @pytest.mark.allow_network
@@ -1341,4 +1442,6 @@ def test_owned_sse_stream_does_not_retry_after_any_body_byte(
 
     assert len(server.requests) == 1
     assert sessions[0].response_close_calls == [1]
-    assert sessions[0].close_calls == 1
+    # ADR-222: read failure closes the response once; the registry-owned
+    # session stays open for the thread's next call.
+    assert sessions[0].close_calls == 0

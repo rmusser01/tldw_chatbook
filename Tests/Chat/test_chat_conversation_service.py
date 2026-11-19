@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
-from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_conversation_service import (
+    FORK_READ_MAX_MESSAGES,
+    ChatConversationService,
+)
 from tldw_chatbook.Chat.citation_legacy_migration import LegacyCitationReadState
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
@@ -41,9 +44,7 @@ class FakeDB:
     child_messages: dict[tuple[str, tuple[str, ...], str], list[dict[str, Any]]] = (
         field(default_factory=dict)
     )
-    tree_rows: dict[tuple[str, str], list[dict[str, Any]]] = field(
-        default_factory=dict
-    )
+    tree_rows: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
     images_by_message_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     latest_message: dict[str, dict[str, Any] | None] = field(default_factory=dict)
     messages_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -242,6 +243,58 @@ class FakeDB:
             )
         )
         return self.tree_rows.get((conversation_id, order_by_timestamp), [])
+
+    def get_message_tree_rows_for_conversation_page(
+        self,
+        conversation_id,
+        *,
+        root_offset=0,
+        root_limit=50,
+        order_desc=False,
+        include_deleted_conversation=False,
+    ):
+        """Fake of the paged tree read: slice the root window, keep subtree.
+
+        Mirrors the real DB's bounded read for the fake's flat fixtures:
+        partition the unbounded rows, slice the requested root page, and
+        return the page's roots plus every descendant reachable through
+        ``parent_message_id`` links, with the live root count.
+        """
+        self.calls.append(
+            (
+                "get_message_tree_rows_for_conversation_page",
+                (conversation_id,),
+                {
+                    "root_offset": root_offset,
+                    "root_limit": root_limit,
+                    "order_desc": order_desc,
+                    "include_deleted_conversation": include_deleted_conversation,
+                },
+            )
+        )
+        rows = self.tree_rows.get(
+            (conversation_id, "DESC" if order_desc else "ASC"), []
+        )
+        root_rows = [r for r in rows if r.get("parent_message_id") is None]
+        children_by_parent = {}
+        for row in rows:
+            parent_id = row.get("parent_message_id")
+            if parent_id is not None:
+                children_by_parent.setdefault(parent_id, []).append(row)
+        effective_offset = max(0, root_offset)
+        page = (
+            root_rows[effective_offset:]
+            if root_limit < 0
+            else root_rows[effective_offset : effective_offset + root_limit]
+        )
+        subtree = list(page)
+        stack = list(page)
+        while stack:
+            node = stack.pop()
+            for child in children_by_parent.get(node["id"], ()):
+                subtree.append(child)
+                stack.append(child)
+        return subtree, len(root_rows)
 
     def get_message_images_by_ids(self, message_ids):
         self.calls.append(("get_message_images_by_ids", (tuple(message_ids),), {}))
@@ -652,9 +705,7 @@ def test_list_conversations_retains_the_exact_ordinary_page_envelope():
         ({"offset": 2**63}, "offset"),
     ],
 )
-def test_list_conversations_rejects_invalid_coordinates_before_db_call(
-    kwargs, message
-):
+def test_list_conversations_rejects_invalid_coordinates_before_db_call(kwargs, message):
     db = FakeDB(conversations_page_rows=[{"id": "conv-1"}])
     service = ChatConversationService(db)
 
@@ -699,9 +750,7 @@ def test_locate_conversation_page_normalizes_the_bounded_owning_page():
     )
     service = ChatConversationService(db)
 
-    result = service.locate_conversation_page(
-        "conv-24", scope_type="all", limit=20
-    )
+    result = service.locate_conversation_page("conv-24", scope_type="all", limit=20)
 
     assert result["pagination"] == {
         "limit": 20,
@@ -715,7 +764,9 @@ def test_locate_conversation_page_normalizes_the_bounded_owning_page():
     assert result["items"][4]["id"] == "conv-24"
     assert result["items"][4]["keywords"] == ["located"]
     assert result["items"][4]["message_count"] == 3
-    locate_call = next(call for call in db.calls if call[0] == "locate_conversation_page")
+    locate_call = next(
+        call for call in db.calls if call[0] == "locate_conversation_page"
+    )
     assert locate_call[2]["scope_type"] == "all"
     assert locate_call[2]["workspace_id"] is None
 
@@ -737,9 +788,7 @@ def test_locate_conversation_page_normalizes_the_bounded_owning_page():
         ),
     ],
 )
-def test_locate_conversation_page_rejects_malformed_coordinates(
-    located_page, match
-):
+def test_locate_conversation_page_rejects_malformed_coordinates(located_page, match):
     service = ChatConversationService(FakeDB(located_page=located_page))
 
     with pytest.raises(ValueError, match=match):
@@ -926,7 +975,7 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
                 "external_ref": "ref-2",
             },
             9,
-        )
+        ),
     ]
 
 
@@ -1401,7 +1450,6 @@ def test_canonical_reader_never_merges_changed_legacy_records(tmp_path):
     assert citations["citations"] == []
 
 
-
 class TestLibraryConversationSeams:
     """task-1337 (plan Task 4): thin agent-facing delegates over the
     additive DB library read seams. The service forwards pagination/window
@@ -1456,9 +1504,14 @@ class TestLibraryConversationSeams:
             def __init__(self):
                 self.calls = []
 
-            def search_library_conversations_page(self, *, query, limit, offset, archive_scope):
+            def search_library_conversations_page(
+                self, *, query, limit, offset, archive_scope
+            ):
                 self.calls.append(("search", query, limit, offset, archive_scope))
-                return {"items": [{"id": "conv-2", "matched_fields": ["title"]}], "total": 1}
+                return {
+                    "items": [{"id": "conv-2", "matched_fields": ["title"]}],
+                    "total": 1,
+                }
 
         db = FakeLibraryDB()
         service = ChatConversationService(db)
@@ -1826,13 +1879,42 @@ def test_list_conversations_character_scope_filters_before_pagination(tmp_path):
             if item["id"] != character_conversation
         ]
         assert generic["pagination"]["total"] == 2
-        assert [item["id"] for item in character["items"]] == [
-            character_conversation
-        ]
+        assert [item["id"] for item in character["items"]] == [character_conversation]
         assert character["pagination"]["total"] == 1
         assert unfiltered["pagination"]["total"] == 3
     finally:
         db.close_connection()
+
+
+def test_list_conversations_title_only_counts_and_pages_titles(tmp_path):
+    """TASK-33622.6: ``title_only`` reaches storage for the page AND its total.
+
+    The Console rail's 'Filter visible titles' shows title matches only; a
+    total that also counted message-content matches read '1 match. Showing
+    0 of 1' over an empty list.
+
+    Args:
+        tmp_path: Temporary directory for the real SQLite database backing
+            the service under test.
+    """
+    db = CharactersRAGDB(tmp_path / "title-only.sqlite", "test-client")
+    try:
+        service = ChatConversationService(db)
+        titled = service.create_conversation(title="Zebra plan")
+        content_only = service.create_conversation(title="Quarterly notes")
+        db.add_message(
+            {"conversation_id": content_only, "sender": "user", "content": "zebra"}
+        )
+
+        titles = service.list_conversations("zebra", scope_type="global", title_only=True)
+        everything = service.list_conversations("zebra", scope_type="global")
+
+        assert [item["id"] for item in titles["items"]] == [titled]
+        assert titles["pagination"]["total"] == 1
+        assert everything["pagination"]["total"] == 2
+    finally:
+        db.close_connection()
+
 
 @pytest.fixture
 def service_with_db(tmp_path):
@@ -1866,7 +1948,9 @@ def _seed_chain(db, service, conv_id, texts):
 def test_copy_active_path_copies_and_remaps(service_with_db):
     db, service = service_with_db
     src = service.create_conversation(title="Src")
-    ids = _seed_chain(db, service, src, [("user", "hello"), ("assistant", "hi"), ("user", "go")])
+    ids = _seed_chain(
+        db, service, src, [("user", "hello"), ("assistant", "hi"), ("user", "go")]
+    )
     dst = service.create_conversation(title="Dst")
 
     outcome = service.copy_conversation_active_path(src, dst)
@@ -1882,17 +1966,33 @@ def test_copy_active_path_copies_and_remaps(service_with_db):
     # ids are fresh, not the source's
     assert {m["id"] for m in copied}.isdisjoint(set(ids))
     # active leaf points at the copied leaf
-    assert db.get_conversation_active_leaf(dst) == copied[-1]["id"] == outcome["leaf_message_id"]
+    assert (
+        db.get_conversation_active_leaf(dst)
+        == copied[-1]["id"]
+        == outcome["leaf_message_id"]
+    )
 
 
 def test_copy_active_path_ignores_inactive_branch(service_with_db):
     db, service = service_with_db
     src = service.create_conversation(title="Src")
     root = db.add_message({"conversation_id": src, "sender": "user", "content": "root"})
-    kept = db.add_message({"conversation_id": src, "sender": "assistant", "content": "kept",
-                           "parent_message_id": root})
-    db.add_message({"conversation_id": src, "sender": "assistant", "content": "dropped",
-                    "parent_message_id": root})
+    kept = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "kept",
+            "parent_message_id": root,
+        }
+    )
+    db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "dropped",
+            "parent_message_id": root,
+        }
+    )
     db.set_conversation_active_leaf(src, kept)
     dst = service.create_conversation(title="Dst")
 
@@ -1909,15 +2009,23 @@ def test_copy_active_path_falls_back_to_latest_when_no_leaf(service_with_db):
     # Explicit distinct timestamps: the DB clock has millisecond precision, so
     # same-millisecond seeding can tie the fallback's latest-timestamp pick
     # (max() keeps the first candidate) and flake this test.
-    root = db.add_message({
-        "conversation_id": src, "sender": "user", "content": "a",
-        "timestamp": "2026-01-01T00:00:00.001Z",
-    })
-    db.add_message({
-        "conversation_id": src, "sender": "assistant", "content": "b",
-        "parent_message_id": root,
-        "timestamp": "2026-01-01T00:00:00.002Z",
-    })
+    root = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "user",
+            "content": "a",
+            "timestamp": "2026-01-01T00:00:00.001Z",
+        }
+    )
+    db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "b",
+            "parent_message_id": root,
+            "timestamp": "2026-01-01T00:00:00.002Z",
+        }
+    )
     db.set_conversation_active_leaf(src, None)  # API-created conversation, never opened
     dst = service.create_conversation(title="Dst")
 
@@ -1937,10 +2045,16 @@ def test_copy_active_path_empty_history_raises(service_with_db):
 def test_copy_active_path_preserves_fields(service_with_db):
     db, service = service_with_db
     src = service.create_conversation(title="Src")
-    mid = db.add_message({
-        "conversation_id": src, "sender": "assistant", "content": "tool stuff",
-        "role": "tool", "metadata_json": '{"k": 1}', "usage_json": '{"tokens": 5}',
-    })
+    mid = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "tool stuff",
+            "role": "tool",
+            "metadata_json": '{"k": 1}',
+            "usage_json": '{"tokens": 5}',
+        }
+    )
     db.set_conversation_active_leaf(src, mid)
     dst = service.create_conversation(title="Dst")
 
@@ -1956,19 +2070,40 @@ def test_copy_active_path_preserves_fields(service_with_db):
 def test_copy_active_path_preserves_provider_continuation(service_with_db):
     db, service = service_with_db
     src = service.create_conversation(title="Src")
-    checkpoint = json.dumps({
-        "schema_version": 1, "checkpoint_revision": 1,
-        "provider": "deepseek", "protocol": "responses",
-        "model": "deepseek-v4-flash", "api_base_url": "https://api.deepseek.com/v1",
-        "state": "active",
-        "rounds": [{"assistant_content": "", "reasoning_blocks": [],
-                    "calls": [{"call_id": "call_active", "name": "lookup",
-                               "arguments": "{}", "state": "pending"}]}],
-    })
-    mid = db.add_message({
-        "conversation_id": src, "sender": "assistant", "content": "partial answer",
-        "role": "assistant", "provider_continuation_json": checkpoint,
-    })
+    checkpoint = json.dumps(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": [],
+                    "calls": [
+                        {
+                            "call_id": "call_active",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "pending",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    mid = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "partial answer",
+            "role": "assistant",
+            "provider_continuation_json": checkpoint,
+        }
+    )
     db.set_conversation_active_leaf(src, mid)
     dst = service.create_conversation(title="Dst")
 
@@ -2058,7 +2193,9 @@ def test_copy_active_path_leaf_failure_rolls_back(service_with_db, monkeypatch):
     pointer failure must not strand copied messages without a leaf."""
     db, service = service_with_db
     src = service.create_conversation(title="Src")
-    _seed = db.add_message({"conversation_id": src, "sender": "user", "content": "hello"})
+    _seed = db.add_message(
+        {"conversation_id": src, "sender": "user", "content": "hello"}
+    )
     db.set_conversation_active_leaf(src, str(_seed))
     dst = service.create_conversation(title="Dst")
 
@@ -2079,8 +2216,12 @@ def test_effective_active_leaf_falls_back_on_dangling_pointer(service_with_db):
     src = service.create_conversation(title="Src")
     first = db.add_message({"conversation_id": src, "sender": "user", "content": "one"})
     second = db.add_message(
-        {"conversation_id": src, "sender": "assistant", "content": "two",
-         "parent_message_id": first}
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "two",
+            "parent_message_id": first,
+        }
     )
     db.set_conversation_active_leaf(src, "not-a-real-message-id")
     assert service.effective_active_leaf(src) == str(second)
@@ -2106,3 +2247,79 @@ def test_copy_active_path_preserves_image_payload(service_with_db):
     copied = db.get_messages_for_conversation(dst)[0]
     assert copied["image_data"] == png
     assert copied["image_mime_type"] == "image/png"
+
+
+def test_copy_active_path_reads_source_conversation_once(service_with_db):
+    """Task 19a (perf): a fork must run ONE full-conversation read.
+
+    ``copy_conversation_active_path`` already fetches the FORK_READ page;
+    ``effective_active_leaf`` must reuse those rows instead of re-running the
+    identical ``get_messages_for_conversation`` query (up to 10k rows fetched
+    twice per fork).
+    """
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    _seed_chain(
+        db, service, src, [("user", "hello"), ("assistant", "hi"), ("user", "go")]
+    )
+    dst = service.create_conversation(title="Dst")
+
+    calls: list[tuple[str, int | None]] = []
+    original = db.get_messages_for_conversation
+
+    def counting(conversation_id, **kwargs):
+        calls.append((str(conversation_id), kwargs.get("limit")))
+        return original(conversation_id, **kwargs)
+
+    db.get_messages_for_conversation = counting  # type: ignore[method-assign]
+    try:
+        outcome = service.copy_conversation_active_path(src, dst)
+    finally:
+        del db.get_messages_for_conversation  # type: ignore[method-assign]
+
+    assert outcome["copied"] == 3
+    source_reads = [call for call in calls if call[0] == src]
+    assert len(source_reads) == 1, (
+        f"fork must read the source conversation exactly once, got {source_reads}"
+    )
+
+
+def test_effective_active_leaf_with_rows_matches_fetch_semantics(service_with_db):
+    """Task 19a: the rows-reuse path resolves identically to the fetch path.
+
+    Pins both resolution modes (durable pointer live; dangling pointer falls
+    back to latest timestamp) so the optional ``rows=`` parameter can never
+    drift from ``effective_active_leaf``'s no-rows behavior.
+    """
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    root = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "user",
+            "content": "a",
+            "timestamp": "2026-01-01T00:00:00.001Z",
+        }
+    )
+    db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "b",
+            "parent_message_id": root,
+            "timestamp": "2026-01-01T00:00:00.002Z",
+        }
+    )
+    rows = db.get_messages_for_conversation(src, limit=FORK_READ_MAX_MESSAGES)
+
+    # Durable pointer references a live row: both paths return it verbatim.
+    db.set_conversation_active_leaf(src, str(root))
+    assert service.effective_active_leaf(src) == str(root)
+    assert service.effective_active_leaf(src, rows=rows) == str(root)
+
+    # Dangling pointer: both paths fall back to the latest-timestamp row.
+    db.set_conversation_active_leaf(src, "not-a-real-message-id")
+    assert service.effective_active_leaf(src, rows=rows) == service.effective_active_leaf(src)
+
+    # Empty rows short-circuit identically to an empty fetch.
+    assert service.effective_active_leaf(src, rows=[]) is None

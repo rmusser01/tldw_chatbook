@@ -6,19 +6,25 @@ import asyncio
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from types import MethodType, SimpleNamespace
+from typing import ClassVar
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.events import Click, MouseDown, MouseScrollDown, MouseScrollUp, MouseUp
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+    _sync_console_control_bar_now,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_display_state import (
     ConsoleDisplayRow,
 )
@@ -28,9 +34,12 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsSummarySt
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.UI.Console_Modules.rail_section_layout import outer_hint_required
 from tldw_chatbook.UI.Console_Modules.right_rail import ConsoleInspectorRail
-from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
+)
+from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
+from tldw_chatbook.Widgets.Console.console_settings_summary import (
+    ConsoleSettingsSummary,
 )
 from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     ConsoleWorkspaceTree,
@@ -38,10 +47,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_tree import (
     WorkspaceTreeFocusRecoveryRequested,
     WorkspaceTreeStarRequested,
 )
-from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
-from tldw_chatbook.Widgets.Console.console_settings_summary import (
-    ConsoleSettingsSummary,
-)
+
 from tldw_chatbook.Widgets.Console.console_staged_context import (
     ConsoleStagedContextTray,
 )
@@ -55,6 +61,8 @@ from tldw_chatbook.Workspaces.workspace_tree_state import (
     WorkspaceTreeConversation,
     WorkspaceTreeWorkspace,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 SECTION_IDS = (
@@ -149,7 +157,9 @@ def _all_open_rail_state() -> ConsoleRailState:
     )
 
 
-class _RailHarness(App[None]):
+class _RailHarness(ConsolidatedCSSApp):
+    CSS_PATH: ClassVar[list[str]] = [str(path) for path in APP_STYLESHEETS]
+
     CSS = """
     Screen {
         layout: vertical;
@@ -1250,6 +1260,8 @@ async def test_bounded_rail_shell_regions_are_compositor_contained(
         assert not sources.hint.region.overlaps(outer_hint.region)
         assert inspector.region.contains_region(outer_hint.region)
 
+        sources.hint.scroll_visible(animate=False, force=True)
+        await pilot.pause()
         local_point = (
             sources.hint.region.x + 1,
             sources.hint.region.y,
@@ -1810,7 +1822,9 @@ async def test_mounted_context_activation_never_persists_but_toggle_writes_once(
 
 
 @pytest.mark.asyncio
-async def test_local_and_outer_hints_use_distinct_counterfactual_predicates() -> None:
+async def test_local_and_outer_hints_use_distinct_counterfactual_predicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = _RailHarness()
 
     async with app.run_test(size=(60, 30)) as pilot:
@@ -1834,6 +1848,16 @@ async def test_local_and_outer_hints_use_distinct_counterfactual_predicates() ->
         assert str(local.renderable) == LOCAL_HINT
         assert cue.display is True
         assert _shows_outer_hint(cue.renderable)
+        cue_region = cue.region
+        assert cue_region.height == 1
+        cue_update = cue.update
+        layout_requests = []
+
+        def record_update(content, *, layout=True):
+            layout_requests.append(layout)
+            return cue_update(content, layout=layout)
+
+        monkeypatch.setattr(cue, "update", record_update)
         outer.scroll_end(animate=False)
         await pilot.pause()
         assert cue.display is True
@@ -1841,6 +1865,8 @@ async def test_local_and_outer_hints_use_distinct_counterfactual_predicates() ->
         outer.scroll_home(animate=False)
         await pilot.pause()
         assert _shows_outer_hint(cue.renderable)
+        assert cue.region == cue_region
+        assert layout_requests and not any(layout_requests)
 
         await pilot.resize_terminal(60, 200)
         await _settle(pilot, passes=8)
@@ -2113,7 +2139,7 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
                 "_build_console_inspector_state",
                 lambda _launch: state,
             )
-            screen._sync_console_control_bar(screen._current_console_rail_state())
+            await _sync_console_control_bar_now(screen, screen._current_console_rail_state())
         await _settle(pilot, passes=10)
 
         assert "local" in events

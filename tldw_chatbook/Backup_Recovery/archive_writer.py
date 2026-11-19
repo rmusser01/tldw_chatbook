@@ -182,10 +182,12 @@ def write_archive(
     if len(capture.manifest_bytes) > limits.manifest_bytes:
         raise ValueError("manifest_limit")
     doc = reader._manifest(capture.manifest_bytes, limits, password is not None)
+    from .credential_policies import MANUAL_CREDENTIAL_ISSUES
+
     manual_only = (
         bool(capture.inventory.issues)
         and all(
-            issue.startswith("credential_manual_recovery_required:")
+            issue.startswith(MANUAL_CREDENTIAL_ISSUES)
             for issue in capture.inventory.issues
         )
         and not any(

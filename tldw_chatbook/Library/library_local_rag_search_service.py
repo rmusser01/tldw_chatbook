@@ -33,6 +33,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
 )
+
 # TASK-21731: read the mode vocabulary from the stdlib-only `search_modes`
 # module, NOT from `simplified.active_config` -- this module is on the app's
 # import path, and active_config drags the whole simplified service tree
@@ -97,6 +98,7 @@ from tldw_chatbook.RAG_Search.ingestion_indexing import (
     get_shared_rag_service,
     shared_rag_service_generation,
 )
+
 # One staleness rule for the `app._rag_service` cache, shared with the chat/
 # Search resolver (`resolve_semantic_rag_service`): a profile switch resets
 # the shared singleton, and both app-level caches must notice.
@@ -198,9 +200,7 @@ _SEMANTICALLY_COVERABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversatio
 # and has no vector index at all, so a prompt reaches hybrid results through
 # this leg alone (rescued by the fusion weighting) and must never appear in
 # a semantic-coverage claim.
-_FTS_SERVABLE_SOURCE_TYPES = frozenset(
-    {"media", "notes", "conversations", "prompts"}
-)
+_FTS_SERVABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversations", "prompts"})
 # Library scope identifier -> the ENGINE's keyword-leg vocabulary
 # (`rag_service.SOURCE_TYPE_*`, singular). The Library speaks plurals
 # (`notes`, `conversations`); the engine's FTS sub-legs are selected -- and
@@ -259,6 +259,26 @@ class LibraryLocalRagSearchService:
 
     def __init__(self, app_instance: Any) -> None:
         self._app = app_instance
+        #: TASK-33621.20 review: the one shared-runtime build in flight, which
+        #: every caller joins (see `_shared_runtime_build`), with the shared
+        #: service generation it was started under.
+        self._runtime_build: tuple[int, asyncio.Future[tuple[Any, Any]]] | None = None
+
+    async def prewarm(self) -> bool:
+        """Build the shared RAG runtime now, ahead of a time-boxed search.
+
+        TASK-33621.20 / TASK-35992: `rag` mode builds the runtime inside its
+        first `search` call (embedding model, vector store: 4-5 s cached,
+        18 s uncached). The Console's automatic Library preparation awaits
+        this first, under its own bound, so that build no longer spends the
+        turn's short search budget. Cheap once the runtime is cached.
+
+        Returns:
+            True when a usable runtime is available; False when it is not
+            (missing deps or a failed build), which the next `search`
+            reports through its usual recovery state.
+        """
+        return await self._resolve_rag_runtime() is not None
 
     async def search(
         self,
@@ -289,8 +309,9 @@ class LibraryLocalRagSearchService:
                 keyword search to the scope's media/note id allowlists and
                 excludes the conversations and prompts seams entirely
                 (neither is part of the scope vocabulary, spec D5), and
-                restricts semantic search via one store query per
-                allowlisted source type, merged by score.
+                restricts semantic search via ONE engine search carrying the
+                union of per-source-type allowlists, merged by score inside
+                the engine (review-B B2).
             **kwargs: Backend options. `top_k` caps the result count per
                 source (default 5). `include_citations` is used in `rag`
                 mode only.
@@ -384,9 +405,7 @@ class LibraryLocalRagSearchService:
         profile_mode = _resolve_profile_search_mode(rag_service)
 
         if profile_mode == "plain":
-            result = await self._search_keyword(
-                query, source_types, top_k, scope=scope
-            )
+            result = await self._search_keyword(query, source_types, top_k, scope=scope)
             return _with_route_notes(
                 result,
                 (
@@ -500,7 +519,8 @@ class LibraryLocalRagSearchService:
         # for the same reason the scope slot is (task-9 review finding): two
         # seams can fail in one call and neither may overwrite the other.
         failed_seams = sorted(
-            name for name, (state, _rows) in outcomes.items()
+            name
+            for name, (state, _rows) in outcomes.items()
             if state is SeamState.FAILED
         )
         for name in failed_seams:
@@ -517,9 +537,7 @@ class LibraryLocalRagSearchService:
             # eval harness, which until TASK-18255 could not tell an unwired
             # seam from an empty one); this sentence is what the user reads.
             diagnostics.setdefault(LIBRARY_RAG_ROUTE_NOTES_KEY, []).append(
-                ROUTE_NOTE_SEAMS_FAILED_TEMPLATE.format(
-                    seams=", ".join(failed_seams)
-                )
+                ROUTE_NOTE_SEAMS_FAILED_TEMPLATE.format(seams=", ".join(failed_seams))
             )
 
         if not any(state is SeamState.AVAILABLE for state, _rows in outcomes.values()):
@@ -695,7 +713,9 @@ class LibraryLocalRagSearchService:
             ]
 
         try:
-            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(
+                query, run_match
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: notes seam failed."
@@ -732,7 +752,9 @@ class LibraryLocalRagSearchService:
             return [_media_row(item) for item in items if isinstance(item, Mapping)]
 
         try:
-            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(
+                query, run_match
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: media seam failed."
@@ -779,7 +801,9 @@ class LibraryLocalRagSearchService:
             ]
 
         try:
-            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(
+                query, run_match
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: conversations seam failed."
@@ -813,7 +837,9 @@ class LibraryLocalRagSearchService:
             ]
 
         try:
-            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(
+                query, run_match
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: prompts seam failed."
@@ -856,13 +882,15 @@ class LibraryLocalRagSearchService:
             scope: Optional resolved RAG retrieval scope (rag-scope
                 narrowing, task-6). `None` or an unscoped scope performs
                 today's single unrestricted store query (no
-                `metadata_allowlist` at all). A scoped value runs one store
-                query per source_type present in the scope's allowlist --
-                a flat `metadata_allowlist` cannot express an OR across
-                source types, see `rag_scope.build_semantic_allowlists` --
-                and merges the per-type results by score, descending,
-                before trimming to `top_k` (mirrors
-                `pipeline_functions_simple.search_semantic`'s merge).
+                `metadata_allowlist` at all). A scoped value passes the
+                WHOLE union of per-source-type AND-groups
+                (`rag_scope.build_semantic_allowlists`) to ONE engine
+                search -- a flat `metadata_allowlist` cannot express an OR
+                across source types, and the engine's
+                `_semantic_search_scoped` runs the per-entry store queries
+                and merges by score, descending, before trimming to
+                `top_k` (review-B B2; the caller used to loop one search
+                per entry itself).
             rag_service: Already-resolved runtime, passed by `_search_rag`
                 so profile resolution and the search share one instance.
                 `None` resolves it here, keeping this method self-contained.
@@ -889,19 +917,18 @@ class LibraryLocalRagSearchService:
                 include_citations=include_citations,
             )
         else:
-            per_type_results: list[Any] = []
-            for allowlist in allowlists:
-                per_type_results.extend(
-                    await rag_service.search(
-                        query=query,
-                        top_k=top_k,
-                        search_type="semantic",
-                        include_citations=include_citations,
-                        metadata_allowlist=allowlist,
-                    )
-                )
-            per_type_results.sort(key=_raw_semantic_score, reverse=True)
-            raw_results = per_type_results[:top_k]
+            # Review-B B2: ONE search call carrying the WHOLE union -- the
+            # engine's `_semantic_search_scoped` runs the per-entry store
+            # queries and merges by score itself, exactly as `_search_hybrid`
+            # already hands it the union. The old caller-side loop issued one
+            # search (one query embedding, one full search round) per entry.
+            raw_results = await rag_service.search(
+                query=query,
+                top_k=top_k,
+                search_type="semantic",
+                include_citations=include_citations,
+                metadata_allowlist=allowlists,
+            )
 
         rows = _filtered_semantic_rows(raw_results, source_types)
         if not raw_results and await self._semantic_index_is_empty(rag_service):
@@ -983,9 +1010,8 @@ class LibraryLocalRagSearchService:
                 translated by `build_semantic_allowlists` into the union of
                 per-source-type AND-groups the engine expects (a flat dict
                 cannot express "media in A OR note in B") and passed as ONE
-                `metadata_allowlist` -- unlike `_search_semantic`, which
-                predates the engine's multi-entry support and still issues
-                one store query per entry itself. Both legs honor it.
+                `metadata_allowlist` -- `_search_semantic` does the same
+                since review-B B2. Both legs honor it.
             rag_service: The resolved runtime.
 
         Returns:
@@ -1086,10 +1112,8 @@ class LibraryLocalRagSearchService:
             return cached
         if not embeddings_rag_deps_installed():
             return None
-        # Captured BEFORE the build -- see `cache_app_rag_service`.
-        generation = shared_rag_service_generation()
         try:
-            service = await asyncio.to_thread(get_shared_rag_service)
+            service, generation = await asyncio.shield(self._shared_runtime_build())
         except Exception:
             logger.opt(exception=True).error(
                 "Library RAG: shared RAG service initialization raised; "
@@ -1103,6 +1127,43 @@ class LibraryLocalRagSearchService:
         # later profile switch invalidates it.
         cache_app_rag_service(self._app, service, generation)
         return service
+
+    def _shared_runtime_build(self) -> asyncio.Future[tuple[Any, Any]]:
+        """Return the shared-runtime build in flight, starting one if none is.
+
+        TASK-33621.20 review: the Console's automatic preparation gives up on
+        a slow build (timeout, Stop) and may retry. A fresh
+        ``asyncio.to_thread`` per attempt left one more default-executor
+        thread blocked on the factory's build lock behind a hung build, so
+        repeated retries could exhaust the shared executor. Callers now
+        await this one build through ``asyncio.shield``: a caller that gives
+        up leaves it running, and the next caller joins it -- unless the
+        shared service generation has moved since it started (a RAG profile
+        switch): that build is discarded when it lands, so a new one starts.
+
+        Returns:
+            A future resolving to ``(service, generation)``; the generation is
+            captured when the build starts (see `cache_app_rag_service`).
+        """
+        # Captured BEFORE the build -- see `cache_app_rag_service`.
+        generation = shared_rag_service_generation()
+        started, build = getattr(self, "_runtime_build", None) or (None, None)
+        if (
+            build is None
+            or started != generation
+            or build.done()
+            or build.get_loop() is not (asyncio.get_running_loop())
+        ):
+            build = asyncio.ensure_future(self._build_shared_runtime(generation))
+            # Nobody may be waiting when it fails: retrieve the error here so
+            # it is not reported as "never retrieved".
+            build.add_done_callback(lambda done: done.cancelled() or done.exception())
+            self._runtime_build = (generation, build)
+        return build
+
+    @staticmethod
+    async def _build_shared_runtime(generation: int) -> tuple[Any, Any]:
+        return await asyncio.to_thread(get_shared_rag_service), generation
 
     async def _semantic_index_is_empty(self, rag_service: Any) -> bool:
         """True only when the runtime's vector store verifiably has 0 documents.
@@ -1641,17 +1702,6 @@ def _coerce_score(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _raw_semantic_score(item: Any) -> float:
-    """Sortable score for a raw (pre-``_semantic_row``) semantic result item.
-
-    Mirrors ``_coerce_score``'s dual Mapping/attribute handling so the
-    per-type merge (``_search_semantic``) can sort mixed-shape results from
-    ``rag_service.search`` without first normalizing every item.
-    """
-    value = item.get("score") if isinstance(item, Mapping) else getattr(item, "score", None)
-    return _coerce_score(value) or float("-inf")
 
 
 async def _empty_scoped_seam() -> tuple[SeamState, list[dict[str, Any]]]:

@@ -449,17 +449,25 @@ See [Lab](Docs/User_Guide/lab.md).
 | **Ctrl+1** | Home | Status, attention items, running work, and next actions |
 | **Ctrl+2** | Console | Conversations, context, tools, approvals, and runs |
 | **Ctrl+3** | Library | Notes, media, prompts, conversations, skills, search, RAG, and ingestion |
-| **F10** | Research | Grounded workspaces and research-run observation |
-| **Ctrl+4** | Artifacts | Generated outputs, reports, datasets, and Chatbooks |
-| **Ctrl+5** | Roleplay | Characters, personas, dictionaries, and lore |
-| **Ctrl+6** | Watchlists | Monitored sources, runs, alerts, and recovery |
+| **Ctrl+4** | Roleplay | Characters, personas, dictionaries, and lore |
+| **Ctrl+5** | Watchlists | Monitored sources, runs, alerts, and recovery |
+| **Ctrl+6** | Library ▸ Artifacts | Opens All artifacts in Library's Artifacts section (artifacts, Chatbooks, and reports); Artifacts is no longer a destination of its own |
 | **Ctrl+7** | Schedules | Timing and triggers |
 | **Ctrl+8** | Workflows | Reusable procedures and outputs |
-| **Ctrl+9** | MCP | MCP servers, tools, permissions, and auth |
+| **Ctrl+9** | Settings ▸ Tools & MCP | Opens the Tools & MCP category of Settings (MCP servers, tools, permissions, and auth); MCP is no longer a destination of its own |
 | **Ctrl+0** | ACP | Compatible agent runtimes and sessions |
-| **F7** | Lab | Models, speech, and evaluations |
-| **F8** | Logs | Application logs and diagnostics |
-| **F9** | Settings | Providers, storage, appearance, privacy, and application behavior |
+| **F2** | Lab | Models, speech, and evaluations |
+| **F3** | Logs | Application logs and diagnostics |
+| **F4** | Settings | Providers, storage, appearance, privacy, and application behavior |
+| **F5** | Research | Grounded workspaces and research-run observation |
+| **F7** | Meetings | Record a call or a room with a live labelled transcript, then file it in the Library |
+| **F8** | Plugins | Installed plugins, source-qualified browsing, and marketplaces |
+| **F9** | Kanban | A keyboard-first board of columns and cards |
+
+**F1** (help for the current screen) and **F6** (next pane) work everywhere, so
+the destination keys skip them. Every destination is also in the nav bar, and the
+command palette (**Ctrl+P**) reaches all of them plus the two views behind
+Ctrl+6 and Ctrl+9, which have no nav-bar label.
 
 Legacy route names may still resolve during migration, but they are not the
 primary navigation model.
@@ -584,9 +592,11 @@ server-backed workflows each introduce a separate trust boundary.
 
 ### Advanced profiles
 
-`TLDW_CONFIG_PATH` can select a different config file. A config override does
+`TLDW_CONFIG_PATH` can select a different config file; `tldw-cli --config PATH`
+does the same for one launch and wins when both are set. A config override does
 not automatically relocate every data path; set `[paths].data_dir` inside that
-profile when true isolation is required.
+profile when true isolation is required. For moving to another computer, see
+"Setting up another machine" in `Docs/User_Guide/First_Run_Setup.md`.
 
 ## Browser access
 
@@ -650,7 +660,7 @@ it into Console. Semantic/vector search additionally requires the
 
 ### Startup or migration fails
 
-Open **Logs** with **F8** and inspect the error before deleting data. Back up the
+Open **Logs** with **F3** and inspect the error before deleting data. Back up the
 active profile, then use the
 [Release Recovery and Setup guide](Docs/Development/release-recovery-setup.md).
 
@@ -772,3 +782,5 @@ For project questions and feature requests, open a
 [GitHub issue](https://github.com/rmusser01/tldw_chatbook/issues). For security
 issues, do not publish sensitive details in a public issue; contact the
 maintainer privately at [contact@rmusser.net](mailto:contact@rmusser.net).
+
+Console: [learned response rules](backlog/docs/console-response-rules.md) with `/omfg` and `/rules`.

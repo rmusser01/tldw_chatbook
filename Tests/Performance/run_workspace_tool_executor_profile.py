@@ -291,7 +291,9 @@ def _isolated_runtime_python(runtime_root: Path) -> Path:
     isolated_site_packages = Path(site_query.stdout.strip())
     repository = Path(__file__).resolve().parents[2]
     dependency_paths = [
-        Path(value).resolve() for value in site.getsitepackages() if Path(value).is_dir()
+        Path(value).resolve()
+        for value in site.getsitepackages()
+        if Path(value).is_dir()
     ]
     (isolated_site_packages / "task19637-profile.pth").write_text(
         "\n".join(str(path) for path in (repository, *dependency_paths)) + "\n",
@@ -346,7 +348,9 @@ def _isolated_environment(
 def _run_isolated(args: argparse.Namespace) -> int:
     """Run the profiler under an isolated profile before application import."""
     try:
-        with tempfile.TemporaryDirectory(prefix="tldw-workspace-profile-runtime-") as raw:
+        with tempfile.TemporaryDirectory(
+            prefix="tldw-workspace-profile-runtime-"
+        ) as raw:
             runtime_root = Path(raw)
             runtime_python = _isolated_runtime_python(runtime_root)
             environment = _isolated_environment(runtime_root)

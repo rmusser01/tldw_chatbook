@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────┐  P  Prompt exported successfully to ~/exp/Weekly       │
+│   a  │ Prompts (10)                                         │  r                                                     │
+│   v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  o                     More actions                    │
+│      │ ▊ Filter prompts… (Enter)                          ▎ │  m  ┃                    Export…                     ┃ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  p                    Copy Markdown                    │
+│      │                                                      │  t                      Duplicate                      │
+│      │   collection: All prompts                            │  s                     Collections                     │
+│      │    sort: Newest        Select                        │                          History                       │
+│      │      Import…          Export…                        │                           Delete                       │
+│      │  Release notes from commits                          │                                                        │
+│ ---> │  Local · User only                                   │                                                        │
+│      │                                                   ▂  │                                                        │
+│      │  Weekly review coach                                 │                                                        │
+│      │  Local · has system and user text                    │                                                        │
+│      │                                                      │<---                                                    │
+│      │  SQL query explainer                                 │                                                        │
+│      │  Local · has system and user text                    │                                                        │
+│      │                                                      │                                                        │
+│ ---> │ 1-10 of 10                                           │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      └──────────────────────────────────────────────────────┘                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

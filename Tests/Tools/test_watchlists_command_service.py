@@ -189,8 +189,9 @@ def test_set_briefing_schedule_rejects_noncanonical_intervals_before_write(caden
     writes = []
 
     result = json.loads(
-        _service(set_briefing_schedule=lambda *args, **kwargs: writes.append((args, kwargs)))
-        .set_briefing_schedule(
+        _service(
+            set_briefing_schedule=lambda *args, **kwargs: writes.append((args, kwargs))
+        ).set_briefing_schedule(
             {"collection_id": "local:watchlist:7", "cadence": cadence}
         )
     )
@@ -622,9 +623,7 @@ def test_delayed_collection_mutation_returns_only_after_definitive_commit(tmp_pa
         first = json.loads(future.result(timeout=2))
 
     second = json.loads(
-        service.create_collection(
-            {"name": "Threat intel", "if_exists": "auto_suffix"}
-        )
+        service.create_collection({"name": "Threat intel", "if_exists": "auto_suffix"})
     )
 
     assert first["status"] == second["status"] == "ok"
@@ -667,7 +666,11 @@ def test_create_sources_validates_rows_before_one_bounded_write_and_redacts_urls
     assert result["results"] == [
         {"input_index": 0, "outcome": "created", "source_id": "local:subscription:11"},
         {"input_index": 1, "outcome": "existing", "source_id": "local:subscription:11"},
-        {"input_index": 2, "outcome": "invalid", "message": "Source URL must not include credentials."},
+        {
+            "input_index": 2,
+            "outcome": "invalid",
+            "message": "Source URL must not include credentials.",
+        },
     ]
     serialized = json.dumps(result)
     assert "token" not in serialized
@@ -690,7 +693,11 @@ def test_create_sources_rejects_boolean_integer_and_over_50_without_storage():
     )
     too_many = json.loads(
         service.create_sources(
-            {"sources": [{"url": f"https://example.com/{index}"} for index in range(51)]}
+            {
+                "sources": [
+                    {"url": f"https://example.com/{index}"} for index in range(51)
+                ]
+            }
         )
     )
 
@@ -786,9 +793,7 @@ def test_create_sources_trims_only_outer_url_whitespace():
 
     def create(rows):
         calls.append(rows)
-        return [
-            {"input_index": 0, "outcome": "created", "source": {"source_id": 3}}
-        ]
+        return [{"input_index": 0, "outcome": "created", "source": {"source_id": 3}}]
 
     result = json.loads(
         _service(create_sources=create).create_sources(
@@ -931,9 +936,7 @@ def test_malformed_domain_success_is_scrubbed(command):
         update=incomplete_update,
     )
     if command == "sources":
-        raw = service.create_sources(
-            {"sources": [{"url": "https://example.com/feed"}]}
-        )
+        raw = service.create_sources({"sources": [{"url": "https://example.com/feed"}]})
     elif command == "collection":
         raw = service.create_collection({"name": "Security"})
     else:

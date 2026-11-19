@@ -53,8 +53,9 @@ class ConsoleImageViewerModal(SafeModalDismissMixin, ModalScreen[None]):
         height: auto;
         max-width: 100%;
         max-height: 100%;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 0 1;
     }
 

@@ -8,34 +8,33 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from tldw_profile_core import (
     AgentVisibility,
-    PreferencePayload,
     InterviewAudience,
     InterviewProposedChange,
+    PreferencePayload,
     ProfileControls,
     ProfileRecord,
     ProfileScope,
+    ProposalOperation,
     RecordState,
     ScopeKind,
     SyncMode,
     WorkingContextPayload,
-    ProposalOperation,
 )
 
-from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
 from tldw_chatbook.Personal_Context.key_protector import ProfileLockedError
+from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
 from tldw_chatbook.Personal_Context.runtime_policy import (
     AgentAuthority,
     PersonalContextAuthorityError,
 )
 from tldw_chatbook.Personal_Context.service import (
-    PersonalContextSettingsSnapshot,
     PersonalContextService,
+    PersonalContextSettingsSnapshot,
     ProfileConflictError,
     ProfileKeyCollisionError,
     RecordMutation,
     SettingsScopeSnapshot,
 )
-
 
 NOW = datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
 
@@ -1143,6 +1142,11 @@ def test_settings_snapshot_is_immutable_and_reads_local_policy(service) -> None:
     snapshot = service.settings_snapshot()
 
     assert snapshot.status.runtime_enabled is True
+    assert snapshot.profile_identity.profile_id == active.profile_id
+    assert {item.version_token for item in snapshot.provenance_subjects} == {
+        active.version_id,
+        archived.version_id,
+    }
     assert snapshot.scopes[0].scope == scope
     assert snapshot.scopes[0].authority is AgentAuthority.READ_ONLY
     assert snapshot.scopes[0].label == "Global"
@@ -1387,7 +1391,9 @@ def test_finish_secure_removal_retries_key_deletion_without_starting_fresh(
 
     assert service.status().state == "removed"
     assert memory_protector.is_empty
-    assert delete_calls == 3
+    # TASK-40133: a completed deletion clears the recorded account, so a further
+    # retry deletes nothing rather than whatever now holds that name.
+    assert delete_calls == 2
 
 
 def test_finish_secure_removal_survives_restart_after_failed_key_deletion(

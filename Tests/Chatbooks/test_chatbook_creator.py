@@ -571,7 +571,13 @@ class TestChatbookCreator:
             "content": "This is test content",
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
-            "keywords": "test,sample",
+        }
+        # TASK-34000.19: the note row has no keyword column (the old mock
+        # carried a fictional ``"keywords"`` key the real row never has);
+        # the creator reads memberships through the batch reader, keyed by
+        # note id.
+        mock_db_instance.get_keywords_for_notes_batch.return_value = {
+            "1": ["test", "sample"]
         }
 
         # Mock character data
@@ -613,6 +619,13 @@ class TestChatbookCreator:
 
             # Check metadata
             assert manifest_data["name"] == "Test Chatbook with Data"
+            # TASK-34000.19: the note's keyword membership is the item's tags.
+            [note_item] = [
+                item
+                for item in manifest_data["content_items"]
+                if item["type"] == ContentType.NOTE.value
+            ]
+            assert note_item["tags"] == ["test", "sample"]
             assert manifest_data["author"] == "Test Author"
             assert manifest_data["tags"] == ["test", "sample"]
             assert manifest_data["categories"] == ["testing"]

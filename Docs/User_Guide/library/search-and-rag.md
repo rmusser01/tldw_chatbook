@@ -79,9 +79,14 @@ other mode and resets the current results. Its tooltip names which mode a
 press switches *to* and, for RAG Answer, that it's the paid one: "Next:
 RAG Answer — calls a paid provider." / "Next: Search — stays local." Once you're in RAG Answer
 mode with a provider configured, the query row's status line (silent in
-Search mode) states the same fact before you press Run: "RAG Answer sends
-your question and the evidence to \<provider>. Search stays local." — a
-statement, not a confirmation gate; nothing blocks Run because of it.
+Search mode) names what Run will bill before you press it: "To openai ·
+gpt-4.1-mini: question + evidence" — the provider and the model from your
+saved defaults (Settings ▸ Providers & Models, the same `[chat_defaults]`
+pair First Run wrote; a model saved under the provider's own section is
+used when the defaults name none, and never another provider's model).
+If no model is saved anywhere the line says "its default model" rather
+than guessing. It is a statement, not a confirmation gate; nothing blocks
+Run because of it.
 
 Use Tab or Shift+Tab to reach the mode toggle, then Enter to switch. Focus
 stays on the toggle so Enter can switch back. Changing mode clears the current
@@ -312,7 +317,10 @@ tok)` when pricing for that model is known, or `provider · model · 1,240
 tok · pricing unknown` when it isn't — it never prints a dollar figure it
 can't source. A call that spent money but then failed outright still shows
 this line: a call that cost money says so even when it didn't produce a
-usable answer.
+usable answer. The model it names is the one the status line named before
+Run — the footer reports what the provider says it ran, so a provider that
+answers with a dated snapshot id (gpt-4.1-mini-2025-04-14 for
+gpt-4.1-mini) shows that longer name here.
 
 The same retrieval-coverage line shown above the evidence rows below
 (e.g. "Semantic search found nothing from: Notes.", "No strong semantic
@@ -329,8 +337,8 @@ Set one in Settings ▸ Providers & Models."** and offers **"Open Settings ▸
 Providers"**. Tab to the button and press Enter to open that Settings category.
 The credential-specific environment/config remedy remains in the log.
 
-Return to Library with **Ctrl+3** and reopen **Search / RAG** if the Library
-landing page is shown. Your query, mode and source choices are retained; both
+Return to Library with **Ctrl+3**, which opens the Library landing, and reopen
+**Search / RAG**. Your query, mode and source choices are retained; both
 query fields show the same draft. Run and the recovery action refresh to reflect
 current provider readiness, without repeating a search or generating an answer.
 
@@ -487,11 +495,18 @@ manual action and **does not change the current conversation's Library
 controls**: Auto remains Never or Automatic, and Assistant remains Blocked or
 Allowed exactly as saved on the Console Library chip.
 
-If Console isn't set up yet (no provider/model configured), a toast warns
-that the evidence is staged and setup is what unlocks it before you
-navigate, and Console's own locked "Get started" card shows the same
+Before Console's first send, if Console isn't set up yet (no provider/model
+configured, or the default connection's last connection check could not reach
+the server or had its key rejected, or a local server answered it with any
+other error status, a redirect, or an unreadable model list, wherever it ran:
+Settings, Chat settings, Switch model or setup; a 403 or 404 only means the
+model list is unavailable and does not lock anything), a
+toast warns that the evidence is staged and setup is what unlocks it before
+you navigate, and Console's own locked "Get started" card shows the same
 receipt so the selection is never silently lost — see [Console: First
-run](../console.md#first-run-the-get-started-card).
+run](../console.md#first-run-the-get-started-card). After the first send there
+is no toast and no Get started card: a failed check shows as Console's
+ordinary **Not ready** state, and the evidence is staged as usual.
 
 ### Not the same screen as "Search"
 
@@ -522,8 +537,8 @@ indexes — if RAG Answer mode reports an empty index, go there to backfill.
    history remembers query text, not earlier settings. Both query boxes
    show the selected text. **Clear history** removes the saved entries and
    leaves the current query, evidence and answer in place.
-6. **Ask a question and get an answer** — click **"mode: Search ▸"** so it
-   reads "mode: RAG Answer ▸", then run; the panel shows a generated,
+6. **Ask a question and get an answer** — click **"mode: ✓ Search ⇄ RAG
+   Answer"** so it reads "mode: Search ⇄ ✓ RAG Answer", then run; the panel shows a generated,
    cited answer above the evidence rows — or an honest "Nothing in your
    library supports an answer to that." if it can't. If the run blocks,
    follow the recovery copy.
@@ -557,7 +572,9 @@ source choices and does not run another search or provider call.
 To edit the next RAG question, use **Shift+Tab** from the evidence card or
 its actions, back through the enabled source controls and Run to the query
 box. This keeps RAG Answer mode selected. The rail search shares the query
-text, but submitting there chooses keyword Search mode.
+text, but submitting there chooses keyword Search mode. Resizing the
+terminal, or results and answers arriving, keeps the control you have
+focused in view.
 
 The footer's **enter** hint names what Enter does on the control you are
 actually on: "run search" in the query box and on **Run**, "toggle
@@ -627,307 +644,3 @@ read "select evidence" everywhere, including in the query box.
 - **A hit's conversation may vanish between searching and opening** — if it
   was deleted since the search, **Open** notifies "Conversation is
   unavailable."
-
-—
-*Verified against c2cbb8081 — 2026-08-04 (PR-T1 live check S1-S6, plus
-task-2150 live smoke with a real provider: abstention on an unsupported
-query and a grounded, cited answer with per-source honesty both observed
-live; match bands, coverage notes, scope summary, quiet no-match, and the
-mode-aware heading all confirmed on an earlier pass. PR-T1 adds: a source
-toggle hides/restores rows in the current snapshot with no re-run,
-refuses staging a hidden row, and restored rows survive a Console round
-trip even while source counts are still loading). Verified against
-e2c706303 — 2026-08-06 (PR-T2, docs pass against shipped code/tests, live
-check pending Task 9): the in-flight line names the provider about to be
-billed, a footer states what the call actually cost or says plainly when
-pricing is unknown, the query row and the mode-toggle tooltip both name
-the paid provider before you run, and RAG Answer's provider gate now
-requires a working credential — the same one Console's own readiness
-check uses — not just an endpoint name. Verified against 42b28089f —
-2026-08-06 (task-2852: live check on a fresh profile — "Use in Console"
-on a locked Console now warns before navigating and stages a visible
-receipt on the "Get started" card; a configured Console still lands on
-the unchanged staged-evidence strip). Verified against d6b6a738f —
-2026-08-07 (RAG-port P0 live walkthrough on a scratch profile holding a
-copy of the real Library DBs, real provider): under the default Hybrid
-Basic profile a RAG Answer run returned rows banded on real similarity —
-"match: moderate" for the two best and "match: weak (0.18)" / "weak
-(0.17)" below them — not the old wall of "weak (0.02)" that banding a
-rank-fused score produced. Under BM25 Only the same panel disclosed
-"Profile 'BM25 Only': keyword search (no vectors)." and returned both a
-note and a **media** row, the keyword leg that previously could not
-return a row at all. Under Hybrid Full with no matching index the run
-disclosed "Semantic search found nothing from: Notes, Conversations.
-Semantic leg empty — keyword-only results." and rendered its FTS-leg row
-as "keyword match" rather than inventing a similarity. Turning Media off
-routed the run to semantic and said so: "Media excluded — semantic
-only." Every one of those route notes rendered on zero-row outcomes too.*
-
-> **Superseded in part (TASK-3996).** The last observation above no longer
-> holds: the keyword leg now covers notes and conversations as well as
-> media, so turning Media off while Notes or Conversations stay selected
-> runs the fused hybrid path instead of falling back to semantic, and the
-> "Media excluded — semantic only." disclosure no longer exists. Two later
-> changes finished the job: TASK-15020/B1 pushed scope allowlists into both
-> legs, so a scoped query stays on the hybrid path, and TASK-15020/B2 gave
-> the keyword leg a prompts sub-leg, so a **Prompts-only** selection runs
-> hybrid too. No combination of the four source toggles now falls back to
-> semantic-only, and the "No keyword leg for the selected sources —
-> semantic only." disclosure survives only for a selection with nothing in
-> it this build recognizes. The rest of that walkthrough stands.
-
-*Verified against ec1ed811e — 2026-08-09 (hybrid-fusion cluster live check,
-scratch profile holding a copy of the real Library DBs and vector index,
-real provider): with **Media deselected** and Notes + Conversations in
-scope — the case that used to fall back to semantic — RAG Answer on the
-default Hybrid Basic profile returned a **note** row and a **conversation**
-row, both banded `keyword match`, for the query "worktree UAT database".
-Those three tokens appear in the note but never adjacently, so the query
-matched nothing at all before the per-token FTS quoting fix, and neither
-source type was reachable by the engine's keyword leg before it grew its
-notes and conversations sub-legs. The vector index on that profile holds
-media chunks only, which is why the keyword-only rows survived to be shown
-— at the time, a full vector leg would still have crowded them out.*
-
-*Verified against 0e7b3b564 — 2026-08-10 (TASK-4110 fusion-weighting live
-check): the keyword-only rescue described under
-[Evidence rows](#evidence-rows), seen in the real UI. Scratch profile
-holding a copy of the real Library DBs and vector index, **plus 60 real
-documentation files ingested through the app's own indexing path** — the
-untouched library had four indexed documents, too few for the vector leg to
-fill a result list, and a keyword-only row appearing in that situation
-proves nothing. On the resulting 64-document library, default Hybrid Basic
-profile, Library Search/RAG at its default top-5: the query "drafted
-expert" (two words that occur literally in `Docs/User_Guide/settings.md`
-and in no other document, and that vector retrieval never returns) placed
-that page at position **5, banded `keyword match`**, with positions 1-4
-holding the same four `match: moderate` vector rows as before. Re-running
-the identical query on the identical library with the fusion constant
-reverted to its previous value put an ordinary vector row
-(`Docs/User_Guide/index.md | match: moderate`) in that slot and the
-settings page nowhere in the list. Ordinary semantic queries were unharmed:
-"how do I import a PDF into the library" ranked
-`library/import-and-export.md` first, and "change the color theme and
-appearance" returned a byte-identical list under both constants — the
-weighting change moves the bottom of the list, not the ranking above it.*
-
-*Verified against fix/settings-appearance-crash @ 57ad075de — 2026-08-10
-(task-4023 AC#6: running a query scrolls the Evidence region into view at
-run start and again when results land, so Run visibly does something even
-when the configuration region fills the fold; the rail search box and the
-canvas query box now mirror each other as you type — one query, two
-views of it; the mode button reads "mode: Search ⇄".)*
-*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
-(task-14902: the mode control stays a one-press toggle — a genuine
-two-state flip earns its single press — but its full option set moved
-onto the label: "mode: ✓ Search ⇄ RAG Answer", ✓ marking the active mode,
-so the option space is on screen instead of only in the tooltip.)*
-*Verified against feat/rag-p2a-instrument-renewal @ 08c9fe294 — 2026-08-11
-(TASK-15020 live check; scratch profile holding a copy of the real Library
-DBs and vector index — 453 vectors, 4 media — plus 24 of this repo's own
-User Guide pages seeded as notes and 3 prompts, because the untouched
-library had 8 notes and no prompts, too little to tell a 5-deep list from
-a 15-deep one or to have a prompt to find at all).*
-
-*Verified against fix/rag-keyword-leg-match @ 2558f7844 — 2026-08-12
-(TASK-15400, the function-word change in "Prompts are keyword-only" above).
-**What was verified in the running app:** a scratch profile (`TLDW_CONFIG_PATH`
-plus its own `[paths] data_dir`, `lsof`-confirmed to hold no handle under the
-real profile, real config byte-identical before and after) with three prompts
-written through the app's own `add_prompt`, and two RAG profiles differing in
-exactly one value — the keyword leg's MATCH construction. Library ▸ Search /
-RAG listed **"Prompts (3)"** and offered them as a selected source, and
-switching the mode control to **"mode: Search ⇄ ✓ RAG Answer"** started a run
-against the hybrid profile. **What was NOT verified:** that run did not
-finish — the first hybrid query in a fresh profile sat on "searching ·
-Prompts…" at 98% CPU for over four minutes while the embedding stack came up,
-so no Evidence row was ever seen on screen and the retrieval claim below does
-not rest on a screenshot. **What the claim does rest on:** the same query, on
-the same app-written prompts database, through the engine's own MATCH builder
-under those two profiles — `"saved" "prompt" "for" "chasing" "a" "supplier"
-"about" "a" "late" "order"` returned **0 rows**, and
-`"saved" "prompt" "chasing" "supplier" "late" "order"` returned **1** — the
-"Saved prompt: chasing a late order" row. Note that the plain **Search** mode
-of the same screen is a different code path (the Library's four-seam keyword
-search) and is unchanged by this: it still requires every typed word.*
-
-*Verified against fix/rag-merge-interleave @ db73f0953 — 2026-08-13
-(TASK-15700, the prefix-fallback change in "Prompts are keyword-only" above).
-**Scratch profile** with its own `[paths] data_dir`, `HOME`/`XDG_*` all
-redirected, the model cache read-only and `HF_HUB_OFFLINE=1`; isolation
-confirmed at the running PID (`lsof`: **0** handles under the real profile,
-64 under the scratch) and the real `config.toml` byte-identical before and
-after. The library was built through the app's own paths — **36 of this
-repo's User Guide pages written with `add_note` and indexed with
-`index_entries`** — and the app listed them as "Notes (36)", offered them as
-a selected source, and started a run after the mode control was switched to
-"mode: Search ⇄ ✓ RAG Answer". **What was NOT verified:** that run did not
-finish. The first RAG Answer query on a fresh profile sat on "searching ·
-Notes…" at ~98% CPU for **eleven minutes** without rendering an Evidence row
-— the same stall the 2026-08-12 check hit at four minutes, now filed as
-TASK-15810 (a CPU sample puts the spin inside the Python interpreter, not in
-model loading, so the old "the embedding stack came up" attribution above is
-not established). No Evidence row was seen on screen. **What the claims DO
-rest on:** the same app-written notes and the same app-written vector index,
-through the engine's own hybrid search, two arms one config value apart:*
-
-- *"how do I schedule a watchlist brief" — the shipped `and_then_prefix`
-  builds `'"how" "do" "I" "schedule" "a" "watchlist" "brief"'` and, that
-  returning nothing, `'"schedule"* "watchlist"* "brief"*'`: the keyword leg
-  returns **1 row**, `watchlists.md`, stamped `prefix`. The previous default
-  builds `'"schedule" "watchlist" "brief"'` and its leg returns **0 rows** —
-  the page says "briefing", never "brief". Fused, the page's score rises
-  0.1167 → **0.1667** (it becomes a keyword+vector row); its rank does not
-  move, because the vector leg already had it first.*
-- *"what does the anyone brief do" — a query whose target the vector leg
-  misses entirely. Shipped: `watchlists.md` sits in the fused list at **rank
-  7 of 13**. Previous default: **absent**, 12 rows. That pair of lists is
-  the arc's claim.*
-- *Control, "how do I change the color theme and appearance": both arms
-  return the **same 15 rows, same order, same scores**, and the keyword leg
-  answers from its AND primary under both — the change does not touch a
-  query whose words are all present.*
-
-*Honest bound on all three: on a 36-page library of real documentation the
-vector leg answers nearly everything, so the shipped construction's gain
-shows up as a keyword row and a score rather than as a reordering. That is
-exactly what the harness predicted (0 of 105 gated metrics moved); the gain
-is leg-level and matters where the vector leg is blind, absent or scoped
-away.*
-
-- ***Depth follows the profile, both ways.*** On the shipped default
-  profile the Evidence heading read **"Evidence · top 15 per source"** and
-  the keyword query "settings" returned **16 results** — its 15-note
-  per-source cap plus one conversation — with the list scrolling normally
-  through all 16 cards. Cloning that profile, setting the clone's **Default
-  results** to 5 in Settings ▸ RAG (one constant apart, nothing else
-  changed) and re-running the *same query on the same data* gave
-  **"Evidence · top 5 per source"** and **6 results**, with no restart. Both
-  numbers came from the profile; neither is reachable from any control on
-  the canvas, which has none.
-- ***A scoped hybrid query keeps its keyword leg.*** With a Console RAG
-  scope narrowed to a single note (`Scope: 1`) and the hybrid profile
-  active, "zircaloy flange torque" staged that note as evidence — a note
-  seeded after the vector index was copied and never indexed during the
-  session, so the keyword leg is what produced it, and the pre-B1 scoped
-  divert to semantic-only could not have. No "semantic only" text appeared
-  anywhere on that screen.
-- ***A prompt can now be found.*** In RAG Answer mode on the hybrid
-  profile, "shift log summary supervisor" returned the saved prompt *Shift
-  log summary for a supervisor* as evidence row 4, typed `prompt` and
-  banded **`| keyword match`** — the first time a prompt has appeared in
-  these results at all.
-
-*Verified against `feat/rag-3502-reranker-followups` — 2026-08-16
-(TASK-3502 note-(a), the reranking-disclosure sentence on the Evidence
-region's quiet note line — the first UI consumer of tags the engine had
-been writing with nothing reading them). Verified by tests, not a live
-walkthrough: the tag is traced end to end from the engine's `SearchResult`
-metadata onto the panel's row provenance
-(`Tests/Library/test_library_local_rag_search_service.py`), and both
-sentences plus an untagged control are asserted on the rendered
-`#library-rag-coverage-note` Static
-(`Tests/UI/test_product_maturity_gate16_library_search_rag.py`).*
-
-*Verified against fix/rag-four-seam-cross-ranking @ 6af4ea3bc — 2026-08-14
-(TASK-16071, the "Row order in Search mode" paragraph under
-[Evidence rows](#evidence-rows)). **Scratch profile** with its own
-`[paths] data_dir`, `HOME`/`XDG_*` redirected and `HF_HUB_OFFLINE=1`;
-isolation confirmed at the running PID (`lsof`: **0** handles under the real
-profile, 52 under the scratch) and the real `config.toml` byte-identical
-before and after. The library was built through the app's own writers — 12
-shift-log notes that mention "kestrel gearbox inspection" in passing, one
-media document that IS the inspection manual, and one conversation about
-scheduling it — because a real library rarely holds one query matching
-several notes AND a media item AND a conversation, and without that
-precondition this change has nothing to show. Library ▸ Search / RAG in
-**Search** mode on the default profile, heading "Evidence · top 15 per
-source" and **14 results** in both arms, same data, one code constant apart:*
-
-- *Shipped merge: **1.** Shift log 01 (note), **2. Kestrel gearbox inspection
-  manual** (Media), **3. Maintenance: kestrel gearbox inspection scheduling**
-  (conversation), then shift logs 02-12 filling rows 4-14.*
-- *The previous fixed-order concatenation, restored in the same session for
-  the comparison: shift logs 01-12 at rows **1-12**, the media manual at
-  **13**, the conversation at **14**.*
-
-*So the document the query is actually about moved from row 13 to row 2 on
-identical data, and the row count did not change (nothing is truncated here).
-**What was NOT exercised:** RAG Answer mode on a plain profile, which inherits
-this same reorder and was not run live (only Search mode was) — so the
-TASK-15810 first-query stall, which belongs to the embedding path, was never in
-play; the keyword-only Search run had its full list on screen at the first
-capture after Enter, in both arms. Hybrid and semantic profiles are untouched
-by the change rather than merely unexercised: their retrieval never enters this
-merge.*
-
-*Verified against feat/chunking-template-parity — 2026-08-21
-(chunking-template-parity tasks 12-13: the Sources block gains the
-"Chunked by an older engine: N items" report line and the "Re-chunk
-older-engine items" action documented above. The line is fetched off the
-mount path via the RAG admin scope service's diagnostics payload and is
-omitted when empty; the re-chunk worker runs in its own worker group
-behind a shared in-flight guard with the Settings backfill (a refusal
-notice, never worker cancellation), replaces chunk rows in one
-transaction honoring each item's stored template choice, force-reindexes
-by deterministic vector id with the pre-add needs-reindexing mark, and
-clears the query cache. Pinned by
-`Tests/UI/test_library_rag_legacy_chunk_report.py`,
-`Tests/Library/test_library_rechunk_service.py`,
-`Tests/UI/test_library_rag_rechunk_action.py`, and
-`Tests/RuntimePolicy/test_rechunk_policy_pin.py`.)*
-
-*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
-docs-vs-live pass from critique #8): `enter`, `o` and `u` are bound and
-advertised in the footer, and each one gates on a focused
-`.library-rag-result-card` — but nothing gives an evidence card focus by
-keyboard, so the advertised flow is unreachable without a mouse (14
-consecutive Tabs never landed on a card and eventually left Library for
-the nav bar). The keys themselves are unchanged; the table now says which
-half works today. The fix is task-32053.)*
-
-*Verified against fix/library-crit8-keyboard — 2026-09-08 (task-32053: the
-focused evidence card now paints a left-edge block instead of only swapping
-its border colour — the generic focus outline had been painting over the
-card's own border, so the cue was colour-alone; **Run** gains the compact
-buttons' focus rails; the footer's Enter hint follows the focused control;
-and Escape leaves the query box. Pinned in
-`Tests/UI/test_library_crit8_keyboard.py`.)*
-
-*Verified against fix/library-crit9-grammar — 2026-09-10 (task-32236 and
-task-32235: a RAG Answer blocked on a missing provider credential now paints
-ONE line — "No analysis provider is configured · Set one in Settings ▸
-Providers & Models." — plus an "Open Settings ▸ Providers" button, instead of
-six lines naming an env var, a TOML table and an "Owner"; the structured
-record moved to the log. The Sources toggles read "☐/☑", not "○/✓".
-Live-verified at 235x52 and 100x30 on a profile with no provider.)*
-
-*Verified against fix/library-crit10-docs — 2026-09-11 (task-32366: 14
-critique-10 claims reconciled; surface fixes in task-32346, 32348, 32349,
-32354, 32355). The "mode: ✓ Search ⇄ RAG Answer" toggle this page documents
-was re-checked live at 235x52 and is the first control on the canvas — the
-critique row claiming it does not exist was wrong, and nothing here changed.*
-
-
-*Keyboard answer-reading route verified on `feat/component-pattern-library`
-from `b4a085de18` — 2026-09-17 UTC (TASK-32714): 24 mounted cases cover
-short/long replies and all three citation states in both themes at 170×48
-and 80×24; 12 native long-answer cases use real local keyword retrieval and
-controlled replies. This verifies reading/navigation, not real-provider output
-or factual grounding. [Evidence](../../superpowers/qa/2026-09-17-rag-answer-navigation/README.md).*
-
-*Query return and resize focus verified on `feat/component-pattern-library`
-from `71f7b33658` — 2026-09-17 UTC (TASK-32715): query/evidence focus now
-survives compact/wide resizing. Twelve new mounted regressions pass within
-a 98-test targeted run; four private native journeys pass sixteen resize
-transitions in both themes using local keyword retrieval and controlled
-replies. Shift+Tab returns through the panel to an editable RAG query without
-resubmitting. [Evidence](../../superpowers/qa/2026-09-17-rag-query-return/README.md).*
-
-*Recent-search replay and clearing verified on `feat/component-pattern-library`
-from `cfa89372b5` — 2026-09-17 UTC (TASK-32716): replay synchronizes both query
-fields and answer arrival keeps current focus visible. Eighteen new mounted
-cases pass within 148 targeted checks. Eight private native journeys cover
-both themes, sizes and modes using real keyword retrieval and controlled
-answers; clearing retains query/results/answer and persists an empty history.
-[Evidence](../../superpowers/qa/2026-09-17-rag-history-replay/README.md).*

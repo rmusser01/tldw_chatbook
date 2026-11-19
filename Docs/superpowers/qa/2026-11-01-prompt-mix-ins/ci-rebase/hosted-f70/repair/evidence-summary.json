@@ -1,0 +1,210 @@
+[
+  {
+    "phase": "diagnostic_owner_red",
+    "xml": "owner-probe.xml",
+    "cases": [
+      {
+        "node": "Tests/UI/test_library_note_links_picker_and_preview.py::test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+        "time": "41.460",
+        "result": "failure"
+      }
+    ]
+  },
+  {
+    "phase": "permanent_first_red",
+    "xml": "permanent-red.xml",
+    "cases": [
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[pending]",
+        "time": "0.210",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[mounting]",
+        "time": "0.289",
+        "result": "failure"
+      }
+    ]
+  },
+  {
+    "phase": "permanent_intermediate_red",
+    "xml": "frozen-red.xml",
+    "cases": [
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[pending]",
+        "time": "0.231",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[mounting]",
+        "time": "0.320",
+        "result": "failure"
+      }
+    ]
+  },
+  {
+    "phase": "permanent_final_red",
+    "xml": "final-red.xml",
+    "cases": [
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[pending]",
+        "time": "0.208",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[mounting]",
+        "time": "0.302",
+        "result": "failure"
+      }
+    ]
+  },
+  {
+    "phase": "mixed_before_doc_green",
+    "xml": "frozen-green.xml",
+    "cases": [
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[pending]",
+        "time": "0.433",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[mounting]",
+        "time": "0.194",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_library_returning_landing_sync_retains_actions_focus_and_updates_copy",
+        "time": "0.239",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_library_landing_syncs_unknown_to_starter_without_duplicate_actions",
+        "time": "0.160",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_library_landing_syncs_starter_to_expanded_without_stale_recents",
+        "time": "0.209",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_landing_snapshot_sync_retains_actions_focus_and_updates_recents",
+        "time": "0.182",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_landing_deferred_recents_converge_on_latest_state",
+        "time": "0.121",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_stale_landing_deferred_sync_performs_zero_dom_mutation",
+        "time": "0.116",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_two_changed_generations_render_only_the_newer_generation",
+        "time": "0.101",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_queued_reconcile_supersedes_after_route_switch",
+        "time": "0.124",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_detached_queued_reconcile_completion_is_a_noop",
+        "time": "0.097",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_same_generation_new_route_receives_its_own_first_retry",
+        "time": "0.088",
+        "result": "failure"
+      },
+      {
+        "node": "Tests/UI/test_library_canvas_sync_defects.py::test_strict_failure_retry_retains_original_semantic_focus",
+        "time": "0.121",
+        "result": "failure"
+      }
+    ]
+  },
+  {
+    "phase": "inherited_bootstrap_green",
+    "xml": "inherited-bootstrap.xml",
+    "cases": [
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_landing_snapshot_sync_retains_actions_focus_and_updates_recents",
+        "time": "3.016",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_landing_deferred_recents_converge_on_latest_state",
+        "time": "2.050",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_stale_landing_deferred_sync_performs_zero_dom_mutation",
+        "time": "1.789",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_two_changed_generations_render_only_the_newer_generation",
+        "time": "2.649",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_queued_reconcile_supersedes_after_route_switch",
+        "time": "2.605",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_detached_queued_reconcile_completion_is_a_noop",
+        "time": "2.492",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_entry_compose_once.py::test_same_generation_new_route_receives_its_own_first_retry",
+        "time": "2.671",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_canvas_sync_defects.py::test_strict_failure_retry_retains_original_semantic_focus",
+        "time": "2.765",
+        "result": "pass"
+      }
+    ]
+  },
+  {
+    "phase": "ordinary_final_native_green",
+    "xml": "final-native.xml",
+    "cases": [
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[pending]",
+        "time": "0.425",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_landing_recompose_publication.py::test_landing_recompose_publishes_latest_state_and_finishes_once[mounting]",
+        "time": "0.241",
+        "result": "pass"
+      },
+      {
+        "node": "Tests/UI/test_library_note_links_picker_and_preview.py::test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+        "time": "30.410",
+        "result": "pass"
+      }
+    ]
+  },
+  {
+    "phase": "diagnostic_owner_green",
+    "xml": "owner-green/owner-probe.xml",
+    "cases": [
+      {
+        "node": "Tests/UI/test_library_note_links_picker_and_preview.py::test_typing_two_brackets_opens_a_keyboard_picker_that_inserts_a_real_link",
+        "time": "31.933",
+        "result": "pass"
+      }
+    ]
+  }
+]

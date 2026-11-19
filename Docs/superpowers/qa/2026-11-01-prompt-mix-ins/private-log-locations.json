@@ -1,0 +1,794 @@
+[
+  {
+    "original": "/private/tmp/task7-final-busy.log",
+    "preserved": "private-logs/task7-final-busy.log"
+  },
+  {
+    "original": "/private/tmp/task5-iter1.log",
+    "preserved": "private-logs/task5-iter1.log"
+  },
+  {
+    "original": "/private/tmp/task5-ruff-exact-head.json",
+    "preserved": "private-logs/task5-ruff-exact-head.json"
+  },
+  {
+    "original": "/private/tmp/task7-baseline-original.log",
+    "preserved": "private-logs/task7-baseline-original.log"
+  },
+  {
+    "original": "/private/tmp/task9-queue-diagnostic2.log",
+    "preserved": "private-logs/task9-queue-diagnostic2.log"
+  },
+  {
+    "original": "/private/tmp/task9-queue-diagnostic3.log",
+    "preserved": "private-logs/task9-queue-diagnostic3.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-green.log",
+    "preserved": "private-logs/mixins3-green.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-regressions.log",
+    "preserved": "private-logs/mixins3-regressions.log"
+  },
+  {
+    "original": "/private/tmp/task5-iter2.log",
+    "preserved": "private-logs/task5-iter2.log"
+  },
+  {
+    "original": "/private/tmp/task9-resend.log",
+    "preserved": "private-logs/task9-resend.log"
+  },
+  {
+    "original": "/private/tmp/task9-final.log",
+    "preserved": "private-logs/task9-final.log"
+  },
+  {
+    "original": "/private/tmp/task9-resend2.log",
+    "preserved": "private-logs/task9-resend2.log"
+  },
+  {
+    "original": "/private/tmp/task5-iter3.log",
+    "preserved": "private-logs/task5-iter3.log"
+  },
+  {
+    "original": "/private/tmp/task5-owners2.log",
+    "preserved": "private-logs/task5-owners2.log"
+  },
+  {
+    "original": "/private/tmp/task5-baseline.log",
+    "preserved": "private-logs/task5-baseline.log"
+  },
+  {
+    "original": "/private/tmp/task5-fix1-final.log",
+    "preserved": "private-logs/task5-fix1-final.log"
+  },
+  {
+    "original": "/private/tmp/task5-iter7.log",
+    "preserved": "private-logs/task5-iter7.log"
+  },
+  {
+    "original": "/private/tmp/task7-targets.log",
+    "preserved": "private-logs/task7-targets.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-marker-red.log",
+    "preserved": "private-logs/mixins3-marker-red.log"
+  },
+  {
+    "original": "/private/tmp/task8-flow.txt",
+    "preserved": "private-logs/task8-flow.txt"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-craft-read.txt",
+    "preserved": "private-logs/task8-fix1-craft-read.txt"
+  },
+  {
+    "original": "/private/tmp/task7-current-baseline-check.log",
+    "preserved": "private-logs/task7-current-baseline-check.log"
+  },
+  {
+    "original": "/private/tmp/task7-regressions.log",
+    "preserved": "private-logs/task7-regressions.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-fix-ruff.json",
+    "preserved": "private-logs/mixins3-fix-ruff.json"
+  },
+  {
+    "original": "/private/tmp/task5-iter6.log",
+    "preserved": "private-logs/task5-iter6.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-fix-red.log",
+    "preserved": "private-logs/mixins3-fix-red.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-legacy-red.log",
+    "preserved": "private-logs/mixins3-legacy-red.log"
+  },
+  {
+    "original": "/private/tmp/task7-final-ui-consumer.log",
+    "preserved": "private-logs/task7-final-ui-consumer.log"
+  },
+  {
+    "original": "/private/tmp/task7-fix1-python-files.json",
+    "preserved": "private-logs/task7-fix1-python-files.json"
+  },
+  {
+    "original": "/private/tmp/task5-ruff-new.log",
+    "preserved": "private-logs/task5-ruff-new.log"
+  },
+  {
+    "original": "/private/tmp/task5-final-owners.log",
+    "preserved": "private-logs/task5-final-owners.log"
+  },
+  {
+    "original": "/private/tmp/task5-iter4.log",
+    "preserved": "private-logs/task5-iter4.log"
+  },
+  {
+    "original": "/private/tmp/task7-fix1-green-attempt.log",
+    "preserved": "private-logs/task7-fix1-green-attempt.log"
+  },
+  {
+    "original": "/private/tmp/task8-new-ruff.json",
+    "preserved": "private-logs/task8-new-ruff.json"
+  },
+  {
+    "original": "/private/tmp/task8-base-action-nodes.txt",
+    "preserved": "private-logs/task8-base-action-nodes.txt"
+  },
+  {
+    "original": "/private/tmp/task5-owner-debug.log",
+    "preserved": "private-logs/task5-owner-debug.log"
+  },
+  {
+    "original": "/private/tmp/task8-capture-initial.txt",
+    "preserved": "private-logs/task8-capture-initial.txt"
+  },
+  {
+    "original": "/private/tmp/task5-iter5.log",
+    "preserved": "private-logs/task5-iter5.log"
+  },
+  {
+    "original": "/private/tmp/task9-red.log",
+    "preserved": "private-logs/task9-red.log"
+  },
+  {
+    "original": "/private/tmp/task5-debug.log",
+    "preserved": "private-logs/task5-debug.log"
+  },
+  {
+    "original": "/private/tmp/task8-source-qualified-capture.txt",
+    "preserved": "private-logs/task8-source-qualified-capture.txt"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-ruff-base.json",
+    "preserved": "private-logs/mixin-task2-ruff-base.json"
+  },
+  {
+    "original": "/private/tmp/mixin-task6-fix1-lint.json",
+    "preserved": "private-logs/mixin-task6-fix1-lint.json"
+  },
+  {
+    "original": "/private/tmp/task7-state.log",
+    "preserved": "private-logs/task7-state.log"
+  },
+  {
+    "original": "/private/tmp/task5-more2.log",
+    "preserved": "private-logs/task5-more2.log"
+  },
+  {
+    "original": "/private/tmp/task8-green3.txt",
+    "preserved": "private-logs/task8-green3.txt"
+  },
+  {
+    "original": "/private/tmp/task8-green2.txt",
+    "preserved": "private-logs/task8-green2.txt"
+  },
+  {
+    "original": "/private/tmp/task9-live-root.txt",
+    "preserved": "private-logs/task9-live-root.txt"
+  },
+  {
+    "original": "/private/tmp/task5-more3.log",
+    "preserved": "private-logs/task5-more3.log"
+  },
+  {
+    "original": "/private/tmp/task7-final-ordering.log",
+    "preserved": "private-logs/task7-final-ordering.log"
+  },
+  {
+    "original": "/private/tmp/task8-lint-current.json",
+    "preserved": "private-logs/task8-lint-current.json"
+  },
+  {
+    "original": "/private/tmp/mixins3-base-fts.log",
+    "preserved": "private-logs/mixins3-base-fts.log"
+  },
+  {
+    "original": "/private/tmp/task7-python-files.json",
+    "preserved": "private-logs/task7-python-files.json"
+  },
+  {
+    "original": "/private/tmp/task8-css-final.txt",
+    "preserved": "private-logs/task8-css-final.txt"
+  },
+  {
+    "original": "/private/tmp/task8-retry-final.txt",
+    "preserved": "private-logs/task8-retry-final.txt"
+  },
+  {
+    "original": "/private/tmp/task5-fix2-green.log",
+    "preserved": "private-logs/task5-fix2-green.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-new-final.log",
+    "preserved": "private-logs/mixins3-new-final.log"
+  },
+  {
+    "original": "/private/tmp/task5-fix1-lint.json",
+    "preserved": "private-logs/task5-fix1-lint.json"
+  },
+  {
+    "original": "/private/tmp/task7-wiring-final.log",
+    "preserved": "private-logs/task7-wiring-final.log"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-save-probe.txt",
+    "preserved": "private-logs/task8-fix1-save-probe.txt"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-lint-delta.json",
+    "preserved": "private-logs/task8-fix1-lint-delta.json"
+  },
+  {
+    "original": "/private/tmp/task7-create-diagnostic.log",
+    "preserved": "private-logs/task7-create-diagnostic.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-fix-green.log",
+    "preserved": "private-logs/mixins3-fix-green.log"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-save-settled.txt",
+    "preserved": "private-logs/task8-fix1-save-settled.txt"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-red-keyword-privacy.txt",
+    "preserved": "private-logs/mixin-task2-red-keyword-privacy.txt"
+  },
+  {
+    "original": "/private/tmp/task7-final-qualified.log",
+    "preserved": "private-logs/task7-final-qualified.log"
+  },
+  {
+    "original": "/private/tmp/task9-predecessors.log",
+    "preserved": "private-logs/task9-predecessors.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-rewrite-red.log",
+    "preserved": "private-logs/mixins3-rewrite-red.log"
+  },
+  {
+    "original": "/private/tmp/task8-green1.txt",
+    "preserved": "private-logs/task8-green1.txt"
+  },
+  {
+    "original": "/private/tmp/mixin-audit.txt",
+    "preserved": "private-logs/mixin-audit.txt"
+  },
+  {
+    "original": "/private/tmp/task8-base-nodes.txt",
+    "preserved": "private-logs/task8-base-nodes.txt"
+  },
+  {
+    "original": "/private/tmp/task5-fix1-ruff-differential.json",
+    "preserved": "private-logs/task5-fix1-ruff-differential.json"
+  },
+  {
+    "original": "/private/tmp/task5-ruff.log",
+    "preserved": "private-logs/task5-ruff.log"
+  },
+  {
+    "original": "/private/tmp/task7-ordering-boundary.log",
+    "preserved": "private-logs/task7-ordering-boundary.log"
+  },
+  {
+    "original": "/private/tmp/task5-fix2-red.log",
+    "preserved": "private-logs/task5-fix2-red.log"
+  },
+  {
+    "original": "/private/tmp/task5-fix1-db.log",
+    "preserved": "private-logs/task5-fix1-db.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-import-lint.json",
+    "preserved": "private-logs/mixins3-import-lint.json"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-green.txt",
+    "preserved": "private-logs/task8-fix1-green.txt"
+  },
+  {
+    "original": "/private/tmp/task9-journey8.log",
+    "preserved": "private-logs/task9-journey8.log"
+  },
+  {
+    "original": "/private/tmp/task5-more4.log",
+    "preserved": "private-logs/task5-more4.log"
+  },
+  {
+    "original": "/private/tmp/task5-fix2-cover.log",
+    "preserved": "private-logs/task5-fix2-cover.log"
+  },
+  {
+    "original": "/private/tmp/task8-green5.txt",
+    "preserved": "private-logs/task8-green5.txt"
+  },
+  {
+    "original": "/private/tmp/task5-restart-debug.log",
+    "preserved": "private-logs/task5-restart-debug.log"
+  },
+  {
+    "original": "/private/tmp/task7-lint-base.json",
+    "preserved": "private-logs/task7-lint-base.json"
+  },
+  {
+    "original": "/private/tmp/task8-green4.txt",
+    "preserved": "private-logs/task8-green4.txt"
+  },
+  {
+    "original": "/private/tmp/task5-fix2-ruff-differential.json",
+    "preserved": "private-logs/task5-fix2-ruff-differential.json"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-review1-ruff-current.json",
+    "preserved": "private-logs/mixin-task2-review1-ruff-current.json"
+  },
+  {
+    "original": "/private/tmp/task5-more5.log",
+    "preserved": "private-logs/task5-more5.log"
+  },
+  {
+    "original": "/private/tmp/task8-owners.txt",
+    "preserved": "private-logs/task8-owners.txt"
+  },
+  {
+    "original": "/private/tmp/task5-final-base-attribution.log",
+    "preserved": "private-logs/task5-final-base-attribution.log"
+  },
+  {
+    "original": "/private/tmp/task8-lint-delta.json",
+    "preserved": "private-logs/task8-lint-delta.json"
+  },
+  {
+    "original": "/private/tmp/task5-critical-lint.log",
+    "preserved": "private-logs/task5-critical-lint.log"
+  },
+  {
+    "original": "/private/tmp/task5-retry-red.log",
+    "preserved": "private-logs/task5-retry-red.log"
+  },
+  {
+    "original": "/private/tmp/task5-more7.log",
+    "preserved": "private-logs/task5-more7.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-red.log",
+    "preserved": "private-logs/mixins3-red.log"
+  },
+  {
+    "original": "/private/tmp/task8-lint-base.json",
+    "preserved": "private-logs/task8-lint-base.json"
+  },
+  {
+    "original": "/private/tmp/mixins3-storage2.log",
+    "preserved": "private-logs/mixins3-storage2.log"
+  },
+  {
+    "original": "/private/tmp/task7-review-invalid.log",
+    "preserved": "private-logs/task7-review-invalid.log"
+  },
+  {
+    "original": "/private/tmp/task8-green6.txt",
+    "preserved": "private-logs/task8-green6.txt"
+  },
+  {
+    "original": "/private/tmp/task8-green7.txt",
+    "preserved": "private-logs/task8-green7.txt"
+  },
+  {
+    "original": "/private/tmp/mixins3-storage3.log",
+    "preserved": "private-logs/mixins3-storage3.log"
+  },
+  {
+    "original": "/private/tmp/task5-more6.log",
+    "preserved": "private-logs/task5-more6.log"
+  },
+  {
+    "original": "/private/tmp/task5-ruff-exact-base-head.json",
+    "preserved": "private-logs/task5-ruff-exact-base-head.json"
+  },
+  {
+    "original": "/private/tmp/task7-final-confirmation.log",
+    "preserved": "private-logs/task7-final-confirmation.log"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-final-targeted.txt",
+    "preserved": "private-logs/mixin-task2-final-targeted.txt"
+  },
+  {
+    "original": "/private/tmp/mixin-task6-lint.json",
+    "preserved": "private-logs/mixin-task6-lint.json"
+  },
+  {
+    "original": "/private/tmp/task8-red.txt",
+    "preserved": "private-logs/task8-red.txt"
+  },
+  {
+    "original": "/private/tmp/task9-journey7.log",
+    "preserved": "private-logs/task9-journey7.log"
+  },
+  {
+    "original": "/private/tmp/task7-ready-review.log",
+    "preserved": "private-logs/task7-ready-review.log"
+  },
+  {
+    "original": "/private/tmp/task5-ruff-exact-base.json",
+    "preserved": "private-logs/task5-ruff-exact-base.json"
+  },
+  {
+    "original": "/private/tmp/mixins3-fix-schema.log",
+    "preserved": "private-logs/mixins3-fix-schema.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-seam-green.log",
+    "preserved": "private-logs/mixins3-seam-green.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-fts-green.log",
+    "preserved": "private-logs/mixins3-fts-green.log"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-ruff-current.json",
+    "preserved": "private-logs/mixin-task2-ruff-current.json"
+  },
+  {
+    "original": "/private/tmp/task9-journey6.log",
+    "preserved": "private-logs/task9-journey6.log"
+  },
+  {
+    "original": "/private/tmp/task7-green1.log",
+    "preserved": "private-logs/task7-green1.log"
+  },
+  {
+    "original": "/private/tmp/task7-green3.log",
+    "preserved": "private-logs/task7-green3.log"
+  },
+  {
+    "original": "/private/tmp/task7-source-red.log",
+    "preserved": "private-logs/task7-source-red.log"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-lint-base.json",
+    "preserved": "private-logs/task8-fix1-lint-base.json"
+  },
+  {
+    "original": "/private/tmp/task5-more8.log",
+    "preserved": "private-logs/task5-more8.log"
+  },
+  {
+    "original": "/private/tmp/task9-journey4.log",
+    "preserved": "private-logs/task9-journey4.log"
+  },
+  {
+    "original": "/private/tmp/task8-inspector-guards.txt",
+    "preserved": "private-logs/task8-inspector-guards.txt"
+  },
+  {
+    "original": "/private/tmp/mixins3-final.log",
+    "preserved": "private-logs/mixins3-final.log"
+  },
+  {
+    "original": "/private/tmp/task5-new-lint-fix.log",
+    "preserved": "private-logs/task5-new-lint-fix.log"
+  },
+  {
+    "original": "/private/tmp/task7-confirm-final.log",
+    "preserved": "private-logs/task7-confirm-final.log"
+  },
+  {
+    "original": "/private/tmp/task8-green8.txt",
+    "preserved": "private-logs/task8-green8.txt"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-review1-red.txt",
+    "preserved": "private-logs/mixin-task2-review1-red.txt"
+  },
+  {
+    "original": "/private/tmp/task5-fix1-anchor.log",
+    "preserved": "private-logs/task5-fix1-anchor.log"
+  },
+  {
+    "original": "/private/tmp/task9-journey5.log",
+    "preserved": "private-logs/task9-journey5.log"
+  },
+  {
+    "original": "/private/tmp/task7-visual-confirm.log",
+    "preserved": "private-logs/task7-visual-confirm.log"
+  },
+  {
+    "original": "/private/tmp/task8-focus-preview.txt",
+    "preserved": "private-logs/task8-focus-preview.txt"
+  },
+  {
+    "original": "/private/tmp/task7-green2.log",
+    "preserved": "private-logs/task7-green2.log"
+  },
+  {
+    "original": "/private/tmp/task8-css.txt",
+    "preserved": "private-logs/task8-css.txt"
+  },
+  {
+    "original": "/private/tmp/task7-final-race.log",
+    "preserved": "private-logs/task7-final-race.log"
+  },
+  {
+    "original": "/private/tmp/task9-queue-diagnostic.log",
+    "preserved": "private-logs/task9-queue-diagnostic.log"
+  },
+  {
+    "original": "/private/tmp/task9-journey1.log",
+    "preserved": "private-logs/task9-journey1.log"
+  },
+  {
+    "original": "/private/tmp/task5-negatives.log",
+    "preserved": "private-logs/task5-negatives.log"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-final-initial.txt",
+    "preserved": "private-logs/mixin-task2-final-initial.txt"
+  },
+  {
+    "original": "/private/tmp/task8-notes.txt",
+    "preserved": "private-logs/task8-notes.txt"
+  },
+  {
+    "original": "/private/tmp/mixins3-integration.log",
+    "preserved": "private-logs/mixins3-integration.log"
+  },
+  {
+    "original": "/private/tmp/task5-fix1-proof1.log",
+    "preserved": "private-logs/task5-fix1-proof1.log"
+  },
+  {
+    "original": "/private/tmp/task5-fix1-proof3.log",
+    "preserved": "private-logs/task5-fix1-proof3.log"
+  },
+  {
+    "original": "/private/tmp/task8-final-risk.txt",
+    "preserved": "private-logs/task8-final-risk.txt"
+  },
+  {
+    "original": "/private/tmp/task7-fix1-lint-current.json",
+    "preserved": "private-logs/task7-fix1-lint-current.json"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-review1-ruff-base.json",
+    "preserved": "private-logs/mixin-task2-review1-ruff-base.json"
+  },
+  {
+    "original": "/private/tmp/task9-journey2.log",
+    "preserved": "private-logs/task9-journey2.log"
+  },
+  {
+    "original": "/private/tmp/task5-baseline-admitted.log",
+    "preserved": "private-logs/task5-baseline-admitted.log"
+  },
+  {
+    "original": "/private/tmp/task7-debug.log",
+    "preserved": "private-logs/task7-debug.log"
+  },
+  {
+    "original": "/private/tmp/task9-journey3.log",
+    "preserved": "private-logs/task9-journey3.log"
+  },
+  {
+    "original": "/private/tmp/task5-fix1-proof2.log",
+    "preserved": "private-logs/task5-fix1-proof2.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-baseline-regressions.log",
+    "preserved": "private-logs/mixins3-baseline-regressions.log"
+  },
+  {
+    "original": "/private/tmp/task5-agent1.log",
+    "preserved": "private-logs/task5-agent1.log"
+  },
+  {
+    "original": "/private/tmp/task9-predecessors2.log",
+    "preserved": "private-logs/task9-predecessors2.log"
+  },
+  {
+    "original": "/private/tmp/task8-runtime.txt",
+    "preserved": "private-logs/task8-runtime.txt"
+  },
+  {
+    "original": "/private/tmp/mixins3-recovery-green.log",
+    "preserved": "private-logs/mixins3-recovery-green.log"
+  },
+  {
+    "original": "/private/tmp/task5-new-lint.json",
+    "preserved": "private-logs/task5-new-lint.json"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-base-chatbooks.txt",
+    "preserved": "private-logs/mixin-task2-base-chatbooks.txt"
+  },
+  {
+    "original": "/private/tmp/task8-capture-final-sync.txt",
+    "preserved": "private-logs/task8-capture-final-sync.txt"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-covering.txt",
+    "preserved": "private-logs/task8-fix1-covering.txt"
+  },
+  {
+    "original": "/private/tmp/mixins3-lifecycle.log",
+    "preserved": "private-logs/mixins3-lifecycle.log"
+  },
+  {
+    "original": "/private/tmp/task5-fix1-anchor2.log",
+    "preserved": "private-logs/task5-fix1-anchor2.log"
+  },
+  {
+    "original": "/private/tmp/task5-final-lint.json",
+    "preserved": "private-logs/task5-final-lint.json"
+  },
+  {
+    "original": "/private/tmp/task7-lint-current.json",
+    "preserved": "private-logs/task7-lint-current.json"
+  },
+  {
+    "original": "/private/tmp/mixins3-ruff-fix.log",
+    "preserved": "private-logs/mixins3-ruff-fix.log"
+  },
+  {
+    "original": "/private/tmp/task8-capture-final.txt",
+    "preserved": "private-logs/task8-capture-final.txt"
+  },
+  {
+    "original": "/private/tmp/task5-agent2.log",
+    "preserved": "private-logs/task5-agent2.log"
+  },
+  {
+    "original": "/private/tmp/task5-final-focused.log",
+    "preserved": "private-logs/task5-final-focused.log"
+  },
+  {
+    "original": "/private/tmp/task5-red.log",
+    "preserved": "private-logs/task5-red.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-fts-red.log",
+    "preserved": "private-logs/mixins3-fts-red.log"
+  },
+  {
+    "original": "/private/tmp/task7-capture.log",
+    "preserved": "private-logs/task7-capture.log"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-completions-final.txt",
+    "preserved": "private-logs/task8-fix1-completions-final.txt"
+  },
+  {
+    "original": "/private/tmp/task8-historical.txt",
+    "preserved": "private-logs/task8-historical.txt"
+  },
+  {
+    "original": "/private/tmp/task7-source-final.log",
+    "preserved": "private-logs/task7-source-final.log"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-format-base.txt",
+    "preserved": "private-logs/mixin-task2-format-base.txt"
+  },
+  {
+    "original": "/private/tmp/task9-extended.log",
+    "preserved": "private-logs/task9-extended.log"
+  },
+  {
+    "original": "/private/tmp/task8-ui2.txt",
+    "preserved": "private-logs/task8-ui2.txt"
+  },
+  {
+    "original": "/private/tmp/mixins3-ruff-new.log",
+    "preserved": "private-logs/mixins3-ruff-new.log"
+  },
+  {
+    "original": "/private/tmp/task5-more.log",
+    "preserved": "private-logs/task5-more.log"
+  },
+  {
+    "original": "/private/tmp/task7-integrated5.log",
+    "preserved": "private-logs/task7-integrated5.log"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-lint-current.json",
+    "preserved": "private-logs/task8-fix1-lint-current.json"
+  },
+  {
+    "original": "/private/tmp/task7-fix1-red.log",
+    "preserved": "private-logs/task7-fix1-red.log"
+  },
+  {
+    "original": "/private/tmp/task8-final-ui.txt",
+    "preserved": "private-logs/task8-final-ui.txt"
+  },
+  {
+    "original": "/private/tmp/mixins3-seam-red.log",
+    "preserved": "private-logs/mixins3-seam-red.log"
+  },
+  {
+    "original": "/private/tmp/task9-new-lint.txt",
+    "preserved": "private-logs/task9-new-lint.txt"
+  },
+  {
+    "original": "/private/tmp/task9-packaging.log",
+    "preserved": "private-logs/task9-packaging.log"
+  },
+  {
+    "original": "/private/tmp/task5-owners.log",
+    "preserved": "private-logs/task5-owners.log"
+  },
+  {
+    "original": "/private/tmp/task8-recovery-final.txt",
+    "preserved": "private-logs/task8-recovery-final.txt"
+  },
+  {
+    "original": "/private/tmp/task8-ui1.txt",
+    "preserved": "private-logs/task8-ui1.txt"
+  },
+  {
+    "original": "/private/tmp/task7-fix1-green.log",
+    "preserved": "private-logs/task7-fix1-green.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-storage-green.log",
+    "preserved": "private-logs/mixins3-storage-green.log"
+  },
+  {
+    "original": "/private/tmp/task7-integrated6.log",
+    "preserved": "private-logs/task7-integrated6.log"
+  },
+  {
+    "original": "/private/tmp/mixins3-ruff-diff.json",
+    "preserved": "private-logs/mixins3-ruff-diff.json"
+  },
+  {
+    "original": "/private/tmp/mixin-task2-format-current.txt",
+    "preserved": "private-logs/mixin-task2-format-current.txt"
+  },
+  {
+    "original": "/private/tmp/task5-baseline-owner-nodeids.txt",
+    "preserved": "private-logs/task5-baseline-owner-nodeids.txt"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-red.txt",
+    "preserved": "private-logs/task8-fix1-red.txt"
+  },
+  {
+    "original": "/private/tmp/task8-fix1-final.txt",
+    "preserved": "private-logs/task8-fix1-final.txt"
+  },
+  {
+    "original": "/private/tmp/task5-baseline-admitted2.log",
+    "preserved": "private-logs/task5-baseline-admitted2.log"
+  },
+  {
+    "original": "/private/tmp/task7-fix1-lint-base.json",
+    "preserved": "private-logs/task7-fix1-lint-base.json"
+  }
+]

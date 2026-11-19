@@ -1,0 +1,63 @@
+{
+  "status": "final-source genuine Windows fs_read dispatch qualified",
+  "startup_permission": [
+    true,
+    "startup_allowed"
+  ],
+  "qualified_scope": "Actual native filesystem dispatch only; scripted tool-boundary decisions, no visible UI or model gateway",
+  "fixture_sha256": "62bc5b97ecede400a548347dec5b4659b798b0a45d402476de9f4c04d4365241",
+  "fixture_unchanged": true,
+  "no_session_grant_after_once": true,
+  "all_product_python_sources_stable_during_run": true,
+  "source_file_count": 2968,
+  "mcp_hash_matches_latest_passing_91": true,
+  "absent_facts": [
+    "No GUI launched or pixels captured",
+    "No native/browser presented-frame latency distribution",
+    "No p95 or100/200ms budget claim",
+    "No live model request"
+  ],
+  "fixture_bytes": 89,
+  "denial": {
+    "ok": false,
+    "outcome": "blocked",
+    "dispatch_state": "not_started"
+  },
+  "allow_once": {
+    "ok": true,
+    "approval_decision": "approved"
+  },
+  "processes": [
+    {
+      "guard_before_home_redirection": true,
+      "product_module_count": 18,
+      "origins_all_in_worktree": true,
+      "loaded_product_hashes_match_both_snapshots": true,
+      "network_attempts": 0
+    },
+    {
+      "guard_before_home_redirection": true,
+      "product_module_count": 542,
+      "origins_all_in_worktree": true,
+      "loaded_product_hashes_match_both_snapshots": true,
+      "network_attempts": 0
+    }
+  ],
+  "worker_frames": [
+    {
+      "version": 1,
+      "outcome": "admitted",
+      "code": "root_pinned",
+      "cleanup_proven": true,
+      "truncated": false
+    },
+    {
+      "version": 1,
+      "outcome": "success",
+      "code": "ok",
+      "cleanup_proven": true,
+      "truncated": false
+    }
+  ],
+  "original_receipt_sha256": "29932277dbda395204eea0ab696af038707bc18f308e72f36534aab8cda498c6"
+}

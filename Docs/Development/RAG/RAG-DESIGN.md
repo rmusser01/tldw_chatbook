@@ -631,18 +631,18 @@ async search_enhanced(
 ```python
 SearchRAGWindow.on_search_button_pressed()
 └── _perform_search()
-    ├── perform_plain_rag_search() → chat_rag_events.py
+    ├── perform_plain_rag_search() → RAG_Search/pipeline_builder_simple.py
     │   ├── Get or create RAG service
     │   ├── Search each source database (FTS5)
     │   ├── Apply re-ranking if enabled
     │   └── Format results
-    ├── perform_full_rag_pipeline() → chat_rag_events.py
+    ├── perform_full_rag_pipeline() → RAG_Search/pipeline_builder_simple.py
     │   ├── Get or create RAG service
     │   ├── Perform semantic search → RAGService.search()
     │   ├── Apply query expansion if enabled
     │   ├── Re-rank results
     │   └── Format with citations
-    └── perform_hybrid_rag_search() → chat_rag_events.py
+    └── perform_hybrid_rag_search() → RAG_Search/pipeline_builder_simple.py
         ├── Get or create RAG service
         ├── Perform hybrid search → RAGService.search(search_type="hybrid")
         ├── Apply advanced filtering

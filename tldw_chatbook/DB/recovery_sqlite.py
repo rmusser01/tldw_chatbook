@@ -4,13 +4,44 @@ These helpers neither choose an authority nor open/copy a database. Each owner
 retains its statically qualified private-SQLite calls and exact schema policy.
 """
 
+import sqlite3
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-import sqlite3
 from threading import Event
-from typing import Callable, Iterator
 
 from tldw_chatbook.Backup_Recovery.models import StorageItem
+
+_STATISTICS = {
+    ("table", name, name, f"CREATE TABLE {name}({','.join(columns)})"): (
+        name,
+        tuple((i, col, "", 0, None, 0, 0) for i, col in enumerate(columns)),
+        (),
+    )
+    for name, columns in (
+        ("sqlite_stat1", ("tbl", "idx", "stat")),
+        ("sqlite_stat4", ("tbl", "idx", "neq", "nlt", "ndlt", "sample")),
+    )
+}
+
+
+def _split_statistics(rows):
+    """Separate only SQLite's exact engine-produced statistics table forms."""
+    stats = tuple(row for row in rows if row in _STATISTICS)
+    if len(stats) == 1 and stats[0][1] == "sqlite_stat4":
+        raise ValueError("unsupported_schema")
+    return tuple(row for row in rows if row not in _STATISTICS), stats
+
+
+def _statistics_metadata(metadata, stats):
+    if not stats:
+        return metadata
+    return tuple(
+        sorted(
+            (*metadata, *(_STATISTICS[row] for row in stats)),
+            key=lambda item: (len(item), item[0]),
+        )
+    )
 
 
 def _validate_sqlite(
@@ -19,6 +50,7 @@ def _validate_sqlite(
     schemas: tuple[tuple[int, tuple[str, ...]], ...],
     *,
     version_query: str = "PRAGMA user_version",
+    allow_statistics: bool = False,
 ) -> tuple[str, ...]:
     from tldw_chatbook.Backup_Recovery.sqlite_validation import (
         _canvas_payload_issues,
@@ -38,7 +70,10 @@ def _validate_sqlite(
             restrictions = _restrict_connection(connection)
     else:
         connection.execute("PRAGMA trusted_schema=OFF")
-    actual = tuple(row[3] for row in _catalog(connection) if row[3] is not None)
+    catalog = _catalog(connection)
+    if allow_statistics:
+        catalog, _stats = _split_statistics(catalog)
+    actual = tuple(row[3] for row in catalog if row[3] is not None)
     matched = tuple(known for known, schema in schemas if actual == schema)
     if not matched:
         return ("unsupported_schema",)

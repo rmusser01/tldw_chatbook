@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from tldw_chatbook.Chat.sampling_params import validate_sampling_params
+from tldw_chatbook.Provider_Contract.sampling_params import validate_sampling_params
 from tldw_chatbook.LLM_Calls.llamacpp_bounded import (
     BoundedLlamaError,
     BoundedLlamaRequest,

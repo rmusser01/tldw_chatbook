@@ -47,9 +47,7 @@ def test_on_step_receives_primary_steps_in_order(tmp_path):
         db,
         reg,
         chat_call=chat_call,
-        on_step=lambda step, kind, run_id: seen.append(
-            (kind, step.kind, step.call_id)
-        ),
+        on_step=lambda step, kind, run_id: seen.append((kind, step.kind, step.call_id)),
     )
     _run_id, outcome = service.run_turn(
         conversation_id="c1",

@@ -14,31 +14,33 @@ from loguru import logger
 
 class LanguageFamily(Enum):
     """Language families for grouping similar languages."""
+
     GERMANIC = "germanic"  # English, German, Dutch, Swedish, etc.
-    ROMANCE = "romance"    # Spanish, French, Italian, Portuguese, etc.
-    SLAVIC = "slavic"      # Russian, Polish, Czech, etc.
+    ROMANCE = "romance"  # Spanish, French, Italian, Portuguese, etc.
+    SLAVIC = "slavic"  # Russian, Polish, Czech, etc.
     SINO_TIBETAN = "sino_tibetan"  # Chinese, Burmese, etc.
-    JAPONIC = "japonic"    # Japanese
+    JAPONIC = "japonic"  # Japanese
     KOREANIC = "koreanic"  # Korean
-    SEMITIC = "semitic"    # Arabic, Hebrew
-    INDIC = "indic"        # Hindi, Bengali, etc.
+    SEMITIC = "semitic"  # Arabic, Hebrew
+    INDIC = "indic"  # Hindi, Bengali, etc.
     OTHER = "other"
 
 
 @dataclass
 class LanguageConfig:
     """Configuration for a specific language."""
-    code: str                     # ISO 639-1 code
-    name: str                     # Full name
-    family: LanguageFamily        # Language family
-    direction: str = "ltr"        # Text direction: ltr or rtl
+
+    code: str  # ISO 639-1 code
+    name: str  # Full name
+    family: LanguageFamily  # Language family
+    direction: str = "ltr"  # Text direction: ltr or rtl
     sentence_delimiters: list[str] = None  # Sentence ending markers
-    word_tokenizer: Optional[str] = None   # Specialized tokenizer
+    word_tokenizer: Optional[str] = None  # Specialized tokenizer
     requires_spacing: bool = True  # Whether words are space-separated
 
     def __post_init__(self):
         if self.sentence_delimiters is None:
-            self.sentence_delimiters = ['.', '!', '?']
+            self.sentence_delimiters = [".", "!", "?"]
 
 
 class LanguageDetector:
@@ -47,29 +49,29 @@ class LanguageDetector:
     def __init__(self):
         """Initialize language detector with pattern rules."""
         self.patterns = {
-            'en': (r'[a-zA-Z]', 0.8),  # English
-            'zh': (r'[\u4e00-\u9fff]', 0.3),  # Chinese
-            'ja': (r'[\u3040-\u309f\u30a0-\u30ff]', 0.2),  # Japanese
-            'ko': (r'[\uac00-\ud7af]', 0.3),  # Korean
-            'ar': (r'[\u0600-\u06ff]', 0.3),  # Arabic
-            'he': (r'[\u0590-\u05ff]', 0.3),  # Hebrew
-            'ru': (r'[\u0400-\u04ff]', 0.3),  # Russian/Cyrillic
-            'hi': (r'[\u0900-\u097f]', 0.3),  # Hindi/Devanagari
-            'th': (r'[\u0e00-\u0e7f]', 0.3),  # Thai
-            'el': (r'[\u0370-\u03ff]', 0.3),  # Greek
+            "en": (r"[a-zA-Z]", 0.8),  # English
+            "zh": (r"[\u4e00-\u9fff]", 0.3),  # Chinese
+            "ja": (r"[\u3040-\u309f\u30a0-\u30ff]", 0.2),  # Japanese
+            "ko": (r"[\uac00-\ud7af]", 0.3),  # Korean
+            "ar": (r"[\u0600-\u06ff]", 0.3),  # Arabic
+            "he": (r"[\u0590-\u05ff]", 0.3),  # Hebrew
+            "ru": (r"[\u0400-\u04ff]", 0.3),  # Russian/Cyrillic
+            "hi": (r"[\u0900-\u097f]", 0.3),  # Hindi/Devanagari
+            "th": (r"[\u0e00-\u0e7f]", 0.3),  # Thai
+            "el": (r"[\u0370-\u03ff]", 0.3),  # Greek
         }
 
         # Common words for language detection
         self.common_words = {
-            'en': ['the', 'and', 'is', 'in', 'to', 'of', 'a', 'that'],
-            'es': ['el', 'la', 'de', 'que', 'y', 'en', 'un', 'por'],
-            'fr': ['le', 'de', 'et', 'la', 'les', 'un', 'une', 'que'],
-            'de': ['der', 'die', 'und', 'in', 'das', 'ist', 'ein', 'zu'],
-            'it': ['il', 'di', 'e', 'la', 'che', 'un', 'per', 'in'],
-            'pt': ['o', 'de', 'e', 'a', 'que', 'em', 'um', 'para'],
-            'ru': ['и', 'в', 'на', 'что', 'с', 'не', 'это', 'как'],
-            'zh': ['的', '是', '在', '和', '了', '有', '我', '你'],
-            'ja': ['の', 'は', 'を', 'が', 'に', 'で', 'と', 'も'],
+            "en": ["the", "and", "is", "in", "to", "of", "a", "that"],
+            "es": ["el", "la", "de", "que", "y", "en", "un", "por"],
+            "fr": ["le", "de", "et", "la", "les", "un", "une", "que"],
+            "de": ["der", "die", "und", "in", "das", "ist", "ein", "zu"],
+            "it": ["il", "di", "e", "la", "che", "un", "per", "in"],
+            "pt": ["o", "de", "e", "a", "que", "em", "um", "para"],
+            "ru": ["и", "в", "на", "что", "с", "не", "это", "как"],
+            "zh": ["的", "是", "在", "和", "了", "有", "我", "你"],
+            "ja": ["の", "は", "を", "が", "に", "で", "と", "も"],
         }
 
     def detect(self, text: str) -> tuple[str, float]:
@@ -83,7 +85,7 @@ class LanguageDetector:
             Tuple of (language_code, confidence)
         """
         if not text:
-            return 'en', 0.0
+            return "en", 0.0
 
         # Check character-based patterns
         scores = {}
@@ -113,7 +115,7 @@ class LanguageDetector:
                 return lang, confidence
 
         # Default to English with low confidence
-        return 'en', 0.1
+        return "en", 0.1
 
 
 class MultilingualTokenizer:
@@ -133,55 +135,93 @@ class MultilingualTokenizer:
         """Initialize language configurations."""
         configs = {
             # Germanic languages
-            'en': LanguageConfig('en', 'English', LanguageFamily.GERMANIC),
-            'de': LanguageConfig('de', 'German', LanguageFamily.GERMANIC,
-                               sentence_delimiters=['.', '!', '?', '。']),
-            'nl': LanguageConfig('nl', 'Dutch', LanguageFamily.GERMANIC),
-            'sv': LanguageConfig('sv', 'Swedish', LanguageFamily.GERMANIC),
-
+            "en": LanguageConfig("en", "English", LanguageFamily.GERMANIC),
+            "de": LanguageConfig(
+                "de",
+                "German",
+                LanguageFamily.GERMANIC,
+                sentence_delimiters=[".", "!", "?", "。"],
+            ),
+            "nl": LanguageConfig("nl", "Dutch", LanguageFamily.GERMANIC),
+            "sv": LanguageConfig("sv", "Swedish", LanguageFamily.GERMANIC),
             # Romance languages
-            'es': LanguageConfig('es', 'Spanish', LanguageFamily.ROMANCE,
-                               sentence_delimiters=['.', '!', '?', '¡', '¿']),
-            'fr': LanguageConfig('fr', 'French', LanguageFamily.ROMANCE,
-                               sentence_delimiters=['.', '!', '?', '»', '«']),
-            'it': LanguageConfig('it', 'Italian', LanguageFamily.ROMANCE),
-            'pt': LanguageConfig('pt', 'Portuguese', LanguageFamily.ROMANCE),
-
+            "es": LanguageConfig(
+                "es",
+                "Spanish",
+                LanguageFamily.ROMANCE,
+                sentence_delimiters=[".", "!", "?", "¡", "¿"],
+            ),
+            "fr": LanguageConfig(
+                "fr",
+                "French",
+                LanguageFamily.ROMANCE,
+                sentence_delimiters=[".", "!", "?", "»", "«"],
+            ),
+            "it": LanguageConfig("it", "Italian", LanguageFamily.ROMANCE),
+            "pt": LanguageConfig("pt", "Portuguese", LanguageFamily.ROMANCE),
             # Slavic languages
-            'ru': LanguageConfig('ru', 'Russian', LanguageFamily.SLAVIC,
-                               sentence_delimiters=['.', '!', '?', '。', '！', '？']),
-            'pl': LanguageConfig('pl', 'Polish', LanguageFamily.SLAVIC),
-
+            "ru": LanguageConfig(
+                "ru",
+                "Russian",
+                LanguageFamily.SLAVIC,
+                sentence_delimiters=[".", "!", "?", "。", "！", "？"],
+            ),
+            "pl": LanguageConfig("pl", "Polish", LanguageFamily.SLAVIC),
             # Asian languages
-            'zh': LanguageConfig('zh', 'Chinese', LanguageFamily.SINO_TIBETAN,
-                               sentence_delimiters=['。', '！', '？', '；', '.', '!', '?'],
-                               word_tokenizer='jieba',
-                               requires_spacing=False),
-            'ja': LanguageConfig('ja', 'Japanese', LanguageFamily.JAPONIC,
-                               sentence_delimiters=['。', '！', '？', '.', '!', '?'],
-                               word_tokenizer='fugashi',
-                               requires_spacing=False),
-            'ko': LanguageConfig('ko', 'Korean', LanguageFamily.KOREANIC,
-                               sentence_delimiters=['。', '！', '？', '.', '!', '?'],
-                               word_tokenizer='konlpy',
-                               requires_spacing=True),
-
+            "zh": LanguageConfig(
+                "zh",
+                "Chinese",
+                LanguageFamily.SINO_TIBETAN,
+                sentence_delimiters=["。", "！", "？", "；", ".", "!", "?"],
+                word_tokenizer="jieba",
+                requires_spacing=False,
+            ),
+            "ja": LanguageConfig(
+                "ja",
+                "Japanese",
+                LanguageFamily.JAPONIC,
+                sentence_delimiters=["。", "！", "？", ".", "!", "?"],
+                word_tokenizer="fugashi",
+                requires_spacing=False,
+            ),
+            "ko": LanguageConfig(
+                "ko",
+                "Korean",
+                LanguageFamily.KOREANIC,
+                sentence_delimiters=["。", "！", "？", ".", "!", "?"],
+                word_tokenizer="konlpy",
+                requires_spacing=True,
+            ),
             # Semitic languages
-            'ar': LanguageConfig('ar', 'Arabic', LanguageFamily.SEMITIC,
-                               direction='rtl',
-                               sentence_delimiters=['.', '!', '?', '؟', '۔']),
-            'he': LanguageConfig('he', 'Hebrew', LanguageFamily.SEMITIC,
-                               direction='rtl',
-                               sentence_delimiters=['.', '!', '?']),
-
+            "ar": LanguageConfig(
+                "ar",
+                "Arabic",
+                LanguageFamily.SEMITIC,
+                direction="rtl",
+                sentence_delimiters=[".", "!", "?", "؟", "۔"],
+            ),
+            "he": LanguageConfig(
+                "he",
+                "Hebrew",
+                LanguageFamily.SEMITIC,
+                direction="rtl",
+                sentence_delimiters=[".", "!", "?"],
+            ),
             # Indic languages
-            'hi': LanguageConfig('hi', 'Hindi', LanguageFamily.INDIC,
-                               sentence_delimiters=['।', '.', '!', '?']),
-
+            "hi": LanguageConfig(
+                "hi",
+                "Hindi",
+                LanguageFamily.INDIC,
+                sentence_delimiters=["।", ".", "!", "?"],
+            ),
             # Other
-            'th': LanguageConfig('th', 'Thai', LanguageFamily.OTHER,
-                               word_tokenizer='pythainlp',
-                               requires_spacing=False),
+            "th": LanguageConfig(
+                "th",
+                "Thai",
+                LanguageFamily.OTHER,
+                word_tokenizer="pythainlp",
+                requires_spacing=False,
+            ),
         }
 
         return configs
@@ -196,7 +236,7 @@ class MultilingualTokenizer:
         Returns:
             Language configuration
         """
-        return self.configs.get(language, self.configs['en'])
+        return self.configs.get(language, self.configs["en"])
 
     def tokenize_words(self, text: str, language: Optional[str] = None) -> list[str]:
         """
@@ -239,9 +279,10 @@ class MultilingualTokenizer:
             List of tokens
         """
         try:
-            if tokenizer_name == 'jieba':
+            if tokenizer_name == "jieba":
                 try:
                     import jieba
+
                     return list(jieba.cut(text))
                 except ImportError:
                     logger.warning(
@@ -250,9 +291,10 @@ class MultilingualTokenizer:
                     )
                     return list(text)
 
-            elif tokenizer_name == 'fugashi':
+            elif tokenizer_name == "fugashi":
                 try:
                     import fugashi
+
                     tagger = fugashi.Tagger()
                     return [word.surface for word in tagger(text)]
                 except ImportError:
@@ -262,9 +304,10 @@ class MultilingualTokenizer:
                     )
                     return list(text)
 
-            elif tokenizer_name == 'konlpy':
+            elif tokenizer_name == "konlpy":
                 try:
                     from konlpy.tag import Okt
+
                     okt = Okt()
                     return okt.morphs(text)
                 except ImportError:
@@ -274,9 +317,10 @@ class MultilingualTokenizer:
                     )
                     return text.split()
 
-            elif tokenizer_name == 'pythainlp':
+            elif tokenizer_name == "pythainlp":
                 try:
                     from pythainlp import word_tokenize
+
                     return word_tokenize(text)
                 except ImportError:
                     logger.warning(
@@ -286,7 +330,9 @@ class MultilingualTokenizer:
                     return list(text)
 
             else:
-                logger.warning(f"Unknown tokenizer: {tokenizer_name}, falling back to space-based")
+                logger.warning(
+                    f"Unknown tokenizer: {tokenizer_name}, falling back to space-based"
+                )
                 return text.split()
 
         except Exception as e:
@@ -294,9 +340,11 @@ class MultilingualTokenizer:
                 f"Tokenization error with {tokenizer_name}: {e}. "
                 f"Falling back to {'space' if ' ' in text else 'character'}-based tokenization."
             )
-            return text.split() if ' ' in text else list(text)
+            return text.split() if " " in text else list(text)
 
-    def tokenize_sentences(self, text: str, language: Optional[str] = None) -> list[str]:
+    def tokenize_sentences(
+        self, text: str, language: Optional[str] = None
+    ) -> list[str]:
         """
         Tokenize text into sentences using language-specific rules.
 
@@ -315,8 +363,8 @@ class MultilingualTokenizer:
 
         # Build regex pattern from delimiters
         delimiters = config.sentence_delimiters
-        pattern = '|'.join(re.escape(d) for d in delimiters)
-        pattern = f'(?<=[{pattern}])\\s+'
+        pattern = "|".join(re.escape(d) for d in delimiters)
+        pattern = f"(?<=[{pattern}])\\s+"
 
         # Split on sentence delimiters
         sentences = re.split(pattern, text)
@@ -357,8 +405,10 @@ class LanguageAdapter:
         language, confidence = self.detector.detect(text)
 
         # Update strategy language if different
-        if hasattr(strategy, 'language') and strategy.language != language:
-            logger.info(f"Adapting strategy from {strategy.language} to {language} (confidence: {confidence:.2f})")
+        if hasattr(strategy, "language") and strategy.language != language:
+            logger.info(
+                f"Adapting strategy from {strategy.language} to {language} (confidence: {confidence:.2f})"
+            )
             strategy.language = language
 
         return language
@@ -373,6 +423,7 @@ class LanguageAdapter:
         Returns:
             Sentence splitter function
         """
+
         def splitter(text: str) -> list[str]:
             return self.tokenizer.tokenize_sentences(text, language)
 
@@ -388,6 +439,7 @@ class LanguageAdapter:
         Returns:
             Word tokenizer function
         """
+
         def tokenizer(text: str) -> list[str]:
             return self.tokenizer.tokenize_words(text, language)
 
@@ -410,13 +462,13 @@ class LanguageAdapter:
         config = self.tokenizer.get_config(language)
 
         # Handle RTL languages
-        if config.direction == 'rtl':
+        if config.direction == "rtl":
             # Add RTL mark for proper display
-            text = '\u202B' + text + '\u202C'
+            text = "\u202b" + text + "\u202c"
 
         # Normalize whitespace for languages that use it
         if config.requires_spacing:
-            text = re.sub(r'\s+', ' ', text)
+            text = re.sub(r"\s+", " ", text)
 
         return text
 
@@ -436,9 +488,9 @@ class LanguageAdapter:
         # Adjust chunk size based on language characteristics
         adjustments = {
             LanguageFamily.SINO_TIBETAN: 2.0,  # Chinese characters are more dense
-            LanguageFamily.JAPONIC: 1.5,       # Japanese is somewhat dense
-            LanguageFamily.KOREANIC: 1.2,      # Korean is moderately dense
-            LanguageFamily.SEMITIC: 0.8,       # Arabic/Hebrew may need smaller chunks
+            LanguageFamily.JAPONIC: 1.5,  # Japanese is somewhat dense
+            LanguageFamily.KOREANIC: 1.2,  # Korean is moderately dense
+            LanguageFamily.SEMITIC: 0.8,  # Arabic/Hebrew may need smaller chunks
         }
 
         multiplier = adjustments.get(config.family, 1.0)

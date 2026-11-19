@@ -58,6 +58,8 @@ from tldw_chatbook.Tools.file_operation_tools import GrepFiles
 from Tests.Agents.test_agent_service import fence
 from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service
 
+pytestmark = pytest.mark.bootstrap_profile
+
 #: What the survivor answers. Distinctive enough that finding it in the
 #: wrong tree is unambiguous.
 SURVIVOR_MARKER = "SURVIVOR_RECORD_4c1a late answer"
@@ -447,9 +449,7 @@ def test_a_survivors_row_is_running_while_it_logs(db, log_root):
     _join(survivor_threads)
 
 
-def test_a_child_scheduled_after_the_next_turn_begins_files_its_own_tree(
-    db, log_root
-):
+def test_a_child_scheduled_after_the_next_turn_begins_files_its_own_tree(db, log_root):
     """The race the spawn-time capture closes, made deterministic.
 
     Capturing the writer at `_run_one`'s ENTRY is not enough on its own:

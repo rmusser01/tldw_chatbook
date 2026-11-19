@@ -8,6 +8,9 @@ No complex error handling - just let exceptions propagate.
 import asyncio
 from collections.abc import Mapping
 import math
+from pathlib import Path
+import tempfile
+import threading
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -42,6 +45,13 @@ from .semantic_availability import (
 #: Key under which pipeline diagnostics record scope-enforcement state
 #: (mirrors semantic_availability.SEMANTIC_DIAGNOSTICS_KEY's pattern).
 SCOPE_DIAGNOSTICS_KEY = "scope"
+
+#: TASK-407: content-prefix length the media FTS leg attaches to each hit.
+#: Must stay above ``deduplicate_results``' 200-char key so distinct media
+#: documents keep distinct dedup keys; bounded so multi-megabyte transcripts
+#: are never hauled off disk for a dedup key + context snippet.
+_MEDIA_SNIPPET_PREFIX_CHARS = 500
+
 _SEMANTIC_SOURCE_ALIASES = {
     "media": "media",
     "media_db": "media",
@@ -200,14 +210,29 @@ async def search_media_fts5(
     else:
         media_items = media_results
 
+    media_ids = [item.get("id") for item in media_items if item.get("id")]
+
     # Fetch keywords if needed
     keywords_map = {}
-    if media_items and keyword_filter:
-        media_ids = [item.get("id") for item in media_items if item.get("id")]
-        if media_ids:
-            keywords_map = await asyncio.to_thread(
-                app.media_db.fetch_keywords_for_media_batch, media_ids
-            )
+    if media_ids and keyword_filter:
+        keywords_map = await asyncio.to_thread(
+            app.media_db.fetch_keywords_for_media_batch, media_ids
+        )
+
+    # TASK-407: search_media_db's broad row carries no ``content`` key (full
+    # transcripts are deliberately kept out of the search SELECT), which used
+    # to leave every media hit with content="" -- and deduplicate_results'
+    # content-prefix key then collapsed ALL unscoped media results into one.
+    # One batched SQL-side substr fetch gives each hit a bounded, distinct
+    # snippet (500 chars > the dedup key's 200); rows with no content fall
+    # back to their title for display and dedup by their media record ID.
+    content_map: Dict[int, str] = {}
+    if media_ids:
+        content_map = await asyncio.to_thread(
+            app.media_db.fetch_content_prefixes_for_media_batch,
+            media_ids,
+            _MEDIA_SNIPPET_PREFIX_CHARS,
+        )
 
     # Convert to SearchResult objects
     results = []
@@ -221,17 +246,19 @@ async def search_media_fts5(
             ):
                 continue
 
+        content_prefix = content_map.get(item.get("id"))
         results.append(
             SearchResult(
                 source="media",
                 id=str(item.get("id", "")),
                 title=item.get("title", "Untitled"),
-                content=item.get("content", ""),
+                content=content_prefix or item.get("title") or "",
                 metadata={
                     "type": item.get("type", "unknown"),
                     "author": item.get("author", "Unknown"),
                     "ingestion_date": item.get("ingestion_date", ""),
                     "keywords": keywords_map.get(item.get("id"), []),
+                    "_content_is_title_fallback": not bool(content_prefix),
                 },
             )
         )
@@ -463,20 +490,23 @@ async def search_semantic(
         scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
             task-4). ``None`` or an unscoped scope performs today's single
             unrestricted store query (no ``metadata_allowlist`` at all). A
-            scoped value runs one store query per source_type present in
-            the scope's allowlist -- a flat ``metadata_allowlist`` cannot
-            express an OR across source types, see
-            ``rag_scope.build_semantic_allowlists`` -- and merges the
-            per-type results by score, descending, before trimming to
-            ``limit``. Composes with ``filter_metadata``/``kwargs`` (AND):
-            both may be forwarded to the same store call. ``scope.state ==
-            "empty"`` fails this leg CLOSED -- returns ``[]`` without ever
-            resolving/calling the RAG service -- rather than falling
-            through to an unrestricted search (defense-in-depth, PR #734
-            review; callers are expected to short-circuit EMPTY before ever
-            reaching a leg); that refusal is recorded under
-            ``SCOPE_DIAGNOSTICS_KEY`` (not ``SEMANTIC_DIAGNOSTICS_KEY``) in
-            ``diagnostics``, matching every other leg's EMPTY-scope shape.
+            scoped value passes the WHOLE union of per-source-type
+            AND-groups (``rag_scope.build_semantic_allowlists``) to ONE
+            store search -- a flat ``metadata_allowlist`` cannot express an
+            OR across source types, and the engine's
+            ``_semantic_search_scoped`` runs the per-entry store queries,
+            merging the results by score, descending, before trimming to
+            ``limit`` (review-B B2; the caller used to loop one search per
+            entry itself). Composes with ``filter_metadata``/``kwargs``
+            (AND): both may be forwarded to the same store call.
+            ``scope.state == "empty"`` fails this leg CLOSED -- returns
+            ``[]`` without ever resolving/calling the RAG service -- rather
+            than falling through to an unrestricted search
+            (defense-in-depth, PR #734 review; callers are expected to
+            short-circuit EMPTY before ever reaching a leg); that refusal is
+            recorded under ``SCOPE_DIAGNOSTICS_KEY`` (not
+            ``SEMANTIC_DIAGNOSTICS_KEY``) in ``diagnostics``, matching every
+            other leg's EMPTY-scope shape.
         **kwargs: Extra kwargs forwarded verbatim to ``rag_service.search``
             (call sites whitelist these; see pipeline_builder_simple).
 
@@ -520,21 +550,20 @@ async def search_semantic(
                 **kwargs,
             )
         else:
-            # Scoped: one store query per source_type, merged by score.
-            per_type_results = []
-            for allowlist in allowlists:
-                per_type_results.extend(
-                    await rag_service.search(
-                        query=query,
-                        search_type="semantic",
-                        top_k=limit,
-                        include_citations=True,
-                        metadata_allowlist=allowlist,
-                        **kwargs,
-                    )
-                )
-            per_type_results.sort(key=lambda r: r.score, reverse=True)
-            rag_results = per_type_results[:limit]
+            # Scoped: ONE store search over the whole union allowlist
+            # (review-B B2). The engine's `_semantic_search_scoped` runs the
+            # per-entry store queries and merges by score, descending, then
+            # trims to top_k -- the same merge this caller used to run in
+            # Python after issuing one full search (one query embedding)
+            # per entry.
+            rag_results = await rag_service.search(
+                query=query,
+                search_type="semantic",
+                top_k=limit,
+                include_citations=True,
+                metadata_allowlist=allowlists,
+                **kwargs,
+            )
     except Exception:
         logger.opt(exception=True).error(
             "Semantic search raised; recording search_error state."
@@ -610,17 +639,175 @@ async def search_semantic(
 
 
 def deduplicate_results(results: List[SearchResult]) -> List[SearchResult]:
-    """Remove duplicate results based on content similarity."""
+    """Remove duplicate results based on content similarity.
+
+    TASK-407: real content keys are ``(source, content[:200])``. Media
+    title-fallback rows instead key by record ID: equal titles do not prove
+    equal content. A bare content prefix had two failure modes: content-less
+    results (every media hit before the media leg attached snippets, since
+    search_media_db's broad row omits ``content``) all shared the empty-string key and collapsed
+    into one; and once media hits carried real snippets, a media item and a
+    note that happen to share text (same transcript ingested as both) also
+    collapsed, eating a distinct result. Identical content within ONE source
+    is still a true duplicate -- the same document found by two legs (e.g.
+    FTS and the vector leg both report ``source="media"``) -- while identical
+    content across sources is two distinct results for the user.
+    """
     seen = {}
 
     for result in results:
-        # Use first 200 chars of content as key
-        key = result.content[:200]
+        if (
+            result.source == "media"
+            and result.metadata.get("_content_is_title_fallback") is True
+        ):
+            key = (result.source, "id", result.id)
+        else:
+            key = (result.source, result.content[:200])
 
         if key not in seen or result.score > seen[key].score:
             seen[key] = result
 
     return list(seen.values())
+
+
+# ==============================================================================
+# FlashRank ranker singleton
+# ==============================================================================
+# The default-enabled rerank step used to construct a fresh torch/ORT
+# ``Ranker`` (cold model load, ~hundreds of ms) on EVERY query,
+# synchronously on the event loop -- freezing the UI on each RAG chat send.
+# The ranker is now a lazy, thread-safe, process-wide singleton, and the
+# model work runs off the event loop (see ``rerank_results_async`` and the
+# builder's process step). Same cold-load pattern previously fixed for the
+# vector-store query in simplified/rag_service.py (TASK-32804.9).
+
+#: FlashRank model the pipeline reranks with.
+_FLASHRANK_MODEL_NAME = "ms-marco-MiniLM-L-12-v2"
+
+#: Guards ranker construction only -- rerank calls themselves run
+#: concurrently on the shared instance (onnxruntime sessions are
+#: thread-safe for ``run``).
+_RANKER_LOCK = threading.Lock()
+#: ``None`` until first construction (see ``get_flashrank_ranker``).
+_CACHED_RANKER: Any = None
+
+#: Test seam: when set, ``get_flashrank_ranker`` constructs via this
+#: factory instead of importing the real ``flashrank.Ranker``. Stays
+#: ``None`` in production so the optional dependency is imported lazily
+#: on first rerank, never at module import.
+_RANKER_FACTORY: Any = None
+
+
+def _real_flashrank_ranker_factory() -> Any:
+    """Resolve the real ``flashrank.Ranker`` class.
+
+    Imported per construction attempt (a cached ``sys.modules`` lookup
+    after the first), so a test that swaps ``sys.modules["flashrank"]``
+    controls what gets constructed.
+
+    Raises:
+        ImportError: flashrank is not installed (handled by
+            ``rerank_results``' existing fallback).
+    """
+    from flashrank import Ranker
+
+    return Ranker
+
+
+def _flashrank_cache_dir() -> str:
+    """Directory FlashRank model weights are cached in.
+
+    Lives under the app's user data dir (same home as the model-catalog
+    cache) so weights survive a reboot instead of being re-downloaded
+    into ``/tmp`` every cold start. Falls back to the system temp dir
+    only if the app data dir cannot be resolved.
+    """
+    try:
+        from ..Utils.paths import get_user_data_dir
+
+        return str(Path(get_user_data_dir()) / "cache" / "flashrank")
+    except Exception:
+        logger.warning(
+            "FlashRank cache dir fell back to the system temp dir; "
+            "model weights will not survive a reboot"
+        )
+        return tempfile.gettempdir()
+
+
+def get_flashrank_ranker() -> Any:
+    """Return the process-wide FlashRank ``Ranker`` singleton.
+
+    Constructs on first use (model load) and never again; the lock is
+    held around construction only, so concurrent reranks share the
+    instance without serializing.
+
+    Returns:
+        The shared ranker instance (real or injected via
+        ``_RANKER_FACTORY``).
+
+    Raises:
+        ImportError: flashrank is not installed.
+        Exception: Whatever the factory raises on construction failure
+            (handled by ``rerank_results``' existing fallback).
+    """
+    global _CACHED_RANKER
+    if _CACHED_RANKER is not None:
+        return _CACHED_RANKER
+    if _RANKER_FACTORY is not None:
+        factory = _RANKER_FACTORY
+    else:
+        factory = _real_flashrank_ranker_factory()
+    with _RANKER_LOCK:
+        if _CACHED_RANKER is None:
+            _CACHED_RANKER = factory(
+                model_name=_FLASHRANK_MODEL_NAME,
+                cache_dir=_flashrank_cache_dir(),
+            )
+        return _CACHED_RANKER
+
+
+def _reset_flashrank_ranker_for_tests() -> None:
+    """Drop the cached ranker so the next call reconstructs it.
+
+    Test-only: suites that swap the flashrank backend (via
+    ``sys.modules`` or ``_RANKER_FACTORY``) must reset the singleton
+    between tests or they would keep reusing the previous test's ranker.
+    """
+    global _CACHED_RANKER
+    with _RANKER_LOCK:
+        _CACHED_RANKER = None
+
+
+def _extract_flashrank_rank(
+    ranked: Any, identity_to_index: Dict[int, int]
+) -> tuple[Any, Any]:
+    """Return ``(passage_id, raw_score)`` for one ranked item.
+
+    Real flashrank (0.2.10) returns the *input passage dicts* with a
+    ``"score"`` key added, so the ``id`` we put in comes back as a dict
+    entry. A passage dict that lost its ``id`` still maps through object
+    identity (flashrank returns the very dicts we passed in, mutated).
+    Attribute-style items with ``index``/``score`` attributes are tolerated
+    for alternate ranker backends.
+
+    Args:
+        ranked: One entry of the ranker's response.
+        identity_to_index: Maps ``id()`` of each passage dict we built to
+            its passage id.
+
+    Returns:
+        ``(passage_id, raw_score)`` -- possibly ``None`` when unmappable or
+        missing; callers validate and reject those.
+
+    Raises:
+        AttributeError: Attribute-style item without ``index``/``score``.
+    """
+    if isinstance(ranked, Mapping):
+        pid = ranked.get("id")
+        if pid is None:
+            pid = identity_to_index.get(id(ranked))
+        return pid, ranked.get("score")
+    return ranked.index, ranked.score
 
 
 def rerank_results(
@@ -632,16 +819,22 @@ def rerank_results(
 
     if model == "flashrank":
         try:
-            from flashrank import RerankRequest, Ranker
+            from flashrank import RerankRequest
 
-            # Initialize ranker
-            ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir="/tmp")
+            # Shared, constructed-once ranker (see get_flashrank_ranker).
+            ranker = get_flashrank_ranker()
 
-            # Prepare passages
+            # Prepare passages. flashrank's real contract (verified against
+            # the installed flashrank 0.2.10): ``rerank`` mutates these
+            # dicts in place (adds a ``"score"`` key), sorts them descending
+            # by that score and returns the same list. Each passage carries
+            # a unique ``id`` -- passed through untouched -- which is how a
+            # ranked dict maps back to the SearchResult it belongs to.
             passages = []
-            for result in results:
+            for idx, result in enumerate(results):
                 text = f"{result.title}\n{result.content[:1000]}"
-                passages.append({"text": text})
+                passages.append({"id": idx, "text": text})
+            identity_to_index = {id(passage): passage["id"] for passage in passages}
 
             # Rerank
             rerank_req = RerankRequest(query=query, passages=passages)
@@ -650,10 +843,15 @@ def rerank_results(
             # Validate the complete reranker response before mutating any
             # producer score or provenance marker. A partial/raising fallback
             # must leave prior RRF/semantic score semantics honest.
+            if len(ranked_results) != len(results):
+                # flashrank returns every passage back; a short or long
+                # response is a broken ranker and must not silently drop
+                # or invent results.
+                raise ValueError("invalid FlashRank result")
             planned_updates = []
             seen_indexes: set[int] = set()
-            for ranked in ranked_results[:top_k]:
-                idx = ranked.index
+            for ranked in ranked_results:
+                idx, raw_score = _extract_flashrank_rank(ranked, identity_to_index)
                 if (
                     isinstance(idx, bool)
                     or not isinstance(idx, int)
@@ -661,7 +859,6 @@ def rerank_results(
                     or idx in seen_indexes
                 ):
                     raise ValueError("invalid FlashRank result")
-                raw_score = ranked.score
                 if isinstance(raw_score, bool):
                     raise ValueError("invalid FlashRank result")
                 score = float(raw_score)
@@ -677,8 +874,12 @@ def rerank_results(
                 seen_indexes.add(idx)
                 planned_updates.append((result, score, replacement_metadata))
 
+            # Order by the reranker's own scores, best first. flashrank
+            # already returns its list sorted descending; re-sorting keeps
+            # that guarantee even for rankers that return unsorted output.
+            planned_updates.sort(key=lambda update: update[1], reverse=True)
             reranked = []
-            for result, score, replacement_metadata in planned_updates:
+            for result, score, replacement_metadata in planned_updates[:top_k]:
                 result.score = score
                 result.metadata = replacement_metadata
                 reranked.append(result)
@@ -697,6 +898,27 @@ def rerank_results(
     # Default: just sort by score and limit
     sorted_results = sorted(results, key=lambda x: x.score, reverse=True)
     return sorted_results[:top_k]
+
+
+async def rerank_results_async(
+    results: List[SearchResult], query: str, model: str = "flashrank", top_k: int = 10
+) -> List[SearchResult]:
+    """Rerank results off the event loop.
+
+    Thin ``asyncio.to_thread`` wrapper around ``rerank_results``: rerank
+    (cold model load included) must never run on the Textual event loop.
+    ``rerank_results`` itself stays synchronous for non-async callers.
+
+    Args:
+        results: Results to rerank.
+        query: The search query to score against.
+        model: Rerank model name (``"flashrank"`` for the local ranker).
+        top_k: Maximum number of results to return.
+
+    Returns:
+        The reranked results (or the sync fallback order on failure).
+    """
+    return await asyncio.to_thread(rerank_results, results, query, model, top_k)
 
 
 def filter_by_score(

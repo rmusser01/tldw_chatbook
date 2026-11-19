@@ -1,0 +1,17 @@
+{
+  "qualified": false,
+  "product_samples": 0,
+  "status": "GREEN",
+  "source_sha256": "5c39cc89332cc83a591950ac43aad57d64d469ea9eb444f55a68e13efb9e3f15",
+  "results": {
+    "actual_stage_arms_once_and_stays_armed_after_scheduling": true,
+    "original_task_completion_cancels_with_bounded_timestamp_receipt": true,
+    "collect_exit_finally_cancel_idempotently_and_never_rearm": true,
+    "actual_collect_exit_delegate_once_after_cancel": true,
+    "watchdog_setup_failure_preserves_original_stage_exception_and_once_call": true,
+    "arm_cancel_metadata_failures_are_observation_only": true,
+    "actual_app_finally_cancels_without_masking_original_error": true
+  },
+  "error": null,
+  "scope": "Actual private child class/command/finally AST, controlled timer/files/asyncio task only; no App, product imports, Win32, GUI, product tool execution, external/service network or real timer; stock asyncio may use its internal self-pipe."
+}

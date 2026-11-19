@@ -265,7 +265,7 @@ recovery evidence rather than silently creating an empty database. Do not
 replace an open profile database with a raw file copy.
 
 See
-[ADR-028](../../backlog/decisions/028-character-tts-generation-profile-ownership.md)
+[ADR-294](../../backlog/decisions/294-character-tts-generation-profile-ownership.md)
 for the ownership, privacy, backup, and deferred-scope decisions.
 
 ### Setting up audio.cpp

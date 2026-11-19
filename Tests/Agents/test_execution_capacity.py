@@ -342,3 +342,20 @@ def test_invalid_total_uses_default_instead_of_disabling_limits(invalid):
         operation.finish()
     for owner in owners:
         owner.finish_root()
+
+
+def test_admission_membership_distinguishes_real_owners_through_physical_retirement():
+    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner
+
+    capacity = RuntimeCapacity()
+    fabricated = ExecutionOwner(capacity, WorkOrigin.MANUAL, "fabricated", True)
+    assert not fabricated.is_admitted
+    owner = capacity.begin_execution(
+        origin=WorkOrigin.MANUAL, conversation_id="real", child=True
+    )
+    assert owner.is_admitted
+    operation = owner.reserve_tool()
+    owner.finish_root()
+    assert owner.is_admitted
+    operation.finish()
+    assert not owner.is_admitted

@@ -358,6 +358,7 @@ class SyncScopeService:
         client_version: str | None = None,
         scope_type: str = "personal",
         encryption_policy: str = "client_private_v1",
+        enrollment_only: bool = False,
     ) -> dict[str, Any]:
         """Dry-run a Sync v2 product mode without implying hidden local sync writes."""
 
@@ -390,6 +391,7 @@ class SyncScopeService:
         if not is_local_first_sync_profile_mode(normalized_mode):
             raise ValueError(f"Invalid Sync v2 profile mode: {profile_mode}")
         service = self._require_server_service(SyncBackend.SERVER)
+        enrollment_options = {"enrollment_only": True} if enrollment_only else {}
         with _sync_execution_scope(self, delegate=True):
             result = await self._maybe_await(
                 service.run_v2_dry_run(
@@ -402,6 +404,7 @@ class SyncScopeService:
                     scope_type=scope_type,
                     encryption_policy=encryption_policy,
                     profile_mode=normalized_mode.value,
+                    **enrollment_options,
                 )
             )
         if not isinstance(result, dict):

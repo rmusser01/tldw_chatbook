@@ -1,0 +1,40 @@
+{
+  "base": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+  "source_commit": "fc1627e99b8722a0a69812530d950410e8356ba0",
+  "parent": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+  "tree": "d2fe34915df8500f9df01f503864c6e4df89ba66",
+  "paths": {
+    "Tests/Chat/test_console_chat_create_integration.py": {
+      "git_blob": "a5f3e730a2c4ccd7576e5a2cb71afa3f0773c09e",
+      "sha256": "2501f1c8914c9851c78907b0c1f7fa9040e8888950495450cd61373a9c645c5a"
+    },
+    "Tests/Chat/test_console_note_span_actions.py": {
+      "git_blob": "0caabbb676b4bdfa0d0e12292cc9c61928b88558",
+      "sha256": "b6e587bd6cf8d69054a7ebc60a683cece8fbc92f0642750dc8f56266337e3cae"
+    },
+    "Tests/UI/test_console_composer_run_controls.py": {
+      "git_blob": "2e218f5f0c0a74f6c5a654c88f161c4c4a2147f8",
+      "sha256": "5ac84432c1034c1430a456b098ef5aed33abc6c43ffd645f7a4d2cd4fe66567a"
+    },
+    "Tests/Utils/test_console_new_chat_input_validation.py": {
+      "git_blob": "0327497f7a38aa250ffd01f809a440393f6f49d0",
+      "sha256": "db132d42be48574ed69dee060412c2d2cfd7d22a3c86b83a005285022725e685"
+    },
+    "tldw_chatbook/Chat/console_agent_bridge.py": {
+      "git_blob": "9a29da25fc6b2e6043fb452dc9387adead1dd554",
+      "sha256": "36aed2217dcebb0c2513f573101323911ead833506ee8019f3ba3f4728f10f83"
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "git_blob": "7b7117edcea73e57a95beae57b9c539b15d904e4",
+      "sha256": "65b4a2effa969439b0848584bb103bea7273c6def9310408c99bd35bc40c777d"
+    },
+    "tldw_chatbook/Utils/input_validation.py": {
+      "git_blob": "58bcf505b04f8af6b7937b0521f027b18d134144",
+      "sha256": "ebf77a23e64d7762202b864ad4caa576c2a5748015da6046c0cde39d45598cab"
+    },
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": {
+      "git_blob": "6d6b84f1354e9fcec8be1233e86c61b7b3f13184",
+      "sha256": "7186f5a96ac30cb92bdb8ed619f644dba5c216ca1e41706725a450f175e8e700"
+    }
+  }
+}

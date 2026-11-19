@@ -313,7 +313,8 @@ def test_provider_change_posts_the_swap_notice_and_a_model_change_does_not():
     # TASK-33002.5 rewrote the notice to display names; no raw key remains.
     assert "llama.cpp" in message and "Anthropic" in message
     assert "llama_cpp" not in message and "anthropic" not in message
-    assert app.notify.call_args.kwargs == {"severity": "warning"}
+    # Display names are runtime text: printed literally, never as markup.
+    assert app.notify.call_args.kwargs == {"severity": "warning", "markup": False}
 
 
 def test_swap_notice_names_a_cleared_provider_as_not_selected():
@@ -327,7 +328,11 @@ def test_swap_notice_names_a_cleared_provider_as_not_selected():
     _ensure(console)
 
     message = app.notify.call_args.args[0]
-    assert message.startswith("Console provider changed llama.cpp -> not selected:")
+    # Capture finding 7: the app's arrow and path glyphs, as its other copy.
+    assert message == (
+        "Console provider changed llama.cpp → not selected: this unused session "
+        "now follows your saved defaults (Settings ▸ Providers & Models)."
+    )
 
 
 def test_rebuilds_rederive_a_pristine_chat_at_most_once_per_saved_config(

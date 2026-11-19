@@ -1,0 +1,62 @@
+[
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/settings_screen.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/Agents/agent_service.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_runtime.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_trace_service.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/Workspaces/registry_service.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "ceiling": "passed",
+    "slack": "passed"
+  }
+]

@@ -8,6 +8,7 @@ from tldw_chatbook.Chat.console_ephemeral import (
     EPHEMERAL_AUDITED_TOOL_SOURCES,
     EPHEMERAL_BLOCKED_ACTIONS,
     EPHEMERAL_UNAUDITED_TOOL_REASON,
+    TEMPORARY_CAPTURE_ON_LABEL,
     TEMPORARY_LABEL,
     TEMPORARY_TOOLTIP,
     blocked_reason,
@@ -51,6 +52,7 @@ def test_user_facing_copy_never_overstates_the_guarantee():
     copy = " ".join(
         [
             TEMPORARY_LABEL,
+            TEMPORARY_CAPTURE_ON_LABEL,
             TEMPORARY_TOOLTIP,
             *EPHEMERAL_BLOCKED_ACTIONS.values(),
             EPHEMERAL_UNAUDITED_TOOL_REASON,
@@ -58,6 +60,15 @@ def test_user_facing_copy_never_overstates_the_guarantee():
     ).lower()
     for word in forbidden:
         assert word not in copy, f"copy overstates the guarantee: {word!r}"
+
+
+@pytest.mark.unit
+def test_fixed_temporary_copy_never_says_saving_enables_capture():
+    """TASK-37811: saving turns capture on only when the saved chat resolves
+    Capture On, which a fixed string cannot know. Only the composer Menu's
+    Save chat row, which reads that resolution, may say so."""
+    for copy in (TEMPORARY_LABEL, TEMPORARY_CAPTURE_ON_LABEL, TEMPORARY_TOOLTIP):
+        assert "enables capture" not in copy.lower(), copy
 
 
 # -- agent tool-dispatch policy (tool_blocked_reason) --

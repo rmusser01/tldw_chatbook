@@ -17,7 +17,7 @@ dependencies:
 references:
   - Docs/superpowers/specs/2026-08-23-research-workspace-design.md
   - Docs/superpowers/plans/2026-08-23-research-workspace-primary-studio.md
-  - backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md
+  - backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 priority: high
 ---
 
@@ -45,9 +45,9 @@ Add Summary, Flashcards, Quiz, Report, and Compare Sources as traceable Research
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR
 
-ADR path: `backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md`
+ADR path: `backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-078 already chooses each canonical local/server owner and forbids a duplicate output store. This task implements those mappings; a new ADR is required if any primary output receives a new canonical database.
+Reason: ADR-322 already chooses each canonical local/server owner and forbids a duplicate output store. This task implements those mappings; a new ADR is required if any primary output receives a new canonical database.
 
 Follow `Docs/superpowers/plans/2026-08-23-research-workspace-primary-studio.md` task-by-task with test-first checkpoints and one scoped commit per completed plan task.
 <!-- SECTION:PLAN:END -->

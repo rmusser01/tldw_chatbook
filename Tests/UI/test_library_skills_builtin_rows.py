@@ -19,9 +19,10 @@ from typing import Any
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Markdown, Switch
+from textual.widgets import Button, Markdown, Static, Switch
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import, see docstring
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Library.library_skills_state import build_skills_list_state
 from tldw_chatbook.UI.Library_Modules import library_skills_builtin_controller as lsbc
 from tldw_chatbook.UI.Library_Modules import library_skills_controller as lsc
@@ -220,6 +221,32 @@ def test_preview_pane_is_read_only_markdown_with_customize_and_switch():
             # Never the editor: no body TextArea, no Save.
             assert not app.query("#library-skill-body")
             assert not app.query("#library-skill-save")
+
+    asyncio.run(run())
+
+
+class _StyledPaneApp(ConsolidatedCSSApp):
+    """The preview pane under the application stylesheet."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+    compose = _PaneApp.compose
+
+
+def test_preview_enabled_label_hugs_its_text_under_the_app_stylesheet():
+    """TASK-33003.22: ``w-auto`` replaced the label's inline width.
+
+    With neither, the label takes the whole row and the Switch leaves the
+    screen (measured: x=227 on a 211-column screen).
+    """
+
+    async def run() -> None:
+        app = _StyledPaneApp()
+        async with app.run_test(size=(211, 44)) as pilot:
+            await pilot.pause()
+            switch = app.query_one("#library-skill-builtin-enabled", Switch)
+            label = switch.parent.query_one(Static)
+            assert label.region.width == len(" Enabled ")
+            assert switch.region.x == label.region.right
 
     asyncio.run(run())
 

@@ -100,4 +100,7 @@ F1 (MINOR, fixed): the pause follow-up's own try/except is now hoisted OUT of th
 F2 (MINOR, design simplification, fixed): removed the reminder pane's permanently-disabled View results button and its #scheduling-task-detail-secondary-why reason Static entirely (see the ruling at the top) -- AC#1 only requires reachability from a reminder OR definition pane. test_view_results_is_permanently_disabled_with_a_reason replaced with test_view_results_is_not_rendered_on_the_reminder_pane (asserts absence via detail.query(...), not just .disabled). Definition pane untouched.
 
 F4 (INFO, addressed): these notes restructured so current behavior opens the record instead of a now-superseded initial description, per this same review's own finding.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/schedules.md`: Both page passes were docs passes against shipped code and tests, not live.
 <!-- SECTION:NOTES:END -->

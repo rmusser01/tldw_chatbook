@@ -14,6 +14,7 @@ import textwrap
 import time
 import urllib.parse
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -961,12 +962,9 @@ def _run_pytest_child(
     *,
     environ=None,
     must_not_continue: bool = True,
-    support_file: Path | None = None,
 ):
     checkout = tmp_path / "checkout"
     checkout.mkdir()
-    if support_file is not None:
-        (checkout / support_file.name).write_bytes(support_file.read_bytes())
     test_file = checkout / "test_boundary_attempt.py"
     test_file.write_text(
         "import os\nimport socket\nimport subprocess\n\n"
@@ -974,7 +972,7 @@ def _run_pytest_child(
         "    try:\n"
         + textwrap.indent(body, "        ")
         + "\n    except BaseException:\n"
-        "        pass\n"
+        + ("        pass\n" if must_not_continue else "        raise\n")
         + (
             '    raise AssertionError("prohibited attempt continued")\n'
             if must_not_continue
@@ -2084,36 +2082,437 @@ def test_child_same_inode_read_only_reuse_drops_write_authority(api, tmp_path):
     _assert_containment_attempt(module, result, scratch, "filesystem_write_denied")
 
 
-def test_child_allows_private_binary_read_inside_scratch(tmp_path):
+def test_child_allows_nofollow_scratch_ancestor_posture(tmp_path):
     module = _load_runner()
-    body = textwrap.dedent(
-        """
-        from pathlib import Path
-        from private_paths import open_private_binary
-
-        private_file = Path(os.environ["TMPDIR"]) / "private.bin"
-        file_fd = os.open(private_file, os.O_WRONLY | os.O_CREAT, 0o600)
-        os.write(file_fd, b"private")
-        os.close(file_fd)
-        with open_private_binary(private_file) as opened:
-            assert opened.stream.read() == b"private"
-        Path(os.environ["TMPDIR"]).joinpath("private-read.txt").write_text(
-            "read", encoding="utf-8"
-        )
-        """
-    ).strip()
-
-    result, scratch, _checkout = _run_pytest_child(
+    result, scratch, _ = _run_pytest_child(
         module,
         tmp_path,
-        body,
+        f"assert os.stat({str(tmp_path)!r}, follow_symlinks=False).st_mode",
         must_not_continue=False,
-        support_file=REPO_ROOT / "tldw_chatbook/Utils/private_paths.py",
+    )
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.parametrize("exists", (False, True))
+def test_child_allows_only_nofollow_bootstrap_intent_metadata(tmp_path, exists):
+    module = _load_runner()
+    marker = tmp_path / ".tldw-bootstrap-directory-create.pending"
+    if exists:
+        marker.write_bytes(b"outside scratch")
+    body = f"os.stat({str(marker)!r}, follow_symlinks=False)"
+    if not exists:
+        body = "try:\n    " + body + "\nexcept FileNotFoundError:\n    pass"
+    result, scratch, _ = _run_pytest_child(
+        module, tmp_path, body, must_not_continue=False
+    )
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.parametrize("operation", ("read", "write", "follow", "other-name"))
+def test_child_bootstrap_intent_exception_grants_no_other_access(tmp_path, operation):
+    module = _load_runner()
+    marker = tmp_path / ".tldw-bootstrap-directory-create.pending"
+    marker.write_bytes(b"outside scratch")
+    body = {
+        "read": f"open({str(marker)!r}, 'rb').read()",
+        "write": f"open({str(marker)!r}, 'wb').write(b'changed')",
+        "follow": f"os.stat({str(marker)!r})",
+        "other-name": f"os.stat({str(marker.with_name('other'))!r}, follow_symlinks=False)",
+    }[operation]
+    result, scratch, _ = _run_pytest_child(module, tmp_path, body)
+    category = (
+        "filesystem_write_denied" if operation == "write" else "filesystem_read_denied"
+    )
+    _assert_containment_attempt(module, result, scratch, category)
+    assert marker.read_bytes() == b"outside scratch"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX canonical path contract")
+@pytest.mark.parametrize("system", ("linux", "darwin"))
+def test_child_own_mountinfo_has_no_related_or_write_authority(
+    tmp_path, monkeypatch, system
+):
+    module = _load_child()
+    module._SCRATCH = str(tmp_path)
+    module._READ_ROOTS = (str(tmp_path),)
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform=system))
+    own_proc = f"/proc/{os.getpid()}"
+
+    assert module._read_allowed(own_proc + "/mountinfo") is (system == "linux")
+    assert not module._write_allowed(own_proc + "/mountinfo")
+    for path in (
+        own_proc,
+        own_proc + "/status",
+        own_proc + "/mountinfo/child",
+        own_proc + "/fdinfo",
+        own_proc + "/fdinfo/not-a-descriptor",
+        own_proc + "/fdinfo/" + "9" * 64,
+        f"/proc/{os.getpid() + 1}/mountinfo",
+    ):
+        assert not module._read_allowed(path)
+        assert not module._read_event_allowed("os.scandir", path)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+@pytest.mark.parametrize(
+    "case",
+    (
+        "scratch-directory",
+        "foreign-directory",
+        "scratch-file",
+        "untracked",
+        "closed",
+        "reused",
+        "non-linux",
+        "no-boundary",
+    ),
+)
+def test_child_fdinfo_requires_current_tracked_scratch_directory(
+    tmp_path, monkeypatch, case
+):
+    module = _load_child()
+    scratch = tmp_path / "scratch"
+    foreign = tmp_path / "foreign"
+    scratch.mkdir()
+    foreign.mkdir()
+    subject = scratch
+    if case == "foreign-directory":
+        subject = foreign
+    elif case == "scratch-file":
+        subject = scratch / "file"
+        subject.touch()
+    module._SCRATCH = "" if case == "no-boundary" else str(scratch)
+    module._READ_ROOTS = (str(scratch),)
+    monkeypatch.setattr(
+        module,
+        "sys",
+        SimpleNamespace(platform="darwin" if case == "non-linux" else "linux"),
+    )
+    descriptor = os.open(subject, os.O_RDONLY)
+    to_close = [descriptor]
+    try:
+        identity = module._fd_identity(descriptor)
+        assert identity is not None
+        if case != "untracked":
+            module._OPEN_FDS[descriptor] = (
+                str(subject),
+                subject.is_dir(),
+                False,
+                identity,
+            )
+        if case == "closed":
+            os.close(descriptor)
+            to_close.remove(descriptor)
+        elif case == "reused":
+            replacement = os.open(foreign, os.O_RDONLY)
+            to_close.append(replacement)
+            os.dup2(replacement, descriptor)
+        path = f"/proc/{os.getpid()}/fdinfo/{descriptor}"
+
+        assert module._read_allowed(path) is (case == "scratch-directory")
+        if case != "no-boundary":
+            assert not module._write_allowed(path)
+    finally:
+        for descriptor in to_close:
+            os.close(descriptor)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX canonical path contract")
+@pytest.mark.parametrize(
+    "system,boundary", (("linux", True), ("darwin", True), ("linux", False))
+)
+@pytest.mark.parametrize("probe", ("smaps", "smaps_rollup", "io", "policy0", "cpufreq"))
+def test_child_psutil_capability_probes_are_linux_stat_only(
+    tmp_path, monkeypatch, system, boundary, probe
+):
+    module = _load_child()
+    paths = {
+        **{
+            name: f"/proc/{os.getpid()}/{name}"
+            for name in ("smaps", "smaps_rollup", "io")
+        },
+        "policy0": "/sys/devices/system/cpu/cpufreq/policy0",
+        "cpufreq": "/sys/devices/system/cpu/cpu0/cpufreq",
+    }
+    module._SCRATCH = str(tmp_path) if boundary else ""
+    monkeypatch.setattr(module, "sys", SimpleNamespace(platform=system))
+    monkeypatch.setattr(
+        module, "_STAT_ONLY_PATHS", frozenset(paths.values()), raising=False
+    )
+    seen = []
+    result = object()
+
+    def stat_probe(path, *args, **kwargs):
+        seen.append((path, args, kwargs))
+        return result
+
+    def denied(record):
+        raise PermissionError(record)
+
+    monkeypatch.setitem(module._REAL_METADATA_READ_APIS, "stat", stat_probe)
+    monkeypatch.setattr(module, "_contain", denied)
+    path = paths[probe]
+    if system == "linux" and boundary:
+        assert module._guarded_metadata_read("stat", path) is result
+        assert seen == [(path, (), {})]
+
+        def missing_probe(*args, **kwargs):
+            raise FileNotFoundError(path)
+
+        monkeypatch.setitem(module._REAL_METADATA_READ_APIS, "stat", missing_probe)
+        with pytest.raises(FileNotFoundError) as missing:
+            module._guarded_metadata_read("stat", path)
+        assert missing.value.args == (path,)
+    else:
+        with pytest.raises(PermissionError) as refused:
+            module._guarded_metadata_read("stat", path)
+        assert refused.value.args == (module.FILESYSTEM_READ_DENIED,)
+        assert seen == []
+    assert not module._read_allowed(path)
+    if boundary:
+        assert not module._write_allowed(path)
+    assert not module._read_event_allowed("os.scandir", path)
+    for api in module._REAL_METADATA_READ_APIS:
+        if api != "stat":
+            with pytest.raises(PermissionError) as refused:
+                module._guarded_metadata_read(api, path)
+            assert refused.value.args == (module.FILESYSTEM_READ_DENIED,)
+    for other in (path + "/child", path + "-other", f"/proc/{os.getpid() + 1}/{probe}"):
+        with pytest.raises(PermissionError) as refused:
+            module._guarded_metadata_read("stat", other)
+        assert refused.value.args == (module.FILESYSTEM_READ_DENIED,)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX canonical path contract")
+@pytest.mark.parametrize("system", ("linux", "darwin", "win32", "unknown"))
+@pytest.mark.parametrize("name", ("stat", "limits"))
+def test_runtime_authority_allows_only_linux_own_process_collector_files(
+    tmp_path, monkeypatch, system, name
+):
+    module = _load_child()
+    own_pid = os.getpid()
+    own_proc = f"/proc/{own_pid}"
+    path = own_proc + "/" + name
+    monkeypatch.setattr(
+        module,
+        "sys",
+        SimpleNamespace(
+            platform=system,
+            executable=sys.executable,
+            base_prefix=sys.base_prefix,
+            path=sys.path,
+        ),
+    )
+    assert not module._read_allowed(path)
+    # Authority belongs to the child captured at import, not a later PID lookup.
+    monkeypatch.setattr(module.os, "getpid", lambda: own_pid + 1)
+    module._SCRATCH = str(tmp_path / "scratch")
+    module._READ_ROOTS, module._READ_FILES = module._runtime_authority(
+        str(tmp_path / "checkout"),
+        module._SCRATCH,
+        configured_paths=(),
+        locale_root=str(tmp_path / "missing-locale"),
+        language="C",
+    )
+
+    assert module._read_allowed(path) is (system == "linux")
+    assert not module._write_allowed(path)
+    for denied in (
+        "/proc",
+        own_proc,
+        path + "/child",
+        path + "-other",
+        f"/proc/{own_pid + 1}/{name}",
+        *(
+            own_proc + "/" + leaf
+            for leaf in ("statm", "status", "smaps", "smaps_rollup", "io")
+        ),
+    ):
+        assert not module._read_allowed(denied)
+        assert not module._read_event_allowed("os.listdir", denied)
+        assert not module._read_event_allowed("os.scandir", denied)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux psutil capability probes")
+def test_child_imports_psutil_after_containment_without_reading_probe_contents(
+    tmp_path,
+):
+    module = _load_runner()
+    result, scratch, _ = _run_pytest_child(
+        module,
+        tmp_path,
+        "import sys\nassert 'psutil' not in sys.modules\nimport psutil\nassert callable(psutil.cpu_times)",
+        must_not_continue=False,
     )
 
     assert result.returncode == 0
     assert result.error is None
-    assert (scratch / "tmp/private-read.txt").read_text(encoding="utf-8") == "read"
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux process collector files")
+def test_child_imports_prometheus_after_containment_with_real_process_metrics(tmp_path):
+    module = _load_runner()
+    body = """
+import sys
+assert 'prometheus_client' not in sys.modules
+assert 'PROMETHEUS_MULTIPROC_DIR' not in os.environ
+assert 'prometheus_multiproc_dir' not in os.environ
+from prometheus_client import REGISTRY
+samples = {
+    sample.name: sample.value
+    for metric in REGISTRY.collect()
+    for sample in metric.samples
+    if sample.name.startswith('process_')
+}
+for name in (
+    'process_virtual_memory_bytes', 'process_resident_memory_bytes',
+    'process_start_time_seconds', 'process_open_fds', 'process_max_fds',
+):
+    assert samples[name] > 0
+assert samples['process_cpu_seconds_total'] >= 0
+"""
+    result, scratch, _ = _run_pytest_child(
+        module, tmp_path, body, must_not_continue=False
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux process collector files")
+@pytest.mark.parametrize(
+    "operation",
+    (
+        "foreign-stat",
+        "foreign-limits",
+        "sibling",
+        "statm",
+        "enumerate",
+        "write-stat",
+        "write-limits",
+    ),
+)
+def test_child_process_collector_files_grant_no_other_access(tmp_path, operation):
+    module = _load_runner()
+    body = {
+        "foreign-stat": "open(f'/proc/{os.getppid()}/stat').read()",
+        "foreign-limits": "open(f'/proc/{os.getppid()}/limits').read()",
+        "sibling": "open('/proc/self/status').read()",
+        "statm": "open('/proc/self/statm').read()",
+        "enumerate": "os.listdir('/proc/self')",
+        "write-stat": "open('/proc/self/stat', 'w')",
+        "write-limits": "open('/proc/self/limits', 'w')",
+    }[operation]
+    result, scratch, _ = _run_pytest_child(module, tmp_path, body)
+
+    _assert_containment_attempt(
+        module,
+        result,
+        scratch,
+        "filesystem_write_denied"
+        if operation.startswith("write-")
+        else "filesystem_read_denied",
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux stat-only capability probes")
+@pytest.mark.parametrize(
+    "operation",
+    ("content", "foreign-pid", "sibling", "enumerate", "lstat", "access", "write"),
+)
+def test_child_psutil_stat_probes_grant_no_other_access(tmp_path, operation):
+    module = _load_runner()
+    body = {
+        "content": "open('/proc/self/smaps').read()",
+        "foreign-pid": "os.stat(f'/proc/{os.getpid() + 1}/smaps')",
+        "sibling": "os.stat('/proc/self/statm')",
+        "enumerate": "os.listdir('/sys/devices/system/cpu/cpufreq/policy0')",
+        "lstat": "os.lstat('/proc/self/io')",
+        "access": "os.access('/proc/self/smaps_rollup', os.R_OK)",
+        "write": "open('/proc/self/io', 'w')",
+    }[operation]
+    result, scratch, _ = _run_pytest_child(module, tmp_path, body)
+
+    _assert_containment_attempt(
+        module,
+        result,
+        scratch,
+        "filesystem_write_denied" if operation == "write" else "filesystem_read_denied",
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux kernel mount metadata")
+def test_child_reads_linux_mount_metadata_for_tracked_scratch_directory(tmp_path):
+    module = _load_runner()
+    body = """
+descriptor = os.open(os.environ['XDG_DATA_HOME'], os.O_RDONLY | os.O_DIRECTORY)
+try:
+    with open(f'/proc/self/fdinfo/{descriptor}') as handle:
+        assert 'mnt_id:' in handle.read()
+    with open('/proc/self/mountinfo') as handle:
+        assert ' - ' in handle.read()
+finally:
+    os.close(descriptor)
+"""
+    result, scratch, _ = _run_pytest_child(
+        module, tmp_path, body, must_not_continue=False
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux kernel mount metadata")
+@pytest.mark.parametrize(
+    "operation",
+    ("foreign-pid", "sibling", "enumerate", "closed", "file", "write"),
+)
+def test_child_linux_mount_metadata_grants_no_other_access(tmp_path, operation):
+    module = _load_runner()
+    body = {
+        "foreign-pid": "open(f'/proc/{os.getpid() + 1}/mountinfo').read()",
+        "sibling": "open('/proc/self/status').read()",
+        "enumerate": "os.listdir('/proc/self/fdinfo')",
+        "closed": "descriptor = os.open(os.environ['XDG_DATA_HOME'], os.O_RDONLY)\n"
+        "os.close(descriptor)\nopen(f'/proc/self/fdinfo/{descriptor}').read()",
+        "file": "descriptor = os.open(os.path.join(os.environ['TMPDIR'], 'file'), "
+        "os.O_CREAT | os.O_RDWR, 0o600)\n"
+        "open(f'/proc/self/fdinfo/{descriptor}').read()",
+        "write": "open('/proc/self/mountinfo', 'w')",
+    }[operation]
+    result, scratch, _ = _run_pytest_child(module, tmp_path, body)
+
+    _assert_containment_attempt(
+        module,
+        result,
+        scratch,
+        "filesystem_write_denied" if operation == "write" else "filesystem_read_denied",
+    )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor contract")
+def test_child_allows_private_binary_read_inside_scratch(tmp_path):
+    module = _load_runner()
+    selector = "Tests/Utils/test_private_paths.py::test_open_private_binary_hardens_before_read"
+    scratch = tmp_path / "scratch"
+
+    result = module.run_closeout_child(
+        checkout=REPO_ROOT,
+        scratch=scratch,
+        mode="pytest",
+        target=Path(f"{REPO_ROOT / selector}"),
+    )
+
+    assert result.returncode == 0
+    assert result.error is None
+    assert json.loads(result.result_path.read_text()) == {selector: "PASS"}
     assert (scratch / "attempts.jsonl").read_bytes() == b""
 
 
@@ -2184,6 +2583,26 @@ def test_child_settles_one_real_catalogue_selector(tmp_path):
 
     assert result.returncode == 0
     assert result.error is None
+
+
+def test_child_environment_replaces_supplied_profile_guard_identity(tmp_path):
+    from Tests import real_profile_guard
+
+    module = _load_runner()
+    expected = real_profile_guard.child_environment()
+    supplied = {
+        **os.environ,
+        real_profile_guard.REAL_HOME_ENV: str(tmp_path / "untrusted-real-home"),
+        real_profile_guard.PROFILE_SNAPSHOT_ENV: "not-json",
+        "TASK23019_FAKE_API_KEY": "must-not-reach-child",
+    }
+
+    prepared = module.prepare_scratch_environment(
+        tmp_path / "scratch", environ=supplied
+    )
+
+    assert all(prepared.env[name] == value for name, value in expected.items())
+    assert "TASK23019_FAKE_API_KEY" not in prepared.env
 
 
 def test_child_environment_redirects_every_writable_owner_before_import(tmp_path):
@@ -2459,6 +2878,94 @@ def test_child_runs_only_the_explicit_pytest_node(selector, expected_node, tmp_p
     assert recorded == {expected_node: "PASS"}
 
 
+@pytest.mark.parametrize("source", ("owned", "missing", "escape", "swap"))
+def test_child_discovers_only_checkout_owned_vendored_core(
+    tmp_path, monkeypatch, source
+):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    scratch = tmp_path / "scratch"
+    vendor = checkout / "packages/tldw_profile_core/src"
+    if source != "missing":
+        package = vendor / "tldw_profile_core"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("FIXTURE_ORIGIN = 'checkout'\n")
+    foreign = tmp_path / "foreign"
+    if source in {"escape", "swap"}:
+        package = foreign / "tldw_profile_core"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(
+            "import os\nfrom pathlib import Path\n"
+            "Path(os.environ['TMPDIR'], 'foreign-imported').write_text('foreign')\n"
+            "FIXTURE_ORIGIN = 'foreign'\n"
+        )
+    if source == "escape":
+        vendor.rename(vendor.with_name("original-src"))
+        vendor.symlink_to(foreign, target_is_directory=True)
+
+    # Keep the trusted driver inside checkout: its script directory must not
+    # accidentally authorize the foreign fixture through interpreter sys.path.
+    driver = checkout / "child_driver.py"
+    driver_source = CHILD_PATH.read_text(encoding="utf-8")
+    if source == "swap":
+        hook = textwrap.dedent(
+            f"""
+            _original_runtime_authority = _runtime_authority
+
+            def _swap_before_runtime_capture(*args, **kwargs):
+                vendor = Path({str(vendor)!r})
+                assert str(vendor) in sys.path
+                vendor.rename(vendor.with_name('original-src'))
+                vendor.symlink_to({str(foreign)!r}, target_is_directory=True)
+                Path(_SCRATCH, 'swap-complete').write_text('swapped')
+                return _original_runtime_authority(*args, **kwargs)
+
+            _runtime_authority = _swap_before_runtime_capture
+            """
+        )
+        main_guard = '\nif __name__ == "__main__":'
+        assert driver_source.count(main_guard) == 1
+        driver_source = driver_source.replace(main_guard, hook + main_guard)
+    driver.write_text(driver_source, encoding="utf-8")
+    monkeypatch.setattr(module, "CHILD_PATH", driver)
+
+    target = checkout / "test_vendored_core.py"
+    body = (
+        "import os\nimport sys\nfrom pathlib import Path\n\n"
+        "def test_vendored_core():\n"
+        "    Path(os.environ['TMPDIR'], 'target-started').write_text('started')\n"
+        "    assert not any(getattr(finder, '__module__', type(finder).__module__).startswith('__editable__') for finder in sys.meta_path)\n"
+    )
+    if source != "missing":
+        body += (
+            "    assert 'tldw_profile_core' not in sys.modules\n"
+            "    import tldw_profile_core\n"
+            "    assert tldw_profile_core.FIXTURE_ORIGIN == 'checkout'\n"
+            f"    assert Path(tldw_profile_core.__file__).resolve().parent == Path({str(vendor / 'tldw_profile_core')!r})\n"
+        )
+    target.write_text(body, encoding="utf-8")
+
+    result = module.run_closeout_child(
+        checkout=checkout, scratch=scratch, mode="pytest", target=target
+    )
+
+    assert not (scratch / "tmp/foreign-imported").exists()
+    if source in {"escape", "swap"}:
+        _assert_containment_attempt(module, result, scratch, "filesystem_read_denied")
+        if source == "escape":
+            assert not (scratch / "tmp/target-started").exists()
+        else:
+            assert (scratch / "swap-complete").read_text() == "swapped"
+    else:
+        assert result.returncode == 0
+        assert result.error is None
+        assert json.loads(result.result_path.read_text()) == {
+            "test_vendored_core.py::test_vendored_core": "PASS"
+        }
+        assert (scratch / "attempts.jsonl").read_bytes() == b""
+
+
 def test_real_hermetic_child_runs_declared_async_curated_selector(tmp_path):
     module = _load_runner()
     selector = (
@@ -2563,7 +3070,10 @@ def test_child_pytest_explicitly_loads_only_required_async_plugin(
     assert isinstance(observed["plugins"][0], child.ResultRecorder)
 
 
-def test_missing_explicit_async_plugin_is_a_stable_child_failure(monkeypatch, tmp_path):
+@pytest.mark.parametrize("reuse_scratch", (False, True))
+def test_missing_explicit_async_plugin_is_a_stable_child_failure(
+    monkeypatch, tmp_path, reuse_scratch
+):
     module = _load_runner()
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -2576,11 +3086,21 @@ def test_missing_explicit_async_plugin_is_a_stable_child_failure(monkeypatch, tm
     )
     assert broken_source != source
     broken_child.write_text(broken_source, encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    if reuse_scratch:
+        previous = module.run_closeout_child(
+            checkout=checkout, scratch=scratch, mode="pytest", target=target
+        )
+        assert previous.returncode == 0
+        assert previous.error is None
+        assert previous.result_path is not None
+        results = json.loads(previous.result_path.read_text())
+        assert len(results) == 1 and set(results.values()) == {"PASS"}
     monkeypatch.setattr(module, "CHILD_PATH", broken_child)
 
     result = module.run_closeout_child(
         checkout=checkout,
-        scratch=tmp_path / "scratch",
+        scratch=scratch,
         mode="pytest",
         target=target,
     )
@@ -2845,6 +3365,7 @@ async def test_common_matrix_records_one_failed_cell_and_continues(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_media_capability_captures_settled_visible_selected_row(
     monkeypatch, tmp_path
 ):
@@ -5660,10 +6181,10 @@ def test_canonical_root_accepts_macos_var_alias(tmp_path):
 def test_windows_promotion_fails_stably_before_repository_write(tmp_path, monkeypatch):
     module = _load_runner()
     kwargs = _promote_fixture(module, tmp_path)
-    monkeypatch.setattr(module.os, "name", "nt")
-
-    with pytest.raises(module.CloseoutError) as error:
-        module.promote_evidence(**kwargs)
+    with monkeypatch.context() as platform:
+        platform.setattr(module.os, "name", "nt")
+        with pytest.raises(module.CloseoutError) as error:
+            module.promote_evidence(**kwargs)
 
     assert error.value.category == "promotion_unsupported_platform"
     assert not kwargs["destination"].parent.exists()
@@ -7388,3 +7909,58 @@ def test_verify_evidence_unresolvable_manifest_subject_fails_stably(
 
     assert module.main(["--verify-evidence", str(evidence)]) == 2
     assert json.loads(capsys.readouterr().err) == {"error": "subject_tree_mismatch"}
+
+
+def test_child_retains_popen_annotations_and_denies_construction(tmp_path):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    target = checkout / "test_popen_surface.py"
+    target.write_text(
+        "import subprocess\n"
+        "def annotated(process: subprocess.Popen | None = None): pass\n"
+        "def test_constructor():\n"
+        "    try:\n"
+        "        subprocess.Popen(['/definitely/not/a/task23019-program'])\n"
+        "    except BaseException:\n"
+        "        pass\n"
+        "    raise AssertionError('prohibited constructor continued')\n",
+        encoding="utf-8",
+    )
+    scratch = tmp_path / "scratch"
+    result = module.run_closeout_child(
+        checkout=checkout, scratch=scratch, mode="pytest", target=target
+    )
+    _assert_containment_attempt(module, result, scratch, "process_denied")
+
+
+def test_child_optional_audio_backends_are_unavailable_before_test_import(tmp_path):
+    module = _load_runner()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    for name in ("sounddevice", "pyaudio"):
+        (checkout / f"{name}.py").write_text(
+            "raise AssertionError('optional audio backend initialized')\n",
+            encoding="utf-8",
+        )
+    target = checkout / "test_audio_boundary.py"
+    target.write_text(
+        "import importlib.util\n"
+        "for name in ('sounddevice', 'pyaudio'):\n"
+        "    assert importlib.util.find_spec(name) is None\n"
+        "    try:\n"
+        "        __import__(name)\n"
+        "    except ModuleNotFoundError:\n"
+        "        pass\n"
+        "    else:\n"
+        "        raise AssertionError('audio backend import was allowed')\n"
+        "def test_no_audio_device_authority(): pass\n",
+        encoding="utf-8",
+    )
+    scratch = tmp_path / "scratch"
+    result = module.run_closeout_child(
+        checkout=checkout, scratch=scratch, mode="pytest", target=target
+    )
+    assert result.returncode == 0
+    assert result.error is None
+    assert (scratch / "attempts.jsonl").read_bytes() == b""

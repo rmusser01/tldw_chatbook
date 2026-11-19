@@ -1,0 +1,31 @@
+{
+  "task14_receipt_sha256": "0d8e957278c985164c18040aa720a761cd7bf15c4439653a75fd7bee477caafc",
+  "carry": {
+    "original_entry_count": 2118,
+    "prior_verified_receipt": "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/evidence-packing-verification.json",
+    "zip_path": "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/qualification-evidence.zip",
+    "zip_sha256": "acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84",
+    "zip_bytes": 63166118,
+    "fresh_zip_whole_file_hash_verified": true,
+    "entries_decompressed_or_replayed": false,
+    "original_visible_paths_preserved": 99,
+    "new_packing_files_preserved": 5,
+    "older_qa_tree_blobs_preserved": 12337,
+    "older_qa_exact_whole_files": 12336,
+    "older_qa_original_prefix_upstream_append_exception": {
+      "path": "Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md",
+      "original_bytes": 7982,
+      "original_sha256": "db7d9edb09f65f5132aa06d98dfe48932a6528a9407db62e156042b463841505",
+      "original_exact_prefix": true,
+      "append_bytes": 4417,
+      "append_lines": 70,
+      "append_sha256": "281ec403c258c1210dac8b710e603d35eec99712ad7fbdc6cdcfe60d4a88a8d3",
+      "final_exact_upstream": true,
+      "final_sha256": "356b47f7fe349cb19f12bb432efaf44e52c59e89eb40d772ac54627e68904e49"
+    },
+    "all_qa_archive_paths_disjoint_from_incoming": true
+  },
+  "fresh_whole_ZIP_hash_exact": true,
+  "original2118_entry_bytes_preserved_by_exact_container": true,
+  "no_archive_replay": true
+}

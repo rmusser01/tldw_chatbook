@@ -1,0 +1,38 @@
+# [analysis_defaults] stays OpenAI/gpt-4o whatever provider the wizard connects; no Settings control either
+[analysis_defaults]
+# Default settings specifically for the Media Analysis feature
+provider = "OpenAI"
+model = "gpt-4o"
+temperature = 0.7
+top_p = 0.95
+min_p = 0.05
+
+Consumers: Library ingest 'Analyze after import' (Library/ingest_analysis.py:10-16) and Media viewer analysis panel (Widgets/Media/media_viewer_panel.py:1523-1535)
+* the provider comes from ``[analysis_defaults] provider`` -- the same
+  config the Media viewer's analysis panel already reads as its default;
+* readiness + credential resolution go through
+  ``Chat/provider_readiness.get_provider_readiness`` -- the one definition
+  of "this provider can actually be called" shared with Console, covering
+  ``api_settings.<provider>.api_key``, the conventional environment
+  variable, and the keyless local providers.
+
+Settings editors of analysis_defaults (live screens):
+(none)
+Wizard writes chat_defaults only (provider_setup_persistence.py:856-861):
+    section_values: dict[str, dict[str, object]] = {
+        provider_section: provider_values,
+        "chat_defaults": {
+            "provider": ownership.provider_key,
+            "model": model,
+        },
+
+# Other secondary 'default provider' keys the wizard leaves pointing at OpenAI/Anthropic:
+5600:default_llm_for_contextualization = "gpt-3.5-turbo"
+5901:# relevance_analysis_llm = "openai"
+5902:# final_answer_llm = "openai"
+6253:chat_default_provider = "openai"
+[character_defaults]
+# Default settings specifically for the 'Character' tab
+provider = "Anthropic"
+model = "claude-haiku-4-5" # Make sure this exists in [providers.Anthropic]
+system_prompt = "You are roleplaying as a witty pirate captain."

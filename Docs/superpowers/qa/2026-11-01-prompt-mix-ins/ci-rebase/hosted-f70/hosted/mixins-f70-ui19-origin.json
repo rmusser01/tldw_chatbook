@@ -1,0 +1,12 @@
+{
+  "head": "f70eb635f5991d25b7cd5d32d789406d837be32b",
+  "run_id": 41552416723,
+  "attempt": 1,
+  "job_id": 125652587027,
+  "path": "/private/tmp/mixins-f70-ui19.log",
+  "bytes": 449028,
+  "sha256": "1ed2bd9c87560671a2f417606e843ddb0e930fa20a32a637ccd1100fe2ce60a2",
+  "failure": "unchanged healthy Library DOM wait: rendered0/state1, reconcile dirty, loaded/no errors/current LibraryScreen",
+  "merge_state": "auto disabled for investigation",
+  "rerun_request": "specific job cannot rerun whileworkflowactive; no rerun yet"
+}

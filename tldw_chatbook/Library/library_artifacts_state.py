@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
-ArtifactSource = Literal["chatbook", "live_report", "kept_report"]
-ArtifactView = Literal["all", "chatbooks", "reports"]
+ArtifactSource = Literal[
+    "chatbook",
+    "live_report",
+    "kept_report",
+    "dream_story",
+    "dream_collection",
+    "dream_track",
+]
+ArtifactView = Literal["all", "chatbooks", "reports", "dreams"]
 ArtifactSort = Literal["newest", "title"]
 ReadDirection = Literal["after", "before"]
 ArtifactOrderKey = tuple[int | str, ArtifactSource, int]
@@ -29,7 +37,14 @@ class ArtifactKey:
     native_id: int
 
     def __post_init__(self) -> None:
-        if self.source not in ("chatbook", "live_report", "kept_report"):
+        if self.source not in (
+            "chatbook",
+            "live_report",
+            "kept_report",
+            "dream_story",
+            "dream_collection",
+            "dream_track",
+        ):
             raise ValueError("Unknown artifact source")
         if type(self.native_id) is not int or self.native_id <= 0:
             raise ValueError("Artifact ID must be a positive integer")
@@ -52,7 +67,7 @@ class ArtifactScope:
     kept_only: bool = False
 
     def __post_init__(self) -> None:
-        if self.view not in ("all", "chatbooks", "reports"):
+        if self.view not in ("all", "chatbooks", "reports", "dreams"):
             raise ValueError("Unknown artifact view")
         if self.sort not in ("newest", "title"):
             raise ValueError("Unknown artifact sort")
@@ -153,6 +168,7 @@ class ArtifactDetail:
     details: tuple[tuple[str, str], ...]
     source_conversation_id: str | None = None
     source_message_id: str | None = None
+    dream_story: Mapping[str, Any] | None = None
 
 
 def validate_artifact_window(

@@ -1,0 +1,32 @@
+# ruff ratchet baseline (TASK-38600; ADR 355 backlog/decisions/355-ruff-lint-gate.md)
+# generated with: ruff 0.16.6
+# selection: F,B,ASYNC,PLE over tldw_chatbook (F is ZERO by policy
+# and intentionally absent here -- the gate-new CI job enforces it)
+# format: <RULE> <count>, one per line
+# regenerate (with the pinned CI version!): python Tests/lint/ruff_gate.py --update-baseline
+ASYNC109 45
+ASYNC110 19
+ASYNC220 2
+ASYNC221 1
+ASYNC230 8
+ASYNC240 94
+B004 4
+B006 14
+B007 63
+B008 7
+B009 79
+B010 21
+B012 1
+B018 8
+B019 1
+B023 36
+B025 1
+B026 1
+B027 2
+B028 1
+B033 2
+B904 239
+B905 213
+PLE0605 1
+PLE0704 1
+PLE1205 241

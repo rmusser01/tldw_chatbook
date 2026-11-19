@@ -165,11 +165,13 @@ class FakeMCPService:
         decision: str = "allowed",
         timeout_seconds: float | None = None,
         registered_argument_names: set[str] | None = None,
+        approval_definition_hash: str | None = None,
     ) -> dict:
         self.execute_calls.append(
             (server_key, tool_name, dict(arguments or {}), initiator, decision)
         )
         self.execute_registered_argument_names_calls.append(registered_argument_names)
+        self.last_approval_definition_hash = approval_definition_hash
         if self.execute_delay:
             await asyncio.sleep(self.execute_delay)
         if self.execute_raises is not None:
@@ -980,8 +982,11 @@ def test_invoke_ask_callback_approve_once_executes_and_records_approved(running_
 
     assert result.ok is True
     assert len(captured["pending"]) == 1
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+
     assert captured["pending"][0] == MCPPendingCall(
         llm_name=tool_id,
+        presentation_authority=profile_authority("mcp", "default", "srv", "tool_name"),
         server_key="local:srv",
         tool_name="run",
         server_label="srv",
@@ -2098,7 +2103,9 @@ def _console_exclusion_set() -> frozenset:
 
 
 def _mixed_library_inventory() -> dict:
-    names = sorted(_console_exclusion_set()) + ["chat_with_llm"]
+    # The unrelated built-in sample must be one the direct runtime can run:
+    # ``chat_with_llm`` is never offered at all (TASK-34100.5).
+    names = sorted(_console_exclusion_set()) + ["chat_with_character"]
     return {"tools": [_tool_dict(name, f"{name} description") for name in names]}
 
 
@@ -2113,7 +2120,7 @@ def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
     names = {entry.name for entry in provider.list_catalog()}
     assert "mcp__tldw_chatbook__library_list_media" in names
     assert "mcp__tldw_chatbook__search_rag" in names
-    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert "mcp__tldw_chatbook__chat_with_character" in names
     assert names == {
         f"mcp__tldw_chatbook__{tool['name']}"
         for tool in service.inventory["tools"]
@@ -2149,7 +2156,7 @@ def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
     names = {entry.name for entry in provider.list_catalog()}
     for raw_name in exclusions:
         assert f"mcp__tldw_chatbook__{raw_name}" not in names
-    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert "mcp__tldw_chatbook__chat_with_character" in names
     # Same raw names on a LOCAL profile are a different tool entirely.
     assert "mcp__docs__library_list_media" in names
     assert "mcp__docs__search_rag" in names
@@ -2206,13 +2213,13 @@ def test_compose_catalog_exclusion_set_stored_immutably():
         main_loop=asyncio.new_event_loop(),
         builtin_raw_name_exclusions=mutable,
     )
-    mutable.add("chat_with_llm")
+    mutable.add("chat_with_character")
 
     _compose(provider)
 
     names = {entry.name for entry in provider.list_catalog()}
     assert "mcp__tldw_chatbook__library_list_media" not in names
-    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert "mcp__tldw_chatbook__chat_with_character" in names
 
 
 # ---------------------------------------------------------------------------
@@ -2395,3 +2402,50 @@ def test_none_stamp_preserves_fresh_gate_selection(running_loop, state, none_sta
     else:
         assert json.loads(result.content) == service.execute_result
         assert result.outcome is None
+
+
+def test_explicit_session_approval_qualifies_history_but_reuse_does_not(running_loop):
+    from tldw_chatbook.MCP.permission_store import definition_hash
+
+    raw_tool = _tool_dict("run", input_schema={"type": "object"})
+    service = FakeMCPService(catalog_records=[_catalog_record("srv", [raw_tool])])
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        approval_callback=lambda pending: {
+            p.llm_name: "approve_session" for p in pending
+        },
+    )
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+    assert provider.invoke(tool_id, {}).ok
+    assert service.last_approval_definition_hash == definition_hash(
+        raw_tool.get("description", ""), raw_tool["inputSchema"]
+    )
+    provider._approval_callback = None
+    assert provider.invoke(tool_id, {}).ok
+    assert service.last_approval_definition_hash is None
+
+
+def test_pending_display_authority_preserves_mcp_owner_and_provider_serialization(
+    running_loop,
+):
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    entry = provider.list_catalog()[0]
+    schema = provider.load_schema(entry.id)
+    row = provider.pending_gate_for(
+        entry.id, {"nested": {"secret": "verbatim"}}, "call-a"
+    )
+    assert row.presentation_authority.profile_id == "default"
+    assert row.presentation_authority.profile_label == "Default"
+    assert row.presentation_authority.stamp_domain == "tool_name"
+    assert provider.load_schema(entry.id) == schema
+    provider.apply_batch_decisions(RUN, {entry.id: "allow_matching"})
+    result = provider.invoke(entry.id, row.arguments)
+    assert result.ok
+    assert service.add_arg_rule_calls[0][2] == row.arguments
+    assert row.reason == "ask" and row.options == ()

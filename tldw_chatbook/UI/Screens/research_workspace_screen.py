@@ -844,7 +844,9 @@ class ResearchWorkspaceScreen(BaseAppScreen):
         section.sync_note(note)
 
     @on(ResearchQuickNotesSection.NewRequested)
-    def create_quick_note(self, message: ResearchQuickNotesSection.NewRequested) -> None:
+    def create_quick_note(
+        self, message: ResearchQuickNotesSection.NewRequested
+    ) -> None:
         section = self.query_one(ResearchQuickNotesSection)
         if (
             message.ref != section.editor_ref

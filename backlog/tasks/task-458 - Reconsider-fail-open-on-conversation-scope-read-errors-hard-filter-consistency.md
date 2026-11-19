@@ -3,7 +3,7 @@ id: TASK-458
 title: >-
   Reconsider fail-open on conversation-scope read errors (hard-filter
   consistency)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-22 03:51'
 labels: []
@@ -19,7 +19,14 @@ PR #757 review (comment 5) made the workspace-scope read in resolve_scope_for_se
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Investigation documents how a conversation-scope read failure currently propagates through resolve_scope_for_session and get_rag_context_for_chat (raises vs. silently degrades to unscoped)
-- [ ] #2 A decision is recorded: either the conversation-scope read is changed to fail closed (EMPTY, matching the PR#757 comment-5 workspace-scope precedent) with tests, or the fail-open behavior is deliberately kept with documented rationale
-- [ ] #3 If changed, existing conversation-scope tests in Tests/RAG/test_scope_pipeline_enforcement.py and Tests/Chat/test_rag_scope.py continue to pass and new tests cover the failure path
+- [x] #1 Investigation documents how a conversation-scope read failure currently propagates through resolve_scope_for_session and get_rag_context_for_chat (raises vs. silently degrades to unscoped)
+- [x] #2 A decision is recorded: either the conversation-scope read is changed to fail closed (EMPTY, matching the PR#757 comment-5 workspace-scope precedent) with tests, or the fail-open behavior is deliberately kept with documented rationale
+- [x] #3 If changed, existing conversation-scope tests in Tests/RAG/test_scope_pipeline_enforcement.py and Tests/Chat/test_rag_scope.py continue to pass and new tests cover the failure path
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+The conversation-scope read now fails closed symmetrically with the workspace read: on a fresh-authorization read failure, resolve_scope_for_session returns early with an EMPTY EffectiveScope(cause='conversation-scope-unavailable') (Event_Handlers/Chat_Events/chat_rag_events.py:1080-1102), landed with the rag prompt-evidence program (7db27a44bb).

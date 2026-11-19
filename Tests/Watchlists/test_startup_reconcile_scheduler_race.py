@@ -129,8 +129,7 @@ async def test_the_startup_sweep_spares_a_run_the_scheduler_just_launched(
 
         after = {row["id"]: row for row in _run_rows(db)}
         assert reconciled["runs"] == 0, (
-            f"the sweep had nothing legitimate to reconcile, but claimed "
-            f"{reconciled}"
+            f"the sweep had nothing legitimate to reconcile, but claimed {reconciled}"
         )
         assert after[live_id]["status"] == "running", (
             f"the startup sweep failed a LIVE scheduled check: {after[live_id]}"
@@ -195,9 +194,7 @@ async def test_the_sweep_still_fails_a_run_the_previous_process_stranded(
     scheduler_worker = asyncio.create_task(loop.run(), name="scheduler_worker")
     try:
         await asyncio.wait_for(fetch_started.wait(), timeout=_TIMEOUT_SECONDS)
-        live_id = [
-            row["id"] for row in _run_rows(db) if row["id"] != stranded_id
-        ][0]
+        live_id = [row["id"] for row in _run_rows(db) if row["id"] != stranded_id][0]
 
         reconciled = await asyncio.wait_for(
             asyncio.to_thread(reconcile_interrupted_subscription_work, db, boundary),

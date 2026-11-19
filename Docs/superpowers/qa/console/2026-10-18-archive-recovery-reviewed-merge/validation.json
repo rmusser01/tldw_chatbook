@@ -1,0 +1,536 @@
+{
+  "review_source_snapshot_sha256": "25b4892df0ec4ad861d16b8f2144b130b0f31d9a6b6380318a738a664550b066",
+  "raw_root": "/private/tmp/archive-recovery-pr3162-merge-20261018",
+  "runs": [
+    {
+      "name": "ci-green",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/CI/test_backlog_task_id_uniqueness.py",
+        "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/settings_screen.py]",
+        "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/ci-green-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/ci-green-cache"
+      ],
+      "code": 0,
+      "seconds": 9.871411085128784,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "0dc84a9b21f1667f8aea9553f5b5d511c86e5b1cd4ff322f370d5156dad8544d",
+      "summary": "5 passed in 8.59s"
+    },
+    {
+      "name": "ci-red",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/CI/test_backlog_task_id_uniqueness.py",
+        "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/settings_screen.py]",
+        "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/ci-red-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/ci-red-cache"
+      ],
+      "started": 1792363709.0507798,
+      "exit_code": 1,
+      "finished": 1792363728.6852028,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "65698e8ed40e2019a0398dc0d668e74ae1e1521792fee08dff2a5776615339c7",
+      "summary": "4 failed, 1 passed in 16.66s"
+    },
+    {
+      "name": "compact-diagnostic",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "-x",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_production_recovery_keeps_exact_history_and_active_draft[button-size0]",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/compact-diagnostic-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/compact-diagnostic-cache"
+      ],
+      "code": 1,
+      "seconds": 24.82775616645813,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "05e86f37c15a3c421ca4dddff7f53d7739e6380a4c0462f2f419c5a552b182fd",
+      "summary": "1 failed in 19.01s"
+    },
+    {
+      "name": "css-census",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/css-census-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/css-census-cache"
+      ],
+      "code": 0,
+      "seconds": 17.59226703643799,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "66fc16258e9cb506de9413580a8b645c7a96e51ea5910034e76ca513fa76cedc",
+      "summary": "1 passed in 14.97s"
+    },
+    {
+      "name": "deferred-scroll",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_production_recovery_keeps_exact_history_and_active_draft[button-size0]",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_compact_confirmation_focus_shows_exact_target",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/deferred-scroll-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/deferred-scroll-cache"
+      ],
+      "code": 1,
+      "seconds": 43.07815408706665,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "7e6196647de2cbec7656869c77f8e5644d31a67e86d5844f65f0c10b3981e7db",
+      "summary": "2 failed in 37.69s"
+    },
+    {
+      "name": "final-fixes",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_archive_recovery_cards.py",
+        "Tests/Chat/test_archive_recovery_operations.py",
+        "Tests/DB/test_archive_chronology.py",
+        "Tests/CI/test_backlog_task_id_uniqueness.py",
+        "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/settings_screen.py]",
+        "Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/UI/Screens/settings_screen.py]",
+        "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "Tests/UI/test_design_token_governance.py",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/final-fixes-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/final-fixes-cache"
+      ],
+      "code": 1,
+      "seconds": 105.88646197319031,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "4e59b06a068cf803939b06b36769b11e642b184df3d44c268f9963641cb40baf",
+      "summary": "49 passed, 5 errors in 101.39s (0:01:41)"
+    },
+    {
+      "name": "final-interactions",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "Tests/UI/test_console_archive_recovery_flow.py",
+        "-k",
+        "compact_confirmation_focus or native_date_search or focused_native_recovery_actions or production_recovery_keeps or preview_hidden_chat or native_result_refresh",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/final-interactions-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/final-interactions-cache"
+      ],
+      "code": 0,
+      "seconds": 252.89553213119507,
+      "classification": "closing_green",
+      "log_sha256": "756ba5b50bfa5c181fde079a3a21c0b888c37c94792c221bd8929f7380cb10d2",
+      "summary": "14 passed, 29 deselected in 245.46s (0:04:05)"
+    },
+    {
+      "name": "final-mounted",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_archive_recovery_flow.py",
+        "-k",
+        "compact_confirmation_focus or native_date_search or focused_native_recovery_actions or production_recovery_keeps or preview_hidden_chat or native_result_refresh",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/final-mounted-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/final-mounted-cache"
+      ],
+      "code": 1,
+      "seconds": 309.873507976532,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "740e583b3595eb69c9dd6d302267fe41146628311aad5eb1f20e21f259829a74",
+      "summary": "3 failed, 11 passed, 29 deselected in 296.91s (0:04:56)"
+    },
+    {
+      "name": "layout-serialized",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "Tests/UI/test_console_archive_recovery_cards.py",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_production_recovery_keeps_exact_history_and_active_draft[button-size0]",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_compact_confirmation_focus_shows_exact_target",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_native_result_refresh_remains_manual_and_imported_json_is_inert",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/layout-serialized-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/layout-serialized-cache"
+      ],
+      "code": 1,
+      "seconds": 76.92931914329529,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "ec071dea05bbf3069519c19f57e0ea58be2438a8f52edd936cbc9bd11bb92fef",
+      "summary": "1 failed, 9 passed in 68.84s (0:01:08)"
+    },
+    {
+      "name": "mounted-qualified",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "Tests/UI/test_console_archive_recovery_flow.py",
+        "-k",
+        "compact_confirmation_focus or native_date_search or focused_native_recovery_actions or production_recovery_keeps or preview_hidden_chat or native_result_refresh",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/mounted-qualified-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/mounted-qualified-cache"
+      ],
+      "code": 0,
+      "seconds": 288.5554082393646,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "058d14d037649828800c1afadb3110bad24284bcf8aaa9b50239ab5ea086258e",
+      "summary": "14 passed, 29 deselected in 280.36s (0:04:40)"
+    },
+    {
+      "name": "navigation-red-bootstrap",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_archive_recovery_cards.py::test_library_recovery_navigation_can_await_a_leave_dialog",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/navigation-red-bootstrap-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/navigation-red-bootstrap-cache"
+      ],
+      "code": 1,
+      "seconds": 9.460952997207642,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "22494f688fedf9ef3822b47ee234b22a3cfb612689c88d2655968bb33a233f81",
+      "summary": "2 failed in 6.87s"
+    },
+    {
+      "name": "navigation-red",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_archive_recovery_cards.py::test_library_recovery_navigation_can_await_a_leave_dialog",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/navigation-red-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/navigation-red-cache"
+      ],
+      "code": 1,
+      "seconds": 5.160665035247803,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "60bc6b513fe470269b41f1afd74ca586d8f72930d918a81497c5cb6f972ec883",
+      "summary": "2 errors in 2.52s"
+    },
+    {
+      "name": "profile-schema-green",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_archive_recovery_cards.py",
+        "Tests/Library/test_library_collections_service.py",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/profile-schema-green-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/profile-schema-green-cache"
+      ],
+      "code": 0,
+      "seconds": 36.820395946502686,
+      "classification": "closing_green",
+      "log_sha256": "c74cd8d2fcddfdab945f81aa84cb5f8f50627e34ec692f02dcc6853f090fafc0",
+      "summary": "52 passed in 25.56s"
+    },
+    {
+      "name": "queued-remount-green",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "Tests/UI/test_console_archive_recovery_cards.py",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_native_result_refresh_remains_manual_and_imported_json_is_inert",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/queued-remount-green-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/queued-remount-green-cache"
+      ],
+      "code": 0,
+      "seconds": 34.20507502555847,
+      "classification": "closing_green",
+      "log_sha256": "c60eb131f08a8bc725220cd7c1a65a5061c68333ad8ee65e3616feb5c8ab9d61",
+      "summary": "10 passed in 27.90s"
+    },
+    {
+      "name": "queued-remount-red",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "Tests/UI/test_console_archive_recovery_cards.py::test_queued_results_retire_on_source_loss_and_remount_on_return",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/queued-remount-red-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/queued-remount-red-cache"
+      ],
+      "code": 1,
+      "seconds": 10.327841997146606,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "42d54f5cfc0903080c3956accb5c252daf98a767e0d9d99101aaeea008c0c84f",
+      "summary": "1 failed, 1 passed in 4.92s"
+    },
+    {
+      "name": "queued-source-green",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "--tb=short",
+        "Tests/UI/test_console_archive_recovery_flow.py::test_native_result_refresh_remains_manual_and_imported_json_is_inert",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/queued-source-green-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/queued-source-green-cache"
+      ],
+      "code": 1,
+      "seconds": 27.991333723068237,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "ea87153ccf86ec3dd7437a7ecf1ee8b2e23a6b49f8441c4be4645b196c9951cd",
+      "summary": "1 failed in 22.41s"
+    },
+    {
+      "name": "review-green",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_archive_recovery_search.py::test_unknown_archive_pages_use_last_modified_then_identity",
+        "Tests/DB/test_operation_owned_connection_retirement.py::test_expiry_after_connection_registration_bounds_internal_checkpoint",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/review-green-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/review-green-cache"
+      ],
+      "code": 0,
+      "seconds": 5.32322883605957,
+      "classification": "closing_green",
+      "log_sha256": "9c8d055d4257e6516344fd5b8e3200834bd1c61e6a179e710b3adab34b9b2d95",
+      "summary": "3 passed in 3.23s"
+    },
+    {
+      "name": "review-red",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_archive_recovery_search.py::test_unknown_archive_pages_use_last_modified_then_identity",
+        "Tests/DB/test_operation_owned_connection_retirement.py::test_expiry_after_connection_registration_bounds_internal_checkpoint",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/review-red-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/review-red-cache"
+      ],
+      "code": 1,
+      "seconds": 7.103261947631836,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "5039c2db461215ab0cea1ee244d14cd6ede951271bd8ad7f076e9c391945fefd",
+      "summary": "3 failed in 4.67s"
+    },
+    {
+      "name": "targeted-storage",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/DB/test_store_kernel.py",
+        "Tests/DB/test_operation_owned_connection_retirement.py",
+        "Tests/DB/test_library_collections_capture_migration.py",
+        "Tests/Library/test_library_collections_service.py",
+        "Tests/Architecture/test_library_collections_wiring.py",
+        "Tests/DB/test_archive_recovery_query.py",
+        "Tests/Chat/test_archive_recovery_search.py",
+        "Tests/Chat/test_archive_recovery_operations.py",
+        "Tests/Chat/test_archive_recovery_result_store.py",
+        "Tests/Agents/test_archive_recovery_tools.py",
+        "Tests/Chat/test_archive_recovery_coordinator.py",
+        "Tests/Chat/test_archive_recovery_review_hook.py",
+        "Tests/Chat/test_console_archive_recovery_dispatch.py",
+        "Tests/Chat/test_console_archive_recovery_followup.py",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/targeted-storage-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/targeted-storage-cache"
+      ],
+      "code": 1,
+      "seconds": 488.0604200363159,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "b930782f75a65b24c1871029754de5f8a84412f71b4d5b6bfc4d03710e7331af",
+      "summary": "1 failed, 369 passed in 484.88s (0:08:04)"
+    },
+    {
+      "name": "targeted-ui",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_console_archive_recovery_cards.py",
+        "Tests/UI/test_workspace_archive_review_regressions.py",
+        "Tests/UI/test_console_archive_recovery_boundaries.py",
+        "Tests/UI/test_console_archive_recovery_flow.py",
+        "-k",
+        "not retained_native_recovery_resource_owners_plateau_and_close",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/targeted-ui-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/targeted-ui-cache"
+      ],
+      "code": 1,
+      "seconds": 529.4564237594604,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "f95966d8120dd6fbcf520710586c85b9aef08eeb8da1f4c75dd57c5b1479520b",
+      "summary": "1 failed, 92 passed, 1 deselected in 521.50s (0:08:41)"
+    },
+    {
+      "name": "timestamp-red",
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/Chat/test_archive_recovery_operations.py::test_searched_workspace_target_uses_same_time_normalization_for_restore",
+        "--basetemp=/private/tmp/archive-recovery-pr3162-merge-20261018/timestamp-red-tmp",
+        "-o",
+        "cache_dir=/private/tmp/archive-recovery-pr3162-merge-20261018/timestamp-red-cache"
+      ],
+      "code": 1,
+      "seconds": 13.54030179977417,
+      "classification": "retained_diagnostic_or_earlier_cohort",
+      "log_sha256": "c65ebc986ba2f841d7e8319f0d055b1fe43f0f63829e9ee9d50a8abe8aac628b",
+      "summary": "4 failed, 1 passed in 8.97s"
+    }
+  ],
+  "derived_checkers": [
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "tldw_chatbook/css/check_bundle_sync.py"
+      ],
+      "code": 0,
+      "seconds": 2.068844795227051
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_profile_owned_path_inventory.py"
+      ],
+      "code": 0,
+      "seconds": 21.14258098602295
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_persistent_diagnostic_inventory.py"
+      ],
+      "code": 0,
+      "seconds": 108.34660601615906
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_backlog_task_ids.py"
+      ],
+      "code": 0,
+      "seconds": 1.2577860355377197
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_backlog_task_files.py"
+      ],
+      "code": 0,
+      "seconds": 0.4861738681793213
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_schema_table_allowlist.py"
+      ],
+      "code": 0,
+      "seconds": 0.4507279396057129
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_index_plan_pins.py"
+      ],
+      "code": 0,
+      "seconds": 3.602294921875
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_textual_worker_contract.py"
+      ],
+      "code": 0,
+      "seconds": 39.77633190155029
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_timestamp_writers.py"
+      ],
+      "code": 0,
+      "seconds": 14.715244054794312
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_markup_interpolation.py"
+      ],
+      "code": 0,
+      "seconds": 21.138421058654785
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_ui_pr_gate_census.py"
+      ],
+      "code": 0,
+      "seconds": 1.4777898788452148
+    }
+  ],
+  "worker_final_log_sha256": "06801079b082f185b239b97b5902b2b5847fcda3ca2a71f6988d4461233326b1",
+  "formatter": "13 scoped files already formatted",
+  "syntax_no_introduced_per_file_ruff_files": 23,
+  "live_requests_added": 0,
+  "live_cap_used": 30,
+  "live_cap_total": 30,
+  "full_suite_run": false,
+  "note": "Counts overlap; diagnostic and superseded failures are preserved. Hosted review/required PR CI/merge are pending at this local checkpoint."
+}

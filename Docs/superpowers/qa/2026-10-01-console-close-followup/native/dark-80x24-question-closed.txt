@@ -1,0 +1,24 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handof… Speak replies   ▌   Hands-free   ▌     Blocked
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────
+ Conversation | Viewed question
+    ◆ Viewed question   ✕    New tab     Temporary
+ Each tab runs its own agent — up to 3 in parallel (change in Settings >     ✕
+ ╭────────────────────────────────────────────────────────────────────────────╮
+ │ The agent has 1 question for you:                                          │
+ │                                                                            │
+ │ Choice                                                                     │
+ │ Private choice?                                                            │
+ │ ▐●▌ One — First choice                                                     │
+ │ ▐●▌ Two — Second choice                                                    │
+ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+ │ ▊  Other…                                                               ▎  │
+ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+ │                                                                            │
+────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model:
+█  Composer ▾  Menu   Ask, command, or paste       Send         Dictate
+  Ctrl+Shift+F focus | Alt+I inspect | F1 · F6 · Ctrl+P · Ctrl+Q

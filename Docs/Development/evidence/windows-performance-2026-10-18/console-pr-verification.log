@@ -1,0 +1,147 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+........................................................................ [ 48%]
+........................................................................ [ 96%]
+.....F                                                                   [100%]
+================================== FAILURES ===================================
+______ test_original_context_read_is_responsive_owned_and_custom_affine _______
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-29/test_original_context_read_is_0')
+
+    def test_original_context_read_is_responsive_owned_and_custom_affine(tmp_path):
+        launch = (
+            "from Tests.Performance.test_console_skill_context_owned import _SCRIPT; "
+            "exec(compile(_SCRIPT, '<skill-context-control>', 'exec'))"
+        )
+>       _run(tmp_path, "skill-context", "owned", script=launch, timeout=150)
+
+Tests\Performance\test_console_skill_context_owned.py:186:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-29/test_original_context_read_is_0')
+route = 'skill-context', outcome = 'owned'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w", encoding="utf-8") as output:
+                result = subprocess.run(
+                    [sys.executable, "-X", "utf8", "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text(encoding="utf-8", errors="replace")
+        stderr = ""
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: exception was the direct cause of the following exception:
+E
+E         Traceback (most recent call last):
+E           File "<string>", line 1, in <module>
+E           File "<skill-context-control>", line 168, in <module>
+E           File "C:\Python312\Lib\asyncio\runners.py", line 195, in run
+E             return runner.run(main)
+E                    ^^^^^^^^^^^^^^^^
+E           File "C:\Python312\Lib\asyncio\runners.py", line 118, in run
+E             return self._loop.run_until_complete(task)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+E             return future.result()
+E                    ^^^^^^^^^^^^^^^
+E           File "<skill-context-control>", line 31, in exercise
+E           File "<skill-context-control>", line 16, in until
+E           File "C:\Python312\Lib\asyncio\timeouts.py", line 115, in __aexit__
+E             raise TimeoutError from exc_val
+E         TimeoutError
+E         --- _setup_logging START (from Logging_Config.py) ---
+E         Loguru: All pre-existing sinks removed.
+E         Loguru: Configured to forward its messages to standard Python logging system.
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe', '-X', 'utf8', '...ed import _SCRIPT; exec(compile(_SCRIPT, '<skill-context-control>', 'exec'))", 'skill-context', 'owned'], returncode=1).returncode
+
+Tests\Backup_Recovery\test_home_citation_retirement.py:332: AssertionError
+============================== warnings summary ===============================
+Tests/UI/test_console_tokenizer_preparation.py::test_tokenizer_preparation_is_coalesced_off_loop
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+Tests/UI/test_console_readiness_config_projection.py::test_control_bar_helper_refreshes_after_joining_an_old_revision
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+85.58s call     Tests/Performance/test_console_skill_context_owned.py::test_original_context_read_is_responsive_owned_and_custom_affine
+41.36s call     Tests/Performance/test_console_tokenizer_owned.py::test_original_tokenizer_admission_is_off_loop_and_owned
+3.28s call     Tests/Chat/test_console_cold_trust_preparation.py::test_resident_proof_rejects_changed_helper_before_invoking_it[wrapper]
+3.00s call     Tests/Chat/test_console_cold_trust_preparation.py::test_resident_proof_rejects_changed_helper_before_invoking_it[defaults]
+2.96s call     Tests/Chat/test_console_cold_trust_preparation.py::test_resident_proof_rejects_changed_helper_before_invoking_it[binding]
+2.95s call     Tests/Chat/test_console_cold_trust_preparation.py::test_resident_proof_rejects_changed_helper_before_invoking_it[body]
+1.21s call     Tests/UI/test_console_readiness_config_projection.py::test_control_bar_helper_refreshes_after_joining_an_old_revision
+
+(18 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Performance/test_console_skill_context_owned.py::test_original_context_read_is_responsive_owned_and_custom_affine
+1 failed, 149 passed, 4 deselected, 2 warnings in 165.72s (0:02:45)

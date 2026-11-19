@@ -1,0 +1,122 @@
+{
+  "chat_defaults": {
+    "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+    "provider": "llama_cpp",
+    "rag_auto_retrieve_on_send": false,
+    "streaming": true
+  },
+  "console": {
+    "agent_max_model_retries": 0,
+    "agent_max_model_turns": 5,
+    "agent_max_steps": 40,
+    "agent_max_tool_call_seconds": 3600.0,
+    "agent_max_total_tokens": 25000000,
+    "agent_max_wall_seconds": 180.0,
+    "assistant_library_access_default": true,
+    "background_effects": {
+      "effect": "none",
+      "enabled": false,
+      "fps": 6,
+      "intensity": "low",
+      "scope": "transcript"
+    },
+    "collapse_large_pastes": true,
+    "compaction_auxiliary_timeout_seconds": 120,
+    "compaction_carry_forward_mode": "memory_with_recent_turns",
+    "compaction_failure_behavior": "stop_and_ask",
+    "compaction_mode": "ask",
+    "compaction_native_delegation": false,
+    "compaction_representation": "text_summary",
+    "compaction_summary_max_tokens": 1024,
+    "compaction_target_ratio": 0.55,
+    "compaction_trigger_ratio": 0.8,
+    "conversation_budget_mode": "automatic",
+    "direct_library_tools": true,
+    "exchange_capture": true,
+    "exchange_capture_detail": "safe",
+    "exchange_capture_pii_redaction": false,
+    "interrupt_bell": true,
+    "local_tools_enabled": false,
+    "micro_compaction_every_turns": 0,
+    "paste_collapse_threshold": 50,
+    "project_instructions_nested_max_bytes": 32768,
+    "project_instructions_startup_max_bytes": 32768,
+    "rail_layout_scope": "global",
+    "rail_state": {
+      "console_rail_state:global:shared-layout-v1": {
+        "agent_open": false,
+        "conversations_open": true,
+        "details_open": false,
+        "environment_open": true,
+        "inspector_more_open": false,
+        "left_open": true,
+        "model_open": false,
+        "right_open": true,
+        "right_open_explicit": true,
+        "tasks_open": true,
+        "workspace_open": true
+      }
+    },
+    "raw_cli_permitted": false,
+    "reasoning_history": "auto",
+    "reasoning_history_overrides": {},
+    "reasoning_native_tool_overrides": {},
+    "show_model_thinking": true,
+    "sidechat_model": "",
+    "sidechat_prompt_template": "Give me more details about: {selection}",
+    "stack_collapsed_rail_labels": false,
+    "thinking_history_policy_default": "auto",
+    "trace_compaction_disk_safety_margin_bytes": 67108864,
+    "trace_compaction_min_database_bytes": 67108864,
+    "trace_compaction_min_freelist_bytes": 16777216,
+    "trace_compaction_min_freelist_ratio": 0.2,
+    "trace_compaction_min_idle_seconds": 30.0,
+    "trace_compaction_quiesce_timeout_seconds": 5.0,
+    "trace_compaction_retry_initial_seconds": 300.0,
+    "trace_compaction_retry_max_seconds": 3600.0,
+    "trace_legacy_writes": false,
+    "trace_normalized_reads": true,
+    "trace_normalized_writes": true,
+    "trace_viewer_profile": "safe",
+    "trace_viewer_profile_version": 1
+  },
+  "data_dir": "/private/tmp/archive-recovery-live-20261018/direct-persona/data",
+  "database_paths": {
+    "USER_DB_BASE_DIR": "/private/tmp/archive-recovery-live-20261018/direct-persona/data",
+    "chachanotes_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/tldw_chatbook_ChaChaNotes.db",
+    "check_integrity_on_startup": false,
+    "evals_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/evals.db",
+    "integrity_check_timeout": 30,
+    "library_collections_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/tldw_chatbook_library_collections.db",
+    "media_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/tldw_cli_media_v2.db",
+    "prompts_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/tldw_cli_prompts.db",
+    "rag_indexing_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/rag_indexing.db",
+    "research_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/tldw_chatbook_research.db",
+    "subscriptions_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/tldw_chatbook_subscriptions.db",
+    "workspaces_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/tldw_chatbook_workspaces.db",
+    "writing_db_path": "/private/tmp/archive-recovery-live-20261018/direct-persona/data/task7_live/tldw_chatbook_writing.db"
+  },
+  "hooks": {
+    "enabled": true,
+    "hook": [
+      {
+        "command": [
+          "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+          "/private/tmp/archive-recovery-live-20261018/direct-persona/deny-rag.py"
+        ],
+        "event": "PreToolUse",
+        "matcher": "search_library_rag",
+        "timeout_s": 2
+      }
+    ]
+  },
+  "mcp_enabled": false,
+  "model_refresh": false,
+  "normal_profile_fingerprints_unchanged": true,
+  "provider": {
+    "api_url": "http://127.0.0.1:8010",
+    "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0"
+  },
+  "request_offset": 15,
+  "request_total_cap": 20
+}

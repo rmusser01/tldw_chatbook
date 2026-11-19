@@ -23,7 +23,7 @@ every group already renders with:
    hides one. A width at which the detail pane is hidden altogether is
    PR-4's responsive floor to define, and the modal is the fallback
    there when it does.) This is the amendment to
-   `099-schedule-editor-shape.md` (see below): that ADR closed the
+   `339-schedule-editor-shape.md` (see below): that ADR closed the
    pane-vs-modal question in favor of the modal for the *whole* form;
    this decision does not reopen that call. It carves out a narrower one
    — single fields only, with the modal still the way to reach every
@@ -84,13 +84,13 @@ seam": the owner row, because it doubles as the PR-5 transfer machine
 rather than an ordinary field; the header lifecycle toggle, because it
 is the first caller of a facade method whose only existing write path
 (`SyncEngine`'s definitions pull) is unconditionally server-wins; and
-the editing model itself, because `099-schedule-editor-shape.md` had
+the editing model itself, because `339-schedule-editor-shape.md` had
 already closed "should Schedules edit in a pane" against the *whole*
 create/edit form, for reasons (the width cliff at narrow terminals, the
 need for a discard-guarded lifecycle) that do not disappear just because
 this PR only touches single fields.
 
-`099-schedule-editor-shape.md`'s own "Consequences" section anticipated
+`339-schedule-editor-shape.md`'s own "Consequences" section anticipated
 this: "Reopen only if a future schedule editor must show live queue
 context while editing … reconsider all three shapes against the width
 floor rather than defaulting to the pane." This program does not reopen
@@ -106,7 +106,7 @@ responsive floor later decides to hide the detail pane.
 
 ## Consequences
 
-- `099-schedule-editor-shape.md` gets an "Amendment (2026-09-03)"
+- `339-schedule-editor-shape.md` gets an "Amendment (2026-09-03)"
   section (this PR, in place, no renumbering) rather than a superseding
   ADR: the original decision and its width-cliff argument still hold for
   the surface it actually decided (create/full-edit/narrow fallback).
@@ -146,7 +146,7 @@ SAME pane widget class as a fresh instance inside a full-screen
 `WorkbenchHostScreen`, fed by the same service-backed loads the docked
 pane gets, with `Esc` to return. `m` (move owner) routes the same way
 (final review F1). "Edit in full…" still opens `ReminderForm` from inside
-the pushed pane, so ADR-099's modal remains reachable at every width and
+the pushed pane, so ADR-339's modal remains reachable at every width and
 its width-cliff argument is untouched — what changed is only which
 surface stands in for the *hidden inspector*, and the pushed pane keeps
 in-place row editing working at 80×24 rather than dropping back to a

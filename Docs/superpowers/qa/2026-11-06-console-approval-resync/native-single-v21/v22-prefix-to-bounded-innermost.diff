@@ -1,0 +1,55 @@
+--- V22-prefix/approval_fixture_workload_v7.py
++++ V22-innermost/approval_fixture_workload_v7.py
+@@ -40,7 +40,10 @@
+         "reason_code": None,
+         "reason_status": "canonical_class_unavailable",
+         "traceback": [],
+-        "traceback_order": "outer_to_inner_prefix",
++        "traceback_order": "innermost_observed_outer_to_inner",
++        "traceback_walk_limited": False,
++        "traceback_frames_walked": 0,
++        "raise_site_included": False,
+         "traceback_truncated": False,
+     }
+     if isinstance(canonical, type):
+@@ -62,14 +65,26 @@
+     root = vars(guard).get("REPO") if guard is not None else None
+     root = root.resolve() if isinstance(root, Path) else None
+     traceback = BaseException.__traceback__.__get__(exception, type(exception))
+-    for _ in range(12):
+-        if traceback is None:
+-            break
+-        code = traceback.tb_frame.f_code
++    retained = []
++    walked = 0
++    while traceback is not None and walked < 64:
++        retained.append(traceback)
++        if len(retained) > 12:
++            retained.pop(0)
++        traceback = traceback.tb_next
++        walked += 1
++    result.update(
++        traceback_walk_limited=traceback is not None,
++        traceback_frames_walked=walked,
++        traceback_truncated=walked > 12 or traceback is not None,
++        raise_site_included=traceback is None and bool(retained),
++    )
++    for observed in retained:
++        code = observed.tb_frame.f_code
+         frame = {
+             "file": None,
+             "function": None,
+-            "line": traceback.tb_lineno,
++            "line": observed.tb_lineno,
+             "source": "source_root_unavailable",
+         }
+         if root is not None:
+@@ -96,8 +111,6 @@
+                             file=relative, function=name, source="selected_source"
+                         )
+         result["traceback"].append(frame)
+-        traceback = traceback.tb_next
+-    result["traceback_truncated"] = traceback is not None
+     return result
+ 
+ 

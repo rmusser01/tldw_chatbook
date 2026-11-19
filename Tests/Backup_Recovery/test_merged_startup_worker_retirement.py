@@ -21,8 +21,10 @@ from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
 route,outcome=sys.argv[1:]
 root=Path.home()
-db=config.get_chachanotes_db_lazy()
-app=SimpleNamespace(chachanotes_db=db,loguru_logger=logger)
+from tldw_chatbook.app_services import open_chachanotes_db
+db=open_chachanotes_db(config.get_chachanotes_db_path(), client_id=config.CLI_APP_CLIENT_ID, seed_builtin_content=True)
+from tldw_chatbook.app_services import ProfileStorage
+app=SimpleNamespace(chachanotes_db=db,loguru_logger=logger,services=SimpleNamespace(storage=ProfileStorage(chachanotes=db)))
 getter=db.get_connection
 close=db.close_connection
 if route in {'fts','persona'}:

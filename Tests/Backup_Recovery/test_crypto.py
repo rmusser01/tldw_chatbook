@@ -9,8 +9,11 @@ import sys
 import time
 from pathlib import Path
 from threading import Event, Thread
+from uuid import uuid4
 
 import pytest
+
+from Tests.Backup_Recovery.path_aliases import create_directory_alias
 
 
 def _copy_helper_package(helper_resource_root, destination):
@@ -190,7 +193,7 @@ def test_fixed_age_v1_interoperability(
         "implementation",
         "format",
         "unknown_field",
-        "worker_symlink",
+        "worker_junction" if os.name == "nt" else "worker_symlink",
         "oversized_worker",
         "missing_dependency",
         "boolean_protocol",
@@ -207,6 +210,9 @@ def test_unqualified_resource_is_unavailable(
         worker.unlink()
     elif defect == "digest":
         worker.write_bytes(worker.read_bytes() + b"\n# tampered\n")
+    elif defect == "worker_junction":
+        worker.unlink()
+        create_directory_alias(worker, helper_resource_root)
     elif defect == "worker_symlink":
         worker.unlink()
         worker.symlink_to(helper_resource_root / "age_worker.py")
@@ -245,6 +251,13 @@ def test_unqualified_resource_is_unavailable(
         "helper_integrity_mismatch" if defect == "digest" else "helper_unavailable"
     )
     assert crypto.helper_capability() == (False, expected)
+    if defect in {"worker_junction", "worker_symlink"}:
+        assert (
+            hashlib.sha256(
+                (helper_resource_root / "age_worker.py").read_bytes()
+            ).hexdigest()
+            == crypto._WORKER_SHA256
+        )
 
 
 def test_worker_integrity_anchor_matches_packaged_source(helper_resource_root):
@@ -254,16 +267,38 @@ def test_worker_integrity_anchor_matches_packaged_source(helper_resource_root):
     assert hashlib.sha256(worker.read_bytes()).hexdigest() == crypto._WORKER_SHA256
 
 
-def test_byte_budgets_count_streamed_input_and_output(tmp_path, crypto, monkeypatch):
-    monkeypatch.setattr(crypto, "_MAX_CONTAINER", 1024)
+def test_invalid_budgets_do_not_create_output(tmp_path, crypto):
     source, target = tmp_path / "source", tmp_path / "target"
-    for size in (1000, 2000):
-        source.write_bytes(b"s" * size)
-        with pytest.raises(crypto.CryptoError):
+    source.write_bytes(b"synthetic")
+    for limits in ({"input_limit": 0}, {"output_limit": 0}):
+        with pytest.raises(crypto.CryptoError, match="invalid_budget"):
             crypto.transform(
-                source, target, password=b"test", decrypt=False, cancel=Event()
+                source,
+                target,
+                password=b"test",
+                decrypt=False,
+                cancel=Event(),
+                **limits,
             )
         assert not target.exists()
+
+
+@pytest.mark.parametrize("limited_stream", ["input", "output"])
+def test_byte_budgets_count_streamed_input_and_output(tmp_path, crypto, limited_stream):
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.write_bytes(b"s" * 2000)
+    with pytest.raises(crypto.CryptoError, match="transform_failed"):
+        crypto.transform(
+            source,
+            target,
+            password=b"test",
+            decrypt=False,
+            cancel=Event(),
+            input_limit=1000 if limited_stream == "input" else 4096,
+            output_limit=1000 if limited_stream == "output" else 4096,
+        )
+    assert not target.exists()
+    assert not list(tmp_path.glob(".backup-age-*"))
 
 
 def test_pipe_backpressure_and_memory_are_bounded(
@@ -308,9 +343,15 @@ def test_pipe_backpressure_and_memory_are_bounded(
         while thread.is_alive() and time.monotonic() < deadline:
             peak_parent = max(peak_parent, psutil.Process().memory_info().rss)
             for child, _, _ in children:
+                # A Windows venv executable redirects to a separate runtime child.
                 try:
                     peak_child = max(
-                        peak_child, psutil.Process(child.pid).memory_info().rss
+                        peak_child,
+                        sum(
+                            process.memory_info().rss
+                            for process in [psutil.Process(child.pid)]
+                            + psutil.Process(child.pid).children(recursive=True)
+                        ),
                     )
                 except psutil.NoSuchProcess:
                     pass
@@ -340,7 +381,7 @@ def test_pipe_backpressure_and_memory_are_bounded(
             hashlib.file_digest(a, "sha256").digest()
             == hashlib.file_digest(b, "sha256").digest()
         )
-    assert target.stat().st_mode & 0o777 == 0o600
+    assert crypto.os.stat(target).st_mode & 0o777 == 0o600
 
 
 @pytest.mark.parametrize("action", ["cancel", "crash"])
@@ -462,7 +503,7 @@ def test_helper_protocol_errors_are_fixed_and_secret_free(helper_resource_root):
         assert (
             result.returncode != 0
             and result.stdout == b""
-            and result.stderr == b"protocol_error\n"
+            and result.stderr == f"protocol_error{os.linesep}".encode("ascii")
         )
     result = subprocess.run(
         [sys.executable, "-I", str(worker), "decrypt"],
@@ -474,28 +515,56 @@ def test_helper_protocol_errors_are_fixed_and_secret_free(helper_resource_root):
     assert (
         result.returncode != 0
         and result.stdout == b""
-        and result.stderr == b"invalid_header\n"
+        and result.stderr == f"invalid_header{os.linesep}".encode("ascii")
     )
 
 
-@pytest.mark.parametrize("kind", ["symlink", "fifo", "directory", "nul"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "junction" if os.name == "nt" else "symlink",
+        "named_pipe" if os.name == "nt" else "fifo",
+        "directory",
+        "nul",
+    ],
+)
 def test_invalid_sources_are_rejected_without_output(tmp_path, crypto, kind):
     source, target = tmp_path / "source", tmp_path / "target"
-    if kind == "symlink":
+    pipe = None
+    preserve = None
+    if kind == "junction":
         real = tmp_path / "real"
+        real.mkdir()
+        preserve = real / "payload"
+        preserve.write_bytes(b"synthetic")
+        create_directory_alias(source, real)
+    elif kind == "symlink":
+        real = tmp_path / "real"
+        preserve = real
         real.write_bytes(b"synthetic")
         source.symlink_to(real)
+    elif kind == "named_pipe":
+        from multiprocessing.connection import Listener
+
+        source = Path(r"\\.\pipe" + "\\" + f"chatbook-crypto-{uuid4().hex}")
+        pipe = Listener(str(source), family="AF_PIPE")
     elif kind == "fifo":
         os.mkfifo(source)
     elif kind == "directory":
         source.mkdir()
     else:
         source = type(source)(str(source) + "\x00")
-    with pytest.raises(crypto.CryptoError):
-        crypto.transform(
-            source, target, password=b"test", decrypt=False, cancel=Event()
-        )
-    assert not target.exists()
+    try:
+        with pytest.raises(crypto.CryptoError):
+            crypto.transform(
+                source, target, password=b"test", decrypt=False, cancel=Event()
+            )
+        assert not target.exists()
+        if preserve is not None:
+            assert preserve.read_bytes() == b"synthetic"
+    finally:
+        if pipe is not None:
+            pipe.close()
 
 
 def test_cleanup_error_does_not_strand_serial_job_lock(tmp_path, crypto, monkeypatch):
@@ -504,6 +573,7 @@ def test_cleanup_error_does_not_strand_serial_job_lock(tmp_path, crypto, monkeyp
     destination = tmp_path / "private"
     destination.mkdir(mode=0o700)
     original = subprocess.Popen
+    blockers = []
 
     def observe(*args, **kwargs):
         child = original(*args, **kwargs)
@@ -512,7 +582,13 @@ def test_cleanup_error_does_not_strand_serial_job_lock(tmp_path, crypto, monkeyp
 
             def deny_cleanup(*args, **kwargs):
                 result = wait(*args, **kwargs)
-                destination.chmod(0o500)
+                if os.name == "nt":
+                    if not blockers:
+                        # A real Windows share denial prevents temporary deletion.
+                        temporary = next(destination.glob(".backup-age-*"))
+                        blockers.append(temporary.open("rb"))
+                else:
+                    destination.chmod(0o500)
                 return result
 
             child.wait = deny_cleanup
@@ -532,7 +608,11 @@ def test_cleanup_error_does_not_strand_serial_job_lock(tmp_path, crypto, monkeyp
         crypto._JOBS.release()
         assert not (destination / "target").exists()
     finally:
+        for blocker in blockers:
+            blocker.close()
         destination.chmod(0o700)
+        for temporary in destination.glob(".backup-age-*"):
+            temporary.unlink()
 
 
 @pytest.mark.parametrize("mode", ["info_flood", "stderr_flood"])
@@ -598,7 +678,10 @@ def test_nonregular_resource_does_not_block_capability(tmp_path, helper_resource
     root = _copy_helper_package(helper_resource_root, tmp_path)
     path = root / "age_worker.py"
     path.unlink()
-    os.mkfifo(path)
+    if os.name == "nt":
+        path.mkdir()  # Windows has no filesystem FIFO; still reject a real non-file.
+    else:
+        os.mkfifo(path)
     # Inherit Tests/conftest.py's isolated config/home; bound the probe itself.
     probe = subprocess.run(
         [
@@ -650,7 +733,7 @@ def test_backpressure_harness_reaps_stalled_work():
     cancel = Event()
     thread = Thread(target=lambda: child.stdout.read())
     try:
-        assert child.stdout.readline() == b"ready\n"
+        assert child.stdout.readline() == f"ready{os.linesep}".encode("ascii")
         thread.start()
         assert thread.is_alive() and child.poll() is None
         _cleanup_stream_worker(thread, cancel, [(child, (), {})])

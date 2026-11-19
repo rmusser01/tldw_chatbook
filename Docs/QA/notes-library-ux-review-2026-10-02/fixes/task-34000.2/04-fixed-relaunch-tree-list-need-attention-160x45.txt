@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│   a  │ Library notes · ⚠ A sync folder needs attention · Next: Open Manage sync folders.              │  o                                                   │
+│   v  │ Notes (132)                                                                                    │  t                                                   │
+│      │ These notes live in the Library's own database — for notes that live in a folder on disk,      │  e                                                   │
+│      │ switch to Folder files. To copy or keep a folder synced, choose Add from files.                │  s                                                   │
+│      │                                                                                                │                                                      │
+│      │ Filter                                                                                         │                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│      │ ▊ Filter notes… (Enter)                                                                      ▎ │                                                      │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│      │                                                                                                │                                                      │
+│      │    New     Sort: Newest     Select                                                             │                                                      │
+│      │    Add from files…     Export     Manage sync folders                                          │                                                      │
+│ ---> │ Folders & placement                                                                            │                                                      │
+│      │    New folder     ○ Add to folder     ○ Move note     ○ Remove placement                       │                                                      │
+│      │ Note actions unavailable — select a note in the list                                           │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │  ▸ Agent_Lessons                                                                               │<---                                                  │
+│      │  ▸ Journal                                                                                     │                                                      │
+│      │  ▸ Meetings                                                                                    │                                                      │
+│      │  ▸ Projects                                                                                    │                                                      │
+│      │  ▸ Recipes                                                                                     │                                                      │
+│ ---> │  ▸ Research                                                                                    │                                                      │
+│      │  ▸ Study                                                                                       │                                                      │
+│      │  ▸ VSync  ⚠ Needs attention                                                                    │                                                      │
+│      │  ▾ Unfiled                                                                                     │                                                      │
+│      │ █  Ideas inbox · 18h                                                                           │                                                      │
+│      │    Reading list · 20h                                                                          │                                                      │
+│      │    Index — start here · 2d                                                                     │                                                      │
+│      │    Meeting Notes 2026-09-30 · 2d                                                               │                                                      │
+│      │    Gardening log · 5d                                                                          │                                                      │
+│      │    📚 Reading queue 2026 ✨ · 1w                                                               │                                                      │
+│      │    A very long note title that keeps going so we can test truncation in the notes list, the …  │                                                      │
+│      │    Daily log 2026-09-21 · 1w                                                                   │                                                      │
+│      │    Daily log 2026-09-20 · 1w                                                                   │                                                      │
+│      └────────────────────────────────────────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

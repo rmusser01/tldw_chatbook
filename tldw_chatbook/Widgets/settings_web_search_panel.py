@@ -13,7 +13,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Button, Input, Link, Select, Static
 
-from ..UI.Screens.settings_web_search import APPLICATION_DEFAULT, WebSearchSettings
+from ..UI.Settings_Modules.settings_web_search import APPLICATION_DEFAULT, WebSearchSettings
 from ..Web_Scraping.search_backend_settings import BACKENDS
 
 

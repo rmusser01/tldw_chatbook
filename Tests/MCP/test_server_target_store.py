@@ -119,9 +119,10 @@ def test_bootstrap_persists_a_canonical_uuid4_authority_scope(tmp_path):
     target = store.list_targets()[0]
     assert target.authority_scope_id is not None
     _assert_canonical_uuid4(target.authority_scope_id)
-    assert json.loads(path.read_text(encoding="utf-8"))["targets"][0][
-        "authority_scope_id"
-    ] == target.authority_scope_id
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["targets"][0]["authority_scope_id"]
+        == target.authority_scope_id
+    )
 
 
 def test_authority_scope_round_trips_json_without_appearing_in_target_repr(tmp_path):
@@ -195,9 +196,7 @@ def test_ensure_authority_scope_serializes_same_store_upgrade_calls(tmp_path):
     store = ConfiguredServerTargetStore(path)
 
     with ThreadPoolExecutor(max_workers=8) as executor:
-        scopes = list(
-            executor.map(store.ensure_authority_scope_id, ["server-a"] * 16)
-        )
+        scopes = list(executor.map(store.ensure_authority_scope_id, ["server-a"] * 16))
 
     assert len(set(scopes)) == 1
     assert store.get_target("server-a").authority_scope_id == scopes[0]
@@ -245,14 +244,13 @@ def test_ensure_authority_scope_serializes_same_process_store_instances(
         )
 
     assert len(set(scopes)) == 1
-    assert ConfiguredServerTargetStore(path).get_target(
-        "server-a"
-    ).authority_scope_id == scopes[0]
+    assert (
+        ConfiguredServerTargetStore(path).get_target("server-a").authority_scope_id
+        == scopes[0]
+    )
 
 
-def test_status_update_cannot_erase_concurrently_admitted_scope(
-    tmp_path, monkeypatch
-):
+def test_status_update_cannot_erase_concurrently_admitted_scope(tmp_path, monkeypatch):
     path = tmp_path / "server_targets.json"
     _write_target_payload(path, [_legacy_target_payload()])
     status_store = ConfiguredServerTargetStore(path)
@@ -279,9 +277,7 @@ def test_status_update_cannot_erase_concurrently_admitted_scope(
     assert restored.authority_scope_id == returned_scope
 
 
-def test_legacy_upsert_cannot_erase_concurrently_admitted_scope(
-    tmp_path, monkeypatch
-):
+def test_legacy_upsert_cannot_erase_concurrently_admitted_scope(tmp_path, monkeypatch):
     path = tmp_path / "server_targets.json"
     _write_target_payload(
         path,
@@ -315,9 +311,7 @@ def test_legacy_upsert_cannot_erase_concurrently_admitted_scope(
         upsert_future.result(timeout=2)
         returned_scope = scope_future.result(timeout=2)
 
-    restored = ConfiguredServerTargetStore(path).get_target(
-        "https://example.com/api"
-    )
+    restored = ConfiguredServerTargetStore(path).get_target("https://example.com/api")
     assert restored is not None
     assert restored.auth_mode == "bearer"
     assert restored.authority_scope_id == returned_scope
@@ -472,9 +466,7 @@ def test_scope_persistence_failure_never_returns_an_ephemeral_scope(
     assert store.get_target("server-a").authority_scope_id is None
 
 
-def test_scope_reload_failure_never_returns_an_unverified_scope(
-    tmp_path, monkeypatch
-):
+def test_scope_reload_failure_never_returns_an_unverified_scope(tmp_path, monkeypatch):
     path = tmp_path / "server_targets.json"
     _write_target_payload(path, [_legacy_target_payload()])
     store = ConfiguredServerTargetStore(path)

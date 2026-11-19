@@ -1,0 +1,11 @@
+{
+  "python": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "platform": "macOS-26.5.2-arm64-arm-64bit",
+  "machine": "arm64",
+  "sqlite": "3.49.1",
+  "textual": "8.2.8",
+  "pytest": "8.4.2",
+  "ruff": "ruff 0.16.6",
+  "base": "7d1a5ef849dfadb73cbdf16a3813cb583c8695ca",
+  "git": "git version 2.39.5 (Apple Git-154)"
+}

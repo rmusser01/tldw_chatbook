@@ -1,0 +1,512 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "12172-12172",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "11946-11946",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "11917-11917",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "11869-11869",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "11847-11847",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "11833-11842",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "8243-8243",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "8236-8236",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "8219-8219",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "8170-8170",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "8153-8153",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "7734-7734",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "7729-7729",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "7707-7707",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "7666-7675",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "2885-2888",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "2877-2880",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "2734-2735",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "111-122",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "76-76",
+      "Tests/Chat/test_console_provider_gateway.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "1281-1281",
+      "Tests/UI/test_console_cost_chip_screen.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "1271-1279",
+      "Tests/UI/test_console_cost_chip_screen.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "1211-1250",
+      "Tests/UI/test_console_cost_chip_screen.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "177-177",
+      "Tests/UI/test_console_cost_chip_screen.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "149-149",
+      "Tests/UI/test_console_cost_chip_screen.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "60-63",
+      "Tests/UI/test_console_cost_chip_screen.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "326-328",
+      "Tests/UI/test_console_spend_projection.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "40-42",
+      "Tests/UI/test_console_spend_projection.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "18-21",
+      "Tests/Utils/test_egress.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19148-19148",
+      "tldw_chatbook/UI/Screens/chat_screen.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  }
+]

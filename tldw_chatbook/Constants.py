@@ -42,6 +42,7 @@ TAB_ACP = "acp"
 TAB_SKILLS = "skills"
 TAB_SETTINGS = "settings"
 TAB_MEETINGS = "meetings"
+TAB_KANBAN = "kanban"
 
 # Library navigation-context contract keys and values.
 LIBRARY_NAV_CONTEXT_MODE = "mode"
@@ -57,9 +58,7 @@ LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"
 LIBRARY_MODE_CONVERSATIONS = "conversations"
 
 # Console navigation-context contract keys.
-CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = (
-    "resume_local_conversation_id"
-)
+CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = "resume_local_conversation_id"
 CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET = "character_conversation_target"
 
 # Trusted character-conversation navigation context keys.
@@ -138,6 +137,7 @@ TAB_DISPLAY_LABELS = {
     TAB_SKILLS: "Skills",
     TAB_SETTINGS: "Settings",
     TAB_MEETINGS: "Meetings",
+    TAB_KANBAN: "Kanban",
 }
 
 

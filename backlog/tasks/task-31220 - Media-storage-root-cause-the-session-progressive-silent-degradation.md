@@ -48,6 +48,9 @@ AC wording amended at close: "Retry, row opens and select mode are never LEFT ga
 Trade-offs: cancel-before-first-step can leak the flag at teardown only (commented at the seam); the rail's "Media N" count is stale after an Undo (pre-existing, filed as a rider).
 Verification: per-file suites vs base in separate processes; whole-file test_library_shell.py and test_library_media_side_by_side.py compared to the task-31249 census; preflight green; live single-instance delete/undo at 235x52 and 100x30; failed-undo and failed-retry receipts in app-tests with raising seams.
 Files: tldw_chatbook/UI/Screens/library_screen.py, tldw_chatbook/UI/Library_Modules/library_media_browse_controller.py, tldw_chatbook/Widgets/Library/library_media_canvas.py, tldw_chatbook/Library/library_media_state.py, Tests/UI/test_library_media_bulk_delete_real_db.py (new), Tests/UI/test_library_multiselect_media.py, Tests/UI/test_library_media_browse_controller.py, Tests/UI/test_library_media_side_by_side.py, Tests/UI/test_library_shell.py, Tests/UI/test_library_media_render_fixes.py, Docs/security/production-diagnostic-inventory.json.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/media-and-conversations.md`: Confirmed against the product code and its tests, not re-verified live for the doc-only pass.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering

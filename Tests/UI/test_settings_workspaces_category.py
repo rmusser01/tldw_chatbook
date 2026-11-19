@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
+import time
+
 import pytest
+from textual.css.query import QueryError
 
 from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
@@ -30,6 +34,24 @@ def _settings_without_splash(section, key=None, default=None):
     if section == "splash_screen" and key == "enabled":
         return False
     return default
+
+
+async def _until(pilot, screen, ready, *, seconds: float = 10.0) -> None:
+    """Wait for the Settings pane swap to finish and ``ready()`` to hold.
+
+    TASK-40319: a row press or a folder action starts an async same-category
+    swap (``_swap_category_panes`` clears ``_category_pane_swap_pending``), and
+    a nested panel paints in its own mount after that, so a fixed pause raced
+    both under load. At the deadline it falls through, so the caller's own
+    assertion names what is missing.
+    """
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if not screen._category_pane_swap_pending:
+            with contextlib.suppress(QueryError):
+                if ready():
+                    return
+        await pilot.pause(0.05)
 
 
 async def _wait_for_settings_screen(app, pilot) -> SettingsScreen:
@@ -149,10 +171,14 @@ async def test_create_rename_archive_unarchive_flow(request) -> None:
 
             # Set active.
             screen.query_one("#settings-workspace-set-active", Button).press()
-            await _wait_for_selector(
-                screen,
+            # The old card's Archive is still mounted until the swap replaces it.
+            await _until(
                 pilot,
-                "#settings-workspace-archive",
+                screen,
+                lambda: (
+                    registry.get_active_workspace().workspace_id == workspace_id
+                    and screen.query_one("#settings-workspace-archive")
+                ),
             )
             assert registry.get_active_workspace().workspace_id == workspace_id
 
@@ -184,11 +210,13 @@ async def test_create_rename_archive_unarchive_flow(request) -> None:
                 pilot,
                 "#settings-workspaces-show-archived",
             )
-            for _ in range(200):
-                if not screen.query(f"#settings-workspace-row-{workspace_id}"):
-                    break
-                await pilot.pause(0.01)
-            else:
+            # The resume's own refresh can rebuild Show archived once more.
+            await _until(
+                pilot,
+                screen,
+                lambda: not screen.query(f"#settings-workspace-row-{workspace_id}"),
+            )
+            if screen.query(f"#settings-workspace-row-{workspace_id}"):
                 pytest.fail("Archived workspace remained in the active workspace list")
             screen.query_one(
                 "#settings-workspaces-show-archived", Checkbox
@@ -323,7 +351,9 @@ async def test_default_workspace_card_is_protected(request) -> None:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-workspace-default", Button).press()
-        await pilot.pause(0.2)
+        await _until(
+            pilot, screen, lambda: "use private scratch" in _visible_text(screen)
+        )
 
         assert not screen.query("#settings-workspace-rename-apply")
         assert not screen.query("#settings-workspace-archive")
@@ -389,12 +419,14 @@ async def test_folder_bindings_add_toggle_remove_and_inline_errors(
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-ws-folders", Button).press()
-        await pilot.pause(0.2)
+        await _until(
+            pilot, screen, lambda: screen.query_one("#settings-workspace-folder-path")
+        )
 
         # Add (defaults to read-only).
         screen.query_one("#settings-workspace-folder-path", Input).value = str(project)
         screen.query_one("#settings-workspace-folder-add", Button).press()
-        await pilot.pause(0.3)
+        await _until(pilot, screen, lambda: registry.list_folder_bindings("ws-folders"))
         bindings = registry.list_folder_bindings("ws-folders")
         assert len(bindings) == 1
         binding = bindings[0]
@@ -409,7 +441,14 @@ async def test_folder_bindings_add_toggle_remove_and_inline_errors(
         screen.query_one(
             f"#settings-workspace-folder-toggle-{binding.binding_id}", Button
         ).press()
-        await pilot.pause(0.3)
+        await _until(
+            pilot,
+            screen,
+            lambda: (
+                registry.list_folder_bindings("ws-folders")[0].metadata["access"]
+                == "rw"
+            ),
+        )
         assert registry.list_folder_bindings("ws-folders")[0].metadata["access"] == "rw"
 
         # Invalid add explains inline.
@@ -417,14 +456,16 @@ async def test_folder_bindings_add_toggle_remove_and_inline_errors(
             tmp_path / "missing"
         )
         screen.query_one("#settings-workspace-folder-add", Button).press()
-        await pilot.pause(0.3)
+        await _until(pilot, screen, lambda: "not a directory" in _visible_text(screen))
         assert "not a directory" in _visible_text(screen)
 
         # Remove.
         screen.query_one(
             f"#settings-workspace-folder-remove-{binding.binding_id}", Button
         ).press()
-        await pilot.pause(0.3)
+        await _until(
+            pilot, screen, lambda: not registry.list_folder_bindings("ws-folders")
+        )
         assert registry.list_folder_bindings("ws-folders") == ()
 
 
@@ -444,7 +485,9 @@ async def test_pane_refreshes_after_external_registry_change(request) -> None:
 
         registry.create_workspace(workspace_id="ws-late", name="Late Arrival")
         screen._refresh_settings_workspaces_pane()
-        await pilot.pause(0.3)
+        await _until(
+            pilot, screen, lambda: screen.query_one("#settings-workspace-row-ws-late")
+        )
         assert screen.query_one("#settings-workspace-row-ws-late", Button)
 
 
@@ -545,7 +588,9 @@ async def test_change_review_toggle_flips_and_persists(request, tmp_path) -> Non
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-ws-cr", Button).press()
-        await pilot.pause(0.2)
+        await _until(
+            pilot, screen, lambda: "Tracking disabled" in _visible_text(screen)
+        )
 
         text = _visible_text(screen)
         assert registry.change_review_enabled("ws-cr") is False
@@ -556,11 +601,13 @@ async def test_change_review_toggle_flips_and_persists(request, tmp_path) -> Non
         assert "30 days" in text
         assert "does not erase existing history" in text
         screen.query_one("#settings-workspace-change-review-toggle", Button).press()
-        await pilot.pause(0.3)
+        await _until(pilot, screen, lambda: "Tracking enabled" in _visible_text(screen))
         assert registry.change_review_enabled("ws-cr") is True
         assert "Tracking enabled" in _visible_text(screen)
         screen.query_one("#settings-workspace-change-review-toggle", Button).press()
-        await pilot.pause(0.3)
+        await _until(
+            pilot, screen, lambda: "Tracking disabled" in _visible_text(screen)
+        )
         assert registry.change_review_enabled("ws-cr") is False
 
 
@@ -581,14 +628,19 @@ async def test_change_review_stale_toggle_reports_conflict_and_refreshes(
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-ws-stale", Button).press()
-        await pilot.pause(0.2)
+        # The toggle carries its intent only once the panel has painted.
+        await _until(
+            pilot, screen, lambda: "Tracking disabled" in _visible_text(screen)
+        )
 
         stale_button = screen.query_one(
             "#settings-workspace-change-review-toggle", Button
         )
         registry.set_change_review_enabled("ws-stale", True)
         stale_button.press()
-        await pilot.pause(0.3)
+        await _until(
+            pilot, screen, lambda: "changed elsewhere" in _visible_text(screen)
+        )
 
         assert registry.change_review_enabled("ws-stale") is True
         text = _visible_text(screen)
@@ -620,7 +672,9 @@ async def test_change_review_unavailable_consent_has_no_toggle(request) -> None:
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-ws-unavailable", Button).press()
-        await pilot.pause(0.2)
+        await _until(
+            pilot, screen, lambda: "state could not be read" in _visible_text(screen)
+        )
 
         assert "state could not be read" in _visible_text(screen)
         assert not screen.query_one("#settings-workspace-change-review-toggle").display
@@ -664,13 +718,15 @@ async def test_change_review_failed_root_offers_one_retry_without_paths(
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-ws-retry", Button).press()
-        await pilot.pause(0.2)
+        await _until(
+            pilot, screen, lambda: "chat and tools continue" in _visible_text(screen)
+        )
 
         text = _visible_text(screen)
         assert "chat and tools continue" in text
         assert "/private/secret/root" not in text
         screen.query_one("#settings-workspace-change-review-retry", Button).press()
-        await pilot.pause(0.2)
+        await _until(pilot, screen, lambda: retries)
 
         assert retries == ["ws-retry"]
 
@@ -706,7 +762,9 @@ async def test_change_review_preparing_is_explicitly_non_blocking(request) -> No
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-ws-preparing", Button).press()
-        await pilot.pause(0.2)
+        await _until(
+            pilot, screen, lambda: "Preparing change history" in _visible_text(screen)
+        )
 
         text = _visible_text(screen)
         assert "Preparing change history" in text
@@ -734,7 +792,7 @@ async def test_change_review_git_absent_shows_honest_copy(request, monkeypatch) 
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-ws-nogit", Button).press()
-        await pilot.pause(0.2)
+        await _until(pilot, screen, lambda: "needs git" in _visible_text(screen))
 
         assert "Change review needs git — install git to enable." in _visible_text(
             screen
@@ -762,7 +820,9 @@ async def test_change_review_global_kill_disclosed_in_settings(
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-workspaces")
         screen.query_one("#settings-workspace-row-ws-gk", Button).press()
-        await pilot.pause(0.2)
+        await _until(
+            pilot, screen, lambda: "disabled globally" in _visible_text(screen)
+        )
 
         text = _visible_text(screen)
         assert "disabled globally" in text, text

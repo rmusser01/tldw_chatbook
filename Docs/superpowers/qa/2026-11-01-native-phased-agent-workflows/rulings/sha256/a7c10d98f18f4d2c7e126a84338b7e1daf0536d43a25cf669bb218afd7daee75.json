@@ -1,0 +1,46 @@
+{
+  "captured_utc": "2026-11-05T06:18:01.640928+00:00",
+  "head": "8fc02744869122f961cb92af0b069fccb7b7d6f2",
+  "parent": "1b5db03c8eee8903cf4fb0e109bade41f49c0b4f",
+  "exact_owned_paths": [
+    "Docs/Architecture/agent-runtime.md",
+    "Tests/DB/test_workflow_active_time.py",
+    "Tests/DB/test_workflow_admission_boundaries.py",
+    "Tests/DB/test_workflow_attempts.py",
+    "Tests/DB/test_workflow_runs.py",
+    "Tests/UI/test_workflow_existing_admission.py",
+    "tldw_chatbook/Agents/workflow_models.py",
+    "tldw_chatbook/DB/automatic_work.py",
+    "tldw_chatbook/DB/workflow_runs.py",
+    "tldw_chatbook/UI/Console_Modules/workflows.py",
+    "tldw_chatbook/Widgets/Console/console_workflow_setup.py"
+  ],
+  "all11_commit_index_worktree_equal": true,
+  "all8326_current_python_source_hashes_match_covering_launch": true,
+  "covering_exit": 0,
+  "covering_duration": 65.09953333297744,
+  "covering_junit": {
+    "tests": 149,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "covering_children_copies_sha_verified": 4,
+  "original_staged61_sha256": "c5fcb00eab4ea09c49d1797567cbd4cc9f0eb9bb8d99cc2355f764638aaa7248",
+  "original_protected279_verified": true,
+  "owned_diff_check_exit": 0,
+  "report_full_read": true,
+  "report_sha256": "ed4b8080a9e287d402e75aeebd8b168c613a7d65e5eb856c98362cd37c84683c",
+  "report_bytes": 17060,
+  "report_read_slices": [
+    [
+      0,
+      17000
+    ],
+    [
+      17000,
+      null
+    ]
+  ],
+  "scope": "independent byte/Git/current-source and XML receipt audit; no product tests/native/provider rerun; warnings/debt/adverse cohorts retained; one scoped gate pending"
+}

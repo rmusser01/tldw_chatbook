@@ -105,4 +105,8 @@ Phase 1 shipped as seven root fixes (subtasks TASK-33001.1 to .7, all Done with 
 - The 28 test files this branch changes, run with -n 8 on the merged HEAD and on origin/dev 88b61879b9 (the 26 that exist there, extracted to a scratch tree): HEAD 1720 passed, 568 failed, 31 errors (537 of the 599 carry ADR-126 RecoveryRequired); dev 1344 passed, 574 failed, 31 errors. Comparing junit ids: 0 HEAD-only failures among the tests both runs share; 6 fixed at HEAD (the app.py slack and ChatScreen rows, and 4 Settings/journey tests that are RecoveryRequired on dev); 387 ids exist only at HEAD, of which 2 fail, the ProductionApp writer-gate pair covered by TASK-33001.11.
 - Final-wave RED/GREEN and controls: the picker precedence test was red 3/3 before a4696bcba6; the inspector-stop pin fails a filter-out-scroll-bodies mutant; the M2 sentinel fails a mutant that makes the snapshot look disk-loaded; the M1 comparison was red before bca3fd37c1 (the static adapter answered True for Min P on an ollama entry). Tests/Widgets/test_model_search_picker.py 41 passed; the four mounted model-profile Settings tests 5/5 under private_profile_test.
 - ./scripts/preflight.sh: rc=0 ("all derived-artifact checks passed", gated Tests/UI census 118/118).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/settings.md`: Final fix wave (one F6 handler, the Theme inspector taking F6, custom-ep hidden rows): not driven live.
+- `Docs/User_Guide/console.md`: Final wave I2: pinned by a widget test with 25 models for each warning (`Tests/Widgets/test_model_search_picker.py`), not driven live.
 <!-- SECTION:NOTES:END -->

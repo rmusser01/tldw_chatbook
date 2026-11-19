@@ -79,9 +79,7 @@ async def _seed_row(pilot, transcript: ConsoleTranscript) -> ConsoleTranscriptMe
     )
     await transcript.refresh_messages()
     await pilot.pause()
-    return pilot.app.screen.query_one(
-        "#console-message-row1", ConsoleTranscriptMessage
-    )
+    return pilot.app.screen.query_one("#console-message-row1", ConsoleTranscriptMessage)
 
 
 @pytest.mark.asyncio
@@ -125,7 +123,9 @@ async def test_screen_mounted_menu_is_still_dismissed_by_an_outside_press():
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
         transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
-        await screen.mount(ConsoleSelectionMenu(screen_x=2, screen_y=2, owner=transcript))
+        await screen.mount(
+            ConsoleSelectionMenu(screen_x=2, screen_y=2, owner=transcript)
+        )
         await pilot.pause()
         assert screen.query_one(ConsoleSelectionMenu)
 
@@ -256,7 +256,9 @@ async def test_press_inside_the_transcript_still_leaves_the_menu_alone():
     async with make_console_pilot() as pilot:
         screen = pilot.app.screen
         transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
-        await screen.mount(ConsoleSelectionMenu(screen_x=2, screen_y=2, owner=transcript))
+        await screen.mount(
+            ConsoleSelectionMenu(screen_x=2, screen_y=2, owner=transcript)
+        )
         await pilot.pause()
         menu = screen.query_one(ConsoleSelectionMenu)
 

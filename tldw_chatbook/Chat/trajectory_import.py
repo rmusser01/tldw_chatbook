@@ -1,13 +1,13 @@
 """Trajectory import: open a shared trace file as a read-only snapshot.
 
-The consumer side of the ADR-067 export format (task-16320): read a
+The consumer side of the ADR-313 export format (task-16320): read a
 ``tldw-trajectory`` JSON document, validate it through the EXPORT
 validator (``Chat/trajectory_export.validate_trajectory_export`` -- the
 shared seam, so import and export can never drift apart), and map the
 file's sections onto ``Chat/trajectory.derive_trajectory`` inputs to
 produce the same ``TrajectorySnapshot`` the live view renders.
 
-Read-only contract (ADR-067 §5)
+Read-only contract (ADR-313 §5)
     Imported traces are ephemeral view data. This module NEVER opens,
     writes, or references the application database -- it holds no DB
     imports at all -- and the snapshot it returns is consumed purely for
@@ -43,7 +43,9 @@ from tldw_chatbook.Chat.trajectory_export import (
     TRACE_EXPORT_VERSION,
     TraceExportProfile,
     TrajectoryExportError,
-    _has_credential_material,
+    _mask_credential_material,
+    _masked,
+    _parsed_json,
     _trace_digest,
     validate_trajectory_export,
 )
@@ -139,7 +141,7 @@ def _read_document(source: Path | str | Mapping) -> dict:
 
 
 def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
-    """Validate and map the retained ADR-067 version-1 document."""
+    """Validate and map the retained ADR-313 version-1 document."""
     try:
         payload = validate_trajectory_export(document)
     except TrajectoryExportError as exc:
@@ -147,12 +149,20 @@ def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
             raise TrajectoryImportError(f"'{path}': {exc}") from exc
         raise TrajectoryImportError(str(exc)) from exc
 
-    messages = payload["messages"]
-    usage_by_id = {
-        str(message["id"]): ProviderUsage.from_json(message.get("usage_json"))
-        for message in messages
-    }
     try:
+        # TASK-41603: a v1 file is masked by the rules a v2 import re-masks
+        # with (owner decision 2026-11-17, "Re-mask on import"): messages,
+        # title, and tool payloads, a payload's JSON object as v2 masks one.
+        payload["trajectory_rows"] = [
+            {**row, "payload_json": _parsed_json(row.get("payload_json"))}
+            for row in payload["trajectory_rows"]
+        ]
+        payload = _mask_credential_material(payload)[0]
+        messages = payload["messages"]
+        usage_by_id = {
+            str(message["id"]): ProviderUsage.from_json(message.get("usage_json"))
+            for message in messages
+        }
         return derive_trajectory(
             messages,
             usage_by_id,
@@ -161,6 +171,8 @@ def _v1_snapshot(document: Mapping, path: Path | None) -> TrajectorySnapshot:
             payload["compaction_records"],
             payload.get("active_leaf_message_id"),
         )
+    except RecursionError:
+        raise  # load_imported_trace names it "nested too deeply" (TASK-41701)
     except Exception as exc:  # noqa: BLE001 - mapping boundary; name the file
         where = f"'{path}'" if path is not None else "trace document"
         raise TrajectoryImportError(
@@ -295,16 +307,16 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
     version = document.get("version")
     if not isinstance(version, int) or isinstance(version, bool):
         raise TrajectoryImportError(
-            f"Invalid Trace bundle: 'version' must be an integer, got {version!r}"
+            f"Invalid Trace bundle: 'version' must be an integer, got {_masked(version)!r}"
         )
     if version > TRACE_EXPORT_VERSION:
         raise TrajectoryImportError(
-            f"Unsupported Trace export version {version}: this build reads version "
+            f"Unsupported Trace export version {_masked(version)}: this build reads version "
             f"{TRACE_EXPORT_VERSION}; upgrade the app or request an older export"
         )
     if version != TRACE_EXPORT_VERSION:
         raise TrajectoryImportError(
-            f"Invalid Trace bundle: 'version' must be {TRACE_EXPORT_VERSION}, got {version!r}"
+            f"Invalid Trace bundle: 'version' must be {TRACE_EXPORT_VERSION}, got {_masked(version)!r}"
         )
 
     manifest = _require_v2(document, "manifest", dict)
@@ -312,7 +324,7 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
         TraceExportProfile(manifest.get("profile"))
     except (TypeError, ValueError) as exc:
         raise TrajectoryImportError(
-            f"Invalid Trace v2 manifest profile {manifest.get('profile')!r}"
+            f"Invalid Trace v2 manifest profile {_masked(manifest.get('profile'))!r}"
         ) from exc
     if manifest.get("schema_version") != TRACE_EXPORT_VERSION:
         raise TrajectoryImportError(
@@ -390,7 +402,7 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
     if unexpected_privacy_keys:
         raise TrajectoryImportError(
             "Invalid Trace v2 manifest: 'privacy_inventory' has unsupported fields: "
-            + ", ".join(unexpected_privacy_keys)
+            + ", ".join(map(_masked, unexpected_privacy_keys))
         )
 
     raw_events = _require_v2(document, "events", list)
@@ -414,7 +426,7 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             )
         if event_id in ids:
             raise TrajectoryImportError(
-                f"Invalid Trace v2 bundle: duplicate event_id {event_id!r}"
+                f"Invalid Trace v2 bundle: duplicate event_id {_masked(event_id)!r}"
             )
         ids.add(event_id)
         if (
@@ -492,7 +504,7 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             if unknown_usage:
                 raise TrajectoryImportError(
                     f"Invalid Trace v2 bundle: 'events[{index}].usage' contains "
-                    f"unsupported fields: {', '.join(map(str, unknown_usage))}"
+                    f"unsupported fields: {', '.join(str(_masked(key)) for key in unknown_usage)}"
                 )
             for field in _USAGE_COUNT_FIELDS:
                 if field not in usage:
@@ -553,13 +565,13 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
                 or not isinstance(detail.get("sensitivity"), str)
             ):
                 raise TrajectoryImportError(
-                    f"Invalid Trace v2 bundle: 'events[{index}].field_provenance.{field}' "
+                    f"Invalid Trace v2 bundle: 'events[{index}].field_provenance.{_masked(field)}' "
                     "must include valid state, reason, and sensitivity strings"
                 )
             if field in field_states and detail.get("state") != field_states[field]:
                 raise TrajectoryImportError(
                     f"Invalid Trace v2 bundle: 'events[{index}].field_provenance."
-                    f"{field}.state' does not match field_states.{field}"
+                    f"{_masked(field)}.state' does not match field_states.{_masked(field)}"
                 )
         if not isinstance(event["redaction_provenance"], list):
             raise TrajectoryImportError(
@@ -623,7 +635,7 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             target = event.get(field)
             if target and target not in ids:
                 raise TrajectoryImportError(
-                    f"Invalid Trace v2 bundle: dangling {field} {target!r} "
+                    f"Invalid Trace v2 bundle: dangling {field} {_masked(target)!r} "
                     f"at events[{index}]"
                 )
     for index, event in enumerate(source_events):
@@ -747,7 +759,8 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
         key = (str(event_id), field)
         if key in decision_keys:
             raise TrajectoryImportError(
-                f"Invalid Trace v2 manifest privacy_decisions: duplicate {key!r}"
+                f"Invalid Trace v2 manifest privacy_decisions: duplicate "
+                f"{tuple(map(_masked, key))!r}"
             )
         decision_keys.add(key)
         event = event_by_id[str(event_id)]
@@ -755,19 +768,19 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
         if field in field_states and field_states[field] != state:
             raise TrajectoryImportError(
                 f"Invalid Trace v2 manifest privacy_decisions[{index}]: state "
-                f"does not match event field_states.{field}"
+                f"does not match event field_states.{_masked(field)}"
             )
         detail = event["field_provenance"].get(field)
         if not isinstance(detail, Mapping) or detail.get("state") != state:
             raise TrajectoryImportError(
                 f"Invalid Trace v2 manifest privacy_decisions[{index}]: state "
-                f"does not match event field_provenance.{field}"
+                f"does not match event field_provenance.{_masked(field)}"
             )
         expected_classification = event.get("sensitivity") or "unspecified"
         if detail.get("sensitivity") != expected_classification:
             raise TrajectoryImportError(
                 f"Invalid Trace v2 manifest privacy_decisions[{index}]: sensitivity "
-                f"classification does not match event field_provenance.{field}"
+                f"classification does not match event field_provenance.{_masked(field)}"
             )
         expected_sensitive = expected_classification != "unspecified" or state in {
             "redacted",
@@ -826,13 +839,13 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             detail = event["field_provenance"].get(field)
             if not isinstance(detail, Mapping) or detail.get("state") != state:
                 raise TrajectoryImportError(
-                    f"Invalid Trace v2 bundle: event {event['event_id']!r} "
-                    f"field_provenance.{field} does not match field_states"
+                    f"Invalid Trace v2 bundle: event {_masked(event['event_id'])!r} "
+                    f"field_provenance.{_masked(field)} does not match field_states"
                 )
             if (str(event["event_id"]), str(field), str(state)) not in provenance_roots:
                 raise TrajectoryImportError(
-                    f"Invalid Trace v2 bundle: event {event['event_id']!r} "
-                    f"field {field!r} lacks matching redaction provenance"
+                    f"Invalid Trace v2 bundle: event {_masked(event['event_id'])!r} "
+                    f"field {_masked(field)!r} lacks matching redaction provenance"
                 )
 
     expected_missing = [
@@ -899,7 +912,7 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
         if relationship not in allowed_relationships:
             raise TrajectoryImportError(
                 f"Invalid Trace v2 lineage[{index}]: unsupported relationship "
-                f"{relationship!r}"
+                f"{_masked(relationship)!r}"
             )
     expected_lineage = [
         {
@@ -936,12 +949,14 @@ def _validate_v2(document: Mapping) -> tuple[dict[str, Any], list[Mapping[str, A
             "Trace v2 integrity digest mismatch: the file is corrupted or was tampered with; "
             "SHA-256 does not establish authenticity"
         )
-    if _has_credential_material(document):
-        raise TrajectoryImportError(
-            "Trace v2 import blocked: credentials are forbidden in collaboration "
-            "bundles; request a privacy-safe export"
-        )
-    return dict(manifest), events
+    # An older bundle can hold a value the current rules mask: it is imported
+    # with those values masked by the export's own rules, never refused for
+    # it (TASK-41133, owner decision 2026-11-17, "Re-mask on import"). The
+    # digest above was checked on the bundle as written.
+    masked, _changed = _mask_credential_material(
+        {"manifest": manifest, "events": events}
+    )
+    return dict(masked["manifest"]), masked["events"]
 
 
 _USAGE_FIELDS = (
@@ -984,7 +999,7 @@ def _event_record(event: Mapping[str, Any]) -> TrajectoryRecord:
     payload = event.get("payload")
     if payload is not None and not isinstance(payload, Mapping):
         raise TrajectoryImportError(
-            f"Invalid Trace v2 event {event['event_id']!r}: 'payload' must be an object or null"
+            f"Invalid Trace v2 event {_masked(event['event_id'])!r}: 'payload' must be an object or null"
         )
     return TrajectoryRecord(
         seq=int(event["seq"]),
@@ -1096,6 +1111,13 @@ def _import_operation(
     )
 
 
+def _nested_too_deeply(path: Path | None) -> TrajectoryImportError:
+    """The error for a document nested past what validation can walk
+    (TASK-41701), worded as ``_read_document`` words one json cannot parse."""
+    where = f"'{path}'" if path is not None else "Trace document"
+    return TrajectoryImportError(f"{where} is not a valid trajectory trace: nested too deeply")
+
+
 def load_imported_trace(source: Path | str | Mapping) -> ImportedTrace:
     """Load v1 or v2 collaboration data without persistence side effects."""
     path = None if isinstance(source, Mapping) else Path(str(source))
@@ -1108,19 +1130,22 @@ def load_imported_trace(source: Path | str | Mapping) -> ImportedTrace:
             if path is not None:
                 raise TrajectoryImportError(f"'{path}': {exc}") from exc
             raise
+        except RecursionError as exc:
+            raise _nested_too_deeply(path) from exc
         integrity = {
             "algorithm": "sha256",
             "digest": document["integrity"]["digest"],
             "authenticity": False,
             "verified": True,
             "verdict": "valid",
-            "notice": (
-                "SHA-256 digest valid; source authenticity not established."
-            ),
+            "notice": ("SHA-256 digest valid; source authenticity not established."),
         }
         privacy = dict(manifest["privacy_inventory"])
     else:
-        snapshot = _v1_snapshot(document, path)
+        try:
+            snapshot = _v1_snapshot(document, path)
+        except RecursionError as exc:
+            raise _nested_too_deeply(path) from exc
         event_count = sum(len(turn.records) for turn in snapshot.turns)
         manifest = {
             "schema_version": 1,

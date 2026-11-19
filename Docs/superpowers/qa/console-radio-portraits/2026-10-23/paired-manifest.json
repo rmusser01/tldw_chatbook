@@ -1,0 +1,65 @@
+{
+  "method": "One unchanged original base, shared generated eyelid/mouth patches; local compositing explicitly authorized by the user.",
+  "input_sha256": {
+    "source": "6d8ba7ecf1f19dd5e7c2a5a11e9337dd2ce26897140aff6fe4e77b91bfdf1463",
+    "eyes_closed": "8e5f5932db3b720dcf8cab06397404765a77fd152953829732671d6e45dea4f3",
+    "mouth_small": "f9908a694dcbc3deb200b676a90058c4b2e0a5244d3ef957e1eebd7137a349a3",
+    "mouth_open": "994003d6d7f01650adcca9aef36f1f7633f9d1ca2f89951a20db5da360943f29"
+  },
+  "frames": {
+    "rest": {
+      "file": "selected/rest.png",
+      "eyes": "open",
+      "mouth": "rest",
+      "sha256": "c1544ee7e129cfb65f9d70c0d9767644d527e14d0306faf0ffc7445618d88cfd",
+      "width": 1024,
+      "height": 1024
+    },
+    "blink_rest": {
+      "file": "selected/blink_rest.png",
+      "eyes": "closed",
+      "mouth": "rest",
+      "sha256": "1b7569bfd3f72e78d996fad795d1fdbf1deb7823dbebd45e54e5e274d1c18f26",
+      "width": 1024,
+      "height": 1024
+    },
+    "small": {
+      "file": "selected/small.png",
+      "eyes": "open",
+      "mouth": "small",
+      "sha256": "3bdb5e28a5478cf59fcb71d9730de0110fc044ffb21e27c26f455d0590296549",
+      "width": 1024,
+      "height": 1024
+    },
+    "blink_small": {
+      "file": "selected/blink_small.png",
+      "eyes": "closed",
+      "mouth": "small",
+      "sha256": "2cdcddf11edb2e6fab0a2f16bdb113aba77579a4410ce2986d6ac6c3bf36509e",
+      "width": 1024,
+      "height": 1024
+    },
+    "open": {
+      "file": "selected/open.png",
+      "eyes": "open",
+      "mouth": "open",
+      "sha256": "d49a9654152da89a05c4da6dbc265445355292620850d6a77cd9762a919c27fa",
+      "width": 1024,
+      "height": 1024
+    },
+    "blink_open": {
+      "file": "selected/blink_open.png",
+      "eyes": "closed",
+      "mouth": "open",
+      "sha256": "8f08d49a082b3342df6616c0a476680e3025af9845f24e971e52cf762996ed59",
+      "width": 1024,
+      "height": 1024
+    }
+  },
+  "checks": {
+    "outside_edit_pixels_equal_original": true,
+    "mouth_equal_across_eye_pair": true,
+    "eyes_equal_across_mouth_states": true,
+    "rest_equals_original_pixels": true
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "only_new_helper_and_failed_snapshot_try_AST_vs_public": true,
+  "snapshot_and_other_AST_exact_vs_prefix": true,
+  "prefix59_original_exact": true,
+  "public54_original_exact": true,
+  "other_runtime_and_refs_exact": true,
+  "maximum_tb_links": 64,
+  "maximum_formatted_retained_frames": 12,
+  "new_product_imports": false,
+  "App_or_GUI": false,
+  "qualified": false,
+  "product_samples": 0
+}

@@ -1,0 +1,46 @@
+{
+  "base": "6f5bfae0c191909bb676dae97e5071d6b4f56d61",
+  "head_before_task7_commit": "6f5bfae0c191909bb676dae97e5071d6b4f56d61",
+  "sizes": [
+    [
+      80,
+      24
+    ],
+    [
+      120,
+      40
+    ],
+    [
+      170,
+      48
+    ]
+  ],
+  "sha256": {
+    "Tests/Library/test_library_prompts_state.py": "9295ad09f730301609efc66f040658eb3b767827b9bf08b3d4bb8bd1fb42ceb5",
+    "Tests/State/test_screen_state_store.py": "c6ae2031280f50549c7edd62979f7cbec95a372de92fe1cf6e98d33e75dfc3f0",
+    "Tests/UI/test_library_prompts_reader.py": "44a480ab4d1d6fadf90bbb37b60a0c1b1c3234d9ecc86e0561b2344a73458a9e",
+    "tldw_chatbook/Chat/console_prompt_mixin_service.py": "ac2eb3cf3ad1fa7b711aba9a2eb72a57e4ba2e202f8649067d2aff215946d222",
+    "tldw_chatbook/Library/library_prompts_state.py": "cfd0684b9858bc747aea5f4e24307772c5f2aba5f7f34936b4d13e3a72d62a24",
+    "tldw_chatbook/UI/Console_Modules/prompts.py": "d9ed8b0d4608673759725159cbdf0d6b169eaf28c4dccf9d4766d10caea59972",
+    "tldw_chatbook/UI/Console_Modules/wiring.py": "ed89b563221a2007e8485315489688fce1c2682c8ae800cf046638c049f0c5bc",
+    "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": "35eb7eb82d9dc7177e1fb06d3387072b6b10bb4de736f7c217b9717b0c25ded7",
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": "276eec7301d0946f57eacde869c219c24281b2eb944e4926b664e1414ec727bb",
+    "tldw_chatbook/UI/Library_Modules/library_prompts_state.py": "1901d65b14978657c6d8d884585a129e809f3dcb016357368b68168b9fd67638",
+    "tldw_chatbook/UI/Navigation/pending_handoff_store.py": "786b9c935236e8c27e89804e6a55eee0cb36b70c02dd69d24bd558897295754d",
+    "tldw_chatbook/UI/Navigation/screen_state_store.py": "3a7b52058503025e906e21c84d89ac99af349454e6b73234089d2902fd13b243",
+    "tldw_chatbook/UI/Screens/library_screen.py": "4f57d0ad2d4e988770416b032322e393e8b317439591f7d3ff0474149eeeb956",
+    "tldw_chatbook/Widgets/Library/library_prompts_canvas.py": "35fc984919fa9ce9be8a88ff9715d7795ece20e4eff1f73a89c441512fa49f91",
+    "Tests/UI/test_library_prompt_mixins.py": "d64f9e0ef28f1aee5d33f4f1374b8d54f8e79399e11a0e44276deac916324a1a",
+    "tldw_chatbook/Widgets/Prompts/prompt_mixin_editor.py": "81541f7b671e04b2abeadd05c97a7da62d19a1c9798dc0352977ca1ac1c28d89",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "4c4f5e724d0f96a48d4b680b17b46055392f6ebebb08057d1bb829124117faa8",
+    "tldw_chatbook/css/core/_variables.tcss": "3c7c1c0c8dbef9e33cccab046391841c867a7a3b0ed156da728319ca4d030213"
+  },
+  "captures": {
+    "/private/tmp/task7-captures/mixin-120x40-clean.svg": "e91595e23deb5a2fbeec4f0d3587b853e37144ab2ac304a3d7a2f3cbaca19171",
+    "/private/tmp/task7-captures/mixin-120x40-dirty.svg": "b198a5e3fcc0d01ba47f0163c60ee8903c1a1283c056d6e8656af4c42433163a",
+    "/private/tmp/task7-captures/mixin-170x48-clean.svg": "7a9afc54d7c237d6cdc90f9f8b48b28ab00880acf7c22354dee0577e102e6f48",
+    "/private/tmp/task7-captures/mixin-170x48-dirty.svg": "03cd344ad895dd72b5853c29875d90411e52f95dd6121b27dcc540c46ed4a083",
+    "/private/tmp/task7-captures/mixin-80x24-clean.svg": "29e9752aa2f53cf492ffc06602e9837cb76253ee010f2e37b2305367e29125a7",
+    "/private/tmp/task7-captures/mixin-80x24-dirty.svg": "21f87f98359a27100409c7afc3f0bc427422df3fb6ed86182b01a4ee9d1004a4"
+  }
+}

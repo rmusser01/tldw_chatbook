@@ -1,0 +1,39 @@
+{
+  "route": "pcm",
+  "output_device": "MacBook Pro Speakers",
+  "sample_rate": 24000,
+  "driver_latency_ms": 53.25,
+  "complete_waveform_submitted": true,
+  "native_finished_after_last_scheduled_sample_ms": -24.365334073081613,
+  "completion_after_native_finished_ms": 130.699000088498,
+  "observer_clock_offset": 0.00018329196609556675,
+  "maximum_callback_clock_variation_ms": 23.056125035509467,
+  "transitions": [
+    {
+      "event": "onset",
+      "dac_monotonic": 1064322.043546625,
+      "terminal_flush_monotonic": 1064322.050602958,
+      "delay_ms": 7.056
+    },
+    {
+      "event": "nonzero pause",
+      "dac_monotonic": 1064322.643556125,
+      "terminal_flush_monotonic": 1064322.683853666,
+      "delay_ms": 40.298
+    },
+    {
+      "event": "onset",
+      "dac_monotonic": 1064323.0172189581,
+      "terminal_flush_monotonic": 1064323.050111875,
+      "delay_ms": 32.893
+    },
+    {
+      "event": "silence",
+      "dac_monotonic": 1064323.617217875,
+      "terminal_flush_monotonic": 1064323.649993791,
+      "delay_ms": 32.776
+    }
+  ],
+  "physical_loopback": false,
+  "measurement": "Exact source sample boundaries mapped by production observer to monotonic; terminal flushes with actual avatar pixels. No photon/acoustic recording."
+}

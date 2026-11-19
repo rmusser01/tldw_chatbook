@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.restart_observation import _wait_while_busy
+
 _SEED = r"""
 import os,sys
 from pathlib import Path
@@ -40,7 +42,7 @@ from tldw_chatbook import config
 from tldw_chatbook.Widgets import emoji_picker
 from tldw_chatbook.runtime_policy.source_state import RuntimeSourceStateStore,RuntimeSourceState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.Backup_Recovery.async_file_participants import _FileJob
+from tldw_chatbook.Backup_Recovery.async_file_participants import FileJob
 from tldw_chatbook.Backup_Recovery import raw_participants as raw
 home=Path.home();selector=Path(os.environ['TLDW_CONFIG_PATH']);parent=selector.parent
 owner=sys.argv[1]
@@ -76,14 +78,14 @@ else:
  path=parent/'ui_state.toml';owner_id='ui.state';screen=object.__new__(ChatScreen)
  def write(value):
   async def save():
-   with _FileJob(screen,'sidebar_state') as job:
+   with FileJob(screen,'sidebar_state') as job:
     outcome=await job.run({'collapsible_states':{},'search_query':value,'last_active_section':'notes'})
     if outcome.error:raise outcome.error
   asyncio.run(save())
  def read():
   import toml
-  with raw._scope(screen,'sidebar_state') as operation:
-   with raw._file(operation,raw._selected(operation),'r') as stream:return toml.load(stream)['sidebar']['search_query']
+  with raw.scope(screen,'sidebar_state') as operation:
+   with raw.file(operation,raw.selected_target(operation),'r') as stream:return toml.load(stream)['sidebar']['search_query']
 write('before-capture');first=read()
 assert path.is_file() and bootstrap._registry(root)==registry_before
 storage._shutdown()
@@ -114,7 +116,10 @@ print('CAPTURE_SIBLING_CONTINUITY_COMPLETE',owner,flush=True)
 """
 
 
-def _child(home, script, *arguments, timeout=70, selector=None):
+def _child(home, script, *arguments, timeout=70, selector=None, idle=None):
+    """Run ``script`` in a child; with ``idle``, the child also fails once it
+    stops using CPU for ``idle`` seconds, and ``timeout`` stays the only stop
+    for a hang that keeps polling."""
     repository = Path(__file__).resolve().parents[2]
     environment = dict(
         os.environ,
@@ -126,18 +131,25 @@ def _child(home, script, *arguments, timeout=70, selector=None):
         PYTHONPATH=str(repository),
     )
     log = home / ("capture-" + ("-".join(arguments) or "seed") + ".log")
+    command = [sys.executable, "-X", "faulthandler", "-c", script, *arguments]
     with log.open("w") as output:
-        result = subprocess.run(
-            [sys.executable, "-X", "faulthandler", "-c", script, *arguments],
-            cwd=repository,
-            env=environment,
-            stdout=output,
-            stderr=output,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    assert result.returncode == 0, log.read_text()[-10000:]
+        if idle is None:
+            returncode = subprocess.run(
+                command,
+                cwd=repository,
+                env=environment,
+                stdout=output,
+                stderr=output,
+                text=True,
+                timeout=timeout,
+                check=False,
+            ).returncode
+        else:
+            process = subprocess.Popen(
+                command, cwd=repository, env=environment, stdout=output, stderr=output
+            )
+            returncode = _wait_while_busy(process, idle=idle, timeout=timeout)
+    assert returncode == 0, log.read_text()[-10000:]
     return log.read_text()
 
 
@@ -157,7 +169,16 @@ def native_profile(tmp_path, request):
 
 @pytest.mark.parametrize("owner", ["emoji", "runtime", "sidebar"])
 def test_complete_capture_keeps_installed_sibling_writable(native_profile, owner):
-    output = _child(native_profile[0], _CAPTURE, owner, selector=native_profile[1])
+    # A complete capture; on a loaded host it outlasted the fixed 70 s while
+    # busy (TASK-40307), so it fails only once it stops using CPU.
+    output = _child(
+        native_profile[0],
+        _CAPTURE,
+        owner,
+        selector=native_profile[1],
+        timeout=280,
+        idle=60,
+    )
     assert "CAPTURE_SIBLING_CONTINUITY_COMPLETE" in output
 
 
@@ -251,7 +272,12 @@ def test_capture_waits_for_other_bound_selector_writer_without_extra_payload(
 ):
     script = "WRITER=" + repr(_OTHER_WRITER) + "\n" + _SHARED_CAPTURE
     output = _child(
-        native_profile[0], script, "runtime", timeout=80, selector=native_profile[1]
+        native_profile[0],
+        script,
+        "runtime",
+        timeout=280,
+        selector=native_profile[1],
+        idle=60,
     )
     assert "SHARED_PARENT_CAPTURE_EXCLUSION_COMPLETE" in output
 
@@ -490,3 +516,84 @@ def test_related_selector_exclusion_never_grants_its_owned_sibling(
         storage._config_capture_sources(root, (selector,), proof)
     assert bootstrap._registry(root) == before
     assert path.read_text() == "{}"
+
+
+@pytest.mark.parametrize("child", ["busy", "idle"])
+def test_child_wait_fails_only_an_idle_child(child):
+    """TASK-40306: a busy child may outlast ``idle``; a child using no CPU may not."""
+    import time
+
+    body = (
+        "import time\nend=time.monotonic()+4\nwhile time.monotonic()<end:pass"
+        if child == "busy"
+        else "import time\ntime.sleep(60)"
+    )
+    process = subprocess.Popen([sys.executable, "-c", body])
+    started = time.monotonic()
+    if child == "busy":
+        assert _wait_while_busy(process, idle=2, timeout=60) == 0
+    else:
+        with pytest.raises(subprocess.TimeoutExpired):
+            _wait_while_busy(process, idle=2, timeout=60)
+        assert process.poll() is not None and time.monotonic() - started < 30
+
+
+def test_child_wait_kills_a_hung_childs_descendants():
+    """TASK-41104 review: killing a hung child also kills what it started, so a
+    hung restore leaves no process running past its test."""
+    import psutil
+
+    body = (
+        "import subprocess,sys\n"
+        "g=subprocess.Popen([sys.executable,'-c','import time;time.sleep(600)'])\n"
+        "print(g.pid,flush=True)\n"
+        "g.wait()\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", body], stdout=subprocess.PIPE, text=True
+    )
+    grandchild = psutil.Process(int(process.stdout.readline()))
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            _wait_while_busy(process, idle=2, timeout=60)
+        _gone, alive = psutil.wait_procs([grandchild], timeout=10)
+        assert not alive, "the hung child's own child is still running"
+    finally:
+        if grandchild.is_running():
+            grandchild.kill()
+
+
+def test_child_wait_counts_a_busy_child_beside_a_zombie_descendant(monkeypatch):
+    """TASK-41104 review: a descendant whose CPU cannot be read (an unreaped
+    zombie) must not hide the busy child's CPU and get it killed as idle.
+    Linux reads a zombie's CPU, so the unreadable read is forced here."""
+    import psutil
+
+    body = (
+        "import subprocess,sys,time\n"
+        "g=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])\n"
+        "print(g.pid,flush=True)\n"
+        "end=time.monotonic()+8\n"
+        "while time.monotonic()<end:pass\n"
+        "g.kill();g.wait()\n"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", body], stdout=subprocess.PIPE, text=True
+    )
+    grandchild = int(process.stdout.readline())
+    process.stdout.close()
+    read = psutil.Process.cpu_times
+
+    def unreadable(self):
+        if self.pid == grandchild:
+            raise psutil.ZombieProcess(self.pid)
+        return read(self)
+
+    monkeypatch.setattr(psutil.Process, "cpu_times", unreadable)
+    try:
+        assert _wait_while_busy(process, idle=2, timeout=60) == 0
+    finally:
+        try:  # The old helper left it running when it killed the child.
+            psutil.Process(grandchild).kill()
+        except psutil.Error:
+            pass

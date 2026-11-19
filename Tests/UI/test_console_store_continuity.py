@@ -40,24 +40,24 @@ from types import SimpleNamespace
 
 import pytest
 from loguru import logger
+from textual.widgets import Button
 
 from Tests.Chat.test_console_fleet_wake import _drain, _settle, _survivor
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
-from textual.widgets import Button
-
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_fleet_wake import WAKE_NOTICE_HEADER
 from tldw_chatbook.Chat.console_library_destination import (
     resolve_console_destination,
 )
-from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
-from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 SEEDED_USER = "first user message"
 SEEDED_REPLY = "assistant one"
@@ -73,8 +73,9 @@ class _StallingWakeGateway:
     (`console_chat_controller.py`, the `AGENT_WAKE` branch). Holding the
     probe therefore parks the whole wake turn before it has written
     anything, which is what lets a test navigate away and have BOTH wake
-    rows land with no Console mounted. A cold llama.cpp probe is the
-    everyday shape of this stall.
+    rows land while the Console is suspended (the reusable route keeps its
+    one ChatScreen installed, so it is suspended, not unmounted). A cold
+    llama.cpp probe is the everyday shape of this stall.
     """
 
     def __init__(self, reply: str = SEEDED_REPLY) -> None:
@@ -90,6 +91,12 @@ class _StallingWakeGateway:
         self.stall_stream = False
         self.entered_stream = asyncio.Event()
         self.release_stream = asyncio.Event()
+
+    def cached_context_window(self, settings):
+        """Use the real gateway's offline metadata fallback for mounted UI."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
 
     async def resolve_for_send(self, selection):
         if self.stall:
@@ -109,9 +116,7 @@ class _StallingWakeGateway:
             # generic "Provider destination is incomplete." copy. Derive it
             # through the production classifier the real gateway uses rather
             # than hand-building one, so this double cannot drift from it.
-            resolution.resolved_destination = resolve_console_destination(
-                resolution
-            )
+            resolution.resolved_destination = resolve_console_destination(resolution)
         return resolution
 
     async def stream_chat(self, resolution, messages, **kwargs):
@@ -135,6 +140,7 @@ def _drain_from_child_thread(wake, drain) -> None:
 def _terminal_survivor_run(runs_db, conversation_id, *, result=CHILD_RESULT):
     """A sub-agent run that finished AFTER its (terminal) parent turn."""
     from uuid import uuid4
+
     chain_id = runs_db.automatic_work.create_chain(
         conversation_id, root_submission_id=uuid4().hex
     )
@@ -150,7 +156,6 @@ def _terminal_survivor_run(runs_db, conversation_id, *, result=CHILD_RESULT):
     )
     runs_db.set_status(run_id, "done", result)
     return run_id
-
 
 
 async def _navigate(
@@ -173,7 +178,9 @@ async def _navigate(
             if not allow_confirmation:
                 screen.query_one("#cancel-button", Button).press()
                 await pilot.pause()
-                raise AssertionError("ordinary Console navigation asked for confirmation")
+                raise AssertionError(
+                    "ordinary Console navigation asked for confirmation"
+                )
             try:
                 screen.query_one("#confirm-button", Button).press()
             except Exception:  # noqa: BLE001 -- the dialog may still be settling
@@ -272,14 +279,17 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
     ordinary_timer_after_sync: list[bool] = []
 
     async def fail_first_reattach_sync(screen):
-        if inject["armed"]:
+        # Only the attach reconciliation's sync: a fresh view also runs the
+        # ordinary sync paths, which are not what this test isolates.
+        reattach = inject["armed"] and screen._console_attach_reconcile_running
+        if reattach:
             if not inject["failed"]:
                 inject["failed"] = True
                 first_failure.set()
                 raise RuntimeError("injected first reattach render failure")
             await allow_retry.wait()
         await original_sync(screen)
-        if inject["armed"]:
+        if reattach:
             inject["sync_succeeded"] = True
             retry_succeeded.set()
 
@@ -325,8 +335,15 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
             original_remount()
 
         runtime.remount_pending_approval = record_remount
+        # TASK-39161: the Console route is reused (TASK-31520), so a plain
+        # return resumes the same view. A runtime-identity flip drops the
+        # cached instance, so the return builds a fresh Console view that
+        # re-attaches to the app-owned runtime.
+        flipped = RuntimeIdentity(active_source="server", active_server_id="r13-flip")
+        monkeypatch.setattr(app, "_current_runtime_identity", lambda: flipped)
         inject["armed"] = True
         reopened = await _navigate(app, pilot, "chat", expect="ChatScreen")
+        assert reopened is not chat, "the return resumed the cached Console view"
         await asyncio.wait_for(first_failure.wait(), timeout=2)
 
         assert remount_after_sync == []
@@ -338,7 +355,13 @@ async def test_reattach_render_failure_retries_before_decisions_and_view_timers(
         assert outcome.accepted
         allow_retry.set()
         await asyncio.wait_for(retry_succeeded.wait(), timeout=3)
-        await pilot.pause()
+        # The fresh view finishes its reconciliation and first paint on its
+        # own worker after the sync returns; wait for both, not one pause.
+        await _settle(
+            lambda: remount_after_sync
+            and "REATTACH-RETRY-TERMINAL" in _rendered_text(reopened),
+            10,
+        )
 
         terminal_rows = [
             message
@@ -362,14 +385,16 @@ def _step(label: str) -> None:
 
 
 async def _seed_console(app, pilot, gateway):
-    """Mount a real Console, send once, return the live handles."""
-    _step("seed: constructing screen")
-    chat = ChatScreen(app)
-    await app.push_screen(chat)
-    _step("seed: pushed screen")
-    app._initial_screen_pushed = True
-    app.current_tab = "chat"
-    await pilot.pause()
+    """Route to the app's real Console, send once, return the live handles.
+
+    TASK-39120: since fed0b7257a (TASK-31520) the Console route reuses the
+    app's one installed ChatScreen. A ChatScreen this harness pushed itself
+    kept the runtime's view across the navigation, so the routed Console
+    never attached and painted an empty transcript on return.
+    """
+    _step("seed: routing to the app's Console")
+    chat = await _navigate(app, pilot, "chat", expect="ChatScreen")
+    _step("seed: routed")
     await _wait_for_selector(chat, pilot, "#console-native-composer")
     _step("seed: composer present")
     controller = chat._ensure_console_chat_controller()
@@ -424,7 +449,11 @@ def _db_chain(db, conversation_id):
 
 
 async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
-    """Drive P3b: a wake turn that COMPLETES with no Console mounted.
+    """Drive P3b: a wake turn that COMPLETES while the Console is suspended.
+
+    Since fed0b7257a (TASK-31520) the Console route suspends its installed
+    ChatScreen on navigation instead of unmounting it; `on_screen_suspend`
+    keeps `runtime.view`.
 
     Returns ``(chat2, store, session_id, conversation_id, runs_db, run_id)``
     with Console re-entered through the real navigation API.
@@ -453,7 +482,7 @@ async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
     _step("nav: leaving console")
     await _navigate(app, pilot, "library", expect="LibraryScreen")
     _step("nav: left console")
-    assert chat not in app.screen_stack, "Console must actually unmount"
+    assert chat not in app.screen_stack, "Console must actually be suspended"
 
     # ...and only NOW let the turn finish: both wake rows land headless.
     _step("wake: releasing provider")
@@ -473,7 +502,9 @@ async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
     chat2 = await _navigate(app, pilot, "chat", expect="ChatScreen")
     _step("nav: returned")
     assert isinstance(chat2, ChatScreen), type(chat2).__name__
-    assert chat2 is not chat, "screens are never cached"
+    # fed0b7257a (TASK-31520) made the Console route reusable: navigation
+    # suspends and resumes the app's one installed ChatScreen.
+    assert chat2 is chat, "the Console route reuses its installed screen"
     await _wait_for_selector(chat2, pilot, "#console-native-composer")
     await pilot.pause()
     return chat2, store, session_id, conversation_id, runs_db, run_id
@@ -485,10 +516,14 @@ async def _run_headless_wake_turn(app, pilot, gateway, tmp_path):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_a_wake_that_ran_while_console_was_unmounted_is_in_the_transcript(
-    tmp_path,
+    tmp_path, request: pytest.FixtureRequest,
 ):
     """P3b. Executed on unmodified production: the user saw 2 of 4 rows.
+
+    The name predates TASK-31520: the Console is now suspended, not
+    unmounted, while the wake runs (docs cite the name, so it is kept).
 
     The wake turn genuinely ran -- it reached the provider, appended its
     machine-origin SYSTEM notice and its assistant reply, persisted both to
@@ -676,8 +711,11 @@ async def test_transcript_payload_db_and_active_leaf_all_agree(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(tmp_path):
+async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(
+    tmp_path, request
+):
     """A staged wake targets a session id; that id must not change on nav.
 
     The snapshot preserved session ids explicitly
@@ -694,10 +732,11 @@ async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(tmp_pa
     gateway = _StallingWakeGateway()
     app.console_provider_gateway_factory = lambda: gateway
 
+    # This harness supplies the one content screen before deferred startup.
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -714,6 +753,12 @@ async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(tmp_pa
         await pilot.pause()
         await pilot.press("h", "a", "l", "f")
         await pilot.pause()
+        assert app.screen_stack == [app.screen_stack[0], chat]
+        assert app.screen is chat
+        assert chat._console_runtime().view is chat
+        assert store.active_session_id == first.id
+        assert chat._console_visible_draft_session_id == first.id
+        assert chat.query_one("#console-native-composer").draft_text() == "half"
         before_ids = [session.id for session in store.sessions()]
         assert first.persisted_conversation_id in (None, ""), (
             "this test is about an UNSAVED conversation"

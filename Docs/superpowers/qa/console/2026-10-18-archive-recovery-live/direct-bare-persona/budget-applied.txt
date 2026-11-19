@@ -1,0 +1,48 @@
+                                                                                                                                       ╭─────────────╮
+ ‹ me  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃6 Artifacts  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌──────────────────────────────────────────────────────────────────────────────────────┐  │  ┌────────────────────────────┐
+│                              │  │  │                                                                                      │  │  │                            │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.    │  │  │  Scope Inspector           │
+│  No filter | / focus         │  │  │ │ │  The limit that actually stops a long run. Counts prompt + completion for   │ │  │  │  │                            │
+│  category search             │  │  │ │ │  ONE run (one message), not the whole conversation - and the whole          │ │  │  │  │ Selected category: Console │
+│                              │  │  │ │ │  conversation is re-sent every turn, so spend grows quadratically: 25M is   │ │  │  │  │ Behavior                   │
+│  Core                        │  │  │ │ │  typically reached around turn 250. Sub-agents each get this same ceiling   │ │  │  │  │ No unsaved changes         │
+│     Overview (view)          │  │  │ │ │  rather than a share of it, so one message's worst case is about 3x it. 0   │ │  │  │  │  Guided edits: change a    │
+│     Providers & Models       │  │  │ │ │  = unlimited. Loop detection stops identical repeated calls and 3           │ │  │  │  │  field first.              │
+│     Web Search               │  │  │ │ │  consecutive failures from the same tool; successful calls with changing    │ │  │  │  │  Save (s) — no changes     │
+│     Speech & TTS             │  │  │ │ │  arguments can still loop.                                                  │ │  │  │  │  Revert (r) — no changes   │
+│  Interface                   │  │  │ │ │ Wall-clock limit        │ 180.0                                             │ │  │  │  │ Local-only: saves write    │
+│     Appearance               │  │  │ │ │  = 3m. How long ONE run may take end to end. Stop works throughout.         │ │  │  │  │ your config file.          │
+│     Theme                    │  │  │ │ │  Sub-agents are bounded separately by  child_max_wall_seconds, so raising   │ │  │  │  │  Purpose: Focus a          │
+│     Splash Screen            │  │  │ │ │  this does not extend them.                                                 │ │  │  │  │  Console Behavior field    │
+│   > Console Behavior         │  │  │ │ │ Per-tool-call limit     │ 3600.0                                            │ │  │  │  │  for setting-specific      │
+│  Data & Privacy              │  │  │ │ │  = 1h. Ceiling on a SINGLE tool call - the real limit on long crawls,       │ │▃ │  │  │  guidance.                 │
+│     Storage                  │  │  │ │ │  ingests, and builds, which a large wall-clock budget alone will not save.  │ │  │  │  │ │                          │
+│     Workspaces               │  │  │ │ │  0 = no ceiling (Stop still works: it is polled every 0.5s while a tool     │ │  │  │  │  Consequences: No          │
+│     Tool Profiles            │  │  │ │ │  runs). A call reported as timed out may still finish later on its own      │ │  │  │  │  field-specific guidance   │
+│     Privacy & Security       │  │  │ │ │  thread, so lowering this below ~186s can double-execute an MCP tool.       │ │  │  │  │  is active right now.      │
+│     Network                  │  │  │ │ │ Model turns (backstop)  │ 2                                                 │ │▁ │  │  │ │                          │
+│     My Profile               │  │  │ │ │  Tool-calling rounds per message. A backstop, not the usual limiter - at    │ │  │  │  │  Saved as: varies by       │
+│  Troubleshooting             │  │  │ │ │  the default token budget a run stops on spend first, long before this.     │ │  │  │  │  field                     │
+│     Diagnostics (view)       │  │  │ │ │ Steps (backstop)        │ 40                                                │ │  │  │  │ │                          │
+│     About (view)             │  │  │ │ │  Individual loop steps. One tool round costs 3 (think, call, result) and    │ │  │  │  │  Applies: varies by        │
+│     Agents                   │  │  │ │ │  the closing reply costs 1, so N turns need 3*(N-1)+1 steps. Set below      │ │  │  │  │  field                     │
+│  Expert                      │  │  │ │ │  that and this, not the turn count, becomes your limiter.                   │ │  │  │  │ │                        ▃ │
+│     Internal Prompts         │  │  │ │ │                                                                             │ │  │  │  │ Override rules             │
+│     Advanced Config          │  │  │ │ │                                                                             │ │  │  │  │  Priority: active          │
+│   Domain Defaults ▸ (11)     │  │  │ │ │  Agent tool-result display cap                                              │ │  │  │  │  Console session, then     │
+│                              │  │  │ │ │ Display cap (chars)     │ 160                                               │ │  │  │  │  provider+model profile,   │
+│                              │  │  │ │ │  How much of an agent tool result the Console shows you here -- distinct    │ │  │  │  │  then these global         │
+│                              │  │  │ │ │  from max_tool_result_chars, which caps what the model itself saw. Open a   │ │  │  │  │  fallbacks                 │
+│                              │  │  │ │ │  run's "View full log" (Agent rail) to read everything beyond this cap.     │ │  │  │  │ │                          │
+│                              │  │  │ │ │ ┌──────────────────────────────────────────────────────╭──────────────────────────────────────────────────────────╮ │
+│                              │  │  │ │ │ │                                                      │                                                          │ │
+│                              │  │  │ │ │ │  Permission summaries                                │ Console behavior settings saved.                         │ │
+│                              │  │  │ │ │ │  applies immediately - no Save needed                │                                                          │ │
+│                              │  │  │                                                            ╰──────────────────────────────────────────────────────────╯ │
+└──────────────────────────────┘  │  └──────────────────────────────────────────────────────────────────────────────────────┘  │  └────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

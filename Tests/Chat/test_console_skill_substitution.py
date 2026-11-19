@@ -114,8 +114,17 @@ class _RecordingGateway:
     async def resolve_for_send(self, selection):
         # `provider_resolution` rather than `_ReadyResolution()`: a26cdafd8
         # made the typed `resolved_destination` mandatory on a ready
-        # resolution, and a bare attribute-class cannot carry one.
-        return provider_resolution(provider="llama_cpp", model="m")
+        # resolution, and a bare attribute-class cannot carry one. A real
+        # resolution always has the routing fields too: without
+        # `execution_key` the project-instruction consent check raised and an
+        # agent run was cancelled before its first model call (TASK-41312).
+        return provider_resolution(
+            provider="llama_cpp",
+            model="m",
+            execution_key="llama_cpp",
+            continuation_protocol=None,
+            api_mode=None,
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.payloads.append(messages)

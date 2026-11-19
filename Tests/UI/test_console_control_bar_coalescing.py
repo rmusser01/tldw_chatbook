@@ -29,7 +29,7 @@ import pytest
 
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 @pytest.fixture()

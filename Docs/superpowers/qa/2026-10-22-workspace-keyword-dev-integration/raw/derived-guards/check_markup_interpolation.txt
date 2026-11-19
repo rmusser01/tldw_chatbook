@@ -1,0 +1,4 @@
+markup interpolation: 313 notify_interp, 79 button_label_interp, 60 tooltip_interp occurrence(s) (541 pinned).
+check_markup_interpolation: OK
+
+STDERR

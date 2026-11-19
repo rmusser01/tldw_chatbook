@@ -141,7 +141,9 @@ def test_trust_store_rejects_marker_mismatch(tmp_path):
 def test_trust_store_rejects_missing_marker_after_manifest_exists(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"6" * 32)
     marker_path = tmp_path / "marker.json"
-    marker = FileSkillTrustGenerationMarkerStore(marker_path, store_dir=marker_path.parent)
+    marker = FileSkillTrustGenerationMarkerStore(
+        marker_path, store_dir=marker_path.parent
+    )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)
 
     store.save_manifest(
@@ -156,7 +158,9 @@ def test_trust_store_rejects_missing_marker_after_manifest_exists(tmp_path):
 def test_trust_store_marker_failure_preserves_previous_manifest_and_marker(tmp_path):
     keys = derive_skill_trust_keys("passphrase", salt=b"7" * 32)
     marker = FailingMarkerStore(
-        FileSkillTrustGenerationMarkerStore(tmp_path / "marker.json", store_dir=tmp_path),
+        FileSkillTrustGenerationMarkerStore(
+            tmp_path / "marker.json", store_dir=tmp_path
+        ),
         fail_on_save_number=2,
     )
     store = SkillTrustStore(store_dir=tmp_path / "trust", marker_store=marker)

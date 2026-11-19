@@ -1,0 +1,4 @@
+{
+  "sha256": "9239e2990da1476f274e00a2597bf2b0aa7240a7b30d65298e2bba56da9d28cb",
+  "raw_text": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"16.593\" timestamp=\"2026-11-02T09:59:28.161843-08:00\" hostname=\"Roberts-MacBook-Pro-2.local\"><testcase classname=\"Tests.UI.test_console_idle_heap_refreeze\" name=\"test_mounted_received_custody_blocks_completion_and_idle_timer_reclaims\" time=\"14.531\" /></testsuite></testsuites>"
+}

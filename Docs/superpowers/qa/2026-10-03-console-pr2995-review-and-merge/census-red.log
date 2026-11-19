@@ -1,0 +1,125 @@
+F...                                                                     [100%]
+=================================== FAILURES ===================================
+_____________ test_ui_ready_module_census_stays_at_the_pinned_size _____________
+
+tmp_path = PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-9131/test_ui_ready_module_census_st0')
+ratchet = <module 'tldw_tests_boot_budget_ratchet' from '/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Performance/boot_budget_ratchet.py'>
+
+    @pytest.mark.integration
+    def test_ui_ready_module_census_stays_at_the_pinned_size(
+        tmp_path: Path, ratchet
+    ) -> None:
+        """Boot to `_ui_ready`; this repo's resident modules stay within budget.
+    
+        Args:
+            tmp_path: pytest fixture; isolated dir for the subprocess's profile.
+            ratchet: shared ratchet helper (see ``conftest.py``).
+        """
+        mods = _boot_and_census(tmp_path)
+    
+        missing = [m for m in EXPECTED_AT_READY if m not in mods]
+        assert not missing, (
+            f"census looks degenerate -- expected mount-leg members missing: {missing}"
+        )
+    
+>       assert len(mods) <= MAX_TLDW_MODULES_AT_UI_READY, (
+            f"{len(mods)} tldw_chatbook modules resident at _ui_ready "
+            f"(ratchet limit {MAX_TLDW_MODULES_AT_UI_READY}). Mount-leg growth "
+            "is invisible to the import guards.\n"
+            f"{ratchet.format_module_diff(mods, 'ui-ready-census')}\n"
+            f"{ratchet.ratchet_policy('MAX_TLDW_MODULES_AT_UI_READY')}\n"
+            f"Deliberate snapshot refresh: `{ratchet.SNAPSHOT_REFRESH}`"
+        )
+E       AssertionError: 1034 tldw_chatbook modules resident at _ui_ready (ratchet limit 1033). Mount-leg growth is invisible to the import guards.
+E         vs pinned snapshot boot_budget_snapshots/ui_ready_modules.txt:
+E           NEW modules (6) -- these consumed the headroom; defer them or shed elsewhere:
+E             + tldw_chatbook.Chat.console_chat_start
+E             + tldw_chatbook.Chat.console_compaction_failure
+E             + tldw_chatbook.MCP.tool_results
+E             + tldw_chatbook.UI.Console_Modules.composer_run_controls
+E             + tldw_chatbook.UI.Console_Modules.hooks
+E             + tldw_chatbook.app_keep_alive
+E           modules no longer resident (2) -- sheds since the snapshot was pinned:
+E             - tldw_chatbook.Widgets.Console.console_model_popover
+E             - tldw_chatbook.Widgets.model_search_picker
+E         RATCHET (ADR-097, backlog/decisions/097-boot-budget-ratchets.md): MAX_TLDW_MODULES_AT_UI_READY never rises. Legitimate responses: (a) defer the cost off this path, (b) shed equivalent cost elsewhere in the same PR, or (c) an explicit owner exception recorded in the ADR's exception ledger. Raising the constant is NOT one of the options -- a PR that raises it without a ledger entry should be rejected in review.
+E         Deliberate snapshot refresh: `.venv/bin/python scripts/update_boot_budget_snapshots.py`
+E       assert 1034 <= 1033
+E        +  where 1034 = len(['tldw_chatbook', 'tldw_chatbook.ACP_Interop', 'tldw_chatbook.ACP_Interop.runtime_process', 'tldw_chatbook.ACP_Interop.runtime_session', 'tldw_chatbook.Actor_Packs', 'tldw_chatbook.Actor_Packs.activation', ...])
+
+Tests/Performance/test_ui_ready_module_census.py:474: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 19:06:04.586 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 19:06:04.698 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 19:06:04.840 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 19:06:04.845 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+============================= slowest 25 durations =============================
+40.05s call     Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+
+(11 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+1 failed, 3 passed in 41.31s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-51e09fef-f01c-4d20-a71f-3b1efded111a/popen-gw0/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-51e09fef-f01c-4d20-a71f-3b1efded111a/popen-gw0/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-51e09fef-f01c-4d20-a71f-3b1efded111a/popen-gw0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-51e09fef-f01c-4d20-a71f-3b1efded111a/popen-gw0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-51e09fef-f01c-4d20-a71f-3b1efded111a
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-51e09fef-f01c-4d20-a71f-3b1efded111a'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f3241e71-841a-4f6e-9dd3-4176cca277cd/popen-gw3/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f3241e71-841a-4f6e-9dd3-4176cca277cd/popen-gw3/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f3241e71-841a-4f6e-9dd3-4176cca277cd/popen-gw3
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f3241e71-841a-4f6e-9dd3-4176cca277cd/popen-gw3'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f3241e71-841a-4f6e-9dd3-4176cca277cd
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-f3241e71-841a-4f6e-9dd3-4176cca277cd'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-562bc244-3f7e-4436-82dd-bd189fb86488/popen-gw0/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-562bc244-3f7e-4436-82dd-bd189fb86488/popen-gw0/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-562bc244-3f7e-4436-82dd-bd189fb86488/popen-gw0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-562bc244-3f7e-4436-82dd-bd189fb86488/popen-gw0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-562bc244-3f7e-4436-82dd-bd189fb86488
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-562bc244-3f7e-4436-82dd-bd189fb86488'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-564e6cb3-b79a-4cc1-8508-8428ddf3a8d4/popen-gw2/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-564e6cb3-b79a-4cc1-8508-8428ddf3a8d4/popen-gw2/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-564e6cb3-b79a-4cc1-8508-8428ddf3a8d4/popen-gw2
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-564e6cb3-b79a-4cc1-8508-8428ddf3a8d4/popen-gw2'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-564e6cb3-b79a-4cc1-8508-8428ddf3a8d4
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-564e6cb3-b79a-4cc1-8508-8428ddf3a8d4'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e0121c37-ce14-45a7-b9b3-4e290c3293ff/popen-gw1/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e0121c37-ce14-45a7-b9b3-4e290c3293ff/popen-gw1/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e0121c37-ce14-45a7-b9b3-4e290c3293ff/popen-gw1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e0121c37-ce14-45a7-b9b3-4e290c3293ff/popen-gw1'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e0121c37-ce14-45a7-b9b3-4e290c3293ff
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-e0121c37-ce14-45a7-b9b3-4e290c3293ff'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc255f44-1447-48ae-aac1-918d737c9850/popen-gw1/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc255f44-1447-48ae-aac1-918d737c9850/popen-gw1/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc255f44-1447-48ae-aac1-918d737c9850/popen-gw1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc255f44-1447-48ae-aac1-918d737c9850/popen-gw1'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc255f44-1447-48ae-aac1-918d737c9850
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-cc255f44-1447-48ae-aac1-918d737c9850'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8c35a7cc-f74d-4636-b19b-cb59f2b52553/popen-gw4/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8c35a7cc-f74d-4636-b19b-cb59f2b52553/popen-gw4/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8c35a7cc-f74d-4636-b19b-cb59f2b52553/popen-gw4
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8c35a7cc-f74d-4636-b19b-cb59f2b52553/popen-gw4'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8c35a7cc-f74d-4636-b19b-cb59f2b52553
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-8c35a7cc-f74d-4636-b19b-cb59f2b52553'
+  warnings.warn(

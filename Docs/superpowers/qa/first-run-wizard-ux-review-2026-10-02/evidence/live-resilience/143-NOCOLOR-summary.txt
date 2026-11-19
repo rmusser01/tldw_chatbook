@@ -1,0 +1,40 @@
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                 Set up tldw chatbook                                                 │
+│                                                                                                                      │
+│▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│
+│    ┌──┐      ┌──┐       ┌──┐      ┌──┐       ┌──┐      ┌──┐       ┌──┐      ┌──┐       ┌──┐      ┌──┐       ┌──┐     │
+│    │✓ │      │✓ │       │✓ │      │✓ │       │✓ │      │✓ │       │✓ │      │✓ │       │✓ │      │✓ │       │11│     │
+│    └──┘      └──┘       └──┘      └──┘       └──┘      └──┘       └──┘      └──┘       └──┘      └──┘       └──┘     │
+│──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+│                                                                                                                      │
+│                                                   Setup summary                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│  ✓ Provider — openai                                                                                                 │
+│  ✓ Default model — gpt-5.6-terra                                                                                     │
+│  – RAG — off by default — embedding model e5-small-v2                                                                │
+│  – Speech transcription — not set up (optional)                                                                      │
+│  ✓ Voice — PocketTTS (default voice)                                                                                 │
+│  – Tools — all off; turn them on under MCP ▸ Servers ▸ built-in row ▸ Tool gates                                     │
+│  – Notes folder sync — set up later in Library                                                                       │
+│  – Theme — textual-dark                                                                                              │
+│  ✗ Key encryption — API keys are stored as plain text                                                                │
+│  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                │
+│  ▊ ▐ ▌ Keep model lists fresh — checks your configured providers online at startup  ▎                                │
+│  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                │
+│  Config file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-qa/home…config.toml       │
+│  Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard.                                                   │
+│                                                                                                                      │
+│       Start chatting    Add your first document                                                                      │
+│                                                                                                                      │
+│       Write your first note     Explore Home     Review settings                                                     │
+│                                                                                                                      │
+│                                                                                                                  ▇▇  │
+│                                                                                                                      │
+│▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+│                                                                                                                      │
+│    Step 11 of 11                                                                                       ← Back        │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                     Ctrl+B back · choose an action below to finish

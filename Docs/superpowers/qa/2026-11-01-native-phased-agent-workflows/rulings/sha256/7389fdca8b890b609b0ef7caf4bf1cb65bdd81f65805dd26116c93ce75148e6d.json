@@ -1,0 +1,56 @@
+{
+  "base": "7dc71ac16c3daf736b70d035e1888f6dd00965a6",
+  "original_proposal": {
+    "path": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-9-prerequisite-source.frozen-e92c3c92c5fcd01232dcb6f92a214f5262d8a9b7dec99f24af41ec9c419ff22f.md",
+    "sha256": "e92c3c92c5fcd01232dcb6f92a214f5262d8a9b7dec99f24af41ec9c419ff22f",
+    "bytes": 18743
+  },
+  "corrected_proposal": {
+    "path": ".superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-9-prerequisite-source.md",
+    "sha256": "56be2bc7b857677c8cf5fad554705a4010c41afb6043a28b91610af70250f253",
+    "original_full_prefix_preserved": true
+  },
+  "suffix_sha256": "e3e2dc49cc12ca75af63dbac90711910c9221ed5a2decd7c755cf81d65c4de98",
+  "suffix_bytes": 2271,
+  "full_prefixes_and_suffix_bytes_match": true,
+  "files": {
+    "backlog/decisions/285-native-phased-agent-workflows.md": {
+      "prefix_sha256": "35963323ebf2e1720a7b12ce3008aa267e11b46fb99b4037bb9753eda2aa6633",
+      "prefix_bytes": 227433,
+      "suffix_sha256": "e3e2dc49cc12ca75af63dbac90711910c9221ed5a2decd7c755cf81d65c4de98",
+      "suffix_bytes": 2271,
+      "complete_sha256": "6e6549a335233199e4e6fa8b8433fb0a8ee70f74d98aebd3138f7ae1be4ba63b",
+      "head_sha256": "35963323ebf2e1720a7b12ce3008aa267e11b46fb99b4037bb9753eda2aa6633",
+      "index_sha256": "35963323ebf2e1720a7b12ce3008aa267e11b46fb99b4037bb9753eda2aa6633"
+    },
+    "Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md": {
+      "prefix_sha256": "7880904de05cf81d0f7293819df061ea1bc5e8ea5af4acda5060725b431b091a",
+      "prefix_bytes": 211741,
+      "suffix_sha256": "e3e2dc49cc12ca75af63dbac90711910c9221ed5a2decd7c755cf81d65c4de98",
+      "suffix_bytes": 2271,
+      "complete_sha256": "d14f7ea885c40e30c894a77abcbe17c7c95b232452dacd765eb4d77730895035",
+      "head_sha256": "7880904de05cf81d0f7293819df061ea1bc5e8ea5af4acda5060725b431b091a",
+      "index_sha256": "7880904de05cf81d0f7293819df061ea1bc5e8ea5af4acda5060725b431b091a"
+    },
+    "Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md": {
+      "prefix_sha256": "39c2c4040b1ea8ee642c6a5fea8a56f4bc5cef01be34e2717dbfeceb9fb9c4aa",
+      "prefix_bytes": 251246,
+      "suffix_sha256": "e3e2dc49cc12ca75af63dbac90711910c9221ed5a2decd7c755cf81d65c4de98",
+      "suffix_bytes": 2271,
+      "complete_sha256": "af96423e70b1617bef5be356fcd43c8e7cd9a43e91c169c9d520c58d2f084fa0",
+      "head_sha256": "d8768058594c3602248d2fb28bbe2de27c19f167026bf865f32d54264ed9a667",
+      "index_sha256": "d8768058594c3602248d2fb28bbe2de27c19f167026bf865f32d54264ed9a667"
+    },
+    "backlog/tasks/task-38532 - Expose-workflow-setup-and-phase-controls-in-Console.md": {
+      "prefix_sha256": "8d72c986dc80d9f2dfa78bbbc9c1846e6cfca02ae74eed91b67ac1a23e5f0120",
+      "prefix_bytes": 3315,
+      "suffix_sha256": "e3e2dc49cc12ca75af63dbac90711910c9221ed5a2decd7c755cf81d65c4de98",
+      "suffix_bytes": 2271,
+      "complete_sha256": "766e9dda859f4312abf5ed5a7b208af9f12dc1f4d31b11b76177814feb78f7ea",
+      "head_sha256": "8aed119588c9959cebcb0fa94557c01c1aa51c7331a4587ce3540529fdf463c3",
+      "index_sha256": "8aed119588c9959cebcb0fa94557c01c1aa51c7331a4587ce3540529fdf463c3"
+    }
+  },
+  "product_test_mutation": false,
+  "native_attempts": 0
+}

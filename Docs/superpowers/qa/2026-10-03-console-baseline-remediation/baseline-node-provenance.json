@@ -1,0 +1,65 @@
+{
+  "Tests/Chat/test_console_prompt_queue_coordinator.py::test_close_tombstones_before_cancel_and_never_starts_next_prompt": [
+    "task2-baseline.log"
+  ],
+  "Tests/UI/test_console_runtime_ownership.py::test_runtime_owned_custody_tracks_only_lifetime_handles": [
+    "task2-baseline.log"
+  ],
+  "Tests/UI/test_console_runtime_ownership.py::test_runtime_tombstones_before_shutdown_and_disposes_via_to_thread": [
+    "task2-baseline.log"
+  ],
+  "Tests/UI/test_console_runtime_ownership.py::test_persistent_attach_sync_failure_has_bounded_backoff_and_resume_retry": [
+    "task2-baseline.log"
+  ],
+  "Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[wake]": [
+    "task2-baseline.log"
+  ],
+  "Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll": [
+    "task2-baseline.log"
+  ],
+  "Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab": [
+    "task2-baseline.log"
+  ],
+  "Tests/UI/test_console_launch_wake.py::test_a_launch_with_no_marks_constructs_nothing_and_reads_once": [
+    "task2-baseline.log"
+  ],
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_invalid_ownership[bad_role]": [
+    "task2-baseline.log"
+  ],
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_invalid_ownership[cross_conversation]": [
+    "task2-baseline.log"
+  ],
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_considers_only_checkpoint_owners_on_the_selected_active_lineage": [
+    "task2-baseline.log"
+  ],
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_malformed_or_mismatched_checkpoint_identity[assistant_message_id]": [
+    "task2-baseline.log"
+  ],
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_state_cas_requires_every_expected_owner_predicate[assistant_state]": [
+    "task2-baseline.log"
+  ],
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[terminal_content]": [
+    "task2-baseline.log"
+  ],
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[sync_intent]": [
+    "task2-baseline.log"
+  ],
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[checkpoint_delete]": [
+    "task2-baseline.log"
+  ],
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_is_atomic_and_returns_committed_proof": [
+    "task2-baseline.log"
+  ],
+  "Tests/Chat/test_console_agent_project_instructions.py::test_child_chain_uses_its_own_exact_first_request_budget": [
+    "task2-fix1-budget-baseline.log"
+  ],
+  "Tests/Chat/test_console_agent_project_instructions.py::test_primary_token_omission_is_delivery_local_when_child_admits": [
+    "task2-fix1-budget-baseline.log"
+  ],
+  "Tests/Chat/test_console_chat_fork.py::test_configuration_and_leaf_writers_block_fork_through_live_publication[active_leaf]": [
+    "final-fix-baseline.log"
+  ],
+  "Tests/Agents/test_agent_chat_create_tools.py::test_new_chat_schema_shape": [
+    "final-fix-baseline.log"
+  ]
+}

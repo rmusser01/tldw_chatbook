@@ -36,10 +36,12 @@ _SCRATCH = ""
 _READ_ROOTS: tuple[str, ...] = ()
 _READ_FILES: frozenset[str] = frozenset()
 _METADATA_ONLY_PATHS: frozenset[str] = frozenset()
+_STAT_ONLY_PATHS: frozenset[str] = frozenset()
 _ENUMERATION_DIRS: frozenset[str] = frozenset()
 _OPEN_FDS: dict[int, tuple[str, bool, bool, tuple[int, int, int, tuple[str, int]]]] = {}
 _RESOLVING_PATH = threading.local()
 _OPEN_AUDIT_PATH = threading.local()
+_PROCESS_PROC_ROOT = f"/proc/{os.getpid()}"
 THREAD_BASELINE: tuple[int | None, ...] = ()
 TASK_BASELINE: tuple[object, ...] = ()
 DENIED_ROOTS: tuple[str, ...] = ()
@@ -165,10 +167,31 @@ def _resolved_at(path: object, dir_fd: object = None) -> str | None:
     return _resolved(os.path.join(opened[0], frozen))
 
 
+def _native_mount_metadata_read_allowed(path: str) -> bool:
+    """Keep Linux native mount identity within the child's scratch authority."""
+    if sys.platform != "linux" or not _SCRATCH:
+        return False
+    if path == _PROCESS_PROC_ROOT + "/mountinfo":
+        return True
+    prefix = _PROCESS_PROC_ROOT + "/fdinfo/"
+    if not path.startswith(prefix):
+        return False
+    descriptor = path.removeprefix(prefix)
+    if not descriptor.isascii() or not descriptor.isdecimal():
+        return False
+    try:
+        opened = _fd_authority(int(descriptor))
+    except ValueError:
+        return False
+    return bool(opened is not None and opened[1] and _under(opened[0], _SCRATCH))
+
+
 def _read_allowed(path: object) -> bool:
     resolved = _resolved_at(path)
     return resolved is not None and (
-        resolved in _READ_FILES or any(_under(resolved, root) for root in _READ_ROOTS)
+        resolved in _READ_FILES
+        or any(_under(resolved, root) for root in _READ_ROOTS)
+        or _native_mount_metadata_read_allowed(resolved)
     )
 
 
@@ -448,11 +471,24 @@ def _guarded_metadata_read(name: str, path: object, *args: object, **kwargs: obj
         and resolved is not None
         and _strict_ancestor(resolved)
     )
-    named_nofollow_ancestor = resolved in _METADATA_ONLY_PATHS and (
-        name == "lstat" or (name == "stat" and kwargs.get("follow_symlinks") is False)
+    named_nofollow_ancestor = (
+        resolved in _METADATA_ONLY_PATHS
+        and not (isinstance(dir_fd, int) and os.path.isabs(traversal_component))
+        and (
+            name == "lstat"
+            or (name == "stat" and kwargs.get("follow_symlinks") is False)
+        )
     )
     if resolved is None or not (
-        _read_allowed(resolved) or traversal_stat or named_nofollow_ancestor
+        _read_allowed(resolved)
+        or traversal_stat
+        or named_nofollow_ancestor
+        or (
+            name == "stat"
+            and sys.platform == "linux"
+            and bool(_SCRATCH)
+            and resolved in _STAT_ONLY_PATHS
+        )
     ):
         _contain(FILESYSTEM_READ_DENIED)
     return _REAL_METADATA_READ_APIS[name](frozen_path, *args, **kwargs)
@@ -525,6 +561,11 @@ def _runtime_authority(
     files = {_REAL_OS_REALPATH(sys.executable), _REAL_OS_REALPATH(os.devnull)}
     if os.name == "posix":
         files.add(_REAL_OS_REALPATH("/proc/stat"))
+    if sys.platform == "linux":
+        files.update(
+            _REAL_OS_REALPATH(_PROCESS_PROC_ROOT + "/" + name)
+            for name in ("stat", "limits")
+        )
     locale = _REAL_OS_REALPATH(
         locale_root or os.path.join(sys.base_prefix, "share", "locale")
     )
@@ -580,24 +621,29 @@ def _runtime_authority(
 
 
 def _runtime_metadata_ancestors(scratch: str) -> frozenset[str]:
-    """Return exact no-follow metadata probes needed to reach macOS temp roots."""
-    if sys.platform != "darwin":
-        return frozenset()
-    parts = Path(scratch).parts
-    if parts[:3] == (os.sep, "private", "tmp"):
-        return frozenset({"/private", "/private/tmp"})
-    if (
-        len(parts) >= 7
-        and parts[:4] == (os.sep, "private", "var", "folders")
-        and parts[6] == "T"
-    ):
-        return frozenset(str(Path(*parts[:part_count])) for part_count in range(2, 8))
-    return frozenset()
+    """Permit no-follow ancestor and bootstrap-intent metadata, never contents."""
+    # Control-record admission checks this exact sentinel in each ancestor.
+    paths = {str(parent) for parent in Path(scratch).parents}
+    paths.update(
+        str(parent / ".tldw-bootstrap-directory-create.pending")
+        for parent in Path(scratch).parents
+    )
+    if sys.platform == "darwin":
+        parts = Path(scratch).parts
+        if parts[:3] == (os.sep, "private", "tmp"):
+            paths.update({"/private", "/private/tmp"})
+        elif (
+            len(parts) >= 7
+            and parts[:4] == (os.sep, "private", "var", "folders")
+            and parts[6] == "T"
+        ):
+            paths.update(str(Path(*parts[:count])) for count in range(2, 8))
+    return frozenset(paths)
 
 
 def _install_boundary(checkout: str, scratch: str) -> None:
     global _ATTEMPT_FD, _ENUMERATION_DIRS, _METADATA_ONLY_PATHS
-    global _READ_FILES, _READ_ROOTS, _SCRATCH
+    global _READ_FILES, _READ_ROOTS, _SCRATCH, _STAT_ONLY_PATHS
     global TASK_BASELINE, THREAD_BASELINE
 
     _SCRATCH = _REAL_OS_REALPATH(scratch)
@@ -626,8 +672,33 @@ def _install_boundary(checkout: str, scratch: str) -> None:
     if hasattr(os, "O_NOFOLLOW"):
         open_flags |= os.O_NOFOLLOW
     _ATTEMPT_FD = _REAL_OS_OPEN(attempts_path, open_flags, 0o600)
-    _READ_ROOTS, _READ_FILES = _runtime_authority(checkout_root, _SCRATCH)
+    runtime_paths = tuple(sys.path[1:])
+    vendor_source = _REAL_OS_REALPATH(
+        os.path.join(checkout_root, "packages", "tldw_profile_core", "src")
+    )
+    if not _under(vendor_source, checkout_root):
+        _contain(FILESYSTEM_READ_DENIED)
+    sys.path.insert(1, vendor_source)
+    # Vendored discovery uses checkout authority, never a new runtime read root.
+    _READ_ROOTS, _READ_FILES = _runtime_authority(
+        checkout_root, _SCRATCH, configured_paths=runtime_paths
+    )
     _METADATA_ONLY_PATHS = _runtime_metadata_ancestors(_SCRATCH)
+    _STAT_ONLY_PATHS = (
+        frozenset(
+            _REAL_OS_REALPATH(path)
+            for path in (
+                *(
+                    _PROCESS_PROC_ROOT + "/" + name
+                    for name in ("smaps", "smaps_rollup", "io")
+                ),
+                "/sys/devices/system/cpu/cpufreq/policy0",
+                "/sys/devices/system/cpu/cpu0/cpufreq",
+            )
+        )
+        if sys.platform == "linux"
+        else frozenset()
+    )
     _ENUMERATION_DIRS = frozenset({_REAL_OS_REALPATH("/dev/fd")})
     sys.addaudithook(_audit)
 
@@ -656,7 +727,8 @@ def _install_boundary(checkout: str, scratch: str) -> None:
         if hasattr(socket, name):
             setattr(socket, name, _deny_network)
 
-    subprocess.Popen = _deny_process
+    # Keep Popen usable in runtime type annotations while refusing construction.
+    subprocess.Popen.__new__ = staticmethod(_deny_process)
     for name in dir(os):
         value = getattr(os, name, None)
         if callable(value) and (
@@ -678,6 +750,10 @@ def _install_boundary(checkout: str, scratch: str) -> None:
         _replace_os_api(name, _mutator_guard(name))
     for name in _REAL_FD_READ_APIS:
         _replace_os_api(name, _fd_read_guard(name))
+
+    # Reader closeout has no audio-device authority, including import-time setup.
+    sys.modules["sounddevice"] = None
+    sys.modules["pyaudio"] = None
 
     THREAD_BASELINE = tuple(thread.ident for thread in threading.enumerate())
     TASK_BASELINE = ()
@@ -733,6 +809,7 @@ def _write_json(path: Path, payload: object) -> bool:
 
 
 def _run_pytest(target: Path, scratch: Path) -> int:
+    (scratch / "automated-results.json").unlink(missing_ok=True)
     import pytest
 
     pytest_config = scratch / "pytest.ini"
@@ -769,6 +846,8 @@ def _run_pytest(target: Path, scratch: Path) -> int:
             plugins=[recorder],
         )
     )
+    if returncode == pytest.ExitCode.USAGE_ERROR:
+        return returncode
     results_written = _write_json(scratch / "automated-results.json", recorder.results)
     return returncode if results_written else 2
 

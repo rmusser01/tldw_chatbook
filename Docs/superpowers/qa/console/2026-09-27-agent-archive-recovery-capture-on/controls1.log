@@ -1,0 +1,17 @@
+.........                                                                [100%]
+============================= slowest 25 durations =============================
+1.90s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_composes_existing_transform_without_changing_its_source
+1.86s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unowned]
+1.84s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[sidecar]
+1.80s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[foreign]
+1.80s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[unknown]
+1.77s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[history]
+1.75s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[missing_current]
+1.70s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[role]
+1.61s call     Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[attachment]
+1.30s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_composes_existing_transform_without_changing_its_source
+1.16s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[missing_current]
+1.02s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes[foreign]
+
+(13 durations < 1s hidden.)
+9 passed, 30 deselected in 27.08s

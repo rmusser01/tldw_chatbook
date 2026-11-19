@@ -5,24 +5,33 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import dataclass, field, replace
-from enum import Enum
+from dataclasses import dataclass, field, fields, replace
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
 from uuid import uuid4
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+)
+
+from tldw_chatbook.Agents.agent_models import ConsoleSubmissionOrigin as ConsoleSubmissionOrigin
 from tldw_chatbook.Chat.console_endpoint_provenance import (
     ConsoleEndpointProvenance,
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
+    from tldw_chatbook.Chat.console_approval_feedback import ApprovalFeedback
     from tldw_chatbook.Chat.console_dispatch_checkpoint import (
         ConsoleDispatchCheckpoint,
     )
+    from tldw_chatbook.Chat.console_exchange_capture import ExchangeCapture
     from tldw_chatbook.Chat.message_metadata import MessageMetadata
-    from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
+    from tldw_chatbook.Provider_Contract.provider_continuation import ProviderContinuationCheckpoint
     from tldw_chatbook.Chat.provider_usage import ProviderUsage
-    from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
+    from tldw_chatbook.Provider_Contract.thinking_blocks import ThinkingEnvelope
     from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
     from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
@@ -69,21 +78,6 @@ FEEDBACK_ACTIVE_RUN_STATUSES: frozenset["ConsoleRunStatus"] = frozenset(
 )
 
 
-class ConsoleSubmissionOrigin(str, Enum):
-    """Origin of a Console turn entering the accepted-send boundary.
-
-    ``AGENT_WAKE`` (PR3a-2 Task 5) is a machine-injected auto-wake turn:
-    it requires a coordinator-issued ``AgentWakeAuthorization`` (the
-    queue-token precedent), writes NO USER transcript row (a SYSTEM-class
-    machine-origin notice instead), never clears the composer, and its
-    notice reaches the model as a payload-only trailing user-role entry.
-    """
-
-    MANUAL = "manual"
-    QUEUED = "queued"
-    AGENT_WAKE = "agent_wake"
-
-
 @dataclass(frozen=True, slots=True)
 class ConsoleQueuedAcceptanceEvent:
     """Content-free notice that one claimed queue entry became a real turn."""
@@ -104,6 +98,7 @@ class ConsoleControllerActivity:
     queued_count: int
     queue_paused: bool
     terminal_notification_eligible: bool
+    agent_handoff_status: str = ""
 
     @property
     def has_queued_work(self) -> bool:
@@ -285,6 +280,7 @@ ConsoleActivityKind = Literal[
     "activity",
 ]
 ConsoleActivityStatus = Literal[
+    "starting",
     "queued",
     "running",
     "awaiting_approval",
@@ -330,6 +326,7 @@ _CONSOLE_ACTIVITY_KINDS = frozenset(
 )
 CONSOLE_ACTIVITY_STATUSES = frozenset(
     {
+        "starting",
         "queued",
         "running",
         "awaiting_approval",
@@ -370,6 +367,15 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 }
 
 
+#: Shared decision-kind keys for pending-round registries and UI copy.
+CONSOLE_PENDING_HOOK_REVIEW_KIND = "hook_review"
+CONSOLE_PENDING_APPROVAL_KIND = "approval"
+CONSOLE_PENDING_QUESTION_KIND = "question"
+CONSOLE_PENDING_SKILL_INSTALL_KIND = "skill_install"
+CONSOLE_PENDING_SKILL_SCRIPT_KIND = "skill_script"
+CONSOLE_PENDING_WORKTREE_MERGE_KIND = "worktree_merge"
+
+
 #: Qodo #4 (task-32345): what the run chip and the turn-activity line say
 #: while an interrupt round is waiting on the user, by round KIND
 #: (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys). Only the two kinds
@@ -381,8 +387,8 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 #: Sentence-less on purpose: the run chip appends its own full stop, the
 #: activity line appends " · <elapsed>".
 CONSOLE_PENDING_ROUND_COPY: Mapping[str, str] = {
-    "approval": "Waiting for your approval",
-    "question": "Waiting for your answer",
+    CONSOLE_PENDING_APPROVAL_KIND: "Waiting for your approval",
+    CONSOLE_PENDING_QUESTION_KIND: "Waiting for your answer",
 }
 CONSOLE_PENDING_ROUND_DEFAULT_COPY = "Waiting for your confirmation"
 
@@ -392,8 +398,8 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
 
     Precedence, when more than one kind is outstanding at once: an approval
     wins. That is the one kind the Inspector counts
-    (``ConsoleInspectorState.pending_approval_count`` counts mounted APPROVAL
-    cards), so it is the only choice that keeps the chip and the Inspector
+    (``ConsoleInspectorState.pending_approval_count`` counts outstanding APPROVAL
+    rounds), so it is the only choice that keeps the chip and the Inspector
     telling the same story -- and an approval is the heavier decision of the
     two. Otherwise a lone question asks for an answer, and anything else --
     including a mix of non-approval kinds -- asks for a confirmation.
@@ -409,10 +415,10 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
         The waiting sentence, without trailing punctuation.
     """
     resolved = {str(kind) for kind in kinds}
-    if not resolved or "approval" in resolved:
-        return CONSOLE_PENDING_ROUND_COPY["approval"]
-    if resolved == {"question"}:
-        return CONSOLE_PENDING_ROUND_COPY["question"]
+    if not resolved or CONSOLE_PENDING_APPROVAL_KIND in resolved:
+        return CONSOLE_PENDING_ROUND_COPY[CONSOLE_PENDING_APPROVAL_KIND]
+    if resolved == {CONSOLE_PENDING_QUESTION_KIND}:
+        return CONSOLE_PENDING_ROUND_COPY[CONSOLE_PENDING_QUESTION_KIND]
     return CONSOLE_PENDING_ROUND_DEFAULT_COPY
 
 
@@ -463,6 +469,13 @@ CONSOLE_DISPATCH_DUPLICATE_WARNING = (
     "Retry anyway may send a duplicate request because delivery status is unknown."
 )
 CONSOLE_DISPATCH_DISCARDED_COPY = "Response discarded."
+CONSOLE_DISPATCH_UNKNOWN_COPY = "Response delivery status is unknown."
+#: Shared kind for chat-creation registration and Close consequences.
+CONSOLE_PENDING_CHAT_CREATE_KIND = "chat_create"
+
+CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL = (
+    "Close cleanup needs recovery. Restart the app before closing this tab."
+)
 CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY = (
     "Finish or discard the pending turn before saving."
 )
@@ -692,7 +705,9 @@ def console_dispatch_recovery_from_checkpoint(
         assistant_message_id=checkpoint.assistant_message_id,
         conversation_id=checkpoint.conversation_id,
         visible_copy=(
-            "Response delivery status is unknown on the source device."
+            # TASK-33621.6 AC#3: this owner is this device's own send; "on
+            # the source device" is the imported (REMOTE_*) owner's copy.
+            CONSOLE_DISPATCH_UNKNOWN_COPY
             if started
             else "Response accepted; waiting for dispatch."
         ),
@@ -721,6 +736,7 @@ class ConsoleActivityPresentation:
     result_preview: str | None = None
     started_at_monotonic: float | None = None
     elapsed_seconds: float | None = None
+    approval_feedback: ApprovalFeedback | None = None
 
     def __post_init__(self) -> None:
         """Reject unbounded labels and values outside the public vocabulary."""
@@ -990,6 +1006,8 @@ class ConsoleProviderSelection:
     #: Internal routed-run snapshot authority; ordinary sessions follow live
     #: registry edits. Never populated from model-provided spawn arguments.
     base_url_is_pinned: bool = field(default=False, kw_only=True)
+    #: Internal routed-run execution snapshot; raw provider still owns credentials.
+    execution_provider: str = field(default="", kw_only=True)
     #: False only for a live session policy that must never fall back to a
     #: configured endpoint (notably a failed endpoint-adoption rollback).
     configured_endpoint_fallback_allowed: bool = True
@@ -1060,6 +1078,40 @@ class ConsoleRunState:
             ConsoleRunStatus.STREAMING,
             ConsoleRunStatus.CHECKING_CITATIONS,
         }
+
+
+class ConsoleSubmitBlocker(StrEnum):
+    """Why an accepted Console submit ended BLOCKED (TASK-33621.23).
+
+    Code-owned tokens for the log: ``submit_draft`` writes the value on its
+    attention warning and on the ``controller_submit`` send-stage line, which
+    once read only ``status=blocked`` whatever the cause.
+    """
+
+    #: The request's trace could not be saved; the transcript card offers
+    #: Retry / Send without capture / Cancel.
+    TRACE_PROVENANCE = "trace_provenance"
+    #: Trace capture for the provider call could not start; same card.
+    TRACE_CALL = "trace_call"
+    #: A trace pause's retry could not prove what was delivered.
+    DELIVERY_UNKNOWN = "delivery_unknown"
+    #: Dispatch settlement refused the turn (for example a hook); the turn
+    #: is kept for Retry or Discard.
+    DISPATCH_SETTLEMENT = "dispatch_settlement"
+    #: Settling the accepted turn failed; kept for Retry or Discard.
+    SETTLEMENT_FAILED = "settlement_failed"
+    #: Another owner took over the saved turn; kept for recovery.
+    OWNER_CHANGED = "owner_changed"
+    #: Discard's prerequisite pass stopped before the provider by design.
+    PREREQUISITES_ONLY = "prerequisites_only"
+    #: Project-instruction setup refused the turn: no project folder could be
+    #: chosen (the picker was cancelled or unavailable) or instructions were
+    #: turned off from the picker.
+    PROJECT_SETUP = "project_setup"
+    #: Any other check that blocked the turn without naming its own code (a
+    #: hook, the private scratch space, the context check); ``submit_draft``
+    #: applies it so a blocked send never logs without one.
+    TURN_REFUSED = "turn_refused"
 
 
 @dataclass(frozen=True)
@@ -1192,6 +1244,9 @@ class ConsoleChatMessage:
     exchanges: tuple["ExchangeCapture", ...] = ()
     #: Safe current-session citation UI state. Never persisted or restored.
     citation_presentation: ConsoleCitationPresentation | None = None
+    #: TASK-33620.7: accepted captured source count attached to this turn.
+    #: Session-only like ``citation_presentation``; never persisted.
+    evidence_source_count: int | None = None
     #: Structured activity-header facts. Session-only; never persisted,
     #: restored, sent to a provider, or written to the agent run log.
     activity_presentation: ConsoleActivityPresentation | None = None
@@ -1288,6 +1343,46 @@ class ConsoleChatMessage:
     #: while the primary's tool call has run long enough to offer it. Same
     #: ownership and lifetime rules as ``live_activity``.
     live_activity_action: str = ""
+    # Derived only from verified operational receipts; never Retry authority.
+    mixin_usage_count: int | None = field(default=None, repr=False)
+    mixin_replay_status: Literal["legacy", "recorded", "unavailable"] | None = field(
+        default=None, repr=False
+    )
+
+
+#: Field names per message class, for ``copy_console_message``.
+_MESSAGE_FIELD_NAMES: dict[type, tuple[str, ...]] = {}
+
+
+def copy_console_message(message: ConsoleChatMessage) -> ConsoleChatMessage:
+    """Return what ``dataclasses.replace(message)`` returns, without ``__init__``.
+
+    ``replace`` rebuilds the message through its generated ``__init__``: about
+    16 us for this ~50-field class. The store snapshots every active-path
+    message several times per post-action Console sync, so at 3,000 messages
+    that alone held the event loop for ~0.24 s per sync (TASK-33628.5.2).
+    For a class whose fields are all ``init`` fields and that has no
+    ``__post_init__`` -- ``ConsoleChatMessage``, pinned by
+    ``Tests/Chat/test_console_message_copy.py`` -- ``replace`` amounts to a
+    new instance holding the same field values and nothing else, which is
+    what this builds directly. Any other class goes through ``replace``.
+
+    Args:
+        message: The message to copy.
+
+    Returns:
+        A shallow copy that shares field values with ``message``.
+    """
+    cls = type(message)
+    names = _MESSAGE_FIELD_NAMES.get(cls)
+    if names is None:
+        if hasattr(cls, "__post_init__") or not all(f.init for f in fields(cls)):
+            return replace(message)
+        names = _MESSAGE_FIELD_NAMES[cls] = tuple(f.name for f in fields(cls))
+    values = message.__dict__
+    copied = object.__new__(cls)
+    copied.__dict__.update({name: values[name] for name in names})
+    return copied
 
 
 @dataclass(frozen=True)
@@ -1309,6 +1404,10 @@ class ConsoleVariant:
     provider_continuation_actions_enabled: bool = True
     assistant_generation_state: str | None = None
     id: str = field(default_factory=lambda: str(uuid4()))
+    mixin_usage_count: int | None = field(default=None, repr=False)
+    mixin_replay_status: Literal["legacy", "recorded", "unavailable"] | None = field(
+        default=None, repr=False
+    )
 
 
 @dataclass
@@ -1468,3 +1567,100 @@ def fold_greeting_into_system_prompt(system_prompt: str, greeting: str) -> str:
     if not (system_prompt or "").strip():
         return opener_block
     return f"{system_prompt}\n\n{opener_block}"
+
+
+# Definition-time inputs for optional in-memory pending display.
+_CONSOLE_PENDING_COPY_SOURCE = (
+    console_pending_round_copy_for,
+    console_pending_round_copy_for.__code__,
+    console_pending_round_copy_for.__globals__,
+    console_pending_round_copy_for.__defaults__,
+    console_pending_round_copy_for.__kwdefaults__,
+    tuple((console_pending_round_copy_for.__kwdefaults__ or {}).items()),
+    console_pending_round_copy_for.__closure__,
+    tuple(
+        (cell, cell.cell_contents)
+        for cell in console_pending_round_copy_for.__closure__ or ()
+    ),
+)
+
+
+_CONSOLE_PENDING_COPY_KIND_SOURCE = (
+    console_pending_round_copy,
+    console_pending_round_copy.__code__,
+    console_pending_round_copy.__globals__,
+    console_pending_round_copy.__defaults__,
+    console_pending_round_copy.__kwdefaults__,
+    tuple((console_pending_round_copy.__kwdefaults__ or {}).items()),
+    console_pending_round_copy.__closure__,
+    tuple(
+        (cell, cell.cell_contents)
+        for cell in console_pending_round_copy.__closure__ or ()
+    ),
+)
+
+
+CONSOLE_FORK_TITLE_MAX_LENGTH = 60
+
+
+def validate_console_fork_title(value: object) -> str:
+    """Return one normalized, bounded Console fork title.
+
+    Args:
+        value: Raw value received from the Console naming dialog.
+
+    Returns:
+        A nonblank title normalized by the shared Console title helper.
+
+    Raises:
+        ValueError: If ``value`` is not text or normalizes to blank.
+    """
+
+    if type(value) is not str:
+        raise ValueError("Fork title must be text.")
+    normalized = derive_console_session_title(
+        value,
+        max_length=CONSOLE_FORK_TITLE_MAX_LENGTH,
+    )
+    if not normalized:
+        raise ValueError("Fork title cannot be blank.")
+    return normalized
+
+
+class ConsoleForkTitleInput(BaseModel):
+    """Strict shared validation boundary for the Console fork naming dialog."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    title: str = Field(min_length=1, max_length=CONSOLE_FORK_TITLE_MAX_LENGTH)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _normalize_title(cls, value: object) -> str:
+        return validate_console_fork_title(value)
+
+
+@dataclass(frozen=True)
+class ConsoleViewHookSlot:
+    """One runtime-object attribute a mounted Console view owns.
+
+    Args:
+        name: The attribute name on the target object.
+        target: Which runtime object holds it — ``"controller"``,
+            ``"store"`` or ``"wake"`` (the controller's
+            ``fleet_wake`` coordinator).
+        viewless_default: What `detach_view` restores. Almost always
+            `None`, which is every one of these slots' documented
+            "no UI wired" value.
+    """
+
+    name: str
+    target: str
+    viewless_default: Any = None
+    #: WHY this slot's viewless default is correct — i.e. what the
+    #: production read site does with it. Task 4's rule: a `None` default
+    #: is only allowed where the read site's own guard makes `None` mean
+    #: the semantically right thing (inert, or fail-closed); anywhere the
+    #: guard's fallback is a WRONG answer, the default must be an explicit
+    #: callable. Kept next to the value so the two cannot drift.
+    why: str = ""

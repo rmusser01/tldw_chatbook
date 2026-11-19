@@ -3,6 +3,7 @@
 Mirrors settings_appearance_defaults.py: pure functions over a config
 mapping so they unit-test without an app.
 """
+
 from __future__ import annotations
 
 import os
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ...Utils.path_validation import validate_path_simple
-from .settings_config_models import SettingsValidationResult
+from ...state.settings_config_models import SettingsValidationResult
 
 _TRUE_STRINGS = frozenset({"true", "1", "on"})
 _FALSE_STRINGS = frozenset({"false", "0", "no", "off"})
@@ -94,9 +95,7 @@ def validate_network_tls(values: SettingsNetworkTLS) -> SettingsValidationResult
         except (ValueError, OSError) as exc:
             return SettingsValidationResult(False, f"CA bundle path invalid: {exc}")
         if not path.is_file():
-            return SettingsValidationResult(
-                False, f"CA bundle file not found: {path}"
-            )
+            return SettingsValidationResult(False, f"CA bundle file not found: {path}")
         if not os.access(path, os.R_OK):
             return SettingsValidationResult(
                 False, f"CA bundle file is not readable: {path}"

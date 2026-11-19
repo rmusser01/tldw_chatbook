@@ -22,7 +22,8 @@ import pytest
 from textual.geometry import Region
 from textual.widgets import Static
 
-from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_console_dictation import _ready_host
+from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 #: App size whose composer row cannot hold left cluster + actions row + a
@@ -36,11 +37,12 @@ APP_WIDE = (160, 42)
 #: enforced). The visible draft must never be starved below it while a wider
 #: row could satisfy it.
 DRAFT_FLOOR = 32
+pytestmark = pytest.mark.bootstrap_profile
 
 
 async def _composer_parts(host, pilot):
     """Mount the ready Console and return (composer, draft, reason strip)."""
-    console = await _mounted_console(host, pilot)
+    console = await _wait_for_production_console_ready(host, pilot)
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
     draft = composer.query_one("#console-command-visible-text", Static)
     strip = composer.query_one("#console-send-disabled-reason", Static)
@@ -52,6 +54,7 @@ async def _composer_parts(host, pilot):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_narrow_composer_keeps_the_draft_visible_beside_a_reason():
     """At 80 columns the draft must lay out with visible width, not zero.
 
@@ -71,6 +74,7 @@ async def test_narrow_composer_keeps_the_draft_visible_beside_a_reason():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_wide_composer_keeps_reason_strip_capped_and_draft_floor():
     """At wide sizes the strip stays within its 52-cell cap and the draft
     keeps its promised 32-cell floor."""
@@ -87,6 +91,7 @@ async def test_wide_composer_keeps_reason_strip_capped_and_draft_floor():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_resize_from_wide_to_narrow_reapplies_the_strip_budget():
     """The clamp is a function of the live row width: shrinking the terminal
     must retract the strip rather than the draft."""
@@ -174,6 +179,62 @@ def test_cap_accounts_for_attachment_actions_width(monkeypatch):
     assert _cap_with_row_width(composer, 100, monkeypatch) == 19
 
 
+def _disabled_reason_literals() -> list[tuple[str, bool]]:
+    """Every literal ``build_console_disabled_reason`` returns, read from its
+    source, each with whether it is a setup blocker (the strip appends the
+    2-cell " ›" to those). The pass-through ``queue_reason`` is the prompt
+    queue's own copy, not this function's, so it is not listed."""
+    import ast
+    import inspect
+
+    from tldw_chatbook.Chat import console_display_state as state
+
+    function = ast.parse(inspect.getsource(state.build_console_disabled_reason))
+    setup_branch = next(
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "send_blocked and setup_reason"
+    )
+    setup_returns = {
+        id(node) for node in ast.walk(setup_branch) if isinstance(node, ast.Return)
+    }
+    literals = []
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Return):
+            continue
+        if isinstance(node.value, ast.Constant):
+            text = node.value.value
+        elif isinstance(node.value, ast.Name):
+            text = getattr(state, node.value.id, None)  # a QUEUE_REASON_* constant
+        else:
+            continue
+        if isinstance(text, str) and text:
+            literals.append((text, id(node) in setup_returns))
+    # TASK-33621.11: the setup strips are chosen by blocker code from a
+    # table, not returned as literals; every one carries the setup chevron.
+    literals.extend((text, True) for text in state._SETUP_STRIP_COPY.values())
+    literals.append((state._SETUP_STRIP_FALLBACK, True))
+    return literals
+
+
+def test_every_disabled_reason_fits_the_strip_whole():
+    """The capture phase painted "Send blocked — key rejected; update the
+    API key t…": a reason fits only when its cells, the setup chevron and
+    the strip's padding (0 1) fit SEND_REASON_MAX_WIDTH (TASK-33005.7)."""
+    from rich.cells import cell_len
+
+    literals = _disabled_reason_literals()
+    assert len(literals) >= 15 and any(setup for _, setup in literals)
+    too_wide = [
+        (text, cell_len(text) + (2 if setup else 0) + 2)
+        for text, setup in literals
+        if cell_len(text) + (2 if setup else 0) + 2
+        > ConsoleComposerBar.SEND_REASON_MAX_WIDTH
+    ]
+    assert too_wide == []
+
+
 # ---------------------------------------------------------------------------
 # TASK-24620: the dictation voice chip must not starve the draft either.
 # Same starvation class TASK-24415 fixed for the send-disabled reason strip:
@@ -192,7 +253,7 @@ CHIP_MESSAGE = "Microphone unavailable — check permissions and retry"
 async def test_narrow_composer_keeps_draft_visible_beside_voice_chip():
     _, host = _ready_host()
     async with host.run_test(size=APP_NARROW) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         draft = composer.query_one("#console-command-visible-text", Static)
         chip = composer.query_one("#console-voice-status", Static)
@@ -215,7 +276,7 @@ async def test_narrow_composer_keeps_draft_visible_beside_voice_chip():
 async def test_wide_composer_keeps_voice_chip_capped_and_draft_floor():
     _, host = _ready_host()
     async with host.run_test(size=APP_WIDE) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         draft = composer.query_one("#console-command-visible-text", Static)
         chip = composer.query_one("#console-voice-status", Static)
@@ -234,7 +295,7 @@ async def test_wide_composer_keeps_voice_chip_capped_and_draft_floor():
 async def test_resize_from_wide_to_narrow_retracts_the_voice_chip():
     _, host = _ready_host()
     async with host.run_test(size=APP_WIDE) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         draft = composer.query_one("#console-command-visible-text", Static)
         composer.set_voice_status("error", message=CHIP_MESSAGE)
@@ -318,7 +379,7 @@ async def test_chip_going_idle_restores_the_reason_strip_budget():
     strip immediately -- not at some later unrelated sync."""
     _, host = _ready_host()
     async with host.run_test(size=(140, 40)) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         strip = composer.query_one("#console-send-disabled-reason", Static)
         await pilot.pause()
@@ -347,7 +408,7 @@ async def test_preparing_renders_whole_in_the_intermediate_band():
     chip cap at every width, not only at a zero budget."""
     _, host = _ready_host()
     async with host.run_test(size=APP_INTERMEDIATE) as pilot:
-        console = await _mounted_console(host, pilot)
+        console = await _wait_for_production_console_ready(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         chip = composer.query_one("#console-voice-status", Static)
         await pilot.pause()

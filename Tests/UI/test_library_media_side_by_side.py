@@ -88,7 +88,9 @@ async def _wait_for_compact_class(screen, pilot, *, compact: bool):
 
 
 @pytest.mark.asyncio
-async def test_narrow_media_paints_five_two_line_rows_without_embedded_preview() -> None:
+async def test_narrow_media_paints_five_two_line_rows_without_embedded_preview() -> (
+    None
+):
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
     host = LibraryProductionCSSHarness(app)
@@ -131,7 +133,9 @@ async def test_wide_media_keeps_two_line_rows_and_permanent_reader() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reader_mode_toolbar_has_one_body_and_reachable_primary_actions_at_80x24() -> None:
+async def test_reader_mode_toolbar_has_one_body_and_reachable_primary_actions_at_80x24() -> (
+    None
+):
     """The compact Reader keeps primary actions on screen without hidden mode DOM."""
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -222,10 +226,12 @@ async def test_media_row_focus_moves_to_items_grip_when_resize_hides_items() -> 
         reader = screen.query_one("#library-media-viewer")
         await _wait_for_condition(
             pilot,
-            lambda: screen.focused is grip
-            or (
-                screen.focused is not None
-                and (screen.focused is reader or reader in screen.focused.ancestors)
+            lambda: (
+                screen.focused is grip
+                or (
+                    screen.focused is not None
+                    and (screen.focused is reader or reader in screen.focused.ancestors)
+                )
             ),
             message=lambda: (
                 "Resize did not transfer hidden Items focus to a visible role: "
@@ -254,13 +260,13 @@ async def test_media_resize_focus_restore_yields_to_newer_user_focus(
         await pilot.pause()
 
         pending = []
-        transfer_focus = screen._focus_library_media_grip_if_current
+        transfer_focus = screen._media_controller._focus_library_media_grip_if_current
 
         def hold_transfer(generation, hidden_focus, grip):
             pending.append((generation, hidden_focus, grip))
 
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_focus_library_media_grip_if_current",
             hold_transfer,
         )
@@ -277,7 +283,7 @@ async def test_media_resize_focus_restore_yields_to_newer_user_focus(
         library_grip.focus()
         await pilot.pause()
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_focus_library_media_grip_if_current",
             transfer_focus,
         )
@@ -441,7 +447,7 @@ async def test_compact_media_viewer_back_survives_targeted_reorder() -> None:
         moved = next(item for item in media if item["id"] == f"media-{backing_id}")
         moved["last_modified"] = "2030-01-01T00:00:00Z"
         controller = screen._library_media_browse_controller
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
@@ -452,8 +458,10 @@ async def test_compact_media_viewer_back_survives_targeted_reorder() -> None:
         )
         await _wait_for_condition(
             pilot,
-            lambda: getattr(screen.focused, "media_id", None) == media_id
-            and getattr(screen.focused, "id", None) == "library-media-row-0",
+            lambda: (
+                getattr(screen.focused, "media_id", None) == media_id
+                and getattr(screen.focused, "id", None) == "library-media-row-0"
+            ),
             message=lambda: (
                 "Targeted reorder restored a stale row index instead of Media "
                 f"identity: focused={getattr(screen.focused, 'id', None)!r}/"
@@ -483,15 +491,17 @@ async def test_media_reader_back_keeps_a_retained_row_after_origin_removed() -> 
             for index, item in enumerate(service.media_items)
             if service._backing_id(item, index) != removed_backing
         ]
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_result is not None
-            and controller.applied_result.total == 44
-            and not controller.loading,
+            lambda: (
+                controller.applied_result is not None
+                and controller.applied_result.total == 44
+                and not controller.loading
+            ),
             message="Authoritative page without the removed row never applied.",
         )
         retained_ids = {item["id"] for item in controller.retained_items}
@@ -532,8 +542,10 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
         await _wait_for_selector(screen, pilot, "#library-media-row-0")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_media_browse_controller.applied_scope
-            == MediaBrowseScope(page=2),
+            lambda: (
+                screen._library_media_browse_controller.applied_scope
+                == MediaBrowseScope(page=2)
+            ),
             message="Restored Media page 2 never applied.",
         )
         row = screen.query_one("#library-media-row-0", Button)
@@ -568,26 +580,31 @@ async def test_compact_media_viewer_back_follows_single_page_clamp() -> None:
             if service._backing_id(item, index) != target_backing
         ]
         controller = screen._library_media_browse_controller
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_scope == MediaBrowseScope(page=1)
-            and not controller.loading,
+            lambda: (
+                controller.applied_scope == MediaBrowseScope(page=1)
+                and not controller.loading
+            ),
             message="Shrunken page 2 did not clamp once to page 1.",
         )
         assert [call["offset"] for call in service.search_calls] == [20, 20, 0]
         await _wait_for_condition(
             pilot,
-            lambda: getattr(screen.focused, "media_id", None)
-            == controller.retained_items[0]["id"],
+            lambda: (
+                getattr(screen.focused, "media_id", None)
+                == controller.retained_items[0]["id"]
+            ),
             message="Clamped page did not fall back to its first authoritative row.",
         )
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
 async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -> None:
     app = _build_media_test_app()
     _seed_conversations(app, _two_conversations(), media=_many_media_items())
@@ -600,27 +617,144 @@ async def test_compact_media_viewer_back_empty_page_focuses_recovery_control() -
         )
         controller = screen._library_media_browse_controller
         service.media_items = []
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_result is not None
-            and controller.applied_result.total == 0
-            and not controller.loading,
+            lambda: (
+                controller.applied_result is not None
+                and controller.applied_result.total == 0
+                and not controller.loading
+            ),
             message="Exact empty Media result never applied in the viewer.",
         )
-        reads_before_back = len(service.search_calls)
+        reads_after_empty = len(service.search_calls)
 
-        screen.query_one("#library-media-back", Button).press()
+        # task-32043/32086 (80e4cd7056, 2026-09-08): an exact empty page
+        # resets the Reader and returns the canvas to its list by itself, so
+        # there is no "‹ Back" left to press. The return still owes the
+        # keyboard a landing: the Import recovery action. TASK-39130: red on
+        # dev -- the reset's whole-screen recompose leaves focus at None.
         await _wait_for_condition(
             pilot,
-            lambda: getattr(screen.focused, "id", None)
-            == "library-media-empty-import",
-            message="Empty viewer return did not focus the Import recovery action.",
+            lambda: getattr(screen.focused, "id", None) == "library-media-empty-import",
+            message=lambda: (
+                "Empty viewer return did not focus the Import recovery action; "
+                f"focus is {screen.focused!r}."
+            ),
         )
-        assert len(service.search_calls) == reads_before_back
+        # TASK-40293 review: the landing must hold. An armed list-entry
+        # channel used to be revoked by Textual's queued grip focus event.
+        await pilot.pause(0.5)
+        assert getattr(screen.focused, "id", None) == "library-media-empty-import"
+        assert len(service.search_calls) == reads_after_empty
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
+async def test_compact_media_empty_page_landing_survives_a_queued_grip_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-40293 review: Textual's grip parking cannot revoke the landing.
+
+    Under load, the Items prune parks focus on the Library grip and its
+    DescendantFocus is still queued when the empty page resets the Reader.
+    That event revoked the list-entry arm the reset used to take, leaving
+    focus at None. The parking is reproduced here right after the reset,
+    with its event put on the screen's own queue so it is handled before the
+    reset's whole-screen recompose, the order the review measured under load.
+    """
+    from textual.events import DescendantFocus
+
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
+        screen, _media_id, _scroll_offset = await _open_scrolled_compact_media_viewer(
+            host, pilot
+        )
+        reset = screen._media_controller._reset_library_media_reader_to_no_selection
+
+        def reset_then_park_on_grip() -> None:
+            reset()
+            grip = screen.query_one("#library-browse-library-grip")
+            screen.set_focus(grip)
+            screen.post_message(DescendantFocus(grip))
+
+        monkeypatch.setattr(
+            screen._media_controller,
+            "_reset_library_media_reader_to_no_selection",
+            reset_then_park_on_grip,
+        )
+        controller = screen._library_media_browse_controller
+        service.media_items = []
+        screen._media_controller._request_library_media_browse(
+            controller.mutation_refresh_scope, focus_identity=None
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: getattr(screen.focused, "id", None) == "library-media-empty-import",
+            message=lambda: (
+                f"The emptied page did not land on Import: {screen.focused!r}."
+            ),
+        )
+        await pilot.pause(0.5)
+        assert getattr(screen.focused, "id", None) == "library-media-empty-import"
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
+async def test_wide_media_reader_reset_leaves_focus_the_user_holds_in_the_rail() -> (
+    None
+):
+    """TASK-40293 review: an emptied page lands only focus the reset strands.
+
+    With an item in the Reader and focus in the rail's search box, a refresh
+    that empties the page resets the Reader with a whole-screen recompose.
+    The search box survives it and keeps focus: the landing on Import is for
+    focus that was in Media's own panes, and Enter there would start Import.
+    """
+    app = _build_media_test_app()
+    _seed_conversations(app, _two_conversations(), media=_many_media_items())
+    service = app.media_reading_scope_service
+    host = LibraryProductionCSSHarness(app)
+
+    async with host.run_test(size=WIDE_SIZE) as pilot:
+        screen = await _open_media_list(host, pilot)
+        screen.query_one("#library-media-row-0", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                bool(screen._media_state.reader_session.loaded_id)
+                and bool(screen.query("#library-media-viewer-title"))
+            ),
+            message="Reader never loaded row 0.",
+        )
+        search = screen.query_one("#library-search-input")
+        screen.set_focus(search)
+        await pilot.pause()
+        assert screen.focused is search
+        controller = screen._library_media_browse_controller
+        service.media_items = []
+        screen._media_controller._request_library_media_browse(
+            controller.mutation_refresh_scope, focus_identity=None
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                controller.applied_result is not None
+                and controller.applied_result.total == 0
+                and not controller.loading
+                and bool(screen.query("#library-media-empty-import"))
+            ),
+            message="The empty page and Reader reset never applied.",
+        )
+        await pilot.pause(0.5)
+        assert getattr(screen.focused, "id", None) == "library-search-input"
 
 
 @pytest.mark.asyncio
@@ -772,6 +906,7 @@ async def test_trash_view_stays_single_column_at_wide_width() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile  # TASK-39130: _build_test_app reads config
 async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() -> None:
     """Real pane-grip activation remains durable across Trash recomposes."""
     from textual.widgets import Input
@@ -806,12 +941,12 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             lambda: not screen._media_state.reader_layout.library_open,
             message="Library grip did not collapse the Library pane.",
         )
-        # task-31633: with the one-cell grips (AC#2) and list growth (AC#1)
-        # the Items pane is already on its 56-cell comfort ceiling at this
-        # size, so the collapsed rail's cells go to the Reader instead. The
-        # collapse still moves cells -- just not into a pane that is full.
-        assert items.region.width >= initial_width
-        assert shell.work.region.width > initial_reader_width
+        # task-31979 (9187bc0307, after task-31633's pin): the Trash Reader
+        # holds no item, so the Items list takes the freed width down to the
+        # Reader's floor. The collapsed rail's cells go to the list, and the
+        # Reader keeps its floor.
+        assert items.region.width > initial_width
+        assert shell.work.region.width == initial_reader_width
 
         search = screen.query_one("#library-media-trash-search", Input)
         search.focus()
@@ -843,7 +978,7 @@ async def test_media_trash_collapse_choices_survive_filter_and_page_refresh() ->
             lambda: not screen._media_state.reader_layout.items_open,
             message="Items grip did not collapse the Items pane.",
         )
-        screen._request_library_media_trash_page(
+        screen._media_controller._request_library_media_trash_page(
             2, focus_identity="#library-media-trash-next"
         )
         await _wait_for_condition(
@@ -915,11 +1050,11 @@ async def test_media_trash_compact_pane_priority_survives_page_and_filter_refres
             ),
             message="Compact Library pane did not become the explicit priority.",
         )
-        screen._sync_library_media_reader_layout_from_shell()
+        screen._media_controller._sync_library_media_reader_layout_from_shell()
         await pilot.pause()
         assert screen._media_state.reader_layout.library_open is True
         assert screen._media_state.reader_layout.items_open is False
-        screen._request_library_media_trash_page(
+        screen._media_controller._request_library_media_trash_page(
             2, focus_identity="#library-media-trash-next"
         )
         await _wait_for_condition(
@@ -972,9 +1107,7 @@ async def _assert_keyboard_traversal_and_viewer_entry(size):
 
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
-        await _wait_for_compact_class(
-            screen, pilot, compact=size[0] < 120
-        )
+        await _wait_for_compact_class(screen, pilot, compact=size[0] < 120)
 
         # Footer honesty: the plain media list advertises its own set
         # (task-28012 adds the "s: select" key), in BOTH layouts.
@@ -1001,9 +1134,7 @@ async def _assert_keyboard_traversal_and_viewer_entry(size):
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
         assert screen._media_state.view == "viewer"
         assert row_0.is_mounted
-        title = str(
-            screen.query_one("#library-media-viewer-title", Static).renderable
-        )
+        title = str(screen.query_one("#library-media-viewer-title", Static).renderable)
         assert title == "Product Demo Video"
 
 
@@ -1029,9 +1160,7 @@ async def _assert_select_mode_bulk_toolbar_usable(size):
 
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
-        await _wait_for_compact_class(
-            screen, pilot, compact=size[0] < 120
-        )
+        await _wait_for_compact_class(screen, pilot, compact=size[0] < 120)
 
         screen.query_one("#library-media-select-toggle").press()
         await _wait_for_selector(screen, pilot, "#library-media-select-all")
@@ -1058,9 +1187,9 @@ async def _assert_select_mode_bulk_toolbar_usable(size):
             assert region.width > 0, f"{selector} has no rendered width"
             assert region.x < size[0], f"{selector} starts past the terminal edge"
             if wide:
-                assert (
-                    region.x + region.width <= size[0]
-                ), f"{selector} extends past the terminal edge"
+                assert region.x + region.width <= size[0], (
+                    f"{selector} extends past the terminal edge"
+                )
 
         # The toolbar is usable: toggle a row, watch the count patch in
         # place, arm bulk delete, then cancel it.
@@ -1105,9 +1234,7 @@ async def _assert_select_mode_keyboard_toggle_and_footer(size):
 
     async with host.run_test(size=size) as pilot:
         screen = await _open_media_list(host, pilot)
-        await _wait_for_compact_class(
-            screen, pilot, compact=size[0] < 120
-        )
+        await _wait_for_compact_class(screen, pilot, compact=size[0] < 120)
 
         screen.query_one("#library-media-select-toggle").press()
         await _wait_for_selector(screen, pilot, "#library-media-select-all")
@@ -1227,7 +1354,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
             app.media_reading_scope_service = DoubleShrinkLibraryMediaScopeService(
                 media
             )
-            screen._request_library_media_page(3, focus_identity=None)
+            screen._media_controller._request_library_media_page(3, focus_identity=None)
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -1267,7 +1394,7 @@ async def test_compact_media_stale_and_retry_actions_remain_truthful() -> None:
                 assert not row.disabled
                 assert not str(row.label).startswith("○")
 
-            screen._sync_library_media_browse_state(None)
+            screen._media_controller._sync_library_media_browse_state(None)
             await _wait_for_condition(
                 pilot,
                 lambda: screen.query_one("#library-media-export", Button).disabled,
@@ -1294,7 +1421,7 @@ async def test_compact_media_pager_receipt_and_empty_states_remain_contained() -
         assert canvas.region.contains_region(pager.region)
 
         screen._media_state.delete_receipt_ids = ("local:media:1",)
-        screen._sync_library_media_browse_state(None)
+        screen._media_controller._sync_library_media_browse_state(None)
         receipt = await _wait_for_selector(
             screen, pilot, "#library-media-bulk-delete-receipt"
         )
@@ -1377,7 +1504,9 @@ async def test_bulk_undo_counts_a_non_mapping_restore_as_a_still_failed_id() -> 
     claim a clean undo.
     """
     app = _build_media_test_app()
-    service = NonMappingRestoreScopeService(_two_media_items(), non_mapping_backing_id=1)
+    service = NonMappingRestoreScopeService(
+        _two_media_items(), non_mapping_backing_id=1
+    )
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     app.media_reading_scope_service = service
     host = LibraryProductionCSSHarness(app)
@@ -1389,9 +1518,9 @@ async def test_bulk_undo_counts_a_non_mapping_restore_as_a_still_failed_id() -> 
         screen.query_one("#library-media-select-all", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen.query_one(
-                "#library-media-delete-selected", Button
-            ).disabled,
+            lambda: (
+                not screen.query_one("#library-media-delete-selected", Button).disabled
+            ),
             message="Select all never enabled bulk delete.",
         )
         screen.query_one("#library-media-delete-selected", Button).press()
@@ -1444,9 +1573,9 @@ async def test_full_success_bulk_delete_focuses_undo_and_enter_restores() -> Non
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen.query_one(
-                "#library-media-delete-selected", Button
-            ).disabled,
+            lambda: (
+                not screen.query_one("#library-media-delete-selected", Button).disabled
+            ),
             message="Selected Media row never enabled bulk delete.",
         )
         screen.query_one("#library-media-delete-selected", Button).press()
@@ -1478,7 +1607,7 @@ async def test_full_success_bulk_delete_focuses_undo_and_enter_restores() -> Non
         # preserve, and Undo lost focus. Clearing focus first reproduces that
         # ordering: the identity must carry the target on its own.
         screen.set_focus(None)
-        screen._sync_library_media_browse_state("#library-media-bulk-delete-undo")
+        screen._media_controller._sync_library_media_browse_state("#library-media-bulk-delete-undo")
         await pilot.pause()
         await pilot.pause()
         assert screen.focused is not None
@@ -1511,7 +1640,7 @@ async def test_receipt_dismiss_clears_the_failed_undo_copy_too() -> None:
         screen = await _open_media_list(host, pilot)
         screen._media_state.delete_receipt_ids = ("local:media:1",)
         screen._media_state.delete_receipt_undo_failure = "1 of 1 · database is locked"
-        screen._sync_library_media_browse_state(None)
+        screen._media_controller._sync_library_media_browse_state(None)
         receipt_copy = await _wait_for_selector(
             screen, pilot, "#library-media-bulk-delete-receipt-copy"
         )
@@ -1543,9 +1672,7 @@ async def test_single_page_media_list_drops_pager_boundary_noise() -> None:
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        status = await _wait_for_selector(
-            screen, pilot, "#library-media-page-status"
-        )
+        status = await _wait_for_selector(screen, pilot, "#library-media-page-status")
         assert str(status.renderable) == "1-3 of 3"
         assert not screen.query("#library-media-disabled-reason")
         assert not screen.query("#library-media-next")
@@ -1563,9 +1690,7 @@ async def test_multi_page_media_list_keeps_pager_controls() -> None:
         screen = await _open_media_list(host, pilot)
         await _wait_for_selector(screen, pilot, "#library-media-next")
         assert screen.query_one("#library-media-next", Button).disabled is False
-        assert (
-            screen.query_one("#library-media-previous", Button).disabled is True
-        )
+        assert screen.query_one("#library-media-previous", Button).disabled is True
 
 
 # ---------------------------------------------------------------------------

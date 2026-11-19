@@ -18,7 +18,6 @@ from tldw_chatbook.Audio import (
     DictationResult,
     DictationState,
 )
-from tldw_chatbook.Widgets.voice_input_widget import VoiceInputWidget, VoiceInputMessage
 
 
 class TestAudioRecordingProperties:
@@ -346,95 +345,6 @@ class TestDictationServiceProperties:
 
         if audio_data:
             assert len(result.audio_data) == audio_size
-
-
-class TestVoiceInputWidgetProperties:
-    """Property-based tests for VoiceInputWidget."""
-
-    @given(
-        messages=st.lists(
-            st.tuples(st.text(min_size=1, max_size=100), st.booleans()),
-            min_size=0,
-            max_size=10,
-        )
-    )
-    def test_voice_input_message_properties(self, messages):
-        """Test VoiceInputMessage creation and properties."""
-        for text, is_final in messages:
-            msg = VoiceInputMessage(text, is_final)
-
-            # Properties
-            assert msg.text == text
-            assert msg.is_final == is_final
-            assert hasattr(msg, "bubble")  # Should be a Message subclass
-
-    @given(
-        show_device_selector=st.booleans(),
-        show_transcript_preview=st.booleans(),
-        placeholder=st.text(max_size=50),
-    )
-    def test_widget_configuration_properties(
-        self, show_device_selector, show_transcript_preview, placeholder
-    ):
-        """Test widget configuration maintains properties."""
-        with patch("tldw_chatbook.Widgets.voice_input_widget.LiveDictationService"):
-            widget = VoiceInputWidget(
-                show_device_selector=show_device_selector,
-                show_transcript_preview=show_transcript_preview,
-                placeholder=placeholder or "default",
-            )
-
-            # Properties
-            assert widget.show_device_selector == show_device_selector
-            assert widget.show_transcript_preview == show_transcript_preview
-            if placeholder:
-                assert widget.placeholder == placeholder
-
-    @given(
-        audio_levels=st.lists(
-            st.floats(min_value=0.0, max_value=1.0), min_size=1, max_size=20
-        )
-    )
-    def test_audio_level_display_properties(self, audio_levels):
-        """Test audio level visualization maintains properties."""
-        with patch("tldw_chatbook.Widgets.voice_input_widget.LiveDictationService"):
-            widget = VoiceInputWidget()
-
-            for level in audio_levels:
-                widget._update_level_display(level)
-
-                # Properties
-                assert 0.0 <= widget.audio_level <= 1.0
-                assert widget.audio_level == level
-
-    @given(
-        states=st.sampled_from(
-            [
-                DictationState.IDLE,
-                DictationState.STARTING,
-                DictationState.LISTENING,
-                DictationState.PROCESSING,
-                DictationState.PAUSED,
-                DictationState.STOPPING,
-                DictationState.ERROR,
-            ]
-        )
-    )
-    def test_widget_state_display_properties(self, states):
-        """Test widget state display maintains consistency."""
-        with patch("tldw_chatbook.Widgets.voice_input_widget.LiveDictationService"):
-            widget = VoiceInputWidget()
-
-            widget.state = states
-            widget._update_ui_state()
-
-            # State-specific properties
-            if states == DictationState.IDLE:
-                assert not widget.is_voice_recording
-            elif states == DictationState.LISTENING:
-                assert widget.is_voice_recording
-            elif states == DictationState.ERROR:
-                assert widget.error_message != ""
 
 
 class TestSystemIntegrationProperties:

@@ -1,5 +1,7 @@
 """Installed optional owner absence and reference-driven inventory declarations."""
 
+import time
+
 import pytest
 
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
@@ -21,7 +23,6 @@ route=sys.argv[1]
 if route.startswith('graph'):
  from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
  from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
- from tldw_chatbook.Library.library_collections_service import LocalLibraryCollectionsService
  from tldw_chatbook.DB.recovery_core import core_adapters
  notes=CharactersRAGDB(database_path(config,'chachanotes_db_path'),'unused-test')
  collections=LibraryCollectionsDB(database_path(config,'library_collections_db_path'),'unused-test')
@@ -29,9 +30,10 @@ if route.startswith('graph'):
   note=notes.add_note('File note','Saved note bytes')
   with notes.transaction() as cursor:
    cursor.execute('UPDATE notes SET file_path_on_disk=?,version=version+1 WHERE id=?',(str(data/'missing.md'),note))
-  service=LocalLibraryCollectionsService(collections)
-  collection=service.create_collection('Saved references')
-  service.add_item_to_collection(collection.collection_id,source_type='note',source_id=note)
+  # Legacy Collections are read-only since 534f0cb899; seed a retained membership.
+  with collections.transaction() as cursor:
+   cursor.execute("INSERT INTO library_collections (collection_id,name,description,created_at,updated_at,deleted_at) VALUES ('saved','Saved references','','2026-08-04T00:00:00Z','2026-08-04T00:00:00Z',NULL)")
+   cursor.execute("INSERT INTO library_collection_items (membership_id,collection_id,source_type,source_id,title,created_at) VALUES ('member','saved','note',?,'File note','2026-08-04T00:00:00Z')",(note,))
  notes.close();collections.close()
  adapters={a.owner_id:a for a in core_adapters()}
  item=adapters['db.chachanotes.primary'].discover(config)[0]
@@ -101,7 +103,9 @@ from tldw_chatbook.TTS.recovery import recovery_adapters as tts_adapters
 notes=CharactersRAGDB(database_path(config,'chachanotes_db_path'),'unused-test')
 notes.close()
 adapters={a.owner_id:a for a in (*core_adapters(),*operations(),*notes_adapters(),*tts_adapters())}
-for name in ('db.library_ingest_jobs','db.agent_runs','notes.file_notes','notes.sync_state','tts.profile_store','tts.references'):
+# The device-local sync store is never captured, so its absence is an exclusion.
+assert adapters['notes.sync_state'].discover(config)[0].status=='intentionally_excluded'
+for name in ('db.library_ingest_jobs','db.agent_runs','notes.file_notes','tts.profile_store','tts.references'):
  adapter=adapters[name]
  item=adapter.discover(config)[0]
  assert item.status=='unused',(name,item)
@@ -135,7 +139,7 @@ def test_exact_lazy_defaults_preserve_required_missing_evidence(tmp_path):
 
 
 _FRESH = r"""
-import asyncio,json,os,sqlite3,sys,threading
+import asyncio,json,os,sqlite3,sys,threading,time
 from contextlib import closing
 from pathlib import Path
 from Tests.network_guard import install,blocked_attempts
@@ -160,11 +164,12 @@ async def main():
  assert preview.complete,(preview.issues,bad)
  destination=home/'complete.tldw-backup.zip'
  monitoring=asyncio.create_task(monitor_app(app))
- cancel=threading.Event();watchdog=asyncio.get_running_loop().call_later(20,cancel.set)
+ # Cancel only at the parent's hang deadline: a loaded capture is slow, not hung.
+ deadline=float(os.environ['FRESH_CAPTURE_DEADLINE'])
+ cancel=threading.Event();watchdog=asyncio.get_running_loop().call_later(max(0,deadline-time.time()),cancel.set)
  try:
   result=await asyncio.to_thread(capture,(selector,),preview.scope_digest,destination,options=options,cancel=cancel)
-  for _ in range(500):
-   if storage._pause is None and app._backup_runtime_maintenance is None:break
+  while (storage._pause is not None or app._backup_runtime_maintenance is not None) and not cancel.is_set():
    await asyncio.sleep(.01)
   assert storage._pause is None and app._backup_runtime_maintenance is None
   app.chachanotes_db.add_note('After capture','Resumed writer bytes')
@@ -189,8 +194,17 @@ print('retired and reopened')
 """
 
 
-def test_fresh_app_complete_public_capture_preserves_real_bytes_and_resumes(tmp_path):
-    _run(tmp_path, "fresh", "complete", script=_FRESH)
+# TASK-40306: a fixed 20 s cancel failed loaded runs that were only slow (about
+# 22 s alone). The child's cancel now fires 15 s before this hang budget, so a
+# real hang still unwinds the capture and its cleanup before the parent kills it.
+_FRESH_TIMEOUT = 240
+
+
+def test_fresh_app_complete_public_capture_preserves_real_bytes_and_resumes(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("FRESH_CAPTURE_DEADLINE", str(time.time() + _FRESH_TIMEOUT - 15))
+    _run(tmp_path, "fresh", "complete", script=_FRESH, timeout=_FRESH_TIMEOUT)
 
 
 _AGENTS = (

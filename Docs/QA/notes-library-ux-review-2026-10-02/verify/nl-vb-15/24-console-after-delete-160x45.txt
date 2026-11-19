@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                    Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Chat 1                                                                          │
+                  Context ◂  │         Chat 1         ✕    New tab     Temporary                                              │  ▸ Inspect
+   Terminal                  │                                                                                                │     Choose folder · Project
+ ──────────────────────────  │                                                                                                │  What happens if I send now?
+ Workspaces             ▸    │                                                                                                │  Where: Default › Chat 1
+ ──────────────────────────  │                                                                                                │  Scope: Everything available
+ Conversations          ▾    │                                                                                                │  Run: Ready
+     Archive this chat       │                                                                                                │  Sources: 1 staged
+      Archived chats         │                                                                                                │  Approvals: None pending
+     Search all chats…       │                                                                                                │ Environment                 ▾
+   Chat 1                    │                                                                                                │   Changes aren't tracked for…
+                             │                                                                                                │   Bind a folder and enable C…
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                │            Refresh
+  ▊  Filter      ▎           │                                                                                                │                               ▅
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                │  Sources — next send        1
+                             │                                                                                                │  Trip planning: Lisbon (note
+  1 more conversation —      │                                Ready — type a message to begin.                                │    Ready · Trip planning:
+  search with Ctrl+K         │                                                                                                │  Console has staged this liv
+  Chats                 ▾    │                                                                                                │
+   Chat 1              💬    │                                                                                                │  Sources: Notes, Media,
+   Thesis: chapter 2…  💬    │                                                                                                │  Conversations (Prompts off)
+   Release notes dra…  💬    │                                                                                                │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+   Refactor the inge…  💬    │                                                                                                │  ▊  Ask Library sources     ▎
+   Japanese practice…  💬  ▄ │                                                                                                │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+   Kubernetes crashl…  💬    │                                                                                                │    Search Library
+   Half-marathon tra…  💬    │                                                                                                │
+   Trip planning: Li…  💬    │                                                                                                │  Scope: everything   Narrow…
+ ▼ more — scroll             │                                                                                                │
+ ──────────────────────────  │                                                                                                │ Run
+ ▼ Model · Agent · Details   │                                                                                                │ ▼ more sections — scroll
+                             │                                                                                                │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Staged for next send · 1 source                                                                                                                     Un-stage
+ Trip planning: Lisbon — note
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4.1-mini     System Prompt: off     Assistant: General     Sources: 1     Ap
+
+█  Composer ▾  Menu  Use this note as context and help me work with it.▌                                               Send | $       Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

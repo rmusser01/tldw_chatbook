@@ -138,6 +138,7 @@ _EXCLUSION_CARRYING_OPERATIONS = frozenset(
         "fs_grep",
         "fs_write",
         "fs_edit",
+        "fs_mkdir",
         "fs_patch",
         "git_status",
         "git_diff",
@@ -1298,6 +1299,19 @@ class RemoteWorkspaceToolExecutor:
         (shared across bindings on one host); the transport never
         retries — recovery is the status cache and the probe's job.
         """
+        from tldw_chatbook.Tools.workspace_tool_executor import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            with native.exchange(self, request_bytes) as request:
+                result = self._ssh_transport_call(request_bytes, budget=budget)
+                native.response(request, result)
+                return result
+        return self._ssh_transport_call(request_bytes, budget=budget)
+
+    def _ssh_transport_call(
+        self, request_bytes: bytes, *, budget: float
+    ) -> RemoteCallResult:
         cfg = self._ssh
         assert cfg is not None
         if cfg.session_key:
@@ -1508,11 +1522,30 @@ class RemoteWorkspaceToolExecutor:
                     f"recovery probe for {cfg.binding_id} failed: {error!r}"
                 )
 
-        threading.Thread(
-            target=_probe,
+        from contextvars import copy_context
+
+        from tldw_chatbook.Agents.execution_capacity import CapacityRefused
+        from tldw_chatbook.Chat.console_ssh_custody import capture_preparation_ssh
+
+        native = capture_preparation_ssh(self)
+        try:
+            callback = native.probe_worker(_probe) if native is not None else _probe
+        except CapacityRefused:
+            return  # Existing recovery work is best effort; no request was issued.
+        context = copy_context()
+        thread = threading.Thread(
+            target=lambda: context.run(callback),
             daemon=True,
             name=f"ssh-recovery-probe-{cfg.loc.host}",
-        ).start()
+        )
+        try:
+            thread.start()
+        except BaseException:
+            if thread.ident is not None:
+                thread.join()
+            elif native is not None:
+                native.unstarted()
+            raise
 
 
 def _require_ping_payload(payload: object) -> None:
@@ -1550,6 +1583,7 @@ def _require_ping_payload(payload: object) -> None:
 
 __all__ = [
     "RESPONSE_MAGIC",
+    "RemoteExecutorDispatchAdapter",
     "RemoteWorkspaceExecutionError",
     "RemoteWorkspaceLoopbackError",
     "RemoteWorkspaceToolExecutor",
@@ -1560,3 +1594,98 @@ __all__ = [
     "run_session_loopback",
     "split_fs_read_result",
 ]
+
+#: Parity-matrix v1 wording (spec: "Run composition & tool parity"):
+#: git_* stays advertised for local aliases on mixed runs, but a remote
+#: alias refuses at CALL time with this typed message.
+_REMOTE_GIT_UNSUPPORTED_MESSAGE = "git tools not yet supported on SSH bindings"
+
+#: URI-in-path teaching copy (spec: "Model-facing surface"): the note
+#: shows alias -> URI mappings, so the refusal a URI path earns must
+#: teach the correct convention instead of a bare invalid-path error.
+_REMOTE_URI_PATH_MESSAGE = (
+    "remote roots take a path RELATIVE to the root, not a URI: use "
+    'root_alias "{alias}" with a relative path'
+)
+
+
+class RemoteExecutorDispatchAdapter:
+    """Wire-dict-to-str adapter at the run-composition seam (Task 18).
+
+    ``LocalToolSpec`` handlers return the bounded result TEXT (the local
+    ``WorkspaceToolExecutor.execute`` contract) and the CAS/ledger sites
+    above them consume either seam via ``_response_result_text`` — but
+    every handler-facing slot expects a STR. The remote transport
+    executor returns the final wire-frame dict. Wrapping ONCE here (the
+    adapter Task 17 shipped test-only, now real) keeps every spec
+    handler transport-agnostic and gives the two call-time policies one
+    owner:
+
+    - git_* on a remote alias refuses with the parity-matrix typed error
+      (local aliases keep git tools — they hold different executors);
+    - a URI in a ``path``/``pattern`` argument refuses with the message
+      that teaches the ``root_alias`` + relative-path convention.
+
+    Raises whatever the inner executor raises (typed transport errors
+    included); the provider's protocol boundary renders them.
+    """
+
+    def __init__(self, inner: Any, *, alias: str) -> None:
+        self._inner = inner
+        self._alias = str(alias)
+
+    def execute(self, tool: str, args: dict[str, Any], *, intent: str) -> str:
+        if tool.startswith("git_"):
+            raise RemoteWorkspaceExecutionError(
+                "git_unsupported_on_remote",
+                _REMOTE_GIT_UNSUPPORTED_MESSAGE,
+                admitted=False,
+            )
+        for key in ("path", "pattern"):
+            value = args.get(key) if isinstance(args, dict) else None
+            if isinstance(value, str) and "://" in value:
+                raise RemoteWorkspaceExecutionError(
+                    "uri_path_rejected",
+                    _REMOTE_URI_PATH_MESSAGE.format(alias=self._alias),
+                    admitted=False,
+                )
+        wire = self._inner.execute(tool, args, intent=intent)
+        result = wire.get("result") if isinstance(wire, dict) else wire
+        if not isinstance(result, str):
+            # Contract violation (a success frame without result text):
+            # refuse loudly rather than stringifying a wire dict.
+            raise RemoteWorkspaceExecutionError("protocol_failure", admitted=True)
+        return result
+
+    def ping(self) -> Any:
+        return self._inner.ping()
+
+    def maybe_schedule_recovery_probe(self) -> None:
+        self._inner.maybe_schedule_recovery_probe()
+
+
+_NATIVE_SSH_ADAPTER_METHODS = {
+    name: getattr(RemoteExecutorDispatchAdapter, name) for name in ("execute", "ping")
+}
+
+_NATIVE_SSH_METHODS = {
+    name: getattr(RemoteWorkspaceToolExecutor, name)
+    for name in (
+        "execute",
+        "ping",
+        "_execute_ssh",
+        "_ssh_ping",
+        "_verify_destination",
+        "_ssh_call",
+        "_ssh_transport_call",
+        "_ssh_session_call",
+        "_map_ssh_result",
+        "_parse_terminal",
+        "_build_request",
+    )
+}
+
+_NATIVE_SSH_FUNCTIONS = {
+    name: globals()[name]
+    for name in ("_encode_request", "_parse_worker_output", "_bundle_payload")
+}

@@ -1,0 +1,7 @@
+PR3034 probe: second source Select compose held for 0.2s
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+1.43s setup    Tests/UI/test_mcp_workbench.py::test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers
+
+(2 durations < 1s hidden.)
+1 passed in 3.86s

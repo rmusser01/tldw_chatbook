@@ -55,14 +55,15 @@ class ConsoleFeedbackCommentModal(SafeModalDismissMixin, ModalScreen[str | None]
     #console-feedback-comment-modal {
         width: 56;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
     #console-feedback-comment-quote {
         height: 5;
-        border: round gray;
+        border: round $tldw-boundary;
         padding: 0 1;
         margin: 1 0;
         color: $text-muted;

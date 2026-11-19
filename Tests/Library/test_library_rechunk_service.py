@@ -121,9 +121,7 @@ class _FakeRAGService:
             )
             texts = [chunk["text"] for chunk in chunks]
             self.vector_store.seed(doc["id"], texts)
-            results.append(
-                _FakeIndexingResult(doc["id"], len(texts), True, None)
-            )
+            results.append(_FakeIndexingResult(doc["id"], len(texts), True, None))
         return results
 
 
@@ -259,9 +257,7 @@ def test_rechunk_replaces_rows_stamped_and_count_drops_by_exactly_rechunked(
 
     monkeypatch.setattr(svc, "improved_chunking_process", _failing_chunker)
 
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
 
     # good -> re-chunked; empty -> skipped; unresolvable -> skipped (spec
     # §9.1: re-chunk SKIPS an unresolvable template and counts it, never a
@@ -289,9 +285,9 @@ def test_rechunk_replaces_rows_stamped_and_count_drops_by_exactly_rechunked(
     for media_id in (empty, unresolvable, crasher):
         kept = _live_chunk_rows(media_db, media_id)
         assert kept
-        assert all(
-            row["chunk_engine_version"] is None for row in kept
-        ), f"item {media_id} was skipped/failed and must stay legacy-stamped"
+        assert all(row["chunk_engine_version"] is None for row in kept), (
+            f"item {media_id} was skipped/failed and must stay legacy-stamped"
+        )
 
     # The summary line is never a bare "done" (and discloses the skipped
     # re-index, §10.2.1's conditional step).
@@ -315,7 +311,10 @@ def test_rechunk_resolves_stored_per_media_template_first(
         name="rechunk-probe",
         description="probe",
         template_json={
-            "chunking": {"method": "sentences", "config": {"max_size": 60, "overlap": 0}}
+            "chunking": {
+                "method": "sentences",
+                "config": {"max_size": 60, "overlap": 0},
+            }
         },
         tags=None,
     )
@@ -325,9 +324,7 @@ def test_rechunk_resolves_stored_per_media_template_first(
         chunking_config='{"template": "rechunk-probe"}',
     )
 
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
     assert summary["rechunked"] == 1
     rows = _live_chunk_rows(media_db, media_id)
     assert rows
@@ -450,9 +447,7 @@ def test_interrupted_reindex_between_delete_and_add_leaves_item_reindexable(
     crashing.vector_store.seed(f"media_{media_id}", ["OLD stale vector text"])
 
     summary = _run(
-        rechunk_legacy_items(
-            media_db, rag_service=crashing, indexing_db=indexing_db
-        )
+        rechunk_legacy_items(media_db, rag_service=crashing, indexing_db=indexing_db)
     )
     # The source write committed (ADR-030: source first); only the derived
     # index write failed -- best-effort, per-item.
@@ -463,7 +458,9 @@ def test_interrupted_reindex_between_delete_and_add_leaves_item_reindexable(
     # The crash point: the delete happened, the add did not. The item must
     # NOT be permanently absent: needs_reindexing must report True...
     assert indexing_db.needs_reindexing(
-        str(media_id), "media", media_index_entry(media_db.get_media_by_id(media_id)).last_modified
+        str(media_id),
+        "media",
+        media_index_entry(media_db.get_media_by_id(media_id)).last_modified,
     ), "an interrupted re-index must leave the item needing re-index"
 
     # ...and the NEXT run (here: the ordinary backfill path, index_entries)
@@ -471,7 +468,9 @@ def test_interrupted_reindex_between_delete_and_add_leaves_item_reindexable(
     recovering = _FakeRAGService()
     recovery = _run(
         index_entries(
-            recovering, indexing_db, [media_index_entry(media_db.get_media_by_id(media_id))]
+            recovering,
+            indexing_db,
+            [media_index_entry(media_db.get_media_by_id(media_id))],
         )
     )
     assert recovery["indexed"] == 1
@@ -523,9 +522,7 @@ def test_all_exports_resolve_to_real_module_attributes():
     import tldw_chatbook.Library.library_rechunk_service as svc_module
 
     assert svc_module.__all__, "expected a non-empty __all__"
-    missing = [
-        name for name in svc_module.__all__ if not hasattr(svc_module, name)
-    ]
+    missing = [name for name in svc_module.__all__ if not hasattr(svc_module, name)]
     assert missing == []
     # the previously-broken export, pinned by its real name
     assert "REINDEX_PENDING_SENTINEL" in svc_module.__all__
@@ -567,9 +564,7 @@ def test_rechunk_stored_auto_without_candidates_uses_plan_tier(media_db):
         "one two three four five six seven eight nine ten. " * 6,
         chunking_config=AUTO_PLAN_CONFIG,
     )
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
     assert summary["rechunked"] == 1
     rows = _live_chunk_rows(media_db, media_id)
     assert rows
@@ -605,9 +600,7 @@ def test_rechunk_stored_auto_classifier_flip_changes_the_tier(media_db):
     assert decision.tier == "template"
     assert decision.template["name"] == "plaint-tiny"
 
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
     assert summary["rechunked"] == 1
     rows = _live_chunk_rows(media_db, media_id)
     assert rows
@@ -625,9 +618,7 @@ def test_rechunk_stored_auto_json_string_config_re_resolves(media_db):
     media_id = _seed_legacy_item(
         media_db, "alpha beta gamma. " * 20, chunking_config=AUTO_PLAN_CONFIG
     )
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
     assert summary["rechunked"] == 1
     assert _live_chunk_rows(media_db, media_id)
 
@@ -651,9 +642,11 @@ AUTO_TEMPLATE_WIN_CONFIG = (
 
 
 def _stored_config(db: MediaDatabase, media_id: int) -> dict:
-    row = db.get_connection().execute(
-        "SELECT chunking_config FROM Media WHERE id = ?", (media_id,)
-    ).fetchone()
+    row = (
+        db.get_connection()
+        .execute("SELECT chunking_config FROM Media WHERE id = ?", (media_id,))
+        .fetchone()
+    )
     return json.loads(row["chunking_config"])
 
 
@@ -686,9 +679,9 @@ def test_rechunk_auto_template_flip_to_plan_restamps_config_without_template_key
     chunking = get_chunking_service(media_db)
 
     # Pre-state: the stored (ingest-time) claim counts under both readers.
-    assert [doc["id"] for doc in chunking.get_documents_using_template("stale-winner")] == [
-        media_id
-    ]
+    assert [
+        doc["id"] for doc in chunking.get_documents_using_template("stale-winner")
+    ] == [media_id]
     assert _template_ids_in_use(media_db).get("stale-winner") == 1
 
     # The store changes: the winning template is soft-deleted after ingest.
@@ -709,9 +702,7 @@ def test_rechunk_auto_template_flip_to_plan_restamps_config_without_template_key
     assert isinstance(decision, AutoDecision)
     assert decision.tier == "plan"
 
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
     assert summary["rechunked"] == 1
 
     # The rows: stamped, plan tier -> NO template columns.
@@ -746,14 +737,16 @@ def test_rechunk_auto_template_flip_to_plain_restamps_config(media_db, monkeypat
         chunking_config=AUTO_TEMPLATE_WIN_CONFIG,
     )
 
-    def _declining_resolve_auto(db, *, media_type, title, filename, url, goal="balanced"):
-        return AutoDecision(tier="plain", rationale=["Auto declined: nothing selected."])
+    def _declining_resolve_auto(
+        db, *, media_type, title, filename, url, goal="balanced"
+    ):
+        return AutoDecision(
+            tier="plain", rationale=["Auto declined: nothing selected."]
+        )
 
     monkeypatch.setattr(auto_selection_module, "resolve_auto", _declining_resolve_auto)
 
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
     assert summary["rechunked"] == 1
     rows = _live_chunk_rows(media_db, media_id)
     assert rows
@@ -805,13 +798,11 @@ def test_rechunk_auto_template_still_wins_restamps_the_new_winner(media_db):
     )
 
     # Pre-state: the stale claim counts the item under old-winner.
-    assert [doc["id"] for doc in chunking.get_documents_using_template("old-winner")] == [
-        media_id
-    ]
+    assert [
+        doc["id"] for doc in chunking.get_documents_using_template("old-winner")
+    ] == [media_id]
 
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
     assert summary["rechunked"] == 1
     # The new winner's 4-word scheme chunked the item...
     rows = _live_chunk_rows(media_db, media_id)
@@ -868,9 +859,7 @@ def test_rechunk_restamp_failure_rolls_back_row_replacement(media_db, monkeypatc
         rechunk_module, "_restamp_auto_chunking_config", _restamp_whose_update_raises
     )
 
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
 
     # The item is counted failed, never rechunked...
     assert summary["failed"] == 1
@@ -904,18 +893,18 @@ def test_rechunk_stored_explicit_name_leaves_config_untouched(media_db):
         chunking_config=stored,
     )
 
-    summary = _run(
-        rechunk_legacy_items(media_db, rag_service=None, indexing_db=None)
-    )
+    summary = _run(rechunk_legacy_items(media_db, rag_service=None, indexing_db=None))
     assert summary["rechunked"] == 1
     assert all(
         row["chunking_template"] == "named-probe"
         for row in _live_chunk_rows(media_db, media_id)
     )
     # Byte-identical stored choice: no mode key invented, no rewrite.
-    row = media_db.get_connection().execute(
-        "SELECT chunking_config FROM Media WHERE id = ?", (media_id,)
-    ).fetchone()
+    row = (
+        media_db.get_connection()
+        .execute("SELECT chunking_config FROM Media WHERE id = ?", (media_id,))
+        .fetchone()
+    )
     assert row["chunking_config"] == stored
 
 
@@ -947,9 +936,7 @@ def test_rechunk_one_item_rechunks_exactly_that_item(media_db):
     target = _seed_legacy_item(media_db, "alpha beta gamma. " * 30)
     bystander = _seed_legacy_item(media_db, "delta epsilon zeta. " * 30)
 
-    outcome = _run(
-        rechunk_one_item(media_db, media_db.get_media_by_id(target))
-    )
+    outcome = _run(rechunk_one_item(media_db, media_db.get_media_by_id(target)))
 
     assert outcome["status"] == "rechunked"
     assert outcome["notes"] == []
@@ -987,16 +974,12 @@ def test_rechunk_one_item_skipped_shapes_mirror_the_batch(media_db):
     assert "source row unavailable" in _outcome_notes(missing)
     assert "chunk_summary" not in missing
 
-    cleared = _run(
-        rechunk_one_item(media_db, media_db.get_media_by_id(empty))
-    )
+    cleared = _run(rechunk_one_item(media_db, media_db.get_media_by_id(empty)))
     assert cleared["status"] == "skipped"
     assert "source content is empty" in _outcome_notes(cleared)
     assert _live_chunk_rows(media_db, empty), "a skip never touches rows"
 
-    refused = _run(
-        rechunk_one_item(media_db, media_db.get_media_by_id(unresolvable))
-    )
+    refused = _run(rechunk_one_item(media_db, media_db.get_media_by_id(unresolvable)))
     assert refused["status"] == "skipped"
     assert "renamed-away" in _outcome_notes(refused), (
         "the stored-path refusal keeps #3's named-error, skip-and-count shape"
@@ -1013,9 +996,7 @@ def test_rechunk_one_item_spec_override_governs_rows(media_db):
 
     content = "One two three four. Five six seven eight. " * 8
     stored = '{"template": "renamed-away"}'
-    media_id = _seed_legacy_item(
-        media_db, content, chunking_config=stored
-    )
+    media_id = _seed_legacy_item(media_db, content, chunking_config=stored)
 
     outcome = _run(
         rechunk_one_item(
@@ -1041,7 +1022,9 @@ def test_rechunk_one_item_spec_override_governs_rows(media_db):
     assert [row["chunk_text"] for row in rows] == expected
     plain = [
         chunk["text"]
-        for chunk in improved_chunking_process(content, {"max_size": 500, "overlap": 100})
+        for chunk in improved_chunking_process(
+            content, {"max_size": 500, "overlap": 100}
+        )
     ]
     assert [row["chunk_text"] for row in rows] != plain
     assert all(row["chunking_template"] is None for row in rows)
@@ -1049,9 +1032,11 @@ def test_rechunk_one_item_spec_override_governs_rows(media_db):
 
     # The stored choice is byte-identical: the override governs ROWS, never
     # the stored config (no re-stamp outside the auto path).
-    row = media_db.get_connection().execute(
-        "SELECT chunking_config FROM Media WHERE id = ?", (media_id,)
-    ).fetchone()
+    row = (
+        media_db.get_connection()
+        .execute("SELECT chunking_config FROM Media WHERE id = ?", (media_id,))
+        .fetchone()
+    )
     assert row["chunking_config"] == stored
 
 
@@ -1074,9 +1059,7 @@ def test_rechunk_one_item_spec_template_name_resolves(media_db):
         },
         tags=None,
     )
-    media_id = _seed_legacy_item(
-        media_db, " ".join(f"w{i:02d}" for i in range(1, 25))
-    )
+    media_id = _seed_legacy_item(media_db, " ".join(f"w{i:02d}" for i in range(1, 25)))
 
     outcome = _run(
         rechunk_one_item(
@@ -1095,9 +1078,7 @@ def test_rechunk_one_item_spec_template_name_resolves(media_db):
     assert all(row["chunking_template"] == "spec-probe" for row in rows)
 
     # The unresolvable name: FAILED with the named error, rows untouched.
-    other = _seed_legacy_item(
-        media_db, " ".join(f"v{i:02d}" for i in range(1, 25))
-    )
+    other = _seed_legacy_item(media_db, " ".join(f"v{i:02d}" for i in range(1, 25)))
     refused = _run(
         rechunk_one_item(
             media_db,

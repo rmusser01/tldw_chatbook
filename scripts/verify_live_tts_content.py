@@ -217,8 +217,9 @@ def compare_content(
 
 
 def _load_whisper() -> Any:
-    # optional_deps consults app configuration when first imported outside
-    # pytest. Keep that lookup inside a disposable profile, never the user's.
+    # optional_deps consults app configuration only when an entry point calls
+    # apply_config_eager_flags(); keep any
+    # configuration lookup inside a disposable profile, never the user's.
     with tempfile.TemporaryDirectory(prefix="tts-content-profile-") as directory:
         root = Path(directory)
         overrides = {

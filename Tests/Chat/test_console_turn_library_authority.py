@@ -1480,6 +1480,10 @@ async def test_continuation_recovery_freshly_finalizes_before_agent_boundary(
                 ),
             ),
         )
+        from Tests.Chat.test_console_provider_continuation import (
+            _MOONSHOT_RUN_TARGET,
+        )
+
         store.persist_provider_continuation_event(
             ToolBatchReady(
                 ContinuationEventContext(
@@ -1490,7 +1494,8 @@ async def test_continuation_recovery_freshly_finalizes_before_agent_boundary(
                 ),
                 checkpoint,
                 None,
-            )
+            ),
+            continuation_target=_MOONSHOT_RUN_TARGET,
         )
 
         class UnavailableCoordinator:

@@ -127,7 +127,7 @@ async def test_list_user_themes_raises_through_on_pause(request, tmp_path, monke
         def paused(*_a, **_k):
             raise RecoveryRequired("x")
 
-        monkeypatch.setattr(raw_participants, "_scope", paused)
+        monkeypatch.setattr(raw_participants, "scope", paused)
         with pytest.raises(RecoveryRequired):
             editor.list_user_theme_names()
 
@@ -465,7 +465,7 @@ async def test_list_raises_when_pause_starts_mid_scan(request, tmp_path, monkeyp
         def paused(*_a, **_k):
             raise RecoveryRequired("x")
 
-        monkeypatch.setattr(raw_participants, "_file", paused)
+        monkeypatch.setattr(raw_participants, "file", paused)
         with pytest.raises(RecoveryRequired):
             editor.list_user_theme_names()
 
@@ -483,14 +483,14 @@ async def test_file_errors_do_not_leak_paths_into_notices(
     async with app.run_test(size=(120, 40)) as pilot:
         await _mounted(pilot, app, editor, tmp_path)
         editor.list_user_theme_names()  # resolve before the reads start failing
-        real_scope = raw_participants._scope
+        real_scope = raw_participants.scope
 
         def missing(source, route, **kwargs):
             if route == "theme_file" and not kwargs.get("writing"):
                 raise FileNotFoundError(2, "No such file or directory", str(tmp_path / "mine.toml"))
             return real_scope(source, route, **kwargs)
 
-        monkeypatch.setattr(raw_participants, "_scope", missing)
+        monkeypatch.setattr(raw_participants, "scope", missing)
         for action in (
             lambda: editor.rename_user_theme("mine", "ours"),
             lambda: editor.export_theme("mine"),
@@ -545,7 +545,7 @@ async def test_listing_raises_through_on_pause(request, tmp_path, monkeypatch):
         def paused(*_a, **_k):
             raise RecoveryRequired("x")
 
-        monkeypatch.setattr(raw_participants, "_file", paused)
+        monkeypatch.setattr(raw_participants, "file", paused)
         with pytest.raises(RecoveryRequired):
             editor.user_theme_listing()
 
@@ -1258,14 +1258,14 @@ async def test_export_refuses_a_file_that_appears_before_the_write(
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     out = tmp_path_factory.mktemp("export-out")
     target = out / "new.toml"
-    real_file = raw_participants._file
+    real_file = raw_participants.file
 
     def racing_file(operation, path, mode):
         if Path(path).name == "new.toml.tmp":
             target.write_text("intruder", encoding="utf-8")
         return real_file(operation, path, mode)
 
-    monkeypatch.setattr(raw_participants, "_file", racing_file)
+    monkeypatch.setattr(raw_participants, "file", racing_file)
     editor = SettingsThemeEditor()
     app = _app(editor)
     async with app.run_test(size=(120, 40)) as pilot:

@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save         │
+│   a  │ Library notes · Ready                                  │  o  automatically.                                   │
+│   v  │ Notes (122)                                            │  t    ‹ Notes   Advisor meeting 2026-09-24           │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │      In the Library database only — no file on disk  │
+│      │ from files.                                            │     Saved                                            │
+│      │                                                        │         Edit     Preview     Info                    │
+│      │ Filter                                                 │         Save     Use in Console                      │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                            │
+│      │ ▊ Filter notes… (Enter)                              ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ Advisor meeting 2026-09-24                   ▎ │
+│      │                                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Select                     │<---                                                  │
+│      │    Add from files…     Export                          │     Keywords                                         │
+│      │    New folder     Add to folder     Move note          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    Remove placement                                    │     ▊ meeting, thesis                              ▎ │
+│      │                                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │                                                        │                                                      │
+│      │  ▸ Agent_Lessons                                       │     Body                                             │
+│      │  ▸ Journal                                             │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▾ Meetings                                          ▂ │     ┃ # Advisor meeting — 2026-09-24               ┃ │
+│      │    Advisor meeting 2026-09-24 · 4m                     │     ┃                                              ┃ │
+│      │    Standup 2026-09-29 · 4m                             │     ┃ Attendees: me, Dr. Okafor                    ┃ │
+│      │    Advisor meeting 2026-09-10 · 4m                     │     ┃                                              ┃ │
+│      │    ملاحظات الاجتماع — مراجعة المشروع · 4m              │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │    Meeting: design critique — Library rail · 4m        │                                                      │
+│      └────────────────────────────────────────────────────────┘                                      60 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

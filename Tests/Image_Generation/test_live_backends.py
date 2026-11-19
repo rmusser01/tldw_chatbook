@@ -26,6 +26,7 @@ accidentally triggers a paid live call just by running the suite. The key is
 fed to the backend via a crafted config section (like the sd.cpp/swarmui
 groups above), never by relying on the adapter's own env fallback.
 """
+
 from __future__ import annotations
 
 import os
@@ -73,7 +74,9 @@ def _enable_backend(monkeypatch, backend: str, *, toml: dict | None = None) -> N
     section: dict = {"default_backend": backend, "enabled_backends": [backend]}
     if toml:
         section[backend] = toml
-    monkeypatch.setattr(c, "_read_image_generation_toml", lambda: section, raising=False)
+    monkeypatch.setattr(
+        c, "_read_image_generation_toml", lambda: section, raising=False
+    )
 
 
 def _generate(backend: str, *, prompt: str = _PROMPT, **kwargs):
@@ -156,9 +159,7 @@ def test_live_stable_diffusion_cpp_generates_image(monkeypatch):
 def test_live_fal_generates_image(monkeypatch):
     env = _required_env("TLDW_LIVE_FAL_API_KEY")
     model = os.environ.get("TLDW_LIVE_FAL_MODEL", "").strip()
-    _enable_backend(
-        monkeypatch, "fal", toml={"api_key": env["TLDW_LIVE_FAL_API_KEY"]}
-    )
+    _enable_backend(monkeypatch, "fal", toml={"api_key": env["TLDW_LIVE_FAL_API_KEY"]})
     kwargs = {"model": model} if model else {}
     _assert_real_image(_generate("fal", **kwargs))
 

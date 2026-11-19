@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 _SQLITE_MAX_INTEGER = 2**63 - 1
-_ARTIFACT_TYPES = frozenset({"prompt", "recipe"})
+_ARTIFACT_TYPES = frozenset({"prompt", "recipe", "mixin"})
 
 
 def _require_positive_sqlite_integer(value: object, *, field_name: str) -> None:
@@ -21,7 +21,9 @@ def _require_title(value: object) -> None:
 
 def _require_artifact_type(value: object) -> None:
     if type(value) is not str or value not in _ARTIFACT_TYPES:
-        raise ValueError("artifact_type must be exactly 'prompt' or 'recipe'.")
+        raise ValueError(
+            "artifact_type must be exactly 'prompt', 'recipe', or 'mixin'."
+        )
 
 
 def _require_canonical_entries(entries: tuple[object, ...], entry_type: type) -> None:
@@ -110,7 +112,7 @@ class PromptDeleteReceiptEntry:
 
     local_id: int = field(repr=False)
     title: str = field(repr=False)
-    artifact_type: Literal["prompt", "recipe"]
+    artifact_type: Literal["prompt", "recipe", "mixin"]
     tombstone_version: int = field(repr=False)
 
     def __post_init__(self) -> None:

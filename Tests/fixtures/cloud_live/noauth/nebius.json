@@ -1,0 +1,24 @@
+{
+  "server": "nebius",
+  "base_url": "https://api.tokenfactory.nebius.com/v1",
+  "probe_model": "probe-model",
+  "listing": {
+    "status": 401,
+    "body": {
+      "detail": "Couldn't authenticate. Reason: token is not present"
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "detail": "Couldn't authenticate. Reason: token is not present"
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "detail": "Couldn't authenticate. Reason: Unable authenticate"
+    }
+  },
+  "probed_at": "2026-09-30T04:19:42+00:00"
+}

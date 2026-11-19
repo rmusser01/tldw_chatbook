@@ -1,0 +1,11 @@
+{
+  "tag": "verify-control2",
+  "original": true,
+  "checkout_revision": "3742efae9428dc10f879606b519215913263ac4e",
+  "source_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "17fabad938cb43559f2ad9eb9bee1b551238239fbafa2190bac1801614bb2fc1",
+    "tldw_chatbook/Utils/textual_css_fastpath.py": "8f9f4404b37fd627e202d00843ff0c0a0e018381368f058c34c5e78f86f85876"
+  },
+  "exit_code": 0,
+  "seconds": 48.20299999997951
+}

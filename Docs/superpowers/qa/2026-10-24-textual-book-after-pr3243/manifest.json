@@ -1,0 +1,76 @@
+{
+  "audited_dev": "139333920d2a87cb011e4f3aa5f8319b59c44a5c",
+  "utc": "2026-10-25T03:48:49.492303+00:00",
+  "book": {
+    "filename": "textual-1.pdf",
+    "pages": 455,
+    "sha256": "798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6",
+    "instruction_treatment": "Reference data, not user instructions"
+  },
+  "reference_pages": [
+    {
+      "pdf": [
+        79,
+        80
+      ],
+      "printed": [
+        70,
+        71
+      ],
+      "principle": "Widget markup interpretation; imported metadata remains literal application data."
+    },
+    {
+      "pdf": [
+        145,
+        146,
+        158
+      ],
+      "printed": [
+        136,
+        137,
+        149
+      ],
+      "principle": "Independent queues and awaited-handler serialization."
+    },
+    {
+      "pdf": [
+        335
+      ],
+      "printed": [
+        326
+      ],
+      "principle": "Worker groups and cancellation-aware publication; mutation independence is an application deduction."
+    }
+  ],
+  "local_merge_checks": {
+    "census_floor": 845,
+    "CI_contract_cases_passed": 162,
+    "contrast_cases_passed_with_bootstrap_marker": 90,
+    "qualified_failures": [
+      "First targeted invocation used a nonexistent queue-contract filename: zero tests; corrected exact path ran162CIcases.",
+      "Initial combined contrast run reached90fixture setup errors raw_source_selection_changed; all90pass with the existing bootstrap_profile fixture contract, assertions unchanged."
+    ]
+  },
+  "artifact_sha256": {
+    "ci-qualification.json": "ab91abd93110f5466a1fb113860d6f9363deedd2a342bf9cc76c61c1f69d34bc",
+    "conftest.py": "0bf15d165054fb1967d58d674e0af18bedb85ed4d1b50c56b85731684dc55d4c",
+    "integration-review.md": "e5227e95821a9678ac291e2198789df984200b613c36dec20bfd39317a5094a9",
+    "merge.json": "da1218b22104d97ec186b5cc1b050e56012436ec2d55323932afba53cd769d94",
+    "observations.json": "fdbf221a1706ee25b5aff76072286f5ca847bdee7a68c112c8b865e86902c363",
+    "ownership.json": "4f184478b6643f73c7fcd28ee2d27b38b108222fb9dae74e19b0bb06fad42323",
+    "run-probes.py": "0532af5fb48d64ab7d2ba0d9046f9b2f6fc01ce10dcc338de76e3aa27d7abf0d",
+    "source-pins.json": "eb9c2ba4ce6266519b276bcd1af54fa7ccf45f8f00d0c3c9722a43baa8782ad2",
+    "test_markup.py": "ea343f51b553a6f87fcfaebe816ff6518a950006b2281945f7cd43b790ff894f",
+    "test_schedules.py": "45b10d7a2a09ec23f365a8460bf1916d361d29c66befd1ba1da1441a864f2f08",
+    "test_study.py": "100bafb9d7eaf6c68317245e7c01fa827e987585bcd04c063a06169597cf9b2b",
+    "verification.json": "c2e00f0c831349ae9bc6fdcc3ae64f0ea263de5560ae3c578cf02b45bb15009b"
+  },
+  "final_checks": {
+    "local_markdown_links_resolve": 38,
+    "new_tasks": 2,
+    "unchecked_outcome_criteria": 8,
+    "backlog_id_guard": "3 passed",
+    "audit_observations": "7 passed, zero skipped",
+    "lint_and_format": "scoped Ruff check and format --check"
+  }
+}

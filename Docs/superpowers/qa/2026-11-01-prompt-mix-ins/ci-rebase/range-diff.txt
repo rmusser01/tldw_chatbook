@@ -1,0 +1,7 @@
+1:  5dac2bb020 = 1:  d9fa27b716 feat: add literal chat prompt mix-ins on current dev
+2:  963fe12e87 = 2:  41b75fd12c docs: record current-dev and fresh-clone mix-in qualification
+3:  d981abb9aa = 3:  b94fe2e3a8 fix: reconcile mix-in controls and publish usage only after acceptance
+4:  1a58f0af2c = 4:  9657665e13 fix: preserve mix-in layout revisions and dirty-editor projections
+5:  a443d71c5c = 5:  d1a1e45bb1 fix(console): retain accepted mix-in order and fence artifact opens
+6:  e7be3ebfba = 6:  c2fba0a6c6 docs(qa): qualify scoped fixes in an independent shallow clone
+7:  8a68db731f = 7:  79e659dcde docs: record independent prompt mix-in PR approval

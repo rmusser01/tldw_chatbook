@@ -44,10 +44,10 @@ NO_ANALYSIS_PROVIDER_NEXT_STEP = "Set one in Settings ▸ Providers & Models"
 
 # ---------------------------------------------------------------------------
 # (task-3301 xhigh review round, F10) The full [analysis_defaults] call
-# shape. Defaults mirror the Media viewer's analysis panel
-# (`Widgets/Media/media_viewer_panel.py::populate_providers`), which seeds
-# its inputs from the same config section -- so an ingest analysis and a
-# viewer analysis run with identical settings under identical config.
+# shape. Defaults historically mirrored the Media viewer's analysis panel
+# (deleted with the Widgets/Media package, TASK-38605); they still seed
+# from the same config section, so ingest analyses keep the same call
+# shape under identical config.
 # ---------------------------------------------------------------------------
 ANALYSIS_DEFAULT_TEMPERATURE = 0.7
 ANALYSIS_DEFAULT_TOP_P = 0.95
@@ -76,10 +76,19 @@ def chat_dispatch_name(provider: Optional[str]) -> Optional[str]:
         when the provider has no chat handler at all.
     """
     from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.Chat.console_provider_support import (
+        _READINESS_TO_EXECUTION_ALIASES,
+    )
 
     candidate = (provider or "").strip().lower()
     if not candidate:
         return None
+    # TASK-41143: Settings saves a provider's readiness key, and the custom
+    # slots' (``custom``, ``custom_2``) are not handler keys; Console's table
+    # maps them, so every caller of this mapper maps them the same way.
+    candidate = _READINESS_TO_EXECUTION_ALIASES.get(
+        provider_config_key(provider), candidate
+    )
     if candidate in API_CALL_HANDLERS:
         return candidate
     # Normalize both sides the way the readiness layer does (spaces and
@@ -211,9 +220,7 @@ def resolve_ingest_analysis_provider(
             ),
             top_p=_as_float(defaults.get("top_p"), ANALYSIS_DEFAULT_TOP_P),
             min_p=_as_float(defaults.get("min_p"), ANALYSIS_DEFAULT_MIN_P),
-            max_tokens=_as_int(
-                defaults.get("max_tokens"), ANALYSIS_DEFAULT_MAX_TOKENS
-            ),
+            max_tokens=_as_int(defaults.get("max_tokens"), ANALYSIS_DEFAULT_MAX_TOKENS),
             system_prompt=_optional_str(defaults.get("system_prompt"))
             or ANALYSIS_DEFAULT_SYSTEM_PROMPT,
         )

@@ -1,0 +1,23 @@
+{
+  "scope": "Three cb4f hosted extraction integration repairs; no physical qualification",
+  "base_revision": "cb4f23a048a53f09067c68f7bfe8c9ec10d41c58",
+  "hash_basis": "SHA256 UTF8 text with CRLF normalized to LF",
+  "files_SHA256": {
+    "tldw_chatbook/Agents/approval_provenance.py": "7918117cc0e3577721b03d85a48abd98284e083be98486700dbbee5a900c5224",
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": "23d8cbc3c33e54a5a11fc65ad6d0b74a9e706066336a3c3147fbf149a4405ff2",
+    "Tests/Chat/test_console_approval_feedback.py": "685f9eeedb396cf2f9e59a068c803a226fe83ad49d03654319169514bb3534c5",
+    "Tests/Architecture/test_console_review_selection_controller_boundary.py": "3aed11a8af9b2e5cfab69e06842470e3d073344052aa6314bf060c376c7a4f11",
+    "Tests/UI/test_library_reader_console_delete_refresh.py": "ecac75908b8cb759553dd384167cb4334e4826f2a9d9f3de4a2d8922374d05d9",
+    "Docs/superpowers/qa/2026-10-05-console-approval-ux/private_control.py": "738a3e6e0f91040053e913335ee7ece72a47cf6ec412c02fcb26135daacea6f8",
+    "Docs/superpowers/plans/2026-11-07-console-approval-ci-boundaries.md": "8dfc5796c2c15c910febf7684b2b847da4adb08ddee139e4b72f62c03e563921",
+    "Docs/superpowers/qa/2026-11-06-console-approval-resync/ci-cb4f-followup.md": "dd3e035251fb23f9416f7f958a205427eeab9404c06aa6d1e9d02495cec0125e"
+  },
+  "targeted_passes": {
+    "feedback": 34,
+    "denial": 6,
+    "Agents_boundary": 3,
+    "review_boundary": 7,
+    "Library_guard": 1
+  },
+  "qualified_samples": 0
+}

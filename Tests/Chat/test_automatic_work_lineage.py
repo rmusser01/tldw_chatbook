@@ -22,6 +22,19 @@ from Tests.Chat.test_console_fleet_wake import (
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
+
+def _attach_runtime(controller):
+    """Attach the same native runtime sources before these consuming tests send."""
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    runtime = ConsoleRuntime(app=getattr(controller, "app", None))
+    runtime.set_chat_store(controller.store)
+    runtime.set_provider_gateway(controller.provider_gateway)
+    runtime.set_agent_bridge(controller._agent_bridge)
+    runtime.set_chat_controller(controller)
+    return runtime
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_enabled", [True, False])
 async def test_accepted_manual_turns_establish_distinct_chains_for_both_paths(
@@ -30,27 +43,36 @@ async def test_accepted_manual_turns_establish_distinct_chains_for_both_paths(
     controller, store, db = _controller(
         tmp_path, [["first"], ["second"]], enabled=agent_enabled
     )
-    first = await controller.submit_draft("first request")
-    second = await controller.submit_draft("second request")
-    assert first.accepted and second.accepted
-    with db.connection() as conn:
-        rows = conn.execute(
-            "SELECT id FROM automatic_work_chains ORDER BY created_at"
-        ).fetchall()
-    assert len(rows) == 2
-    assert rows[0]["id"] != rows[1]["id"]
-    for row in rows:
-        assert db.automatic_work.snapshot(row["id"]).used["generation"] == 0
-    if agent_enabled:
-        assert {
-            run["work_chain_id"] for run in db.list_runs(store.ensure_session().persisted_conversation_id or store.ensure_session().id)
-        } == {row["id"] for row in rows}
-    db.close()
+    runtime = _attach_runtime(controller)
+    try:
+        first = await controller.submit_draft("first request")
+        second = await controller.submit_draft("second request")
+        assert first.accepted and second.accepted
+        with db.connection() as conn:
+            rows = conn.execute(
+                "SELECT id FROM automatic_work_chains ORDER BY created_at"
+            ).fetchall()
+        assert len(rows) == 2
+        assert rows[0]["id"] != rows[1]["id"]
+        for row in rows:
+            assert db.automatic_work.snapshot(row["id"]).used["generation"] == 0
+        if agent_enabled:
+            assert {
+                run["work_chain_id"]
+                for run in db.list_runs(
+                    store.ensure_session().persisted_conversation_id
+                    or store.ensure_session().id
+                )
+            } == {row["id"] for row in rows}
+    finally:
+        await runtime.dispose()
+        db.close()
 
 
 @pytest.mark.asyncio
 async def test_refused_manual_send_creates_no_allowance(tmp_path):
     chacha, _, db, _, session, gateway, _, controller = _controller_rig(tmp_path)
+    runtime = _attach_runtime(controller)
     gateway.ready = False
     try:
         result = await controller.submit_draft("refused", session_id=session.id)
@@ -61,7 +83,7 @@ async def test_refused_manual_send_creates_no_allowance(tmp_path):
                 == 0
             )
     finally:
-        controller._disposed = True
+        await runtime.dispose()
         db.close()
         chacha.close()
 
@@ -71,6 +93,7 @@ async def test_failed_chain_write_prevents_dispatch_and_clears_stream_ownership(
     tmp_path,
 ):
     controller, store, db = _controller(tmp_path, [["must not dispatch"]])
+    runtime = _attach_runtime(controller)
     with db.transaction() as conn:
         conn.execute(
             "CREATE TRIGGER deny_chain BEFORE INSERT ON automatic_work_chains BEGIN SELECT RAISE(ABORT, 'write refused'); END"
@@ -85,6 +108,7 @@ async def test_failed_chain_write_prevents_dispatch_and_clears_stream_ownership(
         assert controller._active_assistant_message_ids == {}
         assert controller.run_state_for(store.ensure_session().id).is_send_allowed
     finally:
+        await runtime.dispose()
         db.close()
 
 
@@ -93,6 +117,7 @@ async def test_chain_creation_waits_for_sqlite_without_blocking_console(
     tmp_path, monkeypatch
 ):
     controller, _, db = _controller(tmp_path, [["reply"]], enabled=False)
+    runtime = _attach_runtime(controller)
     entered = threading.Event()
     create_chain = db.automatic_work.create_chain
 
@@ -129,6 +154,7 @@ async def test_chain_creation_waits_for_sqlite_without_blocking_console(
         if not send.done():
             send.cancel()
         await asyncio.gather(send, return_exceptions=True)
+        await runtime.dispose()
         db.close()
 
 
@@ -155,6 +181,7 @@ async def test_manual_chain_uses_persisted_conversation_identity(tmp_path):
         agent_bridge=bridge,
         agent_runtime_enabled=True,
     )
+    runtime = _attach_runtime(controller)
     try:
         assert (await controller.submit_draft("hello")).accepted
         session = store.ensure_session()
@@ -167,6 +194,7 @@ async def test_manual_chain_uses_persisted_conversation_identity(tmp_path):
             == conversation_id
         )
     finally:
+        await runtime.dispose()
         db.close()
         chacha.close_connection()
 
@@ -227,6 +255,7 @@ async def test_plain_wakes_keep_separate_result_lineage_and_no_fresh_allowance(
     tmp_path,
 ):
     chacha, _, db, _, session, gateway, _, controller = _controller_rig(tmp_path)
+    runtime = _attach_runtime(controller)
     seen = []
     real_stream = gateway.stream_chat
 
@@ -265,7 +294,7 @@ async def test_plain_wakes_keep_separate_result_lineage_and_no_fresh_allowance(
                 == 2
             )
     finally:
-        controller._disposed = True
+        await runtime.dispose()
         db.close()
         chacha.close()
 
@@ -273,6 +302,7 @@ async def test_plain_wakes_keep_separate_result_lineage_and_no_fresh_allowance(
 @pytest.mark.asyncio
 async def test_prior_wake_token_cannot_authorize_a_later_delivery(tmp_path):
     chacha, _, db, _, session, gateway, _, controller = _controller_rig(tmp_path)
+    runtime = _attach_runtime(controller)
     tokens = []
     submit = controller.submit_draft
 
@@ -300,6 +330,77 @@ async def test_prior_wake_token_cannot_authorize_a_later_delivery(tmp_path):
     finally:
         gate.set()
         await _settle(lambda: not wake.has_pending(session.id))
-        controller._disposed = True
+        await runtime.dispose()
         db.close()
         chacha.close()
+
+
+@pytest.mark.parametrize("kind", ["wake", "chat_start"])
+def test_native_automatic_context_requires_exact_accepted_kind_and_owner(
+    tmp_path, monkeypatch, kind
+):
+    from Tests.DB.test_automatic_chat_starts import prepare, source_run
+    from Tests.DB.test_automatic_wake_attempts import claim, survivor
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = AgentRunsDB(tmp_path / "authority.sqlite")
+    try:
+        root, source = source_run(db)
+        if kind == "chat_start":
+            attempt = prepare(db, source, "target", "attempt")
+            accept = db.automatic_work.accept_chat_start
+        else:
+            attempt = claim(db, root, [survivor(db, root, conversation="source")])
+            accept = db.automatic_work.accept_wake
+        context = AutomaticWorkContext(
+            db.automatic_work, attempt.chain_id, "owner", attempt.id, attempt_kind=kind
+        )
+        with pytest.raises(AutomaticWorkRefused, match="acceptance_required"):
+            context.check()
+        with pytest.raises(AutomaticWorkRefused, match="acceptance_required"):
+            context.mark_accepted()
+        assert accept(attempt.id, owner_id="owner")
+        # The ledger cutoff alone does not set the process-local latch. The
+        # controller calls mark_accepted only after the conversation receipt.
+        with pytest.raises(AutomaticWorkRefused, match="acceptance_required"):
+            context.check()
+        wrong_owner = AutomaticWorkContext(
+            db.automatic_work, attempt.chain_id, "other", attempt.id, attempt_kind=kind
+        )
+        with pytest.raises(ValueError, match="owner"):
+            wrong_owner.mark_accepted()
+        wrong_kind = AutomaticWorkContext(
+            db.automatic_work,
+            attempt.chain_id,
+            "owner",
+            attempt.id,
+            attempt_kind="wake" if kind == "chat_start" else "chat_start",
+        )
+        with pytest.raises(ValueError, match="unknown"):
+            wrong_kind.mark_accepted()
+        wrong_chain = AutomaticWorkContext(
+            db.automatic_work, "other", "owner", attempt.id, attempt_kind=kind
+        )
+        with pytest.raises(AutomaticWorkRefused, match="acceptance_required"):
+            wrong_chain.mark_accepted()
+        context.mark_accepted()
+        assert context.check().chain_id == attempt.chain_id
+        monkeypatch.setattr(
+            "tldw_chatbook.Agents.automatic_work_runtime._setting",
+            lambda key, default: False if key == "autowake_enabled" else default,
+        )
+        with pytest.raises(AutomaticWorkRefused, match="autowake_disabled"):
+            context.check()
+        assert db.automatic_work.snapshot(root).pause_reason == "autowake_disabled"
+        monkeypatch.setattr(
+            "tldw_chatbook.Agents.automatic_work_runtime._setting",
+            lambda key, default: default,
+        )
+        assert context.check().status == "active"
+        db.automatic_work.recover(current_owner_id="replacement")
+        with pytest.raises(AutomaticWorkRefused, match="review_required"):
+            context.check()
+    finally:
+        db.close()

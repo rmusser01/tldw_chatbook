@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerCollectionsFeedsClient(Protocol):
+    """Client methods ServerCollectionsFeedsService calls (TASK-36953.1)."""
+
+    async def create_collections_feed(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_collections_feed(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_collections_feed(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_collections_feed_websub(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_collections_feeds(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def subscribe_collections_feed_websub(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def unsubscribe_collections_feed_websub(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def update_collections_feed(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerCollectionsFeedsService:
@@ -16,7 +30,7 @@ class ServerCollectionsFeedsService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerCollectionsFeedsClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -51,7 +65,7 @@ class ServerCollectionsFeedsService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerCollectionsFeedsClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

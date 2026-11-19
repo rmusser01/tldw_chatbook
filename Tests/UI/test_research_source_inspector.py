@@ -144,7 +144,10 @@ async def test_inspector_has_real_recheck_action_and_escape_safe_cancel() -> Non
         await app.push_screen(reopened, callback=results.append)
         await pilot.pause()
         reopened.query_one("#research-source-annotation-quote", Input).value = "draft"
-        assert reopened.query_one("#research-source-annotation-quote", Input).value == "draft"
+        assert (
+            reopened.query_one("#research-source-annotation-quote", Input).value
+            == "draft"
+        )
         await pilot.press("escape")
         await pilot.pause()
 
@@ -182,8 +185,13 @@ async def test_inspector_lists_edits_and_deletes_stable_device_annotations() -> 
         annotation_list = edit.query_one("#research-source-annotation-list", Select)
         annotation_list.value = existing.annotation_id
         await pilot.pause()
-        assert edit.query_one("#research-source-annotation-note", TextArea).text == "Original note"
-        edit.query_one("#research-source-annotation-note", TextArea).text = "Edited note"
+        assert (
+            edit.query_one("#research-source-annotation-note", TextArea).text
+            == "Original note"
+        )
+        edit.query_one(
+            "#research-source-annotation-note", TextArea
+        ).text = "Edited note"
         edit.query_one("#research-source-annotation-save", Button).press()
         await pilot.pause()
 
@@ -192,7 +200,9 @@ async def test_inspector_lists_edits_and_deletes_stable_device_annotations() -> 
         )
         await app.push_screen(delete, callback=results.append)
         await pilot.pause()
-        delete.query_one("#research-source-annotation-list", Select).value = existing.annotation_id
+        delete.query_one(
+            "#research-source-annotation-list", Select
+        ).value = existing.annotation_id
         await pilot.pause()
         delete.query_one("#research-source-annotation-delete", Button).press()
         await pilot.pause()

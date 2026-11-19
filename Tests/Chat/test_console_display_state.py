@@ -46,7 +46,7 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
     assert state.assistant_label == "Assistant: General"
-    assert state.rag_label == "Library · Auto on · Agent blocked"
+    assert state.rag_label == "Library · Auto on · Agent access off"
     assert state.sources_label == "Sources: 3"
     assert state.tools_label == "Tools: 4 ready"
     assert state.approvals_label == "Approvals: 1 pending"
@@ -58,22 +58,22 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            "Library · Auto off · Agent blocked",
+            "Library · Auto off · Agent access off",
         ),
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            "Library · Auto on · Agent blocked",
+            "Library · Auto on · Agent access off",
         ),
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            "Library · Auto off · Agent allowed",
+            "Library · Auto off · Agent access on",
         ),
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            "Library · Auto on · Agent allowed",
+            "Library · Auto on · Agent access on",
         ),
     ),
 )
@@ -339,6 +339,26 @@ def test_console_inspector_state_omits_mcp_row_when_zero_tools_and_zero_not_conn
         mcp_not_connected_count=0,
     )
     assert "MCP" not in {row.label for row in state.rows}
+
+
+@pytest.mark.parametrize(
+    ("tool_count", "not_connected"), [(None, 0), (0, 0), (5, 0), (5, 2)]
+)
+def test_console_inspector_state_mcp_off_reason_wins_over_counts(
+    tool_count, not_connected
+):
+    """TASK-41308: an unbound MCP store sends no MCP tools, whatever an
+    earlier compose published, so the row says off and why."""
+    state = ConsoleInspectorState.from_values(
+        mcp_tool_count=tool_count,
+        mcp_not_connected_count=not_connected,
+        mcp_unavailable_reason="this profile's MCP settings file can't be used here",
+    )
+    rows_by_label = {row.label: row for row in state.rows}
+    assert rows_by_label["MCP"].value == (
+        "off · this profile's MCP settings file can't be used here"
+    )
+    assert rows_by_label["MCP"].status == "blocked"
 
 
 def test_console_inspector_state_uses_explicit_chatbook_save_capability():

@@ -230,6 +230,10 @@ class SpeechPlaybackMixin:
         self._play_worker_task: Any = None
         #: Releases the current artifact's hold; called before replacing it.
         self._active_playback_release: Callable[[], None] | None = None
+        #: Releases deferred for clips handed to the default app (TASK-39040),
+        #: keyed by the timer that waits out `HAND_OFF_RETENTION_SECONDS`;
+        #: unmount cancels the timers and runs the releases itself.
+        self._hand_off_releases: dict[asyncio.Task, Callable[[], None]] = {}
         #: Result currently waiting for prior playback to stop before delivery.
         self._result_transition_operation_id: str | None = None
         #: A generation retired by an exact profile navigation.
@@ -598,6 +602,52 @@ class SpeechPlaybackMixin:
         if release is not None:
             release()
 
+    def _retain_handed_off_release(self) -> None:
+        """Free the in-app slot but keep the active playback's file for the
+        hand-off bound.
+
+        TASK-39040 fix round 2 (Qodo): the clip went to the default app,
+        which the player cannot see finish. On `854e00b9e3` Stop released
+        the WAV copy (a secure delete) at once, under that app. The release
+        now waits out `HAND_OFF_RETENTION_SECONDS`, or runs at unmount
+        (`_retire_hand_off_retention`).
+        """
+        from tldw_chatbook.TTS.audio_player import HAND_OFF_RETENTION_SECONDS
+
+        release = self._active_playback_release
+        self._active_playback_release = None
+        if release is None:
+            return
+
+        def release_once() -> None:
+            nonlocal release
+            pending, release = release, None
+            if pending is not None:
+                pending()
+
+        async def release_after_bound() -> None:
+            await asyncio.sleep(HAND_OFF_RETENTION_SECONDS)
+            release_once()
+
+        # The release is held HERE, not in the task's `finally`: a timer
+        # cancelled before its first step never runs its body at all.
+        timer = asyncio.create_task(release_after_bound())
+        self._hand_off_releases[timer] = release_once
+        timer.add_done_callback(lambda done: self._hand_off_releases.pop(done, None))
+
+    async def _retire_hand_off_retention(self) -> None:
+        """Release every file retained for a hand-off now: the pane's exit
+        is its existing release point."""
+        retained = list(self._hand_off_releases.items())
+        for timer, _release in retained:
+            timer.cancel()
+        if retained:
+            await asyncio.gather(
+                *(timer for timer, _release in retained), return_exceptions=True
+            )
+        for _timer, release in retained:
+            release()
+
     def _play_audio(self) -> None:
         """Play the generated audio"""
         logger.debug(
@@ -869,6 +919,12 @@ class SpeechPlaybackMixin:
                     self.app.notify("Playback paused", severity="information")
                 else:
                     self.app.notify("Failed to pause playback", severity="warning")
+            elif state == PlaybackState.HANDED_OFF:
+                # TASK-39040: the default app has the clip; the Pause this
+                # app cannot perform is answered with where to pause it.
+                from tldw_chatbook.TTS.windows_audio_launch import HAND_OFF_NOTICE
+
+                self.app.notify(HAND_OFF_NOTICE, severity="warning", markup=False)
             elif state == PlaybackState.PAUSED:
                 success = await self.app.audio_player.resume()
                 if success:
@@ -917,10 +973,21 @@ class SpeechPlaybackMixin:
             # repaints them right back.
             await self._retire_progress_timer()
 
+            from tldw_chatbook.TTS.audio_player import PlaybackState
+
+            # TASK-39040 fix round 2: read before stop(), which frees the slot.
+            handed_off = (
+                await self.app.audio_player.get_state() is PlaybackState.HANDED_OFF
+            )
             # Force stop any playback
             success = await self.app.audio_player.stop()
             logger.debug(f"Stop result: {success}")
-            self._release_playback_artifact()
+            if handed_off:
+                # The default app is still reading the copy; keep it for the
+                # bound instead of deleting it with the slot.
+                self._retain_handed_off_release()
+            else:
+                self._release_playback_artifact()
 
             # Always reset button states regardless of success
             # (audio may have already finished playing)
@@ -932,6 +999,11 @@ class SpeechPlaybackMixin:
                     self._current_result_status_copy()
                 )
                 self.app.notify("Playback stopped", severity="information")
+            elif handed_off:
+                # Truthful: the app could not stop it, and it plays on there.
+                from tldw_chatbook.TTS.windows_audio_launch import HAND_OFF_NOTICE
+
+                self.query_one("#audio-player-status", Static).update(HAND_OFF_NOTICE)
             else:
                 # Audio already finished or wasn't playing
                 self.query_one("#audio-player-status", Static).update(
@@ -1192,9 +1264,26 @@ class SpeechPlaybackMixin:
             return
 
         playback_failed = False
+        #: A status the exit block shows instead of the result's own copy.
+        exit_status: str | None = None
         while True:
             try:
                 state = await self.app.audio_player.get_state()
+                if state == PlaybackState.HANDED_OFF:
+                    # TASK-39040 fix round 2 (Qodo): the clip plays in the
+                    # default app with no process to end it, so this loop
+                    # would never see FINISHED (on `854e00b9e3` it polled
+                    # for as long as the pane lived and kept the WAV copy).
+                    # Say where it plays, hide the bar and the transport the
+                    # app cannot drive, keep the copy for the bound, and stop.
+                    from tldw_chatbook.TTS.windows_audio_launch import HAND_OFF_NOTICE
+
+                    exit_status = HAND_OFF_NOTICE
+                    self._retain_handed_off_release()
+                    if self._result_transition_operation_id is None:
+                        self.query_one("#audio-progress-bar").add_class("hidden")
+                        self.query_one("#audio-time-display").add_class("hidden")
+                    break
                 if state == PlaybackState.PLAYING:
                     position = await self.app.audio_player.get_position()
                     duration = await self.app.audio_player.get_duration()
@@ -1261,7 +1350,7 @@ class SpeechPlaybackMixin:
                 self.query_one("#audio-player-status", Static).update(
                     "Playback failed"
                     if playback_failed
-                    else self._current_result_status_copy()
+                    else exit_status or self._current_result_status_copy()
                 )
         except Exception as e:
             logger.debug(f"Could not reset UI on progress timer exit: {e}")
@@ -1298,6 +1387,9 @@ class SpeechPlaybackMixin:
             self.app.workers.cancel_group(self, "replace_tts_result_after_playback")
             # Cancel any active progress timer
             await self._retire_progress_timer()
+            # Release any copy kept for a hand-off (TASK-39040): the pane's
+            # exit is its release point, not the bound.
+            await self._retire_hand_off_retention()
 
             # Cancel any active play worker
             if (

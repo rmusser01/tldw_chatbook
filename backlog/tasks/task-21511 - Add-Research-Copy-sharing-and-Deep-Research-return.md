@@ -18,7 +18,7 @@ dependencies:
 references:
   - Docs/superpowers/specs/2026-08-23-research-workspace-design.md
   - Docs/superpowers/plans/2026-08-23-research-workspace-copy-sharing-deep-research.md
-  - backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md
+  - backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md
 priority: high
 ---
 
@@ -46,9 +46,9 @@ Add explicit, receipted cross-authority Copy, real server sharing, and a durable
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no new ADR
 
-ADR path: `backlog/decisions/078-research-workspace-authority-and-screen-boundaries.md`
+ADR path: `backlog/decisions/322-research-workspace-authority-and-screen-boundaries.md`
 
-Reason: ADR-078 already defines Copy-only transfer, receipt ownership, server-only sharing, overlay exclusion, and Deep Research ownership/return. The durable tables and UI implement that accepted boundary.
+Reason: ADR-322 already defines Copy-only transfer, receipt ownership, server-only sharing, overlay exclusion, and Deep Research ownership/return. The durable tables and UI implement that accepted boundary.
 
 Follow `Docs/superpowers/plans/2026-08-23-research-workspace-copy-sharing-deep-research.md` task-by-task with test-first checkpoints and one scoped commit per completed plan task.
 <!-- SECTION:PLAN:END -->

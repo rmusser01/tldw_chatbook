@@ -341,7 +341,7 @@ def test_guard_detects_a_synthetic_backwards_select(tmp_path: Path) -> None:
                 '            ("en", "English"),',
                 '            ("es", "Spanish"),',
                 "        ]",
-                "        yield Select(options=language_options, id=\"language-select\")",
+                '        yield Select(options=language_options, id="language-select")',
                 "",
             )
         ),
@@ -376,7 +376,7 @@ def test_guard_detects_a_synthetic_backwards_select(tmp_path: Path) -> None:
                 "        test_options = []",
                 "        for profile in profiles:",
                 '            test_options.append((profile["name"], profile["display_name"]))',
-                "        select = self.query_one(\"#test-profile-select\", Select)",
+                '        select = self.query_one("#test-profile-select", Select)',
                 "        select.set_options(test_options)",
                 "",
             )

@@ -43,6 +43,31 @@ class BatchSTTRoute:
     reason: str
 
 
+def resolve_batch_stt_model(
+    route: BatchSTTRoute,
+    *,
+    selected_model: str | None = None,
+    default_model: str | None = None,
+) -> str | None:
+    """Resolve the model without overriding an existing configured default.
+
+    Args:
+        route: The resolved provider/language route.
+        selected_model: Explicit Faster Whisper model, when selected.
+        default_model: Configured Auto model; None defers to worker config.
+
+    Returns:
+        The exact model, or None for deferred Auto or direct-local GGUF.
+    """
+    if route.model is not None:
+        return route.model
+    if route.provider != _FASTER_WHISPER_PROVIDER:
+        return None
+    if route.requested_provider == _FASTER_WHISPER_PROVIDER:
+        return selected_model or "base"
+    return default_model
+
+
 def resolve_batch_stt_route(
     *,
     provider: object | None,

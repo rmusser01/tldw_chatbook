@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="3.109" timestamp="2026-11-04T21:00:13.253981-08:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Agents.test_workflow_run_service" name="test_native_verifier_checkpoint_reopens_with_complete_private_output[7-40000-False]" time="2.871"><failure message="AssertionError: assert 'native_evidence_unavailable' == 'native_evidence'&#10;  &#10;  - native_evidence&#10;  + native_evidence_unavailable">Tests/Agents/test_workflow_run_service.py:417: in test_native_verifier_checkpoint_reopens_with_complete_private_output
+    assert saved.results[0].checks[0].reason == (
+E   AssertionError: assert 'native_evidence_unavailable' == 'native_evidence'
+E     
+E     - native_evidence
+E     + native_evidence_unavailable</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,56 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 60,
+      "row": 42
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_settlement.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport json\nimport threading\nfrom dataclasses import replace\n\nimport pytest\n\nfrom tldw_chatbook.Chat import console_trace_settlement as settlement_module\nfrom tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService\nfrom tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole\nfrom tldw_chatbook.Chat.console_chat_store import ConsoleChatStore\nfrom tldw_chatbook.Chat.console_prepared_request import build_console_request\nfrom tldw_chatbook.Chat.console_provider_gateway import (\n    ConsoleProviderGateway,\n    ConsoleProviderResolution,\n    ConsoleProviderStreamSignals,\n)\nfrom tldw_chatbook.Chat.console_runtime import recover_console_trace_calls\nfrom tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator\nfrom tldw_chatbook.Chat.console_trace_models import (\n    FrozenTracePolicy,\n    SemanticRevisionRef,\n    TraceCallState,\n    new_opaque_id,\n)\nfrom tldw_chatbook.Chat.console_trace_provenance import (\n    ConsoleRequestRoute,\n    ConsoleTraceCaptureMode,\n    SavedRevisionTraceProvenance,\n    request_route_provenance,\n)\nfrom tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository\nfrom tldw_chatbook.Chat.console_trace_settlement import (\n    MAX_TRACE_RESPONSE_BYTES,\n    ConsoleTraceSettlementCoordinator,\n    TraceSettlementRequest,\n)\nfrom tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 45
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 1073
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Tests/Chat/test_console_trace_settlement.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 1073
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 1073,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  }
+]

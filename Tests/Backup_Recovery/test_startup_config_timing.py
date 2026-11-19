@@ -4,11 +4,123 @@ import json
 import sys
 import threading
 from contextlib import contextmanager
-from types import FunctionType, SimpleNamespace
+from types import CodeType, FunctionType, SimpleNamespace
 
 import pytest
 
 from Tests.Backup_Recovery import startup_timing_diagnostic as diagnostic
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_timer_selection_uses_only_installed_original_code(
+    tmp_path, monkeypatch, foreign
+):
+    from pathlib import Path
+
+    import textual
+    import textual.timer
+
+    path = Path(textual.__file__).resolve().parent / "_win_sleep.py"
+    compiled = compile(path.read_text(encoding="utf-8"), str(path), "exec")
+    sleep_code = next(
+        code
+        for code in compiled.co_consts
+        if isinstance(code, CodeType)
+        and code.co_name == "sleep"
+        and any(
+            isinstance(child, CodeType) and child.co_name == "cancel"
+            for child in code.co_consts
+        )
+    )
+    if foreign:
+        sleep_code = sleep_code.replace(co_filename=str(tmp_path / "foreign.py"))
+    monkeypatch.setitem(
+        sys.modules,
+        "textual._win_sleep",
+        SimpleNamespace(sleep=FunctionType(sleep_code, {})),
+    )
+    plugin = diagnostic.ConfigTimingPlugin(tmp_path)
+    if foreign:
+        with pytest.raises(ValueError, match="timer_timing_source_mismatch"):
+            plugin._select_timer_codes()
+        assert not plugin.timings.codes
+    else:
+        plugin._select_timer_codes()
+        assert set(plugin.timings.codes.values()) == {
+            "timer_stop_all",
+            "timer_stop",
+            "timer_wait",
+            "timer_wait_inner",
+            "timer_cancel",
+            "timer_cancel_inner",
+        }
+        assert textual.timer.Timer._stop_all.__code__ in plugin.timings.codes
+        assert all(
+            code.co_filename in {str(path), str(path.with_name("timer.py"))}
+            for code in plugin.timings.codes
+        )
+
+
+@pytest.mark.asyncio
+async def test_timer_coordinates_distinguish_queued_cancel_from_entered_worker():
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    entered, release = threading.Event(), threading.Event()
+    private_value = "private-cancel-argument-must-not-appear"
+
+    def occupied():
+        entered.set()
+        assert release.wait(3)
+
+    def cancel_inner(value):
+        return value
+
+    async def cancel(value):
+        return await asyncio.get_running_loop().run_in_executor(
+            pool, cancel_inner, value
+        )
+
+    async def selected_test(value):
+        return await cancel(value)
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    blocker = pool.submit(occupied)
+    observer = diagnostic.ConfigTimings(
+        {
+            selected_test.__code__: "test_case",
+            cancel.__code__: "timer_cancel",
+            cancel_inner.__code__: "timer_cancel_inner",
+        }
+    )
+    observer.start()
+    task = asyncio.create_task(selected_test(private_value))
+    try:
+        assert entered.wait(3)
+        await asyncio.sleep(0)
+        record = observer.snapshot()
+        active = next(
+            row for row in record["active"] if row["function"] == "timer_cancel"
+        )
+        assert active["suspended_at"] == {
+            "file": "test_startup_config_timing.py",
+            "function": "cancel",
+            "line": cancel.__code__.co_firstlineno + 1,
+        }
+        assert "timer_cancel_inner" not in record["counts"]
+        assert private_value not in json.dumps(record)
+        release.set()
+        assert await task == private_value
+        final = observer.snapshot()
+        assert final["counts"]["timer_cancel_inner"] == 1
+        assert not final["active"] and not final["errors"]
+        assert private_value not in json.dumps(final)
+    finally:
+        release.set()
+        await task
+        blocker.result(3)
+        pool.shutdown()
+        observer.close()
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,32 @@
+[
+  {
+    "path": "/private/tmp/mixins-5a8-ui26.log",
+    "bytes": 492460,
+    "sha256": "067ec5b712f6d7a6bf2a2461db0c0b35d732b5283933bfd9d5658ec8b3f0ca9b",
+    "head": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+    "run_id": 41522354461,
+    "run_attempt": 1,
+    "job_id": 125545018054,
+    "command": [
+      "gh",
+      "api",
+      "repos/rmusser01/tldw_chatbook/actions/jobs/125545018054/logs"
+    ],
+    "qualification": "Original first-attempt hosted failure; same-head failed-only rerun is separate, not a fix claim."
+  },
+  {
+    "path": "/private/tmp/mixins-5a8-ui31.log",
+    "bytes": 401676,
+    "sha256": "cc8a8d2dc7b9483252858e268c25c4f67674fd48c5e2ad10ef18a54ad58716ac",
+    "head": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+    "run_id": 41522354461,
+    "run_attempt": 1,
+    "job_id": 125545021411,
+    "command": [
+      "gh",
+      "api",
+      "repos/rmusser01/tldw_chatbook/actions/jobs/125545021411/logs"
+    ],
+    "qualification": "Original first-attempt hosted failure; same-head failed-only rerun is separate, not a fix claim."
+  }
+]

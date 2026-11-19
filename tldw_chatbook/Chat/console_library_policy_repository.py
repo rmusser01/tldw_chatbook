@@ -245,3 +245,8 @@ class ConsoleLibraryPolicyRepository:
             ConsoleLibraryPolicyWriteStatus.UNAVAILABLE,
             normalize_policy_read(RuntimeError()).snapshot,
         )
+
+
+# The first durable policy's repository and database types (Console Send
+# preparation and workflow planning check the live repository against them).
+_NATIVE_FIRST_LIBRARY_REPOSITORY = (ConsoleLibraryPolicyRepository, CharactersRAGDB)

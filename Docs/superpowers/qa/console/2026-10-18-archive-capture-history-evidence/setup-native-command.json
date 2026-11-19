@@ -1,0 +1,19 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook",
+  "env": {
+    "PYTHONPATH": ".",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-p",
+    "no:cacheprovider",
+    "Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row[thinking-True]",
+    "-q",
+    "--tb=short",
+    "--basetemp=/private/tmp/archive-capture-task3-red-stores"
+  ],
+  "exit": 1
+}

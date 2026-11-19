@@ -1,0 +1,27 @@
+{
+  "args": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "pytest",
+    "Tests/CI/test_ui_pr_gate_census_checker.py",
+    "Tests/CI/test_derived_artifacts_workflow.py",
+    "Tests/CI/test_ui_lane_shard_replay.py",
+    "Tests/CI/test_ci_queue_pressure_contract.py",
+    "Tests/CI/test_backlog_task_id_uniqueness.py",
+    "-p",
+    "pytest_asyncio.plugin",
+    "-p",
+    "pytest_timeout",
+    "-q",
+    "--tb=short",
+    "--timeout=180",
+    "-o",
+    "cache_dir=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37266-37268\\dev-sync-ci-contracts\\cache",
+    "--basetemp=C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-7e7a66d1321747c89c49c78c3d8e3d58\\pytest",
+    "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37266-37268\\dev-sync-ci-contracts\\result.xml"
+  ],
+  "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-7e7a66d1321747c89c49c78c3d8e3d58",
+  "source_root": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui"
+}

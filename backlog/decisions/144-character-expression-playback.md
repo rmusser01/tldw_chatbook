@@ -3,7 +3,7 @@
 Status: Accepted
 Date: 2026-09-07
 Spec: [Character expression playback](../../Docs/superpowers/specs/2026-09-07-character-expression-playback-design.md)
-Related: [ADR-067](067-bundled-samira-visual-identity-pack.md),
+Related: [ADR-312](312-bundled-samira-visual-identity-pack.md),
 [ADR-074](074-portable-actor-packs-and-local-persona-visual-runtime.md)
 
 ## Decision
@@ -31,7 +31,7 @@ Hidden avatars pause; removed avatars release playback resources.
 
 - Convert every expression to static PNG: loses the requested motion and source data.
 - Store a second Buddy runtime on each character: couples operational and expression
-  models contrary to ADR-067/074 and complicates independent copies.
+  models contrary to ADR-312/074 and complicates independent copies.
 - Add a configurable per-expression poster index now: creates a portability contract
   not needed for Dynamic/Static; codec frame coalescing makes source indices unstable.
 - Let each frame remount the rail avatar: risks flicker, focus/layout work and stale

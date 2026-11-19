@@ -268,9 +268,7 @@ SERVER_FIELD_ALIASES: dict[str, str] = {
 #: reaches this builder anyway (it raises ``ServerIngestUnsupported`` and routes
 #: through ``build_web_clip_kwargs``, which already sends both).
 SERVER_UNSUPPORTED_OPTIONS: dict[str, str] = {
-    "cookies_file": (
-        "the server takes a cookie string, not a path to a cookies.txt"
-    ),
+    "cookies_file": ("the server takes a cookie string, not a path to a cookies.txt"),
     "encoding": "the server has no text-encoding override for ingestion",
     "extraction_method": (
         "the server accepts this on its process-ebooks endpoint, but not on "
@@ -287,12 +285,10 @@ SERVER_UNSUPPORTED_OPTIONS: dict[str, str] = {
         "the server sets transcription precision in its own configuration"
     ),
     "transcription_provider": (
-        "the server's transcription core supports this but its API does not "
-        "expose it"
+        "the server's transcription core supports this but its API does not expose it"
     ),
     "translate_to_english": (
-        "the server's transcription core supports this but its API does not "
-        "expose it"
+        "the server's transcription core supports this but its API does not expose it"
     ),
 }
 
@@ -482,17 +478,22 @@ def build_server_ingest_kwargs(
             # restored snapshot is dropped, not forwarded (the server would
             # silently discard an undeclared field).
             continue
-        if group == "generic" and name in {
-            "analyze",
-            "overwrite_existing",
-            "custom_prompt",
-            "system_prompt",
-            "generate_embeddings",
-            "keep_original_file",
-            "chunk",
-            "chunk_size",
-            "chunk_overlap",
-        } | _SERVER_STRIPPED_TEMPLATE_OPTIONS:
+        if (
+            group == "generic"
+            and name
+            in {
+                "analyze",
+                "overwrite_existing",
+                "custom_prompt",
+                "system_prompt",
+                "generate_embeddings",
+                "keep_original_file",
+                "chunk",
+                "chunk_size",
+                "chunk_overlap",
+            }
+            | _SERVER_STRIPPED_TEMPLATE_OPTIONS
+        ):
             continue
         # task-3309: the endpoint binds its form fields explicitly and never
         # reads the raw form, so anything it does not declare is dropped in

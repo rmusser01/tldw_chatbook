@@ -1,4 +1,4 @@
-"""ADR-067: the run-keyed human-input wait registry.
+"""ADR-314: the run-keyed human-input wait registry.
 
 A blocking human prompt (tool approval card, skill install confirm, skill
 script confirm) marks its run while a decision is pending so

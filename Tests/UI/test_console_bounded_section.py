@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
 import pytest
@@ -9,6 +10,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.pilot import Pilot
+from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -226,6 +228,43 @@ async def test_default_mode_remains_one_bounded_viewport() -> None:
         assert isinstance(section.viewport, BoundedSectionViewport)
         assert tuple(section.viewport.children)
         assert section.native_scroll_owner is None
+
+
+@pytest.mark.asyncio
+async def test_transparently_covered_section_waits_for_its_own_layout(
+    monkeypatch,
+) -> None:
+    section, _content = _section(3)
+    app = _Harness(section)
+    async with app.run_test(size=(60, 20)) as pilot:
+        await _settle(pilot)
+        owner_screen = section.screen
+        cover = Screen()
+        cover.styles.background = "transparent"
+        await app.push_screen(cover)
+        await pilot.pause()
+        assert owner_screen.is_current
+        assert app.screen is not owner_screen
+        calls = []
+        original = section._run_scheduled_reconcile
+
+        def reconcile():
+            calls.append(None)
+            original()
+
+        monkeypatch.setattr(section, "_run_scheduled_reconcile", reconcile)
+        # A background screen may remain "current" without receiving new geometry.
+        with monkeypatch.context() as covered:
+            covered.setattr(
+                owner_screen, "_refresh_layout", lambda *args, **kwargs: None
+            )
+            section.set_allocation(2)
+            await asyncio.sleep(0.1)
+            assert len(calls) <= 2
+        app.pop_screen()
+        await _settle(pilot)
+        assert section.viewport.content_region.height == 2
+        assert section._reconcile_layout_signal is None
 
 
 @pytest.mark.asyncio

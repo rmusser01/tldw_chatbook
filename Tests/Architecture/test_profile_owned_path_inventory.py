@@ -6,6 +6,7 @@ import ast
 import re
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 from scripts.check_profile_owned_path_inventory import (
@@ -222,18 +223,15 @@ def test_shared_asset_exceptions_are_explicit() -> None:
     shared_rules = tuple(
         rule for rule in APPROVED_EXCEPTIONS if rule.relative_path in shared_paths
     )
-    embedding_rule = next(
-        rule
-        for rule in APPROVED_EXCEPTIONS
-        if (
-            rule.relative_path == "tldw_chatbook/config.py"
-            and rule.expression == "literal:~/.local/share/tldw_cli/models/embeddings"
-        )
-    )
-
     assert shared_rules
     assert all(rule.disposition is Disposition.SHARED_ARTIFACT for rule in shared_rules)
-    assert embedding_rule.disposition is Disposition.PERSISTED_DEFAULT
+    # The persisted embedding-cache default is TOML data now (TASK-36945.1): it ships once
+    # in the packaged template and no shared-asset exception covers it. The full template
+    # path pin is test_default_config_template_profile_paths_are_pinned.
+    embedding_default = "~/.local/share/tldw_cli/models/embeddings"
+    template = (REPO_ROOT / "tldw_chatbook/Config_Files/default_config.toml").read_text(encoding="utf-8")
+    assert template.count(embedding_default) == 1
+    assert not any(embedding_default in rule.expression for rule in shared_rules)
 
 
 def _dotted_name(node: ast.AST) -> str | None:
@@ -293,18 +291,49 @@ def _base_data_dir_cli_consumer_lines(tree: ast.AST) -> tuple[int, ...]:
     return tuple(sorted(consumers))
 
 
+#: TASK-39126: a file can only hold a runtime-owner finding if it spells one of
+#: these, so only such files are parsed (parsing all ~9,050 took up to 113 s
+#: of the node's 180 s CI timeout).
+RUNTIME_OWNER_NAMES = ("BASE_DATA_DIR_CLI", "DEFAULT_RUNTIME_POLICY_PATH")
+
+
+def _may_name_runtime_owner(source: str) -> bool:
+    """Whether ``source`` can spell a guarded name as the parser reads it.
+
+    The parser NFKC-normalizes identifiers, so a non-ASCII spelling such as a
+    full-width first letter counts too.
+    """
+    if not source.isascii():
+        source = unicodedata.normalize("NFKC", source)
+    return any(name in source for name in RUNTIME_OWNER_NAMES)
+
+
 def test_base_data_dir_census_detects_qualified_and_aliased_consumers() -> None:
     """Compatibility-constant consumers include qualified import access."""
-    tree = ast.parse(
-        """import tldw_chatbook.config as config
+    source = """import tldw_chatbook.config as config
 from tldw_chatbook.config import BASE_DATA_DIR_CLI as data_dir
 
 config.BASE_DATA_DIR_CLI / "export"
 data_dir / "export"
 """
-    )
+    tree = ast.parse(source)
 
     assert _base_data_dir_cli_consumer_lines(tree) == (4, 5)
+    assert _may_name_runtime_owner(source)
+    # A full-width first letter is the same identifier to the parser, so the
+    # prefilter must not skip the file (TASK-39126).
+    full_width = (
+        "from tldw_chatbook.config import \uff22ASE_DATA_DIR_CLI\n"
+        "\uff22ASE_DATA_DIR_CLI / 'x'\n"
+    )
+    assert _base_data_dir_cli_consumer_lines(ast.parse(full_width)) == (2,)
+    assert _may_name_runtime_owner(full_width)
+    assert not _may_name_runtime_owner("data_dir / 'export'\n")
+
+
+#: TASK-38989: Python under Docs/ is evidence and snippets, never runtime
+#: (bffa2bffed added a QA excerpt that is not even parseable on its own).
+NON_RUNTIME_PYTHON_ROOTS = ("Docs/",)
 
 
 def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners() -> (
@@ -315,7 +344,12 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
     runtime_constant_definitions: list[str] = []
     for source_path in sorted(REPO_ROOT.rglob("*.py")):
         relative_path = source_path.relative_to(REPO_ROOT).as_posix()
-        tree = ast.parse(source_path.read_text(encoding="utf-8"), relative_path)
+        if relative_path.startswith(NON_RUNTIME_PYTHON_ROOTS):
+            continue
+        source = source_path.read_text(encoding="utf-8")
+        if not _may_name_runtime_owner(source):
+            continue
+        tree = ast.parse(source, relative_path)
         base_data_consumers.extend(
             (relative_path, line) for line in _base_data_dir_cli_consumer_lines(tree)
         )
@@ -337,6 +371,45 @@ def test_compatibility_and_runtime_policy_constants_have_no_new_runtime_owners()
     from tldw_chatbook.runtime_policy.bootstrap import default_runtime_policy_path
 
     assert isinstance(default_runtime_policy_path(), Path)
+
+
+#: Roots this node skips: the package (preflight's profile census parses it),
+#: Tests/ (pytest collection parses each file a lane runs) and Docs/ (not
+#: runtime). Only git-tracked files count: a local build/, venv/ or
+#: node_modules/ is not repository source.
+PARSED_ELSEWHERE_ROOTS = ("tldw_chatbook/", "Tests/", "Docs/")
+
+
+def test_python_outside_the_package_and_tests_parses() -> None:
+    """Every other tracked ``.py`` file parses (TASK-39126).
+
+    The runtime-policy node above used to parse every file, so an unparseable
+    script failed it as a side effect. It now parses only files that name its
+    constants; this node keeps that side effect for the roots no other check
+    parses (scripts/, Helper_Scripts/, Packaging/, packages/, .github/,
+    native/, top-level files, ...). ``git ls-files`` reads the index, so it
+    works in CI's shallow checkout. Bytes are parsed, so a BOM or a PEP 263
+    cookie is honoured as Python honours it.
+    """
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.py"],
+        cwd=REPO_ROOT,
+        stdout=subprocess.PIPE,
+        check=True,
+    ).stdout.decode("utf-8", "surrogateescape")
+    unparseable: list[str] = []
+    for relative_path in tracked.split("\0"):
+        if not relative_path or relative_path.startswith(PARSED_ELSEWHERE_ROOTS):
+            continue
+        path = REPO_ROOT / relative_path
+        if not path.is_file():  # tracked, but deleted on disk and not yet staged
+            continue
+        try:
+            ast.parse(path.read_bytes(), filename=relative_path)
+        except SyntaxError as error:
+            unparseable.append(f"{relative_path}:{error.lineno}: {error.msg}")
+
+    assert not unparseable, "\n".join(unparseable)
 
 
 def test_cli_prints_the_real_source_census_and_enforces_it() -> None:

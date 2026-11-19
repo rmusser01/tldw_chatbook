@@ -1,0 +1,72 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 84,
+      "row": 25
+    },
+    "filename": "/private/tmp/mixins-f70-ui19-diagnosis/baseline-library_entry_canvases.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nfrom dataclasses import dataclass\nfrom typing import Any, Callable\n\nfrom textual.app import ComposeResult\nfrom textual.containers import Horizontal, Vertical\nfrom textual.widgets import Button, Static\n\nfrom tldw_chatbook.Library.library_rail_state import LibraryLifecycle\nfrom tldw_chatbook.Library.library_shell_state import (\n    LIBRARY_CANVAS_KIND_NOTES_CREATE,\n    LIBRARY_ROW_BROWSE_SEARCH,\n    LIBRARY_ROW_CREATE_NOTE,\n    LIBRARY_ROW_INGEST_MEDIA,\n)\nfrom tldw_chatbook.UI.destination_recovery import (\n    DestinationRecoveryState,\n    load_failure_callout,\n    sync_load_failure_callout,\n)\nfrom tldw_chatbook.Utils.input_validation import escape_markup\nfrom tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 28
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 33,
+      "row": 6
+    },
+    "filename": "/private/tmp/mixins-f70-ui19-diagnosis/baseline-library_entry_canvases.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from typing import Any\nfrom collections.abc import Callable",
+          "end_location": {
+            "column": 33,
+            "row": 6
+          },
+          "location": {
+            "column": 1,
+            "row": 6
+          }
+        }
+      ],
+      "message": "Import from `collections.abc`"
+    },
+    "location": {
+      "column": 1,
+      "row": 6
+    },
+    "message": "Import from `collections.abc` instead: `Callable`",
+    "name": "deprecated-import",
+    "noqa_row": 6,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  }
+]

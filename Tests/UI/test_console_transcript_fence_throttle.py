@@ -22,12 +22,18 @@ from textual.widgets import Markdown
 from textual.widgets._markdown import MarkdownFence
 
 import tldw_chatbook.Widgets.Console.console_transcript as console_transcript_module
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import (
     ConsoleMarkdownMessage,
     ConsoleTranscript,
     _console_markdown_body_ends_in_open_fence,
 )
+
+# The real transcript getters retain their collection-selected source.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class MarkdownHarness(App):

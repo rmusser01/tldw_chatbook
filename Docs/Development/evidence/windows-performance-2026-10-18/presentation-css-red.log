@@ -1,0 +1,70 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F.F.                                                                     [100%]
+================================== FAILURES ===================================
+___________ test_repeated_candidate_selection_does_not_rehash_rules ___________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C4F35EEF60>
+
+    def test_repeated_candidate_selection_does_not_rehash_rules(monkeypatch):
+        sheet = _sheet()
+        node = _node()
+        hashes = []
+        original = RuleSet.__hash__
+
+        def counted(rule):
+            hashes.append(rule)
+            return original(rule)
+
+        monkeypatch.setattr(RuleSet, "__hash__", counted)
+        first = fastpath._ordered_candidates(sheet, node)
+        assert hashes  # Counter observes real selection work.
+        hashes.clear()
+        assert fastpath._ordered_candidates(sheet, _node()) == first
+>       assert hashes == []
+E       AssertionError: assert [RuleSet(sele...{'disabled'})] == []
+E
+E         Left contains 4 more items, first extra item: RuleSet(selector_set=[<SelectorSet 'Button' (0, 0, 1)>], styles=Styles(auto_color=False, color=Color(255, 0, 0)), errors=[], is_default_rules=False, tie_breaker=0, selector_names={'Button'}, pseudo_classes=set())
+E         Use -v to get more diff
+
+Tests\Performance\test_css_candidate_reuse.py:42: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-19 10:38:56.658 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-19 10:38:56.793 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-19 10:38:56.794 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-19 10:38:56.795 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+__________ test_candidate_cache_is_bounded_and_does_not_retain_nodes __________
+
+    def test_candidate_cache_is_bounded_and_does_not_retain_nodes():
+        import gc
+        import weakref
+
+        class Node:
+            ancestors = ()
+
+        sheet = _sheet()
+        node = Node()
+        node._selector_names = {"Button", "*"}
+        ref = weakref.ref(node)
+        fastpath._ordered_candidates(sheet, node)
+        del node
+        gc.collect()
+        assert ref() is None
+        for index in range(1000):
+            fastpath._ordered_candidates(sheet, _node(names={"Button", f"#id-{index}"}))
+>       cache = getattr(sheet, fastpath._CACHE_ATTR)[3]
+E       IndexError: tuple index out of range
+
+Tests\Performance\test_css_candidate_reuse.py:86: IndexError
+============================== warnings summary ===============================
+Tests/Performance/test_css_candidate_reuse.py::test_repeated_candidate_selection_does_not_rehash_rules
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+
+(12 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Performance/test_css_candidate_reuse.py::test_repeated_candidate_selection_does_not_rehash_rules
+FAILED Tests/Performance/test_css_candidate_reuse.py::test_candidate_cache_is_bounded_and_does_not_retain_nodes
+2 failed, 2 passed, 1 warning in 1.49s

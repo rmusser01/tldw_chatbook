@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from Tests.Chat.test_child_run_scope_ordering import _survivor_bridge
 from Tests.Chat.test_console_agent_bridge import (
     _fence,
@@ -85,6 +87,7 @@ def _install_drain_recorder(bridge, db, name="test-recorder"):
     return fires
 
 
+@pytest.mark.bootstrap_profile
 def test_drain_fires_once_with_terminal_rows_and_a_finished_coordinator(
     tmp_path,
 ):
@@ -141,6 +144,7 @@ def test_drain_fires_once_with_terminal_rows_and_a_finished_coordinator(
     assert bridge._settling_children == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_drain_row_is_terminal_at_fire_time_on_the_raise_path_too(
     tmp_path, monkeypatch
 ):
@@ -187,6 +191,7 @@ def test_drain_row_is_terminal_at_fire_time_on_the_raise_path_too(
     assert event.children[0].run_id == fire["db_run_ids"][0], event
 
 
+@pytest.mark.bootstrap_profile
 def test_change_window_close_completes_before_the_drain_fires(tmp_path):
     """Deterministic cross-hook order: the change window (the earlier
     hook's consumer, which existed first) closes strictly before the
@@ -223,6 +228,7 @@ def test_change_window_close_completes_before_the_drain_fires(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_raising_consumer_neither_starves_later_consumers_nor_reorders(
     tmp_path,
 ):
@@ -259,6 +265,7 @@ def test_a_raising_consumer_neither_starves_later_consumers_nor_reorders(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_raising_settle_hook_never_reaches_the_child_threads_excepthook(
     tmp_path, monkeypatch
 ):
@@ -324,6 +331,7 @@ def test_reregistering_a_name_replaces_in_place_keeping_its_order_slot():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_consumer_registered_once_fires_once_per_drain_across_turns(
     tmp_path,
 ):

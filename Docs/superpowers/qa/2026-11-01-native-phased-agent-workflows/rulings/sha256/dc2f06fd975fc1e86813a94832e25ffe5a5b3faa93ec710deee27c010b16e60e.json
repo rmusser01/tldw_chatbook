@@ -1,0 +1,65 @@
+{
+  "all707_rendered_body_hashes_independently_reparsed": true,
+  "old631_rendered_bodies_and_body_hashes_exact": true,
+  "old631_entry_objects_and_raw_serialized_object_slices_exact": true,
+  "old_map_raw_metadata_value_slices_except_three_live_counts_and_entries_exact": true,
+  "raw_preserved_metadata_fields": 141,
+  "old_complete_draft_report_prefixes_exact": true,
+  "single_final_two_read_freeze_no_later_capture": true,
+  "old3114_line1030783_byte_source_prefix_exact": true,
+  "all178_postcut_source_lines_sequentially_classified": true,
+  "all76_nonempty_lines_exactly_included": true,
+  "all26_Ruling_marker_lines_complete_literal_bodies": true,
+  "all50_other_nonempty_lines_explicit_NONINDEPENDENT_context": true,
+  "all102_blank_separator_exclusions_explicit": true,
+  "all26_actual_cost_spans_exact_no_invented_cost": true,
+  "all13_full_original_frozen_support_pairs_verified": true,
+  "support_classification": {
+    "contracts": 9,
+    "source_reviews": 4
+  },
+  "both_full_external_options_verified": true,
+  "finite81_current_sources_verified": true,
+  "old134_archive_copies_verified": true,
+  "existing_two_zip_manifest_bytes_unchanged": true,
+  "historical65560_gap_five_unpinned_twelve_missing_early_drivers_retained": true,
+  "old_trio_backups": [
+    {
+      "original": "rulings-user-complete-draft.md",
+      "backup": "rulings-final-backup-9ee035fc2e7d22369ac0d8a8c24c9de82a7c8cf06d2db36ff03489c343b7ca0c.md",
+      "sha256": "9ee035fc2e7d22369ac0d8a8c24c9de82a7c8cf06d2db36ff03489c343b7ca0c",
+      "bytes": 576725
+    },
+    {
+      "original": "rulings-combined-map.json",
+      "backup": "rulings-final-backup-b2124024b813e112925fb6aab6eaf3d37f1fcacad76428ed20879bffaa143f65.json",
+      "sha256": "b2124024b813e112925fb6aab6eaf3d37f1fcacad76428ed20879bffaa143f65",
+      "bytes": 1610993
+    },
+    {
+      "original": "rulings-combined-report.md",
+      "backup": "rulings-final-backup-f41648f9ea0663b4f5c70a3cf6319e0e007cc2409918c4a6b33fa1220378894f.md",
+      "sha256": "f41648f9ea0663b4f5c70a3cf6319e0e007cc2409918c4a6b33fa1220378894f",
+      "bytes": 28093
+    }
+  ],
+  "new_trio_outputs": [
+    {
+      "file": "rulings-user-complete-draft.md",
+      "sha256": "497bcd5d19023024556faab656ea6b89c3ec9978f0ffcf42994bfa4d7b3b3580",
+      "bytes": 658827
+    },
+    {
+      "file": "rulings-combined-map.json",
+      "sha256": "513bd781eb6c817bf091aaf55ccde32a06e18be1608aaefa6d78d151740bf6de",
+      "bytes": 1886493
+    },
+    {
+      "file": "rulings-combined-report.md",
+      "sha256": "916a5b2d6c5c77486c71459424657c41a7116a1595fe00cc98203b810916a413",
+      "bytes": 32445
+    }
+  ],
+  "old631_body_hash_sequence_sha256": "5077e9218ed3696560939367cfca2a2076e84643f2373cccc57b5c96523066b7",
+  "final707_body_hash_sequence_sha256": "fdfa8bf7bcbd3ff0c8e010a6556b1c442f3fa8468d4d920cabf91e717c3e20d2"
+}

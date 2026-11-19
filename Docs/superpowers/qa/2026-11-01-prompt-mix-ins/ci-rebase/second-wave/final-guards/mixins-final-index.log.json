@@ -1,0 +1,4 @@
+{
+  "sha256": "2242c161d726a93a8833cd16e43c1b200677bd7491b7236fe88810838eeef5e6",
+  "raw_text": "index plan pins: 330 index names declared under tldw_chatbook/DB, 330 census rows, 113 plan-pinned.\ncheck_index_plan_pins: OK\n"
+}

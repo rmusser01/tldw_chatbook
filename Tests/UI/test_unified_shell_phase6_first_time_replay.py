@@ -175,7 +175,7 @@ async def test_first_time_shell_replay_exposes_home_console_and_orientation_path
                     "PersonasScreen",
                     (
                         "Roleplay",
-                        "Author the pieces that shape a chat",
+                        "who the AI plays",  # Roleplay frame B1: the purpose line
                         "Characters",
                         "Lore",
                     ),

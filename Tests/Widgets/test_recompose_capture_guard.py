@@ -262,6 +262,89 @@ async def test_a_move_queued_behind_a_busy_app_still_wins() -> None:
         assert app.focused is elsewhere, app.focused
 
 
+# ---- A rebuild that keeps one child mounted (TASK-33622.6 review) ----------
+#
+# The Console tray's rebuild keeps its mounted filter row so typing survives a
+# search. That row stays in the focus chain, so when the rebuild removes a
+# focused row control, Textual's reset lands on the kept row's control. The
+# guard predicted the reset as if every child were removed, so its
+# prediction missed and it never restored focus: the kept filter input held
+# focus, and the next key typed there ('m' for the row menu) started a search.
+
+
+class _KeepsItsFirstChild:
+    """Rebuild every child except the first, as the Console tray keeps its filter row."""
+
+    def _recompose_kept_child(self):
+        return self.query_one("#kept-control") if self.children else None
+
+    async def recompose(self) -> None:
+        from textual.compose import compose
+
+        kept = self._recompose_kept_child()
+        async with self.batch():
+            await self.remove_children(
+                [child for child in self.children if child is not kept]
+            )
+            nodes = [node for node in compose(self) if node.id != "kept-control"]
+            await self.mount_all(nodes, after=kept)
+
+
+class _KeepsOneChild(RecomposeCaptureGuard, _KeepsItsFirstChild, Vertical):
+    RECOMPOSE_KEEPS_FOCUS = True
+    DEFAULT_CSS = "_KeepsOneChild { height: auto; }"
+
+    def compose(self) -> ComposeResult:
+        # Precedes the row in the focus chain and survives the rebuild, so it
+        # is where Textual's reset sends focus when the row is torn down.
+        yield Button("Kept", id="kept-control")
+        yield _SlowTeardown("slow teardown")
+        yield Button("Row", id="rebuild-row")
+
+
+@pytest.mark.asyncio
+async def test_a_rebuild_that_keeps_a_child_returns_focus_from_it() -> None:
+    """Textual's reset lands on the kept child; the guard still restores the row."""
+    app = _RebuildHost(_KeepsOneChild)
+    async with app.run_test() as pilot:
+        rows = app.query_one(_KeepsOneChild)
+        kept = app.query_one("#kept-control", Button)
+        original = app.query_one("#rebuild-row", Button)
+        original.focus()
+        await pilot.pause()
+        assert app.focused is original
+
+        rows.refresh(recompose=True)
+        await _wait_for_teardown(rows)
+        assert app.focused is kept, (
+            f"setup: Textual's reset no longer lands on the kept child ({app.focused})"
+        )
+        await pilot.pause(0.6)
+
+        assert kept.is_attached, "setup: the rebuild did not keep the child"
+        focused = app.focused
+        assert focused is not original and focused is not None
+        assert focused.id == "rebuild-row", f"focus was left on {focused}"
+
+
+@pytest.mark.asyncio
+async def test_a_rebuild_leaves_focus_on_the_child_it_keeps() -> None:
+    """Focus already on the kept child is never touched: nothing it holds is removed."""
+    app = _RebuildHost(_KeepsOneChild)
+    async with app.run_test() as pilot:
+        rows = app.query_one(_KeepsOneChild)
+        kept = app.query_one("#kept-control", Button)
+        kept.focus()
+        await pilot.pause()
+
+        assert rows._focus_to_keep() is None
+        rows.refresh(recompose=True)
+        await pilot.pause(0.6)
+
+        assert rows.recompose_in_flight is False
+        assert app.focused is kept, app.focused
+
+
 # ---- A prompt opened from a list row (Qodo #2932, checkpoint review) --------
 #
 # A modal restores focus to the widget that was focused under it, and falls

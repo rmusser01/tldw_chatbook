@@ -335,3 +335,66 @@ a529dbd3ed0b13502b8d100e3053e0bea5baa119
 # lines, zero assertions touched; plus the wiring test's task-3 docstring
 # paragraph and the recipe's own record of the census hole that hid them.
 9d8244c72ef56b75b337503ba92d6ad90c772303
+
+# TASK-36952.3.1, 2026-11-15 -- media body move slice 1 of 8. Nineteen
+# LibraryScreen media bodies (Find, Escape label, viewer-back, Console
+# handoff) moved byte-for-byte into LibraryMediaController; the one token
+# edit is ruling R2's dropped `self._media_controller.` hop. Test edits are
+# receiver-only, AST-proven against the parent.
+0a1f4062fc47cda1adbe8b16b32f1509050684f0
+
+# TASK-36952.3.2, 2026-11-15 -- media body move slice 2 of 8. Twenty-four
+# LibraryScreen media bodies (the ADR-055 mutation interlock, bulk and
+# single-item delete, Undo, selection export, edit save) moved byte-for-byte
+# into LibraryMediaController with no token edit. Test edits are
+# receiver-only, AST-proven against the parent.
+632cf53183e1be001a67cd18a67ee710cd76f314
+
+# TASK-36952.3.3, 2026-11-15 -- media body move slice 3 of 8. Twenty-three
+# LibraryScreen media bodies (select mode, the row press, the browse request
+# and sync, the type filter, take-note) moved byte-for-byte into
+# LibraryMediaController with no token edit. Test edits are receiver-only,
+# AST-proven against the parent. Rebased onto dev cc6006fcf5, the browse
+# sync also carries dev's TASK-40293 branch with its `self._media_controller.`
+# hop collapsed (R2 token 10).
+f1d9f2b9b7cfab0388b45cf16a171be4d6705a86
+
+# TASK-36952.3.4, 2026-11-15 -- media body move slice 4 of 8. Nineteen
+# LibraryScreen Trash bodies (state build and sync, focus fallbacks, open,
+# row, Back, the r/x accelerators, permanent delete, restore) moved
+# byte-for-byte into LibraryMediaController; the only token edits are four
+# LibraryScreen.<static> calls now naming the controller (ruling R2b). Test
+# edits are receiver-only, AST-proven against the parent.
+a96b35d5e886ec26b7deb5e882662d308f32375b
+
+# TASK-36952.3.5, 2026-11-15 -- media body move slice 5 of 8. Seventeen
+# LibraryScreen analysis bodies (the Reader's provider gate, Generate,
+# dispatch and save, and the bulk Analyze run with its receipt actions) moved
+# byte-for-byte into LibraryMediaController with no token edit. Test edits
+# are receiver-only, AST-proven against the parent.
+9400251cce5a8fdca042a55130935951942802ab
+
+# TASK-36952.3.6, 2026-11-15 -- media body move slice 6 of 8. Sixteen
+# LibraryScreen bodies (the Reader's detail load, reading-progress fetch,
+# capture, write queue and restore, the memoised viewer state and match
+# finder, the speaker-rename facts and handler, and the review decoration)
+# moved byte-for-byte into LibraryMediaController with no token edit. Test
+# edits are receiver-only, AST-proven against the parent.
+13cb59ee120e097b4c6371a82d34064ddf0e0bea
+
+# TASK-36952.3.7, 2026-11-17 -- media body move slice 7 of 8. Twenty-three
+# LibraryScreen bodies (the return-settlement machinery, the adaptive reader
+# layout sync, its grip focus and open-time width restore, the rail return,
+# the empty-list focus fallback, the rail-switch Reader keep, the
+# surfaces-or-recompose seam, and the review-set exit, toggle, Undo and
+# receipt-close actions) moved into LibraryMediaController byte-for-byte
+# except four R2(a) tokens (self -> self._screen in the ancestors membership
+# checks). Test edits are receiver-only, AST-proven against the parent.
+5d71d07ab4e4399c57ad83dbcd88ab15f220a239
+
+# TASK-36952.3.8, 2026-11-17 -- media series cleanup slice 8 of 8, ruling R3.
+# LibraryScreen._sanitize_media_field's body moved into LibraryMediaController
+# byte-for-byte as a staticmethod; the screen keeps a static delegator. Its
+# test edits are wiring and size pins only. The slice's second commit (the
+# typed host and the delegator prune) is not a move and is not listed.
+35c99312a17b0f64a5bf3c1e24ff85f412fd37e2

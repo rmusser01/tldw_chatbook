@@ -1,0 +1,4 @@
+{
+  "sha256": "938e0f1a8f1758ca8f03a72107cbbaaf7877a7979e530bc37aeb0312f10c7ad8",
+  "raw_text": "unformatted: File would be reformatted\n   --> /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f0a-ui18-42od1l_t/baseline.py:448:12\n    |\n447 |     console_transcript.note_console_conversation_painted(screen)\n    -     assert (\n    -         refreezer.compaction_due()\n    -     ), \"the rows frozen while the new chat was shown were left stranded\"\n448 +     assert refreezer.compaction_due(), (\n449 +         \"the rows frozen while the new chat was shown were left stranded\"\n450 +     )\n    |\n\n1 file would be reformatted\n"
+}

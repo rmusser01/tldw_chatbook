@@ -591,6 +591,19 @@ def test_no_preference_uses_active_managed_before_legacy() -> None:
     service.close()
 
 
+def test_managed_model_reports_its_missing_vad_before_dispatch() -> None:
+    key = ParakeetSourceKey.V2_INT8
+    calls = []
+    service = _service(_Config(), active={key}, vad_ready=False, dispatches=calls)
+    try:
+        with pytest.raises(ParakeetSourceError) as caught:
+            service.resolve(key)
+        assert caught.value.code is ParakeetSourceErrorCode.VAD_UNAVAILABLE
+        assert not calls
+    finally:
+        service.close()
+
+
 def test_legacy_singular_path_only_migrates_v2_int8_after_vad_ready(
     tmp_path: Path,
 ) -> None:

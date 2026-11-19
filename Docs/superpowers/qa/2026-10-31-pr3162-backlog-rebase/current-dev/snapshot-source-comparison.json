@@ -1,0 +1,37 @@
+[
+  {
+    "path": "tldw_chatbook/Chat/console_configuration_preparation.py",
+    "equal": true,
+    "sha256": "cf802d4fdf75993a8f3c540ca696951867ce1a806de1c210cdd20679cb6c1b5c"
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/session.py",
+    "equal": true,
+    "sha256": "fee61ff69579ae8e3b23bf6fdc7a37aadc67070a4f190690eef245cfc2877b44"
+  },
+  {
+    "path": "tldw_chatbook/MCP/console_snapshot.py",
+    "equal": true,
+    "sha256": "f68d1b339cef28be0803baf78a3c52ad9281c430bf5eec620bba2f5de9c47b14"
+  },
+  {
+    "path": "tldw_chatbook/MCP/unified_control_plane_service.py",
+    "equal": true,
+    "sha256": "bb8d4299d9cdc4062b3e7bbf6d357ff34453f8c37e661a8b12bb1793ca98132e"
+  },
+  {
+    "path": "Tests/UI/app_factory.py",
+    "equal": true,
+    "sha256": "93be69467a5e59abfe4a5f3c55d03273479924dc9a1331ba44da363120e70a51"
+  },
+  {
+    "path": "Tests/MCP/test_external_catalog_worker_ownership.py",
+    "equal": true,
+    "sha256": "c1a43df577da773d8c7e98c7a8359b0028654645d86a4d052e9377000a86e42b"
+  },
+  {
+    "path": "Tests/Backup_Recovery/test_mcp_source_lifetimes.py",
+    "equal": true,
+    "sha256": "44dbe108207c18d72315982839158d976e79070b8b6f2c191707d15c3f2360a8"
+  }
+]

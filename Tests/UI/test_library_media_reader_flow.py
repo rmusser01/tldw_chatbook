@@ -139,10 +139,22 @@ async def test_media_global_f6_reaches_content_scroller() -> None:
 async def _wait_for_detail_call(
     service: ControlledDetailMediaService, backing_id: int
 ) -> None:
+    """Wait until the controlled service has ENTERED the gated detail read.
+
+    The deadline is wall-clock contention survival, not a product bound: the
+    read is dispatched by the 0.12 s selection settle timer onto the app's
+    event loop, and a fixed 2 s budget lost that race to CPU contention about
+    once per few dozen isolated runs (TASK-32171 -- the traversal probe's
+    "genuine nondeterminism": identical rates on branch and base, because the
+    varying input is scheduling latency, not the tree). 15 s matches the
+    `_wait_for_condition` convention these suites already use for the same
+    reason; it only elongates the FAILURE path when the dispatch is truly
+    gone.
+    """
     try:
         started = await asyncio.to_thread(
             service.detail_entered.setdefault(backing_id, threading.Event()).wait,
-            2,
+            15,
         )
         if not started:
             raise TimeoutError
@@ -170,8 +182,12 @@ async def test_arrow_traversal_updates_selection_immediately_but_loads_only_sett
         service.detail_calls.clear()
         row_1 = _row_identity(screen.query_one("#library-media-row-1", Button))
         row_2 = _row_identity(screen.query_one("#library-media-row-2", Button))
-        screen._select_library_media_reader_row(row_1[0], row_1[2], immediate=False)
-        screen._select_library_media_reader_row(row_2[0], row_2[2], immediate=False)
+        screen._media_controller._select_library_media_reader_row(
+            row_1[0], row_1[2], immediate=False
+        )
+        screen._media_controller._select_library_media_reader_row(
+            row_2[0], row_2[2], immediate=False
+        )
 
         selected, expected_backing_id, _ = row_2
         assert screen._media_state.selected_media_id == selected
@@ -225,17 +241,10 @@ async def test_escape_from_reader_focuses_loaded_row_and_down_advances():
         # Load ROW 0 fully first (the reliable open-and-settle pattern the
         # sibling traversal test uses): a fully-loaded item is what the
         # Escape-then-Down selection path needs -- a still-pending selection
-        # is disarmed, not re-selected, when focus moves.
-        row_0 = screen.query_one("#library-media-row-0", Button)
-        row_0_id, backing_id_0, _ = _row_identity(row_0)
-        row_0.press()
-        await _wait_for_detail_call(service, backing_id_0)
-        service.release(backing_id_0)
-        await _wait_for_condition(
-            pilot,
-            lambda: screen._media_state.reader_session.loaded_id == row_0_id,
-            message="Row 0 never settled in the Reader.",
-        )
+        # is disarmed, not re-selected, when focus moves. TASK-41127: through
+        # `_load_row_0`, which also waits for the re-mounted Reader chrome
+        # the next line focuses.
+        row_0_id = await _load_row_0(screen, service, pilot)
         assert screen._media_state.selected_media_id == row_0_id
 
         # Put focus INSIDE the Reader pane, then Escape outward to Items.
@@ -254,9 +263,7 @@ async def test_escape_from_reader_focuses_loaded_row_and_down_advances():
         # movement is synchronous and deterministic; the downstream
         # auto-load-on-arrow is covered by
         # test_arrow_traversal_updates_selection_immediately_but_loads_only_settled_row.
-        next_row_id = str(
-            screen.query_one("#library-media-row-1", Button).media_id
-        )
+        next_row_id = str(screen.query_one("#library-media-row-1", Button).media_id)
         await pilot.press("down")
         await pilot.pause()
         assert str(screen.focused.media_id) == next_row_id
@@ -276,6 +283,10 @@ async def _load_row_0(screen, service, pilot):
         lambda: screen._media_state.reader_session.loaded_id == row_0_id,
         message="Row 0 never settled in the Reader.",
     )
+    # TASK-41127: the loaded detail re-mounts the Reader chrome after the
+    # session publishes ``loaded_id``; callers press Find/More next, so return
+    # once that chrome is on the glass (under load the gap is many frames).
+    await _wait_for_selector(screen, pilot, "#library-media-reader-find")
     return row_0_id
 
 
@@ -379,7 +390,7 @@ async def test_reader_defaults_to_read_and_keeps_mode_across_local_items():
         screen._media_state.reader_session = set_mode(
             screen._media_state.reader_session, "analysis"
         )
-        screen._sync_library_media_viewer_or_recompose()
+        screen._media_controller._sync_library_media_viewer_or_recompose()
         await _wait_for_condition(
             pilot,
             lambda: bool(screen.query("#library-media-reader-mode-analysis")),
@@ -421,7 +432,11 @@ async def test_edit_metadata_from_read_routes_to_info_form_actions():
         )
         assert screen._media_state.reader_session.mode == "read"
 
-        screen.query_one("#library-media-reader-more", Button).press()
+        # TASK-41127: the loaded detail re-mounts the Reader chrome; press the
+        # live More, not whatever the state flag beat to the glass.
+        (
+            await _wait_for_selector(screen, pilot, "#library-media-reader-more")
+        ).press()
         edit = await _wait_for_selector(screen, pilot, "#library-media-edit")
         edit.press()
         await _wait_for_selector(screen, pilot, "#library-media-edit-form")
@@ -476,7 +491,7 @@ async def test_external_detail_without_original_exposes_no_empty_more_menu():
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        await screen._open_library_external_media_detail("7")
+        await screen._media_controller._open_library_external_media_detail("7")
         await _wait_for_condition(
             pilot,
             lambda: bool(screen.query("#library-media-reader-identity")),
@@ -490,9 +505,9 @@ async def test_external_detail_without_original_exposes_no_empty_more_menu():
             ),
         )
 
-        assert screen.query_one("#library-media-reader-identity", Static).renderable == (
-            "Server item · not in local Media list"
-        )
+        assert screen.query_one(
+            "#library-media-reader-identity", Static
+        ).renderable == ("Server item · not in local Media list")
         assert screen.app_instance.media_reading_scope_service.detail_calls[-1] == {
             "media_id": 7,
             "mode": "server",
@@ -514,7 +529,7 @@ async def test_external_detail_without_original_exposes_no_empty_more_menu():
 
         # task-31272: "‹ Back" is not composed in the three-pane shell,
         # so drive the exit seam the button and Escape both share.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: not screen._media_state.reader_session.external_detail,
@@ -540,7 +555,7 @@ async def test_stale_more_disclosure_paints_nothing_on_a_sourceless_detail():
         screen.query_one("#library-media-reader-more", Button).press()
         await _wait_for_selector(screen, pilot, "#library-media-reader-more-actions")
 
-        await screen._open_library_external_media_detail("7")
+        await screen._media_controller._open_library_external_media_detail("7")
         await _wait_for_condition(
             pilot,
             lambda: screen._media_state.reader_session.external_detail,
@@ -563,15 +578,21 @@ async def test_late_external_a_cannot_replace_b_or_show_error(late_outcome):
 
     async with host.run_test(size=WIDE_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
-        opening_a = asyncio.create_task(screen._open_library_external_media_detail("7"))
+        opening_a = asyncio.create_task(
+            screen._media_controller._open_library_external_media_detail("7")
+        )
         await _wait_for_detail_call(service, 7)
-        opening_b = asyncio.create_task(screen._open_library_external_media_detail("8"))
+        opening_b = asyncio.create_task(
+            screen._media_controller._open_library_external_media_detail("8")
+        )
         await _wait_for_detail_call(service, 8)
         service.release(8)
         await _wait_for_condition(
             pilot,
-            lambda: screen._media_state.detail is not None
-            and screen._media_state.reader_session.loaded_id == "server:media:8",
+            lambda: (
+                screen._media_state.detail is not None
+                and screen._media_state.reader_session.loaded_id == "server:media:8"
+            ),
             message="External B did not load.",
         )
 
@@ -612,11 +633,14 @@ async def test_info_describes_the_same_stored_text_representation_sent_to_consol
         provenance = await _wait_for_selector(
             screen, pilot, "#library-media-reader-provenance"
         )
-        payload = screen._selected_media_handoff_payload()
+        payload = screen._media_controller._selected_media_handoff_payload()
 
         assert payload is not None
         assert "Complete stored text excerpt" in str(provenance.renderable)
-        assert "Content excerpt:\n# Stored Markdown\n\n**Exact source text**" in payload.body
+        assert (
+            "Content excerpt:\n# Stored Markdown\n\n**Exact source text**"
+            in payload.body
+        )
         assert payload.body_truncated is False
 
 
@@ -643,11 +667,15 @@ async def test_info_calls_empty_content_metadata_only_like_console():
             message="Empty-content detail did not load.",
         )
 
-        screen.query_one("#library-media-reader-select-info", Button).press()
+        # TASK-41127: the loaded detail re-mounts the Reader chrome; press the
+        # live tab, not whatever the state flag beat to the glass.
+        (
+            await _wait_for_selector(screen, pilot, "#library-media-reader-select-info")
+        ).press()
         provenance = await _wait_for_selector(
             screen, pilot, "#library-media-reader-provenance"
         )
-        payload = screen._selected_media_handoff_payload()
+        payload = screen._media_controller._selected_media_handoff_payload()
 
         assert payload is not None
         assert "No stored content." in payload.body
@@ -681,9 +709,7 @@ async def test_pending_banner_names_selected_b_and_loaded_a():
             pilot,
             lambda: (
                 bool(screen.query("#library-media-viewer-loading"))
-                and screen.query_one(
-                    "#library-media-viewer-loading", Static
-                ).display
+                and screen.query_one("#library-media-viewer-loading", Static).display
             ),
             message="Reader never painted its pending banner.",
         )
@@ -711,7 +737,9 @@ async def test_late_completion_for_a_cannot_replace_loaded_b_or_show_error(
         canonical_b, backing_b, title_b = _row_identity(row_b)
         row_a.press()
         await _wait_for_detail_call(service, backing_a)
-        screen._select_library_media_reader_row(canonical_b, title_b, immediate=True)
+        screen._media_controller._select_library_media_reader_row(
+            canonical_b, title_b, immediate=True
+        )
         await _wait_for_detail_call(service, backing_b)
         service.release(backing_b)
         await _wait_for_condition(
@@ -753,8 +781,7 @@ async def test_detail_failure_keeps_items_usable_and_reader_retryable():
         retry.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._media_state.reader_session.loaded_backing_id
-            == backing_id,
+            lambda: screen._media_state.reader_session.loaded_backing_id == backing_id,
             message="Reader-local Retry did not reload the failed item.",
         )
         assert screen._media_state.reader_session.error is None
@@ -799,7 +826,10 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             lambda: bool(screen.query("#library-media-next")),
             message="Page 1 pager did not settle.",
         )
-        screen.query_one("#library-media-next", Button).press()
+        # TASK-41127 review r15lt-rev1: each page re-mounts the pager and the
+        # rows, so every press takes the live node (`_wait_for_selector`
+        # re-queries after a settle pause); a detached one posts nothing.
+        (await _wait_for_selector(screen, pilot, "#library-media-next")).press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -808,7 +838,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             ),
             message="Page 2 did not apply and settle its pager.",
         )
-        screen.query_one("#library-media-next", Button).press()
+        (await _wait_for_selector(screen, pilot, "#library-media-next")).press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -817,7 +847,7 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             ),
             message="Page 3 did not apply and settle its rows.",
         )
-        anchor = screen.query_one("#library-media-row-10", Button)
+        anchor = await _wait_for_selector(screen, pilot, "#library-media-row-10")
         anchor_id, anchor_backing_id, _ = _row_identity(anchor)
         anchor.press()
         await _wait_for_detail_call(service, anchor_backing_id)
@@ -856,7 +886,11 @@ async def test_filter_uses_authoritative_search_and_restores_page_three_anchor()
             ),
             message="The first authoritative filter result was not selected in Reader.",
         )
-        screen.query_one("#library-media-filter-clear", Button).press()
+        # TASK-41127: the filter result recomposes the Items pane, so the clear
+        # button is pressed once it is mounted again, not on the state flag alone.
+        (
+            await _wait_for_selector(screen, pilot, "#library-media-filter-clear")
+        ).press()
         await _wait_for_condition(
             pilot,
             lambda: (
@@ -954,9 +988,7 @@ async def test_zero_result_filter_repaints_the_mounted_reader_placeholder():
             ),
             message="Matching filter did not apply.",
         )
-        match_id = str(
-            screen._library_media_browse_controller.retained_items[0]["id"]
-        )
+        match_id = str(screen._library_media_browse_controller.retained_items[0]["id"])
         for match in screen._library_media_browse_controller.retained_items:
             service.release(int(str(match["id"]).rsplit(":", 1)[-1]))
         await _wait_for_condition(
@@ -1013,8 +1045,10 @@ async def test_bulk_deleting_the_open_reader_item_clears_the_reader():
         assert screen._media_state.reader_session.loaded_id == row_0_id
 
         screen._media_state.bulk_delete_in_flight = True
-        screen._begin_library_media_mutation()
-        await LibraryScreen._delete_library_media_selection(screen, (row_0_id,))
+        screen._media_controller._begin_library_media_mutation()
+        await LibraryMediaController._delete_library_media_selection(
+            screen._media_controller, (row_0_id,)
+        )
         await _wait_for_condition(
             pilot,
             lambda: screen._media_state.delete_receipt_ids == (row_0_id,),
@@ -1039,7 +1073,13 @@ async def test_entering_select_mode_cancels_pending_single_item_settlement():
         screen = await _open_media_list(host, pilot)
         screen.query_one("#library-media-row-1", Button).focus()
         screen.query_one("#library-media-select-toggle", Button).press()
-        await pilot.pause()
+        # TASK-41127: the press is a posted message; under load one pause did
+        # not always reach its handler. Wait for select mode itself.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._media_state.select_mode is True,
+            message="The select toggle never entered select mode.",
+        )
 
         assert screen._media_state.select_mode is True
         assert screen._media_state.reader_session.pending_request is None
@@ -1072,8 +1112,8 @@ async def test_delete_selects_following_row_then_previous_then_empty():
         )
 
         screen._media_state.bulk_delete_in_flight = True
-        screen._begin_library_media_mutation()
-        await screen._delete_library_media_item(middle_id)
+        screen._media_controller._begin_library_media_mutation()
+        await screen._media_controller._delete_library_media_item(middle_id)
         await _wait_for_condition(
             pilot,
             lambda: screen._media_state.delete_receipt_ids == (middle_id,),
@@ -1090,8 +1130,8 @@ async def test_delete_selects_following_row_then_previous_then_empty():
         )
 
         screen._media_state.bulk_delete_in_flight = True
-        screen._begin_library_media_mutation()
-        await screen._delete_library_media_item(following_id)
+        screen._media_controller._begin_library_media_mutation()
+        await screen._media_controller._delete_library_media_item(following_id)
         assert screen._media_state.reader_session.selected_id == previous_id
         await _wait_for_detail_call(service, previous_backing_id)
         service.release(previous_backing_id)
@@ -1102,8 +1142,8 @@ async def test_delete_selects_following_row_then_previous_then_empty():
         )
 
         screen._media_state.bulk_delete_in_flight = True
-        screen._begin_library_media_mutation()
-        await screen._delete_library_media_item(previous_id)
+        screen._media_controller._begin_library_media_mutation()
+        await screen._media_controller._delete_library_media_item(previous_id)
         assert screen._media_state.reader_session.selected_id is None
         assert screen._media_state.reader_session.loaded_id is None
         assert screen._media_state.detail is None
@@ -1154,9 +1194,9 @@ async def test_stale_detail_never_writes_progress_under_new_selected_id():
     fake._run_library_service_call = run_service_call
     _bind_progress_methods(fake)
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaController._capture_library_media_loaded_progress(fake)
     await workers[0]
-    stale_cached = LibraryScreen._cache_library_media_reading_progress(
+    stale_cached = LibraryMediaController._cache_library_media_reading_progress(
         fake,
         loaded.request_generation,
         "local:media:1",
@@ -1201,7 +1241,7 @@ def test_progress_restores_after_loaded_content_mounts():
         ),
     )
 
-    LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:7")
+    LibraryMediaController._restore_library_media_loaded_progress(fake, "local:media:7")
 
     assert calls == [
         {"x": 2, "y": 19, "animate": False, "force": True, "immediate": True}
@@ -1238,17 +1278,17 @@ async def test_progress_loads_from_service_when_detail_has_no_embedded_progress(
         _run_library_service_call=run_service_call,
     )
     fake._required_library_media_backing_id = MethodType(
-        LibraryScreen._required_library_media_backing_id, fake
+        LibraryMediaController._required_library_media_backing_id, fake
     )
     fake._library_media_backing_id = MethodType(
-        LibraryScreen._library_media_backing_id, fake
+        LibraryMediaController._library_media_backing_id, fake
     )
     detail = {"id": 1, "content": "No embedded progress"}
 
-    progress = await LibraryScreen._fetch_library_media_reading_progress(
+    progress = await LibraryMediaController._fetch_library_media_reading_progress(
         fake, "local:media:1"
     )
-    cached = LibraryScreen._cache_library_media_reading_progress(
+    cached = LibraryMediaController._cache_library_media_reading_progress(
         fake, session.request_generation, "local:media:1", progress
     )
 
@@ -1283,14 +1323,14 @@ def test_mode_change_preserves_per_item_read_scroll_for_session():
         query_one=lambda *_args, **_kwargs: body,
     )
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaController._capture_library_media_loaded_progress(fake)
     fake._media_state.reader_session = set_mode(
         fake._media_state.reader_session, "analysis"
     )
     fake._media_state.reader_session = set_mode(
         fake._media_state.reader_session, "read"
     )
-    LibraryScreen._restore_library_media_loaded_progress(fake, "local:media:4")
+    LibraryMediaController._restore_library_media_loaded_progress(fake, "local:media:4")
 
     assert restored == [
         {"x": 0, "y": 23, "animate": False, "force": True, "immediate": True}
@@ -1317,7 +1357,7 @@ def test_external_server_detail_does_not_use_local_progress_seam():
         run_worker=lambda *_args, **_kwargs: pytest.fail("local progress worker ran"),
     )
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaController._capture_library_media_loaded_progress(fake)
 
     assert queried == []
 
@@ -1353,9 +1393,7 @@ def _escape_fake(
         effective_layout=layout,
     )
     find = SimpleNamespace(role="find", ancestors=())
-    owner = {"library": library, "items": items, "reader": reader, "find": find}[
-        region
-    ]
+    owner = {"library": library, "items": items, "reader": reader, "find": find}[region]
     focused = SimpleNamespace(ancestors=(owner,))
     # task-31237: the bar is collapsed by default, so the fake mounts it
     # only when the test's region IS the find bar (or explicitly asked).
@@ -1372,6 +1410,10 @@ def _escape_fake(
             editing=False,
             confirming_delete=False,
             editing_analysis=False,
+            # TASK-34000.22: the authoring drafts; None = clean, so the
+            # ladder below is never vetoed in these fakes.
+            edit_draft=None,
+            analysis_draft=None,
             # task-31271 seam (a): the escape label reads the bar's STATE, not
             # its DOM presence (the DOM is one refresh behind). The viewer
             # mounts the bar for exactly ``find_open or content_query``, so the
@@ -1380,9 +1422,7 @@ def _escape_fake(
             find_open=open_state,
             content_query="needle" if open_state else "",
             content_match_index=1 if open_state else 0,
-            reader_session=LibraryMediaReaderSessionState(
-                more_open=more_open
-            ),
+            reader_session=LibraryMediaReaderSessionState(more_open=more_open),
         ),
         query_one=_escape_fake_query_one(shell, find, mounted=mounted),
         _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
@@ -1390,6 +1430,9 @@ def _escape_fake(
         _focus_library_media_items_pane=lambda: calls.append(("items-pane",)),
         _focus_library_rail_action=lambda selector: calls.append(("rail", selector)),
         _exit_library_media_viewer=lambda: calls.append("back"),
+        # TASK-34000.22: Escape and its chip both ask this first; "" = no
+        # authoring form holds unsaved text.
+        _library_media_editor_dirty=lambda: "",
         # task-31272 review: the Items pane's type/sort strips open over
         # the three-pane Reader, so Escape closes one first (and its chip
         # names that close); no strip is open in these fakes.
@@ -1400,7 +1443,7 @@ def _escape_fake(
     )
     # task-31237: Escape's find branch routes through the shared close seam.
     fake._close_library_media_find = MethodType(
-        LibraryScreen._close_library_media_find, fake
+        LibraryMediaController._close_library_media_find, fake
     )
     # PR H2: and every "sync, then focus this control" follow-up routes
     # through ONE seam, so the fake exercises the real ordering logic. No
@@ -1408,21 +1451,21 @@ def _escape_fake(
     # the same ``sync`` then ``focus`` pair the branches recorded before.
     fake._mounted_library_media_viewer = lambda: None
     fake._after_library_media_viewer_sync = MethodType(
-        LibraryScreen._after_library_media_viewer_sync, fake
+        LibraryMediaController._after_library_media_viewer_sync, fake
     )
     # PR L (task-31950): the seam's ordering half is its own method now, so
     # the fakes bind it too and keep exercising the real logic.
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
     # task-31271 seam (a): Escape and its footer label read one seam now.
     fake._library_media_find_state = MethodType(
-        LibraryScreen._library_media_find_state, fake
+        LibraryMediaController._library_media_find_state, fake
     )
     # task-31272: both the Escape ladder and its chip ask whether a "back
     # to list" exit exists in this layout.
     fake._library_media_reader_exit_available = MethodType(
-        LibraryScreen._library_media_reader_exit_available, fake
+        LibraryMediaController._library_media_reader_exit_available, fake
     )
     return fake, calls, shell, find
 
@@ -1437,16 +1480,16 @@ def test_escape_and_its_label_read_the_same_find_state():
     fake, calls, _shell, _find = _escape_fake(
         region="reader", find_mounted=True, find_open=False
     )
-    assert LibraryScreen._library_media_escape_label(fake) != "close"
-    LibraryScreen.action_library_media_viewer_back(fake)
+    assert LibraryMediaController._library_media_escape_label(fake) != "close"
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls[:1] == [("items-pane",)]  # graduated panes, did not close find
 
     # Open, but the bar is not mounted yet (the window right after Find).
     fake, calls, _shell, _find = _escape_fake(
         region="reader", find_mounted=False, find_open=True
     )
-    assert LibraryScreen._library_media_escape_label(fake) == "close"
-    LibraryScreen.action_library_media_viewer_back(fake)
+    assert LibraryMediaController._library_media_escape_label(fake) == "close"
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.find_open is False
     assert calls == ["sync", ("focus", "#library-media-reader-find")]
 
@@ -1455,11 +1498,13 @@ class _MoreHandlerControllerFake:
     """The one production hop the More delegator makes, reproduced minimally.
 
     (wave-7 merge) ``handle_library_media_reader_more`` moved to
-    ``LibraryMediaController``; the screen keeps a one-line delegator. The
-    controller reaches the session through its GENERATED state shim and
-    ``_after_library_media_viewer_sync`` through its group-(e) late-binding
-    property, so both are reproduced here -- the REAL controller body still
-    runs, against this file's own screen fake. The alternative (reverting the
+    ``LibraryMediaController``; the screen keeps a one-line delegator, which
+    the tests no longer call (TASK-36952.2). The controller reaches the
+    session through its GENERATED state shim and calls its own
+    ``_after_library_media_viewer_sync`` (a controller method since
+    TASK-36952.3.1; the fake reads the screen fake's bound copy of it), so
+    both are reproduced here -- the REAL controller bodies still run, against
+    this file's own screen fake. The alternative (reverting the
     mover because a post-cleanup test fixtures it) would have re-shaped the
     wave's pinned 140-mover set inside a merge commit; retargeting the
     fixture is recipe SS3's own sanctioned fix for this shape, and it is what
@@ -1510,29 +1555,25 @@ def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
     viewer = _RecomposeHookViewer(pending=lambda: calls.append("pr-f-restore"))
     fake = SimpleNamespace(
         # (wave-7 merge) the session is a `LibraryMediaState` field now.
-        _media_state=SimpleNamespace(
-            reader_session=LibraryMediaReaderSessionState()
-        ),
+        _media_state=SimpleNamespace(reader_session=LibraryMediaReaderSessionState()),
         _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
         _mounted_library_media_viewer=lambda: viewer,
         _focus_library_control=lambda selector: calls.append(("focus", selector)),
         call_after_refresh=lambda *args: calls.append("call_after_refresh"),
     )
     fake._after_library_media_viewer_sync = MethodType(
-        LibraryScreen._after_library_media_viewer_sync, fake
+        LibraryMediaController._after_library_media_viewer_sync, fake
     )
     # PR L (task-31950): the seam's ordering half is its own method now, so
     # the fakes bind it too and keep exercising the real logic.
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
-    # (wave-7 merge) the handler itself moved; the screen delegates to the
-    # controller, so the fake carries the same one hop.
-    fake._media_controller = _MoreHandlerControllerFake(fake)
+    # TASK-36952.2: the handler lives on the controller, so the test calls it
+    # there rather than through the screen's one-line delegator.
+    controller = _MoreHandlerControllerFake(fake)
 
-    LibraryScreen.handle_library_media_reader_more(
-        fake, SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_reader_more(SimpleNamespace(stop=lambda: None))
 
     assert fake._media_state.reader_session.more_open is True
     assert calls == ["sync"]
@@ -1545,34 +1586,82 @@ def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
     ]
 
 
+def test_media_filter_debounce_is_dedicated_from_selection_settling():
+    """F14: the filter input settles at its own 0.25 s, not the 0.12 s settle.
+
+    The filter handler previously reused ``SELECTION_SETTLE_SECONDS`` (0.12),
+    a value tuned for row-selection paint settling, as its search debounce.
+    A dedicated ``MEDIA_FILTER_DEBOUNCE_SECONDS`` keeps selection settling
+    untouched while giving typing a real debounce window.
+    """
+    from tldw_chatbook.Library.library_media_reader_state import (
+        MEDIA_FILTER_DEBOUNCE_SECONDS,
+        SELECTION_SETTLE_SECONDS,
+    )
+
+    armed: list[float] = []
+    stopped: list[object] = []
+
+    class _FilterHandlerFake:
+        """The seams the filter debounce handler touches, nothing else."""
+
+        def __init__(self) -> None:
+            self._library_media_filter_timer = ("stale",)
+
+        def _stop_library_media_filter_timer(self) -> None:
+            stopped.append(self._library_media_filter_timer)
+            self._library_media_filter_timer = None
+
+        def set_timer(self, delay: float, callback) -> object:
+            armed.append(delay)
+            return ("timer", delay)
+
+        def _request_library_media_filter(self, query: str) -> None:
+            raise AssertionError("dispatch must wait for the debounce, not fire now")
+
+    fake = _FilterHandlerFake()
+    LibraryMediaController.handle_library_media_filter_changed(
+        fake, SimpleNamespace(value="needle")
+    )
+
+    assert MEDIA_FILTER_DEBOUNCE_SECONDS == 0.25
+    # Selection settling keeps its own (unchanged) delay.
+    assert SELECTION_SETTLE_SECONDS == 0.12
+    settling = begin_selection(
+        LibraryMediaReaderSessionState(), "local:media:1", 1, "Title"
+    )
+    assert settling.pending_request.delay_seconds == SELECTION_SETTLE_SECONDS
+    # The filter timer was re-armed at the dedicated delay, stopping the
+    # previous pending timer first.
+    assert armed == [MEDIA_FILTER_DEBOUNCE_SECONDS]
+    assert stopped == [("stale",)]
+    assert fake._library_media_filter_timer == ("timer", MEDIA_FILTER_DEBOUNCE_SECONDS)
+
+
 def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
     """The whole-screen recompose leaves no viewer to hang the hook on."""
     calls: list = []
     fake = SimpleNamespace(
         # (wave-7 merge) the session is a `LibraryMediaState` field now.
-        _media_state=SimpleNamespace(
-            reader_session=LibraryMediaReaderSessionState()
-        ),
+        _media_state=SimpleNamespace(reader_session=LibraryMediaReaderSessionState()),
         _sync_library_media_viewer_or_recompose=lambda: calls.append("sync"),
         _mounted_library_media_viewer=lambda: None,
         _focus_library_control=lambda selector: calls.append(("focus", selector)),
         call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
     )
     fake._after_library_media_viewer_sync = MethodType(
-        LibraryScreen._after_library_media_viewer_sync, fake
+        LibraryMediaController._after_library_media_viewer_sync, fake
     )
     # PR L (task-31950): the seam's ordering half is its own method now, so
     # the fakes bind it too and keep exercising the real logic.
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
-    # (wave-7 merge) the handler itself moved; the screen delegates to the
-    # controller, so the fake carries the same one hop.
-    fake._media_controller = _MoreHandlerControllerFake(fake)
+    # TASK-36952.2: the handler lives on the controller, so the test calls it
+    # there rather than through the screen's one-line delegator.
+    controller = _MoreHandlerControllerFake(fake)
 
-    LibraryScreen.handle_library_media_reader_more(
-        fake, SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_reader_more(SimpleNamespace(stop=lambda: None))
 
     assert fake._media_state.reader_session.more_open is True
     assert len(calls) == 2 and calls[0] == "sync"
@@ -1602,12 +1691,10 @@ def test_viewer_sync_seam_skips_the_hook_when_no_recompose_was_armed():
         call_after_refresh=lambda callback, *args: calls.append(("after", callback)),
     )
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
 
-    LibraryScreen._after_library_media_viewer_sync(
-        fake, "#library-media-reader-more"
-    )
+    LibraryMediaController._after_library_media_viewer_sync(fake, "#library-media-reader-more")
 
     assert calls[0] == "sync"
     # The follow-up went to the screen seam, and the viewer's own slot is
@@ -1621,30 +1708,30 @@ def test_viewer_sync_seam_skips_the_hook_when_no_recompose_was_armed():
 def test_escape_closes_more_find_confirmation_before_leaving_reader():
     """Every Reader transient consumes Escape before outward graduation."""
     fake, calls, _shell, _find = _escape_fake(region="reader", more_open=True)
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.reader_session.more_open is False
     assert calls == ["sync", ("focus", "#library-media-reader-more")]
 
     fake, calls, _shell, _find = _escape_fake(region="find")
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.content_query == ""
     assert calls == ["sync", ("focus", "#library-media-reader-find")]
 
     fake, calls, _shell, _find = _escape_fake(region="reader")
     fake._media_state.confirming_delete = True
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.confirming_delete is False
     assert calls == ["sync"]
 
     fake, calls, _shell, _find = _escape_fake(region="reader")
     fake._media_state.editing = True
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.editing is False
     assert calls == ["sync"]
 
     fake, calls, _shell, _find = _escape_fake(region="reader")
     fake._media_state.editing_analysis = True
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.editing_analysis is False
     assert calls == ["sync"]
 
@@ -1657,36 +1744,34 @@ def test_escape_closes_an_open_find_bar_from_anywhere_in_the_reader():
     Escape graduates panes. Items/Library-pane Escapes are unaffected.
     """
     fake, calls, _shell, _find = _escape_fake(region="reader", find_mounted=True)
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert fake._media_state.content_query == ""
     assert fake._media_state.find_open is False
     assert calls == ["sync", ("focus", "#library-media-reader-find")]
 
     # An Items-pane Escape never consumes the reader's find bar.
     fake, calls, shell, _find = _escape_fake(region="items", find_mounted=True)
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls == [("rail", "#library-row-browse-media"), "footer"]
 
 
 def test_escape_label_names_close_find_while_the_bar_is_open():
     """The footer label matches the widened close (Qodo #2367 finding 4)."""
-    fake, _calls, _shell, _find = _escape_fake(
-        region="reader", find_mounted=True
-    )
-    assert LibraryScreen._library_media_escape_label(fake) == "close"
+    fake, _calls, _shell, _find = _escape_fake(region="reader", find_mounted=True)
+    assert LibraryMediaController._library_media_escape_label(fake) == "close"
 
 
 def test_escape_moves_reader_to_items_then_library_then_screen_back():
     """One outward handler graduates through the effective pane hierarchy."""
     fake, calls, shell, _find = _escape_fake(region="reader")
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     # task-28004: the Items landing is the loaded row (falling back to the
     # filter only on an empty list), so Escape-then-Down keeps working.
     assert calls[:1] == [("items-pane",)]
 
     fake.focused = SimpleNamespace(ancestors=(shell.items,))
     calls.clear()
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     # task-31272: the ACTIVE RAIL ROW, never the rail's search Input --
     # the old target made the next Escape (and every letter) typing.
     assert calls == [("rail", "#library-row-browse-media"), "footer"]
@@ -1696,12 +1781,12 @@ def test_escape_moves_reader_to_items_then_library_then_screen_back():
     # painting the document, revoking Escape / ] / [ on identical pixels.
     fake.focused = SimpleNamespace(ancestors=(shell.library,))
     calls.clear()
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls == []
 
     # With the Items pane collapsed the exit is real again, so it stays.
     shell.effective_layout.items_open = False
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls == ["back"]
 
 
@@ -1709,12 +1794,12 @@ def test_escape_skips_responsively_collapsed_panes():
     """Collapsed intermediate roles are absent from outward graduation."""
     fake, calls, shell, _find = _escape_fake(region="reader")
     shell.effective_layout.items_open = False
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls[:1] == [("rail", "#library-row-browse-media")]
 
     calls.clear()
     shell.effective_layout.library_open = False
-    LibraryScreen.action_library_media_viewer_back(fake)
+    LibraryMediaController.action_library_media_viewer_back(fake)
     assert calls == ["back", "footer"]
 
 
@@ -1742,11 +1827,11 @@ async def test_hidden_panes_have_no_focusable_descendants_but_grips_remain_reach
 def test_footer_advertises_only_working_current_actions():
     """The Escape hint names the currently effective focus destination."""
     fake, _calls, shell, _find = _escape_fake(region="reader")
-    assert LibraryScreen._library_media_escape_label(fake) == "focus Items"
+    assert LibraryMediaController._library_media_escape_label(fake) == "focus Items"
     fake.focused = SimpleNamespace(ancestors=(shell.items,))
-    assert LibraryScreen._library_media_escape_label(fake) == "focus Library"
+    assert LibraryMediaController._library_media_escape_label(fake) == "focus Library"
     shell.effective_layout.library_open = False
-    assert LibraryScreen._library_media_escape_label(fake) == "back"
+    assert LibraryMediaController._library_media_escape_label(fake) == "back"
 
 
 class CountingProgressMediaService(ControlledDetailMediaService):
@@ -1762,14 +1847,14 @@ class CountingProgressMediaService(ControlledDetailMediaService):
 
 
 def _bind_progress_methods(fake) -> None:
-    """Bind every progress-write method the screen currently defines."""
+    """Bind every progress-write method ``LibraryMediaController`` defines."""
     for name in (
         "_write_library_media_loaded_progress",
         "_queue_library_media_progress_write",
         "_drain_library_media_progress_writes",
         "_library_media_progress_write_is_current",
     ):
-        method = getattr(LibraryScreen, name, None)
+        method = getattr(LibraryMediaController, name, None)
         if method is not None:
             setattr(fake, name, MethodType(method, fake))
 
@@ -1840,7 +1925,7 @@ async def test_identical_consecutive_captures_settle_a_single_progress_write():
     )
 
     for _ in range(30):
-        LibraryScreen._capture_library_media_loaded_progress(fake)
+        LibraryMediaController._capture_library_media_loaded_progress(fake)
     for worker in workers:
         await worker
 
@@ -1874,7 +1959,7 @@ async def test_offset_burst_settles_only_the_newest_value_per_item():
 
     for scroll_y in (5, 9, 17):
         scroller.scroll_y = scroll_y
-        LibraryScreen._capture_library_media_loaded_progress(fake)
+        LibraryMediaController._capture_library_media_loaded_progress(fake)
     # The drainer had no chance to run during the burst (the fake
     # run_worker defers); drain now and require last-write-wins.
     for worker in workers:
@@ -1912,7 +1997,7 @@ async def test_capture_outside_read_never_persists_the_analysis_body_offset():
         fake._media_state.reader_session, "analysis"
     )
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaController._capture_library_media_loaded_progress(fake)
 
     assert workers == []
     assert calls == []
@@ -1954,32 +2039,32 @@ def test_find_from_analysis_opens_the_bar_on_the_analysis_tab():
         _focus_library_media_content_search_input=lambda: None,
     )
     fake._reset_library_media_search_on_mode_change = MethodType(
-        LibraryScreen._reset_library_media_search_on_mode_change, fake
+        LibraryMediaController._reset_library_media_search_on_mode_change, fake
     )
     fake._close_library_media_find = MethodType(
-        LibraryScreen._close_library_media_find, fake
+        LibraryMediaController._close_library_media_find, fake
     )
     # PR H2: the focus follow-up rides the shared post-sync seam; no viewer
     # is mounted in this fake, so it takes the screen fallback.
     fake._mounted_library_media_viewer = lambda: None
     fake._after_library_media_viewer_sync = MethodType(
-        LibraryScreen._after_library_media_viewer_sync, fake
+        LibraryMediaController._after_library_media_viewer_sync, fake
     )
     # PR L (task-31950): the seam's ordering half is its own method now, so
     # the fakes bind it too and keep exercising the real logic.
     fake._queue_after_library_media_viewer_recompose = MethodType(
-        LibraryScreen._queue_after_library_media_viewer_recompose, fake
+        LibraryMediaController._queue_after_library_media_viewer_recompose, fake
     )
     # Qodo on #2378: the handler refuses when the tab has nothing to search.
     fake._library_media_find_unavailable_reason = MethodType(
-        LibraryScreen._library_media_find_unavailable_reason, fake
+        LibraryMediaController._library_media_find_unavailable_reason, fake
     )
     # task-32348: the button handler and the ctrl+f action share one
     # implementation, so the fake binds that too.
     fake._toggle_library_media_find = MethodType(
-        LibraryScreen._toggle_library_media_find, fake
+        LibraryMediaController._toggle_library_media_find, fake
     )
-    LibraryScreen.handle_library_media_reader_find(
+    LibraryMediaController.handle_library_media_reader_find(
         fake, SimpleNamespace(stop=lambda: None)
     )
     assert fake._media_state.reader_session.mode == "analysis"
@@ -2008,7 +2093,7 @@ def test_media_content_matches_scopes_corpus_to_the_active_reader_mode():
     )
 
     # Read tab -> transcript corpus ("alpha" on lines 0 and 2).
-    assert LibraryScreen._library_media_content_matches(fake) == (0, 2)
+    assert LibraryMediaController._library_media_content_matches(fake) == (0, 2)
     memo_after_read = fake._media_state.content_match_memo
     assert memo_after_read is not None and memo_after_read[3] == "read"
 
@@ -2018,7 +2103,7 @@ def test_media_content_matches_scopes_corpus_to_the_active_reader_mode():
     fake._media_state.reader_session = set_mode(
         fake._media_state.reader_session, "analysis"
     )
-    assert LibraryScreen._library_media_content_matches(fake) == (1,)
+    assert LibraryMediaController._library_media_content_matches(fake) == (1,)
     assert fake._media_state.content_match_memo[3] == "analysis"
 
 
@@ -2043,7 +2128,7 @@ def test_capture_matching_fetched_progress_skips_the_write():
         LibraryMediaReaderSessionState(), "local:media:3", 3, "Three"
     )
     fake._media_state.reader_session = session
-    cached = LibraryScreen._cache_library_media_reading_progress(
+    cached = LibraryMediaController._cache_library_media_reading_progress(
         fake,
         session.request_generation,
         "local:media:3",
@@ -2053,7 +2138,7 @@ def test_capture_matching_fetched_progress_skips_the_write():
         session, session.request_generation, "local:media:3"
     )
 
-    LibraryScreen._capture_library_media_loaded_progress(fake)
+    LibraryMediaController._capture_library_media_loaded_progress(fake)
 
     for coro in workers:
         coro.close()
@@ -2106,7 +2191,7 @@ async def test_thirty_step_traversal_settles_at_most_one_progress_write():
             for index in step_indexes
         ]
         for canonical_id, _backing_id, title in rows:
-            screen._select_library_media_reader_row(
+            screen._media_controller._select_library_media_reader_row(
                 canonical_id, title, immediate=False
             )
             # Key repeat spans event-loop turns: give the drainer the chance
@@ -2115,10 +2200,12 @@ async def test_thirty_step_traversal_settles_at_most_one_progress_write():
             await pilot.pause()
         await _wait_for_condition(
             pilot,
-            lambda: not any(
-                worker.group == "library_media_reading_progress"
-                and not worker.is_finished
-                for worker in screen.workers
+            lambda: (
+                not any(
+                    worker.group == "library_media_reading_progress"
+                    and not worker.is_finished
+                    for worker in screen.workers
+                )
             ),
             message="Progress write workers never settled.",
         )
@@ -2232,7 +2319,9 @@ def test_reader_action_keys_gated_to_plain_local_viewer():
     # task-32348 AC#2: with the Find bar open the caret is in a query field,
     # so the one destructive single key stands down; the other two do not.
     finding = _reader_key_fake(find_open=True)
-    assert LibraryScreen.check_action(finding, "library_media_move_to_trash", ()) is False
+    assert (
+        LibraryScreen.check_action(finding, "library_media_move_to_trash", ()) is False
+    )
     assert LibraryScreen.check_action(finding, "library_media_read_later", ()) is True
 
     # Qodo #2317: while a detail request is pending (mid-load/traversal), the
@@ -2258,7 +2347,9 @@ def test_t_key_arms_delete_confirmation():
     fake._sync_library_media_viewer_or_recompose = lambda: setattr(
         fake, "_synced", fake._synced + 1
     )
-    LibraryScreen.action_library_media_move_to_trash(fake)
+    # TASK-34000.22: `t` refuses while a Media form is dirty; a clean one.
+    fake._library_media_editor_dirty = lambda: ""
+    LibraryMediaController.action_library_media_move_to_trash(fake)
     assert fake._media_state.confirming_delete is True
     assert fake._media_state.delete_receipt_ids == ()
     assert fake._synced == 1
@@ -2268,7 +2359,7 @@ def test_c_key_opens_console_handoff():
     """task-28027: 'c' routes to the same Use-in-Console handoff as the button."""
     calls = []
     fake = SimpleNamespace(_open_selected_media_handoff=lambda: calls.append(1))
-    LibraryScreen.action_library_media_use_in_console(fake)
+    LibraryMediaController.action_library_media_use_in_console(fake)
     assert calls == [1]
 
 
@@ -2278,7 +2369,7 @@ def test_l_key_starts_read_later_toggle():
     fake = SimpleNamespace(
         _start_library_media_read_later_toggle=lambda: started.append(1)
     )
-    LibraryScreen.action_library_media_read_later(fake)
+    LibraryMediaController.action_library_media_read_later(fake)
     assert started == [1]
 
 
@@ -2338,7 +2429,7 @@ async def test_c_key_in_reader_opens_console_handoff_end_to_end(monkeypatch):
 
         calls = []
         monkeypatch.setattr(
-            screen, "_open_selected_media_handoff", lambda: calls.append(1)
+            screen._media_controller, "_open_selected_media_handoff", lambda: calls.append(1)
         )
         screen.query_one("#library-media-reader-find", Button).focus()
         await pilot.pause()
@@ -2411,9 +2502,7 @@ async def test_reader_recompose_returns_focus_to_the_content_not_a_grip(size):
 
         assert _focused_id(screen) not in _MEDIA_GRIP_IDS, screen.focused
         assert _focused_id(screen) == "library-media-viewer-content", screen.focused
-        after = _top_border_row(
-            host, screen.query_one("#library-media-viewer-content")
-        )
+        after = _top_border_row(host, screen.query_one("#library-media-viewer-content"))
         assert after.startswith("┏"), after
         for media_id in tuple(service.detail_release):
             service.release(media_id)
@@ -2453,7 +2542,7 @@ async def test_find_input_keeps_focus_through_a_reader_recompose(size):
             # The action is invoked rather than typed because the focused
             # Find Input swallows the "t" key -- this is the exact method
             # that binding fires.
-            screen.action_library_media_move_to_trash()
+            screen._media_controller.action_library_media_move_to_trash()
             await _wait_for_selector(screen, pilot, "#library-media-delete-cancel")
             await _settle(pilot)
         finally:
@@ -2482,9 +2571,7 @@ async def test_row_focus_survives_a_bulk_delete_receipt_repaint(size):
         _sync_library_canvas(screen, "media")
         await _settle(pilot)
 
-        dismiss = screen.query_one(
-            "#library-media-bulk-delete-receipt-dismiss", Button
-        )
+        dismiss = screen.query_one("#library-media-bulk-delete-receipt-dismiss", Button)
         screen.query_one("#library-media-row-0", Button).focus()
         await pilot.pause()
         assert _focused_id(screen) == "library-media-row-0"
@@ -2527,6 +2614,7 @@ async def test_media_focus_restore_never_clobbers_a_queued_follow_up(size):
         screen = await _open_media_list(host, pilot)
         canvas = screen.query_one("#library-media-canvas")
         ran: list[str] = []
+
         def owner() -> None:
             ran.append("owner")
             screen.query_one("#library-media-row-1", Button).focus()
@@ -2568,9 +2656,9 @@ async def test_restore_falls_back_to_the_list_entry_when_the_target_is_disabled(
         screen.query_one("#library-media-row-0", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen.query_one(
-                "#library-media-export-selected", Button
-            ).disabled,
+            lambda: (
+                not screen.query_one("#library-media-export-selected", Button).disabled
+            ),
             message="Selecting a row never enabled Export.",
         )
         export = screen.query_one("#library-media-export-selected", Button)
@@ -2645,10 +2733,9 @@ async def test_opening_find_costs_no_extra_focus_move(size):
         assert "library-media-reader-find" not in moves, moves
         # Exact list, not just a ceiling (review M-5): an inequality would let
         # a future regression that silently DROPS a legitimate move pass.
-        assert moves == [
-            "library-browse-items-grip",
-            "library-media-content-search",
-        ], moves
+        # TASK-40327: the bar mounts in place, so the Reader recompose that
+        # parked focus on the items grip on the way (the old first move) is gone.
+        assert moves == ["library-media-content-search"], moves
         for media_id in tuple(service.detail_release):
             service.release(media_id)
 
@@ -2867,11 +2954,7 @@ async def test_screen_refresh_without_recompose_moves_no_focus():
 # ---------------------------------------------------------------------------
 
 _FIND_COPY_CONTENT = (
-    "budget line one\n"
-    "ordinary text\n"
-    "budget line two\n"
-    "more text\n"
-    "budget line three\n"
+    "budget line one\nordinary text\nbudget line two\nmore text\nbudget line three\n"
 )
 
 
@@ -3082,15 +3165,31 @@ async def test_any_non_markdown_item_with_content_says_why_rendered_is_absent(
         assert viewer.viewer.media_type == media_type
         assert not viewer.viewer.is_markdown
 
-        screen.query_one("#library-media-reader-select-info", Button).press()
-        await pilot.pause()
-        note = screen.query_one("#library-media-content-mode-note", Static)
+        # TASK-41127: the tab and its note mount, lay out and paint over
+        # several frames; one pause read an empty region under load. Wait for
+        # the live tab, then for the note to reach the glass.
+        (
+            await _wait_for_selector(
+                screen, pilot, "#library-media-reader-select-info"
+            )
+        ).press()
+
+        def painted_note() -> str:
+            # "" while the note is not mounted: the failure message reads
+            # this too, after the wait gave up, and must not raise NoMatches.
+            notes = screen.query("#library-media-content-mode-note")
+            return _painted_text(host, notes.first().region) if notes else ""
+
         # Type-neutral copy (batch-3 review ruling 1): it says why THIS item
         # has no rendered view, not which types one is for -- the old
         # spelling told a transcript reader rendering was "for transcripts".
-        assert (
-            "No Markdown formatting to render — showing the stored text"
-            in _painted_text(host, note.region)
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                "No Markdown formatting to render — showing the stored text"
+                in painted_note()
+            ),
+            message=lambda: f"Rendered-view note never painted: {painted_note()!r}",
         )
         # Text only: the slot gains no control.
         assert not screen.query("#library-media-content-mode-rendered")

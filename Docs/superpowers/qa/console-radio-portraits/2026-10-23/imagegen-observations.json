@@ -1,0 +1,85 @@
+{
+  "synthetic_audio": false,
+  "live_audio": false,
+  "source_sha256": "6d8ba7ecf1f19dd5e7c2a5a11e9337dd2ce26897140aff6fe4e77b91bfdf1463",
+  "roles": [
+    {
+      "role": "rest",
+      "box": [
+        23,
+        12
+      ],
+      "pixels": [
+        24,
+        24
+      ],
+      "sha256": "a88e9e5d65141b13c9e7c3ee536ece3d425df98c91d51964a570211d6910d05e"
+    },
+    {
+      "role": "small",
+      "box": [
+        23,
+        12
+      ],
+      "pixels": [
+        24,
+        24
+      ],
+      "sha256": "f40417cb0f40c23b186201d8847e8709d1ae176e96038de4f8bb44f27b9ea427"
+    },
+    {
+      "role": "open",
+      "box": [
+        23,
+        12
+      ],
+      "pixels": [
+        24,
+        24
+      ],
+      "sha256": "7e301c302c12fb65b9d0bedaa0f133592b751c9f5c907986c050fc8a6aba818a"
+    },
+    {
+      "role": "blink_rest",
+      "box": [
+        23,
+        12
+      ],
+      "pixels": [
+        24,
+        24
+      ],
+      "sha256": "04df3a6a98b4318016d0aa93541ad7da59d662d1b5531b557564055e4b52478c"
+    },
+    {
+      "role": "blink_small",
+      "box": [
+        23,
+        12
+      ],
+      "pixels": [
+        24,
+        24
+      ],
+      "sha256": "e7dac6019dd1ec510bc9f313695a0af588c23fabd9a6bada15df22c464a28a31"
+    },
+    {
+      "role": "blink_open",
+      "box": [
+        23,
+        12
+      ],
+      "pixels": [
+        24,
+        24
+      ],
+      "sha256": "5a9c0ab9fdc599e077d17ff3a3df0272c569390e76c387527b725bd6365fbaf1"
+    }
+  ],
+  "replacement_preserved_other_five": true,
+  "reopened_matches": true,
+  "removed": true,
+  "original_unchanged": true,
+  "applied_revision": 1,
+  "removed_revision": 2
+}

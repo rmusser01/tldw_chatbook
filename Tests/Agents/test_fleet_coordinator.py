@@ -383,10 +383,11 @@ def test_progress_disabled_coordinator_returns_no_sender():
 
 
 @pytest.mark.parametrize("first_operation", ["post", "finish"])
-def test_progress_finish_and_send_serialize_under_the_actual_owner_lock(
+def test_progress_finish_preserves_admitted_reports_and_refuses_late_send(
     first_operation,
 ):
     from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
 
     from tldw_chatbook.Agents.fleet_messages import MessageError, MessageStore
 
@@ -398,31 +399,16 @@ def test_progress_finish_and_send_serialize_under_the_actual_owner_lock(
     sender = coord.bind_progress_sender(
         handle.handle_id, parent_run_id="p", chain_id=None
     )
-    acquired = threading.Event()
+    admitted = threading.Event()
     release = threading.Event()
-    second_attempted = threading.Event()
 
-    class GateLock:
-        """Hold the first entrant at its real locked admission boundary."""
+    def append(_conversation, _report):
+        # This leaf starts only after exact capability, queue and budget checks.
+        admitted.set()
+        assert release.wait(timeout=5)
 
-        def __init__(self):
-            self.lock = threading.Lock()
-            self.first = True
-
-        def __enter__(self):
-            if acquired.is_set():
-                second_attempted.set()
-            self.lock.acquire()
-            if self.first:
-                self.first = False
-                acquired.set()
-                assert release.wait(timeout=5)
-            return self
-
-        def __exit__(self, *args):
-            self.lock.release()
-
-    store._lock = GateLock()
+    inbox._repository = SimpleNamespace(append=append)
+    inbox._saved_conversation_id = "saved"
 
     def post():
         try:
@@ -431,28 +417,29 @@ def test_progress_finish_and_send_serialize_under_the_actual_owner_lock(
             assert exc.code == "unavailable"
             return None
 
-    def finish():
-        coord.finish(handle.handle_id, RUN_DONE)
-
-    operations = {"post": post, "finish": finish}
-    second_operation = "finish" if first_operation == "post" else "post"
     with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(operations[first_operation])
-        try:
-            assert acquired.wait(timeout=5)
-            second = pool.submit(operations[second_operation])
-            assert second_attempted.wait(timeout=5)
-        finally:
-            release.set()
-        outcomes = {
-            first_operation: first.result(timeout=5),
-            second_operation: second.result(timeout=5),
-        }
-    assert (outcomes["post"] is not None) == (first_operation == "post")
+        if first_operation == "post":
+            report = pool.submit(post)
+            try:
+                assert admitted.wait(timeout=5)
+                finish = pool.submit(coord.finish, handle.handle_id, RUN_DONE)
+                finish.result(timeout=0.5)
+                assert coord.live_count() == 0
+                assert inbox.snapshot() == ()  # Publication follows the leaf commit.
+            finally:
+                release.set()
+        else:
+            coord.finish(handle.handle_id, RUN_DONE)
+            report = pool.submit(post)
+        result = report.result(timeout=5)
+    assert (result is not None) == (first_operation == "post")
+    assert admitted.is_set() == (first_operation == "post")
     assert len(inbox.snapshot()) == (1 if first_operation == "post" else 0)
     assert coord.live_count() == 0
     coord.prune_terminal()
     assert len(inbox.snapshot()) == (1 if first_operation == "post" else 0)
+    with pytest.raises(MessageError, match="unavailable"):
+        sender.send("late report")
 
 
 @pytest.mark.parametrize("close_owner", [False, True])

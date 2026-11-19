@@ -8,7 +8,6 @@ explicit link policy (http(s) to the browser, other schemes notify-only).
 
 import webbrowser
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
@@ -180,7 +179,7 @@ def test_roleplay_markdown_annotates_single_quoted_thought_with_contraction():
 @pytest.mark.parametrize(
     ("source", "speech"),
     [
-        ('Narration. "I said \'no\'."', '"I said \'no\'."'),
+        ("Narration. \"I said 'no'.\"", "\"I said 'no'.\""),
         ("Narration. “I said ‘no’.”", "“I said ‘no’.”"),
     ],
 )
@@ -243,6 +242,38 @@ def test_textual_block_compatibility_guard_falls_back(monkeypatch):
     monkeypatch.setattr(Markdown, "BLOCKS", {})
 
     assert _resolve_textual_roleplay_blocks() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_detached_roleplay_markdown_blocks_take_styles_at_native_mount(
+    monkeypatch,
+):
+    app = MarkdownHarness()
+    async with app.run_test() as pilot:
+        transcript = app.query_one(ConsoleTranscript)
+        detached_updates = []
+        original = app.update_styles
+
+        def update_styles(node, *args, **kwargs):
+            if not node.is_attached and node.has_class(
+                "console-roleplay-markdown-block"
+            ):
+                detached_updates.append(type(node).__name__)
+            return original(node, *args, **kwargs)
+
+        monkeypatch.setattr(app, "update_styles", update_styles)
+        transcript.set_messages([_assistant("# Heading\n\nA *flavored* paragraph.")])
+        await transcript.refresh_messages()
+        await pilot.pause()
+        markdown = transcript.query_one(ConsoleRoleplayMarkdown)
+        blocks = list(markdown.query(".console-roleplay-markdown-block"))
+        assert [block.content.plain for block in blocks] == [
+            "Heading",
+            "A flavored paragraph.",
+        ]
+        assert all(block.is_attached for block in blocks)
+        assert detached_updates == []
 
 
 @pytest.mark.asyncio
@@ -310,9 +341,9 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
         for role, style in styles.items():
             assert style.color is not None and style.bgcolor is not None
             ratio = _contrast(style.color, style.bgcolor)
-            assert (
-                ratio >= 4.5
-            ), f"{role} contrast is {ratio:.2f}:1 under {theme}; expected 4.5:1"
+            assert ratio >= 4.5, (
+                f"{role} contrast is {ratio:.2f}:1 under {theme}; expected 4.5:1"
+            )
 
         transcript.select_message("a1")
         await pilot.pause()
@@ -383,8 +414,7 @@ async def test_assistant_rows_render_markdown_and_other_roles_stay_plain():
         header = turn.query_one(".console-markdown-header", ConsoleMessageHeader)
         label = header.query_one(".console-transcript-speaker-label", Static)
         assert "Generating…" in label.renderable.plain
-        # Empty message: footer hidden.
-        assert row.query_one(".console-markdown-footer").display is False
+        assert row.query_one_optional(".console-markdown-footer") is None
 
 
 @pytest.mark.asyncio
@@ -451,10 +481,14 @@ async def test_streaming_appends_without_reparse(monkeypatch):
         update_calls, append_calls = [], []
         original_update, original_append = md.update, md.append
         monkeypatch.setattr(
-            md, "update", lambda text: update_calls.append(text) or original_update(text)
+            md,
+            "update",
+            lambda text: update_calls.append(text) or original_update(text),
         )
         monkeypatch.setattr(
-            md, "append", lambda text: append_calls.append(text) or original_append(text)
+            md,
+            "append",
+            lambda text: append_calls.append(text) or original_append(text),
         )
 
         # Streaming growth: strict prefix -> append only, delta only.
@@ -609,6 +643,7 @@ async def test_footer_renders_chips_and_citation_notice():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_link_policy_http_opens_browser_other_schemes_do_not(monkeypatch):
     opened = []
     monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
@@ -621,12 +656,15 @@ async def test_link_policy_http_opens_browser_other_schemes_do_not(monkeypatch):
         await transcript.refresh_messages()
         await pilot.pause()
         row = transcript.query_one("#console-message-a1")
+        markdown = row.query_one(Markdown)
 
-        row._open_link(SimpleNamespace(href="https://example.com", stop=lambda: None))
+        row._open_link(Markdown.LinkClicked(markdown, "https://example.com"))
+        await app.workers.wait_for_complete()
         assert opened == ["https://example.com"]
 
-        row._open_link(SimpleNamespace(href="file:///etc/passwd", stop=lambda: None))
-        row._open_link(SimpleNamespace(href="javascript:alert(1)", stop=lambda: None))
+        row._open_link(Markdown.LinkClicked(markdown, "file:///etc/passwd"))
+        row._open_link(Markdown.LinkClicked(markdown, "javascript:alert(1)"))
+        await app.workers.wait_for_complete()
         assert opened == ["https://example.com"]  # nothing else opened
 
 

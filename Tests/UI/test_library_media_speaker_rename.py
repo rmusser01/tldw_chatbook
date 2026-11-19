@@ -109,7 +109,7 @@ def test_presentation_reachability_reflects_meeting_folder(
     screen = LibraryScreen(app)
 
     screen._media_state.selected_media_id = f"local:media:{media_id}"
-    presentation = screen._library_media_canvas_presentation()
+    presentation = screen._media_controller._library_media_canvas_presentation()
     assert presentation["can_rename_speakers"] is True
     assert presentation["speaker_rename_media_id"] == media_id
 
@@ -504,7 +504,7 @@ def test_presentation_never_fetches_content_and_memoizes_per_selection(
     queries_after_first = len(spy.queries)
 
     for _ in range(5):
-        screen._library_media_canvas_presentation()
+        screen._media_controller._library_media_canvas_presentation()
     assert len(spy.queries) == queries_after_first       # memoized for this selection
 
 

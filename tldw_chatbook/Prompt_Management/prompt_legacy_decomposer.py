@@ -73,7 +73,14 @@ def _candidates(text: str) -> list[tuple[int, int, str, str, int | None, int | N
     for heading in _MARKDOWN_HEADING.finditer(text):
         if not _in_fence(text, heading.start()):
             candidates.append(
-                (heading.start(), heading.end(), "markdown", heading.group(1), None, None)
+                (
+                    heading.start(),
+                    heading.end(),
+                    "markdown",
+                    heading.group(1),
+                    None,
+                    None,
+                )
             )
     for opening in _XML_OPEN.finditer(text):
         if opening.start() and text[opening.start() - 1] != "\n":
@@ -129,7 +136,9 @@ def _lane_blocks(lane_id: str, text: str) -> tuple[PromptBlock, ...]:
             )
             cursor = end
         else:
-            next_start = candidates[index + 1][0] if index + 1 < len(candidates) else len(text)
+            next_start = (
+                candidates[index + 1][0] if index + 1 < len(candidates) else len(text)
+            )
             blocks.append(
                 PromptBlock(
                     id=f"legacy-{lane_id}-{block_number}",
@@ -153,7 +162,9 @@ def _lane_blocks(lane_id: str, text: str) -> tuple[PromptBlock, ...]:
 
 
 def _origin(text: str) -> LegacyLaneOrigin:
-    return LegacyLaneOrigin(text=text, fingerprint=sha256(text.encode("utf-8")).hexdigest())
+    return LegacyLaneOrigin(
+        text=text, fingerprint=sha256(text.encode("utf-8")).hexdigest()
+    )
 
 
 def decompose_legacy_lanes(system_prompt: str, user_prompt: str) -> LegacyDecomposition:

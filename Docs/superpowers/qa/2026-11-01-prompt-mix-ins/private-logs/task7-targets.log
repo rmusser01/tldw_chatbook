@@ -1,0 +1,49 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+_________ test_mixin_enable_refuses_absent_target_and_replaced_source __________
+tldw_chatbook/DB/Prompts_DB.py:525: in _get_thread_connection
+    conn = connect_private_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1934: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1612: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1832: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2681: in verify_trusted_directory
+    raise PrivatePathError(
+E   tldw_chatbook.Utils.private_paths.PrivatePathError: unsafe_parent: missing_directory [/private/tmp/task7-targets/test_mixin_enable_refuses_abse0/other]
+
+The above exception was the direct cause of the following exception:
+tldw_chatbook/DB/Prompts_DB.py:418: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/Prompts_DB.py:1131: in _initialize_schema
+    conn = self.get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/Prompts_DB.py:572: in get_connection
+    return self._get_thread_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:596: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/Prompts_DB.py:565: in _get_thread_connection
+    raise DatabaseError(
+E   tldw_chatbook.DB.Prompts_DB.DatabaseError: Failed to connect to database '/private/tmp/task7-targets/test_mixin_enable_refuses_abse0/other/prompts.db': unsafe_parent: missing_directory [/private/tmp/task7-targets/test_mixin_enable_refuses_abse0/other]
+
+The above exception was the direct cause of the following exception:
+Tests/UI/test_library_prompts_reader.py:1046: in test_mixin_enable_refuses_absent_target_and_replaced_source
+    other_db, other_service = _real_prompt_scope_service(tmp_path / "other")
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_prompts_canvas.py:5626: in _real_prompt_scope_service
+    db = PromptsDatabase(tmp_path / "prompts.db", client_id="test-client")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/Prompts_DB.py:442: in __init__
+    raise DatabaseError(f"Prompts Database initialization failed: {e}") from e
+E   tldw_chatbook.DB.Prompts_DB.DatabaseError: Prompts Database initialization failed: Failed to connect to database '/private/tmp/task7-targets/test_mixin_enable_refuses_abse0/other/prompts.db': unsafe_parent: missing_directory [/private/tmp/task7-targets/test_mixin_enable_refuses_abse0/other]
+============================= slowest 25 durations =============================
+3.29s call     Tests/UI/test_library_prompt_mixins.py::test_real_console_mixin_consumer_enables_without_touching_composer_or_system
+
+(5 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_prompts_reader.py::test_mixin_enable_refuses_absent_target_and_replaced_source
+1 failed, 1 passed in 5.96s

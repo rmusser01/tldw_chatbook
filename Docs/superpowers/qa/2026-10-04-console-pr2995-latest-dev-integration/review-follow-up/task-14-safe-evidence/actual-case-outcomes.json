@@ -1,0 +1,175 @@
+{
+  "red": {
+    "cases": [
+      {
+        "id": "Tests/UI/test_console_runtime_ownership.py::test_idle_reconciled_view_does_not_admit_transcript_poll",
+        "status": "failed",
+        "message": "AttributeError: 'types.SimpleNamespace' object has no attribute 'consume_pending_vllm_console_intent'"
+      }
+    ],
+    "counts": {
+      "passed": 0,
+      "failed": 1,
+      "error": 0,
+      "xfail": 0,
+      "skipped": 0
+    }
+  },
+  "together": {
+    "cases": [
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_bare_array_listing_of_non_model_objects_stays_invalid[body0]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_bare_array_listing_of_non_model_objects_stays_invalid[body1]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_bare_array_listing_of_non_model_objects_stays_invalid[body2]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalize_models_drops_an_oversized_field_but_keeps_the_model",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalize_models_rejects_unbounded_metadata[metadata0]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalize_models_rejects_unbounded_metadata[metadata1]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalize_models_rejects_unbounded_metadata[metadata2]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalizes_openai_models_response_to_raw_model_ids",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_response_metadata_does_not_include_sensitive_headers",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_anthropic_paginates_with_after_id",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_openai_does_not_paginate",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_discovery_rejects_model_count_over_bound_without_partial_cache_data",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_listing_discovers_in_its_recorded_shape[together]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_stream_parses_under_its_record[together]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_bodies_parse_under_their_record[together-plain-chat_response]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_bodies_parse_under_their_record[together-tool-tool_call_response]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Calls/test_doc_derived_presets.py::test_stream_options_only_where_the_record_asks[together]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Calls/test_doc_derived_presets.py::test_existing_presets_keep_their_payload_contract",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Calls/test_inference_cloud_presets.py::test_allowances_ship_empty_pending_first_capture[together]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/LLM_Calls/test_live_capture_tool.py::test_listing_picks_a_chat_model_and_ollama_cloud_sends_no_tool_choice",
+        "status": "passed",
+        "message": null
+      }
+    ],
+    "counts": {
+      "passed": 20,
+      "failed": 0,
+      "error": 0,
+      "xfail": 0,
+      "skipped": 0
+    }
+  },
+  "reconciliation": {
+    "cases": [
+      {
+        "id": "Tests/UI/test_console_runtime_ownership.py::test_idle_reconciled_view_does_not_admit_transcript_poll",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[viewed]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[other]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[wake]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[review]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[custody]",
+        "status": "passed",
+        "message": null
+      },
+      {
+        "id": "Tests/UI/test_console_runtime_ownership.py::test_captured_attach_timer_overlap_rearms_real_sync_worker",
+        "status": "xfail",
+        "message": "TASK-32873: the real sync worker now reads whole-screen owner state (library projection, staged evidence, active settings, Textual message-pump context) that a bare __new__ ChatScreen mount cannot satisfy; needs the app_factory real-mount rewrite. Tracked in the task notes."
+      }
+    ],
+    "counts": {
+      "passed": 6,
+      "failed": 0,
+      "error": 0,
+      "xfail": 1,
+      "skipped": 0
+    }
+  }
+}

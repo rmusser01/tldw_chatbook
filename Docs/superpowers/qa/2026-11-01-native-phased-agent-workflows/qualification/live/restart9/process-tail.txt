@@ -1,0 +1,68 @@
+7:50.601 | INFO     | tldw_chatbook.app:__init__:1660 -   parallel_init: 0.087s (14.7%)
+2026-11-04 20:37:50.601 | INFO     | tldw_chatbook.app:__init__:1673 -     - notes_service: 0.086s (99.6% of parallel_init)
+2026-11-04 20:37:50.601 | INFO     | tldw_chatbook.app:__init__:1673 -     - media_db: 0.059s (68.2% of parallel_init)
+2026-11-04 20:37:50.601 | INFO     | tldw_chatbook.app:__init__:1673 -     - prompts_service: 0.052s (59.9% of parallel_init)
+2026-11-04 20:37:50.601 | INFO     | tldw_chatbook.app:__init__:1673 -     - providers_models: 0.000s (0.4% of parallel_init)
+2026-11-04 20:37:50.601 | INFO     | tldw_chatbook.app:__init__:1677 - ==============================
+INFO:root:Splash screen enabled: False
+2026-11-04 20:37:50.908 | DEBUG    | tldw_chatbook.app:on_mount:3355 - Notes-sync start gate: no configuration evidence; runtime not constructed this boot.
+INFO:tldw_chatbook.diagnostics.app:event=app_started component=app
+INFO:root:--- _setup_logging START (from Logging_Config.py) ---
+INFO:root:Loguru: All pre-existing sinks removed.
+INFO:root:Loguru: Configured to forward its messages to standard Python logging system.
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_work_decorator.py:74: RuntimeWarning: coroutine 'ChatScreen._sync_native_console_chat_ui' was never awaited
+  def work(
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+2026-11-04 20:38:03.655 | DEBUG    | tldw_chatbook.config:<module>:150 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-11-04 20:38:03.696 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7069 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/config/config.toml
+2026-11-04 20:38:03.698 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7090 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/config/config.toml
+2026-11-04 20:38:03.698 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7174 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+2026-11-04 20:38:03.698 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7178 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-11-04 20:38:03.702 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:38:03.702 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:38:03.703 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-04 20:38:03.703 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2645 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-04 20:38:03.712 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-11-04 20:38:03.712 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+2026-11-04 20:38:03.712 | INFO     | tldw_chatbook.config:<module>:11835 - Default API Endpoint (from config.py global scope): openai
+2026-11-04 20:38:03.712 | DEBUG    | tldw_chatbook.config:<module>:11858 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-11-04 20:38:04.020 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1554 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+2026-11-04 20:38:04.056 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-11-04 20:38:04.255 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+2026-11-04 20:39:04.064 | DEBUG    | tldw_chatbook.config:<module>:150 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-11-04 20:39:04.125 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7069 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/config/config.toml
+2026-11-04 20:39:04.127 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7090 - Successfully loaded and merged CLI config from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/config/config.toml
+2026-11-04 20:39:04.128 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7174 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+2026-11-04 20:39:04.128 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7178 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-11-04 20:39:04.132 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:39:04.132 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:39:04.133 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-04 20:39:04.133 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2645 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-04 20:39:04.147 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-11-04 20:39:04.147 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+2026-11-04 20:39:04.147 | INFO     | tldw_chatbook.config:<module>:11835 - Default API Endpoint (from config.py global scope): openai
+2026-11-04 20:39:04.147 | DEBUG    | tldw_chatbook.config:<module>:11858 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-11-04 20:39:04.557 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1554 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+2026-11-04 20:39:04.614 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-11-04 20:39:04.887 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 341, in <module>
+    asyncio.run(main())
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 334, in main
+    try: creators.retire()
+         ^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/Tests/Performance/_stock_private_app_creators.py", line 264, in retire
+    raise AssertionError(
+AssertionError: {'fixture_creator_not_settled': 'db.media.primary', 'participant_closed': False, 'handles': [{'thread': 'asyncio_10', 'transaction': False, 'live_lease': True}]}

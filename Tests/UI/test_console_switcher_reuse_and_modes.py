@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Button, Input
 
+from Tests.UI.app_factory import swap_app_aliases
 from Tests.UI.test_console_character_activation_presentation import (
     _seed,
     _until,
     activation_library,  # noqa: F401
 )
 from Tests.UI.test_console_character_switcher_geometry import _GeometryApp
+from Tests.UI.test_console_mcp_approval import _wait_for_production_console_ready
 from Tests.UI.test_console_native_chat_flow import _static_plain_text
 from Tests.UI.test_console_scope_row import (
     _AlwaysExistsMediaDB,
@@ -18,15 +22,98 @@ from Tests.UI.test_console_scope_row import (
 )
 from Tests.UI.test_console_workbench_contract import ConsoleHarness
 from Tests.UI.test_library_inspection_admission import library  # noqa: F401
+from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+    LocalCharacterConversationTarget,
+    ResolvedLocalCharacterKey,
+)
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.console_conversation_activation import (
+    ConsoleActivationResultKind,
+)
 from tldw_chatbook.Chat.console_switcher_state import SwitcherMode
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+from tldw_chatbook.Widgets.Console.console_background_effect import (
+    active_console_transcript,
+)
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
     ConsoleSwitcherChoice,
 )
+from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest.mark.asyncio
+async def test_character_activation_publishes_target_during_coalesced_console_sync(
+    activation_library,  # noqa: F811
+    monkeypatch,
+):
+    """An occupied whole-Console refresh cannot falsely fail an exact warm open.
+
+    Args:
+        activation_library: Isolated installed app, profile, and local SQLite owners.
+        monkeypatch: Test-scoped patch holding the broad sync before publication.
+    """
+    owner, _, db = activation_library
+    _seed(owner, db)
+    owner.local_chat_conversation_service = ChatConversationService(db)
+    host = ConsoleHarness(owner)
+    async with host.run_test(size=(120, 50)) as pilot:
+        chat = await _wait_for_production_console_ready(host, pilot)
+        store = chat._ensure_console_chat_store()
+        prior = store.active_session_id
+        assert await chat._workspace._resume_console_workspace_conversation("exact")
+        warm_id = store.active_session_id
+        await chat._session._activate_native_console_session(prior)
+        await _wait_for_production_console_ready(host, pilot)
+        assert active_console_transcript(chat)._session_identity == prior
+        record = db.get_conversation_by_id("exact")
+        target = LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey(
+                db.get_local_authority_id(), record["character_id"]
+            ),
+            "exact",
+        )
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original_summary = (
+            chat._retrieval._refresh_active_dictionaries_summary_if_scope_changed
+        )
+
+        async def hold_summary():
+            entered.set()
+            await release.wait()
+            await original_summary()
+
+        monkeypatch.setattr(
+            chat._retrieval,
+            "_refresh_active_dictionaries_summary_if_scope_changed",
+            hold_summary,
+        )
+        background = asyncio.create_task(chat._sync_native_console_chat_ui())
+        activation = None
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            activation = asyncio.create_task(
+                chat._workspace.activate_character_conversation(target)
+            )
+            result = await asyncio.wait_for(asyncio.shield(activation), 10)
+            assert result.kind is ConsoleActivationResultKind.OPENED
+            assert store.active_session_id == warm_id
+            assert active_console_transcript(chat)._session_identity == warm_id
+            assert chat._workspace._character_conversation_target_visible(target)
+            assert chat.focused is chat.query_one("#console-native-composer")
+            matches = [
+                s for s in store.sessions() if s.persisted_conversation_id == "exact"
+            ]
+            assert len(matches) == 1
+        finally:
+            release.set()
+            tasks = [background] + ([activation] if activation is not None else [])
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 10)
+        await pilot.pause()
 
 
 async def _until_stage(predicate, stage):
@@ -34,6 +121,171 @@ async def _until_stage(predicate, stage):
         await _until(predicate)
     except TimeoutError as exc:
         raise AssertionError(f"Switcher did not reach {stage}") from exc
+
+
+@pytest.mark.asyncio
+async def test_native_tab_publishes_current_draft_and_transcript_during_scope_load(
+    activation_library,  # noqa: F811
+    monkeypatch,
+):
+    owner, _, db = activation_library
+    _seed(owner, db)
+    owner.local_chat_conversation_service = ChatConversationService(db)
+    host = ConsoleHarness(owner)
+    async with host.run_test(size=(120, 50)) as pilot:
+        chat = await _wait_for_production_console_ready(host, pilot)
+        store = chat._ensure_console_chat_store()
+        prior = store.active_session_id
+        assert await chat._workspace._resume_console_workspace_conversation("exact")
+        warm_id = store.active_session_id
+        await chat._session._activate_native_console_session(prior)
+        await _wait_for_production_console_ready(host, pilot)
+        composer = chat.query_one("#console-native-composer")
+        assert active_console_transcript(chat)._session_identity == prior
+        store.set_session_draft(warm_id, "Remembered draft")
+
+        original = chat._retrieval._refresh_console_effective_scope_and_sync
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def hold_scope(session, **kwargs):
+            assert session.id == warm_id
+            entered.set()
+            await release.wait()
+            return await original(session, **kwargs)
+
+        monkeypatch.setattr(
+            chat._retrieval, "_refresh_console_effective_scope_and_sync", hold_scope
+        )
+        activation = asyncio.create_task(
+            chat._session._activate_native_console_session(warm_id)
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            assert store.active_session_id == warm_id
+            await _until_stage(
+                lambda: (
+                    (transcript := active_console_transcript(chat)) is not None
+                    and transcript._session_identity == warm_id
+                    and any(
+                        message.content == "Exact selected content"
+                        and message.id in transcript.mounted_message_content_ids()
+                        for message in transcript._messages
+                    )
+                    and chat.focused is composer
+                    and composer.draft_text() == "Remembered draft"
+                ),
+                "mounted native transcript, draft, and focus with scope held",
+            )
+        finally:
+            release.set()
+            await asyncio.wait_for(activation, 5)
+
+
+@pytest.mark.asyncio
+async def test_active_return_publishes_transcript_during_character_sidebar_read(
+    activation_library,  # noqa: F811
+    monkeypatch,
+):
+    owner, _, db = activation_library
+    _seed(owner, db)
+    owner.local_chat_conversation_service = ChatConversationService(db)
+    host = ConsoleHarness(owner)
+    async with host.run_test(size=(120, 50)) as pilot:
+        chat = await _wait_for_production_console_ready(host, pilot)
+        store = chat._ensure_console_chat_store()
+        prior = store.active_session_id
+        assert await chat._workspace._resume_console_workspace_conversation("exact")
+        warm_id = store.active_session_id
+        await chat._session._activate_native_console_session(prior)
+        await _wait_for_production_console_ready(host, pilot)
+        await _until_stage(
+            lambda: (
+                not any(
+                    worker.node is chat
+                    and worker.group == "console-character-context-refresh"
+                    and not worker.is_finished
+                    for worker in chat.workers
+                )
+            ),
+            "prior Character refresh retirement",
+        )
+        assert active_console_transcript(chat)._session_identity == prior
+
+        controller = chat._character_context
+        original_refresh = controller.refresh_if_scope_changed
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = []
+        hook_workers = []
+        original_run_worker = chat.run_worker
+
+        def observe_worker(*args, **kwargs):
+            worker = original_run_worker(*args, **kwargs)
+            if worker.group == "console-hook-refresh":
+                hook_workers.append(worker)
+            return worker
+
+        async def hold_read(*args, **kwargs):
+            calls.append(asyncio.current_task())
+            entered.set()
+            await release.wait()
+            return await original_refresh(*args, **kwargs)
+
+        monkeypatch.setattr(controller, "refresh_if_scope_changed", hold_read)
+        monkeypatch.setattr(chat, "run_worker", observe_worker)
+        background = asyncio.create_task(chat._sync_native_console_chat_ui())
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            await chat.action_open_console_session_switcher()
+            await _until(lambda: isinstance(host.screen, ConsoleSessionSwitcherModal))
+            modal = host.screen
+            await _until(lambda: modal.query("#console-switcher-query"))
+            modal.query_one("#console-switcher-query", Input).value = "Exact"
+            await _until_stage(
+                lambda: (
+                    not modal._query_pending
+                    and len(modal._entries) == 1
+                    and modal._entries[0].native_session_id == warm_id
+                ),
+                "exact Active result",
+            )
+            await host._press_keys(["enter"])
+            await _until_stage(
+                lambda: host.screen is chat and store.active_session_id == warm_id,
+                "exact Active session",
+            )
+            await _until_stage(
+                lambda: (
+                    (transcript := active_console_transcript(chat)) is not None
+                    and transcript._session_identity == warm_id
+                    and any(
+                        row.content == "Exact selected content"
+                        for row in transcript._messages
+                    )
+                    and chat.focused is chat.query_one("#console-native-composer")
+                ),
+                "exact transcript and composer focus with the sidebar read held",
+            )
+            await asyncio.wait_for(asyncio.shield(background), 5)
+            assert len(calls) == 1
+        finally:
+            release.set()
+            await asyncio.wait_for(background, 5)
+
+        await _until_stage(
+            lambda: (
+                controller.state.scope_fingerprint is not None
+                and controller.state.scope_fingerprint.open_conversation_id == "exact"
+            ),
+            "current Character sidebar",
+        )
+        await _until_stage(
+            lambda: chat._console_attach_reconciled and hook_workers,
+            "Console resume and hook refresh",
+        )
+        await pilot.pause()
+        # The real resume and draft-session change each own a refresh.
+        assert len(hook_workers) == 2
+        await hook_workers[-1].wait()
 
 
 def _luminance(rgb):
@@ -225,7 +477,7 @@ async def test_history_reuse_preserves_exact_saved_identity(activation_library, 
 async def test_history_reuse_refreshes_changed_workspace_scope(activation_library):  # noqa: F811
     owner, _, db = activation_library
     _seed(owner, db)
-    owner.media_db = _AlwaysExistsMediaDB()
+    swap_app_aliases(owner, media_db=_AlwaysExistsMediaDB())
     owner.local_chat_conversation_service = ChatConversationService(db)
     host = ConsoleHarness(owner)
     async with host.run_test(size=(240, 64)) as pilot:
@@ -265,7 +517,13 @@ async def test_history_reuse_refreshes_changed_workspace_scope(activation_librar
         await pilot.pause()
         assert store.active_session_id == target.id
         assert chat._console_effective_scope_cache["exact"].item_count == 2
-        assert _static_plain_text(chat.query_one("#console-scope-chip")) == "Scope: 2"
+        # TASK-35160: the scope chip is the strip line's "scope" segment.
+        assert (
+            chat.query_one(
+                "#console-status-chips", ConsoleStatusChips
+            ).segment_text("scope")
+            == "Scope: 2"
+        )
 
 
 @pytest.mark.asyncio

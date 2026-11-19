@@ -28,9 +28,7 @@ def _joined(*parts: str) -> str:
         _joined("sk-", "proj-", "Q7mN2pL8vR4cT9xK6wH3jF5sD1aB0uE2yI7oP9zX"),
         _joined("sk-ant-", "api03-", "Q7mN2pL8vR4cT9xK6wH3jF5sD1aB0uE2yI7oP9zX"),
         _joined("ghp_", "Q7mN2pL8vR4cT9xK6wH3jF5sD1aB0uE2"),
-        _joined(
-            "sk-", "proj-", "Q7mN2pL8example9xK6wH3jF5sD1aB0uE2yI7oP9zX"
-        ),
+        _joined("sk-", "proj-", "Q7mN2pL8example9xK6wH3jF5sD1aB0uE2yI7oP9zX"),
         'api_key = "Q7mN2pL8vR4cT9xK6wH3jF5sD1aB0uE2"',
         "client_secret: Q7mN2pL8vR4cT9xK6wH3jF5sD1aB0uE2",
         '- api_key = "Q7mN2pL8vR4cT9xK6wH3jF5sD1aB0uE2"',
@@ -64,7 +62,7 @@ def test_high_confidence_private_material_is_rejected_with_one_generic_code(
         "-----END PRIVATE KEY-----",
         "UUID 123e4567-e89b-12d3-a456-426614174000",
         "sha256 " + "a3" * 32,
-        "Traceback (most recent call last):\n  File \"worker.py\", line 12\n"
+        'Traceback (most recent call last):\n  File "worker.py", line 12\n'
         "ValueError: bad input",
         "Error ID ERR-NOTES-20260830-0123456789abcdef",
         "The credential assignment syntax is api_key=<placeholder>.",
@@ -85,9 +83,7 @@ def test_validation_has_no_durable_or_logging_side_effect(
 ) -> None:
     import sqlite3
 
-    sensitive = _joined(
-        "authorization_token=", "Q7mN2pL8vR4cT9xK6wH3jF5sD1aB0uE2"
-    )
+    sensitive = _joined("authorization_token=", "Q7mN2pL8vR4cT9xK6wH3jF5sD1aB0uE2")
 
     def fail_connect(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("credential validation must not open durable storage")

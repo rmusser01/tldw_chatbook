@@ -1,0 +1,69 @@
+{
+  "captured_at": "2026-11-05T02:44:29.747297+00:00",
+  "status": "PASS with explicit historical input limitation",
+  "scope": "Independent root stdlib provenance audit; no implementation/native/test gate",
+  "snapshot": {
+    "file": "rulings-task9-fix1-progress-f9ea4bf3b2bf31fcb5ab2fb644c7d022feaa3e8665c3148bc0df29db992288fb.snapshot.md",
+    "sha256": "f9ea4bf3b2bf31fcb5ab2fb644c7d022feaa3e8665c3148bc0df29db992288fb",
+    "bytes": 1030783,
+    "lines": 3114,
+    "captured_utc": "2026-11-05T02:36:05.238810+00:00",
+    "two_reads_identical": true,
+    "complete_newline": true,
+    "predecessor_exact_prefix": true,
+    "predecessor_sha256": "8866bba3e53c8540f041e45d309d73bf61a7c4281f4e20a67f685a6dc2252f0a",
+    "predecessor_lines": 2993,
+    "combined_ids": [
+      588,
+      631
+    ],
+    "cutoff": "One immutable cutoff; later growth/activeTask9fix1 review excluded; final further refresh owed."
+  },
+  "counts": {
+    "total": 631,
+    "literal": 408,
+    "continuations": 223,
+    "old_preserved": 587,
+    "new_source_paragraphs": 44
+  },
+  "all631_body_hashes": true,
+  "exact587_old_bodies_and_entry_objects": true,
+  "raw587_entry_objects_and135_old_metadata_values": true,
+  "old_complete_draft_report_prefixes": true,
+  "all121_new_source_lines_and44_context_clause_body_mappings": true,
+  "explicit_cost_lines": [
+    2996,
+    3005,
+    3013,
+    3021,
+    3029,
+    3035,
+    3041,
+    3047,
+    3052,
+    3055,
+    3060,
+    3065,
+    3070,
+    3078,
+    3087,
+    3111,
+    3114
+  ],
+  "all13_full_support_original_frozen_pairs": true,
+  "all13_new_input_hashes": true,
+  "listed195_retained_reference_pairs_including_old182": true,
+  "both_external_options": true,
+  "three_backups_and_outputs": true,
+  "historical_input_limit": [
+    {
+      "file": "rulings-refresh-current-snapshot.json",
+      "sha256": "65560db4bd93d0a871c89c079c8a3f5a58cacc8e5d403a8ec9d243a8b9aac1ce",
+      "metadata": "/input_sha256",
+      "actual": "c3a092fc2319a96ca633bb6e69b811d100e5ae33544e1c4b07be33aa937ccb0c",
+      "search_scope_carried_from": "rulings-g-fix2-input-verification.json: historical_unresolved_search",
+      "new_search": false
+    }
+  ],
+  "sourcecut_includes_UI_initialFAIL_and_fix1_delivery_excludes_active_scoped_review_and_later_growth": true
+}

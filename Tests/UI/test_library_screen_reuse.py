@@ -206,7 +206,22 @@ async def test_suspended_library_gates_ingest_dom_work_until_resume(
         )
         assert library._library_ingest_suspended_activity is True
 
-        await _press_until_screen(pilot, "ctrl+3", "LibraryScreen")
+        # TASK-41500: a bare Library return (ctrl+3) lands on the landing, so
+        # return through the explicit Import route that keeps the ingest row.
+        from tldw_chatbook.Constants import LIBRARY_NAV_CONTEXT_INGEST
+        from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+        await app.handle_screen_navigation(
+            NavigateToScreen("library", {LIBRARY_NAV_CONTEXT_INGEST: True})
+        )
+        assert app.screen is library
+        # switch_screen only posts ScreenResume; wait for the resume to run.
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while (
+            dynamic.call_count < 1
+            and asyncio.get_running_loop().time() < deadline
+        ):
+            await pilot.pause()
         assert dynamic.call_count >= 1, (
             "resume must run exactly one ingest-UI reconciliation for the "
             "events gated while suspended"
@@ -260,6 +275,24 @@ def test_on_screen_suspend_stops_every_timer_in_isolation() -> None:
     # construction, hence the explicit seed, exactly like the
     # `_ingest_state`/`_prompts_state` seeds below.
     screen._media_state = LibraryMediaState()
+    # (TASK-36952.3.3) The two media debounce stops are media-controller
+    # bodies now; the hook reaches them through the screen's one-line
+    # delegators, so a `__new__` screen needs a `_media_controller` too: a
+    # duck-typed one over the SAME `_media_state`, the real bodies bound to it.
+    from types import MethodType, SimpleNamespace
+
+    from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+        LibraryMediaController,
+    )
+
+    media_seed = SimpleNamespace(_media_state=screen._media_state)
+    media_seed._stop_library_media_selection_debounce = MethodType(
+        LibraryMediaController._stop_library_media_selection_debounce, media_seed
+    )
+    media_seed._stop_library_media_filter_timer = MethodType(
+        LibraryMediaController._stop_library_media_filter_timer, media_seed
+    )
+    screen._media_controller = media_seed
     # (wave-6 task 3) The prompts search-debounce timer is a
     # `LibraryPromptsState` field, not a flat screen attribute -- the
     # screen's generated shim block was deleted in the prompts cleanup PR,

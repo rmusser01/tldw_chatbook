@@ -61,7 +61,8 @@ def parse_mcp_servers_json(
         One candidate per server entry, in file order.
 
     Raises:
-        ValueError: Invalid JSON, missing/empty "mcpServers", or a non-dict entry.
+        ValueError: Invalid JSON, missing/empty "mcpServers", a non-dict entry,
+            or a malformed args/env container.
     """
     try:
         data = json.loads(text)
@@ -76,10 +77,16 @@ def parse_mcp_servers_json(
     for name, entry in servers.items():
         if not isinstance(entry, dict):
             raise ValueError(f'Entry "{name}" must be an object.')
+        args = entry.get("args")
+        if args is not None and not isinstance(args, list):
+            raise ValueError(f'Entry "{name}" field "args" must be an array or null.')
+        env = entry.get("env")
+        if env is not None and not isinstance(env, dict):
+            raise ValueError(f'Entry "{name}" field "env" must be an object or null.')
         candidate = ImportCandidate(
             profile_id=str(name).strip(),
             command=str(entry.get("command") or "").strip(),
-            args=[str(a) for a in entry.get("args") or []],
+            args=[str(a) for a in args or []],
         )
         # TASK-26013: imported configs pass through the identical spawn guard as
         # hand-entered ones -- this is the untrusted-input path.
@@ -91,7 +98,7 @@ def parse_mcp_servers_json(
                 f'Entry "{name}" refused: {_spawn_verdict.reason} '
                 f"(rule: {_spawn_verdict.rule})"
             )
-        for key, raw_value in (entry.get("env") or {}).items():
+        for key, raw_value in (env or {}).items():
             value = str(raw_value)
             if _PLACEHOLDER_RE.match(value.strip()):
                 candidate.env_placeholders[str(key)] = value.strip()

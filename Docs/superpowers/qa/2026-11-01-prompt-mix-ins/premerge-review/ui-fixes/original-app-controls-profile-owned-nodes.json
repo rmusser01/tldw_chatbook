@@ -1,0 +1,33 @@
+{
+  "mechanism": "collection-only bootstrap_profile marker; original test callables, assertions, product admission and source unchanged",
+  "nodeids": [
+    "Tests/UI/test_library_prompts_canvas.py::test_cancelled_prompt_save_retains_writer_ownership_until_commit",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_previews_nonrestorable_local_snapshots_without_mutation[legacy-recipe-Legacy Recipe snapshots are preview-only.-[bold]literal legacy system[/bold]-literal legacy user]",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_previews_nonrestorable_local_snapshots_without_mutation[over-limit-structured-This retained version is not supported by current local Prompt capabilities.--literal structured user]",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_late_results_after_prompt_switch_are_noops[count]",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_late_results_after_prompt_switch_are_noops[page]",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_late_results_after_prompt_switch_are_noops[restore]",
+    "Tests/UI/test_library_prompts_canvas.py::test_queued_outgoing_history_action_is_noop_after_prompt_adoption[close]",
+    "Tests/UI/test_library_prompts_canvas.py::test_queued_outgoing_history_action_is_noop_after_prompt_adoption[reload]",
+    "Tests/UI/test_library_prompts_canvas.py::test_queued_outgoing_history_action_is_noop_after_prompt_adoption[page]",
+    "Tests/UI/test_library_prompts_canvas.py::test_queued_outgoing_history_action_is_noop_after_prompt_adoption[restore]",
+    "Tests/UI/test_library_prompts_canvas.py::test_queued_outgoing_history_action_is_noop_after_prompt_adoption[select]",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_confirms_and_restores_as_new_current_version[same-type]",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_confirms_and_restores_as_new_current_version[prompt-to-recipe]",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_restore_stays_gated_until_detail_adoption",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_restore_refresh_rejects_same_id_aba_scope",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_collapse_during_restore_detail_fetch_stays_closed",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_history_stale_conflict_reload_refreshes_and_can_retry",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_save_name_already_in_use_shows_status_copy",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_save_onto_soft_deleted_name_shows_status_copy",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_save_stale_version_shows_conflict_bar",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_save_write_time_conflict_shows_conflict_bar",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_save_success_updates_status_and_persists",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_save_recipe_respects_explicit_starter_content_choice[False]",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_save_recipe_respects_explicit_starter_content_choice[True]",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_embedded_save_prompt_adopts_complete_new_identity",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_prompt_discard_refuses_while_save_is_in_flight",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_shell_create_prompt_save_creates_and_increments_count",
+    "Tests/UI/test_library_prompts_canvas.py::test_library_recipe_duplicate_outer_save_is_honest_and_preserves_starter"
+  ]
+}

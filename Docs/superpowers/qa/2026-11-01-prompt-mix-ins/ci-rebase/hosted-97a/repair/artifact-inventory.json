@@ -1,0 +1,191 @@
+{
+  "producer": "/private/tmp/mixins-97a-archive-fix",
+  "count": 37,
+  "artifacts": [
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/97a-original-card.py",
+      "bytes": 14473,
+      "sha256": "73dd384559576c65571360c1617eb95e060d919ae4e34b4075b9b9c8d7a35edd"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/97a-original-view.py",
+      "bytes": 21261,
+      "sha256": "952060a486eb55e41d6629a9e0df3e3c058f788f4aafb17c1a987b0e06eedca6"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/97a-original-tests.py",
+      "bytes": 17671,
+      "sha256": "4a640928c400d64489b69768e6aef20d2a824e99932f89a985cd0052968d530c"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/97a-original-flow.py",
+      "bytes": 77974,
+      "sha256": "78188e64736fbe7ce509004b93ce5ac41c38c605c78e2c5d03524ec0b77bc45f"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/native_lifecycle_probe.py",
+      "bytes": 1598,
+      "sha256": "c9ebe9f59d39127310f77cbba48251a3e74b60341dc478de13eb93239741a47f"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/native-lifecycle-original.log",
+      "bytes": 4979,
+      "sha256": "3a0348b3d611d668a5136e7b5dc9db2a08255b05284743233e85979ba1fe0e64"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/original-resize.log",
+      "bytes": 31597,
+      "sha256": "3d7a32c5414b5f09758141c617c2aa9b6dee121aa1e3268ff87b8c0b6b122bc5"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/regressions-red.log",
+      "bytes": 115934,
+      "sha256": "bc55fbb9a44319398e1b1ccab17b2a71473f860a6f20a9d3c222f18d73d017e7"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/regressions-first-green.log",
+      "bytes": 159507,
+      "sha256": "b3a852c42025e183972b2e4aaddce1c1b757baee371b6b8ec98475880b1ed2fd"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/regressions-corrected-green.log",
+      "bytes": 223,
+      "sha256": "e5bd1d60083c7d9abc407e19709636a325041ecd04fae02281cbcca087dac8fb"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/final-widgets-resize.log",
+      "bytes": 938,
+      "sha256": "446e978d0c2f23e09423e1696e35eab2435d93eb6019ef692e0b87574ec9f531"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/final-native-flows.log",
+      "bytes": 172773,
+      "sha256": "e6091affbd439c1b0cf101cacdcda27614e45998c405a886e022897fcf32e916"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/native_select_retirement_probe.py",
+      "bytes": 1331,
+      "sha256": "e478eba5e142bf0fc24e3d6e4f91e72eab972739e8a01b5d42cdc647ee2fb9cb"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/native-select-retirement-probe.log",
+      "bytes": 4715,
+      "sha256": "e082c551f0127a96624fb22032499cfbc701d524c54ded4c110cf1194d538b6c"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/scope-retirement-red.log",
+      "bytes": 9315,
+      "sha256": "c1da87e253380bdb045a4bcdf0d36d7be5f625905e44323cb3f99eed0b3b11ec"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/ruff-97a-four.json",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/ruff-frozen.json",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/check_source_preservation.py",
+      "bytes": 1869,
+      "sha256": "b301da4f534cc16fd651e7903b9d97bde19b7baa6a1719a907afdc44442645cd"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/source-preservation.json",
+      "bytes": 152,
+      "sha256": "c4748512bfe06a7849a53a2cef01d18292f5da03f38652cb3dfdc4e5fbee4792"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/format-frozen-card.log",
+      "bytes": 25,
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/format-frozen-view.log",
+      "bytes": 25,
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/format-frozen-tests.log",
+      "bytes": 25,
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/format-frozen-flow.log",
+      "bytes": 25,
+      "sha256": "fd2299c9f1c6dc869070883e281051bfe93aacf66c1a3b0069f45b4aa410ca50"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/source-frozen-before.sha256",
+      "bytes": 473,
+      "sha256": "00b0cc90400b90dbd62b2e7fe5bf61eb59a12afcae9c5849bd42ead6ce4309e6"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/source-frozen-after.sha256",
+      "bytes": 473,
+      "sha256": "00b0cc90400b90dbd62b2e7fe5bf61eb59a12afcae9c5849bd42ead6ce4309e6"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/textual-version.txt",
+      "bytes": 6,
+      "sha256": "5d120d984396a16324e0aca8747fd68b1a2c7a03c96de577667de5167b9f7172"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/run_final_cohort.py",
+      "bytes": 1178,
+      "sha256": "a8aa596e0089798bb80ed39b5bb58cdb06700b3594bf32f79295d3043ae4a112"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/frozen-native.log",
+      "bytes": 1372,
+      "sha256": "52fda3d0e0c57069ca96a8525df131acfb7d8d15fe70f73822f157ed11bb8c42"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/frozen-native.xml",
+      "bytes": 5566,
+      "sha256": "017e66c1a5604a1ad660c11fcc061972456f3a1f9dbe3db01f3d35b24df415e9"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/frozen-native-result.json",
+      "bytes": 763,
+      "sha256": "c84ccceeb0968858a0d36ed6196ed6389f484aa0bb78317ac0619814cd6523d4"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/diff-check.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/diff-numstat.txt",
+      "bytes": 229,
+      "sha256": "719056e1061036c652c7b012e40fcb1c8d54f4088fb066046dd434dcaba08c6e"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/source-frozen.diff",
+      "bytes": 12022,
+      "sha256": "8c7e8d4ceceecd8b73e2112de322886980a3ab244a57b22f021965e786bff33a"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/pytest-frozen-native/test_compact_confirmation_focu0/compact-confirm-target.svg",
+      "bytes": 90183,
+      "sha256": "60ecbf4c39488ad2bd4eec7d9edb1cadf589617eddb3219d49e4361711339b66"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/pytest-frozen-native/test_compact_confirmation_focu0/compact-confirm-target.txt",
+      "bytes": 4364,
+      "sha256": "10297e6fe49e4ad0dbd0756ccfb2f7c9a93fcd83533fa33fa7cd75f153ba34f9"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/final-report.json",
+      "bytes": 4641,
+      "sha256": "6d12b407d61a23b397671129cd6470af8322c57b7ea1f3fdaa47cb42645e57be"
+    },
+    {
+      "path": "/private/tmp/mixins-97a-archive-fix/seal_artifacts.py",
+      "bytes": 5902,
+      "sha256": "1166a3954fa6140333b1c99b1dbbabeffd48c54ca038836ae6750bc42ec8aa76"
+    }
+  ]
+}

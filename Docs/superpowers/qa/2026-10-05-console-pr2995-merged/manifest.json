@@ -1,0 +1,113 @@
+{
+  "publication_base": "299d3dbf8051527acf2956fc73dbcd2280097acf",
+  "selected_dev": "74557e202ac38c6d29510d0940a062ca7cc7f38b",
+  "selection": "Explicit final safe-manifest rows, historical aliases, scoped requirements/reviews/preservation receipts and complete ordered rulings/ledger. No recursive workspace export.",
+  "archive": {
+    "path": "safe-evidence.zip",
+    "bytes": 187325,
+    "sha256": "5fed857385baa2fdb234ed54c21ca0ca65265b75ee3de3ac5b1994e568af47c8"
+  },
+  "entries": [
+    {
+      "path": "complete-ledger-at-merge.md",
+      "bytes": 185254,
+      "sha256": "6177ee28e4b9beb55cb9fe1279e89c01b0c438c419e749ece18ce044e69b8f2e"
+    },
+    {
+      "path": "final-bookkeeping-verification.json",
+      "bytes": 756,
+      "sha256": "d0069d14a40de64434aacf65b6632f844160f5b00927a692a3a5be8a48717c2a"
+    },
+    {
+      "path": "final-confirmed-merge.json",
+      "bytes": 369,
+      "sha256": "3ecb597fb5024d9c0ce31edf15a5e96e0ccbdc603c2ebaaf02f0024c9e16543e"
+    },
+    {
+      "path": "final-merge-parent-proof.json",
+      "bytes": 3051,
+      "sha256": "0816edf995d0a0c4944d97325717a32c542fd5b07c0c557a7cbf41aba59b4da1"
+    },
+    {
+      "path": "final-merge-report.md",
+      "bytes": 2669,
+      "sha256": "f833d7e1c32885adede778c06b26bfb84d3ddf633ae8aff76c6182133ff6ccef"
+    },
+    {
+      "path": "final-normal-merge-gate-snapshot.json",
+      "bytes": 138407,
+      "sha256": "79feda62930ee6b3be16cd78f5bf1079e0df6e72583351dd09545a487225af7e"
+    },
+    {
+      "path": "final-normal-merge-receipt.json",
+      "bytes": 436,
+      "sha256": "d82884a82a3da6f1110d13ea1afa123dbfea2394e10d898c40337ed2927e79a9"
+    },
+    {
+      "path": "final-normal-merge.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "final-normal-merge.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "heartbeat-2026-10-05T094005-state.json",
+      "bytes": 129221,
+      "sha256": "21b8a019c959a7c4aeffcf2e85bf0e7de5be3cf8ab3d086ab7e140fb7cafaf25"
+    },
+    {
+      "path": "heartbeat-2026-10-05T104035-state.json",
+      "bytes": 140069,
+      "sha256": "e9b523040af29566af5a7152a0e4d46e98dd086812cad20d004267a52d61c2ff"
+    },
+    {
+      "path": "merged-publication-exporter.py",
+      "bytes": 7092,
+      "sha256": "7792990c5121f7e7f2ae2cb3177f83aead660710c2d1706a32ba5ff9c7e4d0d0"
+    },
+    {
+      "path": "merged-publication-selection.json",
+      "bytes": 2740,
+      "sha256": "edb3de79b67bc1ca78bc8139d0d97b39e1e0ff8a0b19213cc66b731d091d9c55"
+    },
+    {
+      "path": "rulings-i-made-at-merge.md",
+      "bytes": 63860,
+      "sha256": "5d7c41e70d4f04dc8ed4151fe3697a4cc9c1dfc86a608c80d4e6a7b06103e8fb"
+    },
+    {
+      "path": "task-27-current-feedback.json",
+      "bytes": 72280,
+      "sha256": "e2d5f702fb3b0b7fe081068e57968d1643d8673077393cb4052afcd036f173fa"
+    },
+    {
+      "path": "task-27-current-head-hosted-gates.json",
+      "bytes": 9886,
+      "sha256": "71ce052bf94b69c9bac169dc104d64424ff508d4bd52509d402ab2e5043be70a"
+    },
+    {
+      "path": "task-27-feedback-disposition.json",
+      "bytes": 418,
+      "sha256": "35ff99f33cf5fcae82b40b33562d985e66b29c1ace416355c55cbba013a57a8d"
+    },
+    {
+      "path": "task-27-root-feedback-verification.json",
+      "bytes": 2188,
+      "sha256": "ee99e35083d29021029d1a62b12e24a180a8ec56f181e44b9e6726cbb67a4fc7"
+    },
+    {
+      "path": "task-27-routing-feedback-brief.md",
+      "bytes": 3273,
+      "sha256": "7fa2a35c30095d4e3cf09ce6c9f5c4f617cc608be2c0c687ba2075b163d89551"
+    },
+    {
+      "path": "task-27-routing-feedback-review.md",
+      "bytes": 10379,
+      "sha256": "7cd67d5e56306493e9cfbd22138f59eb754c842b04a087ed891189228b05d167"
+    }
+  ],
+  "excluded_pinned_payloads": []
+}

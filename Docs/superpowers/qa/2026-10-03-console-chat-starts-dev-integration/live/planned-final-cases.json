@@ -1,0 +1,16 @@
+[
+  {
+    "title": "DEV_FINAL_START",
+    "destination": "casual",
+    "mode": "start",
+    "opening_prompt": "Reply only DEV_FINAL_START_OK.",
+    "source_prompt": "Call new_chat exactly once with these arguments: {\"title\": \"DEV_FINAL_START\", \"destination\": \"casual\", \"mode\": \"start\", \"opening_prompt\": \"Reply only DEV_FINAL_START_OK.\"}. Do not call other tools. After the tool result, reply with the returned status."
+  },
+  {
+    "title": "DEV_FINAL_REMEMBERED_START",
+    "destination": "casual",
+    "mode": "start",
+    "opening_prompt": "Reply only DEV_FINAL_REMEMBERED_START_OK.",
+    "source_prompt": "Call new_chat exactly once with these arguments: {\"title\": \"DEV_FINAL_REMEMBERED_START\", \"destination\": \"casual\", \"mode\": \"start\", \"opening_prompt\": \"Reply only DEV_FINAL_REMEMBERED_START_OK.\"}. Do not call other tools. After the tool result, reply with the returned status."
+  }
+]

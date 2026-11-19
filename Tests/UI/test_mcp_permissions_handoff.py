@@ -20,7 +20,8 @@ from tldw_chatbook.MCP.permission_store import MCPPermissionStore
 from tldw_chatbook.UI.MCP_Modules.mcp_permissions_mode import MCPPermissionsMode
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
+from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens.settings_tools_hub import ToolsHubPanel
 
 
 def _visible(app, widget):
@@ -36,7 +37,17 @@ def _cursor_visible(app, table):
 
 
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
-@pytest.mark.parametrize("size", [(80, 24), (170, 48)])
+# Size note (task-35150 Task 4): the old (80, 24) parametrized the retired
+# full-screen MCP destination, which had all 80 columns for the workbench
+# triad. Inside Settings the Tools & MCP pane shares the screen with the
+# category rail, and the workbench grid cannot squeeze its compact minimums
+# (rail 16 + canvas 30 + inspector 20) below ~66 columns of detail width;
+# narrower than that Textual's fr resolution degenerates (each pane takes
+# fraction x pane width) and the canvas lands offscreen (task-35151 probe:
+# 120/140 overflowed, 150 fit). task-35151 adds the ADR-148 stacked triad
+# (inspector band under a rail+canvas row) below that 66-column floor, so
+# (120, 30) -- the AC's target width -- rejoins the "small" end of the pair.
+@pytest.mark.parametrize("size", [(120, 30), (150, 30), (170, 48)])
 @private_profile_test
 async def test_edit_routes_to_visible_current_profile_and_keyboard_rows(
     request, tmp_path, theme, size
@@ -87,14 +98,24 @@ async def test_edit_routes_to_visible_current_profile_and_keyboard_rows(
                 ),
             )
             await _activate(pilot, "#tool-profile-edit-0")
-            await _wait(pilot, lambda: isinstance(app.screen, MCPScreen))
+            # The handoff now deep-links INSIDE Settings: the same-route
+            # navigation re-mints the Settings screen and applies the Tools &
+            # MCP context, so wait for the hub pane (not a different screen).
             await _wait(
                 pilot,
                 lambda: (
-                    app.screen.workbench is not None
-                    and not app.screen.workbench.is_loading
-                    and not app.screen.workbench._reloading
-                    and app.screen.workbench._pending_view_state is None
+                    isinstance(app.screen, SettingsScreen)
+                    and bool(app.screen.query("#settings-tools-hub"))
+                ),
+            )
+            pane = app.screen.query_one("#settings-tools-hub", ToolsHubPanel)
+            await _wait(
+                pilot,
+                lambda: (
+                    pane.workbench is not None
+                    and not pane.workbench.is_loading
+                    and not pane.workbench._reloading
+                    and pane.workbench._pending_view_state is None
                 ),
             )
             await pilot.wait_for_scheduled_animations()
@@ -103,6 +124,7 @@ async def test_edit_routes_to_visible_current_profile_and_keyboard_rows(
             table = workbench.query_one("#mcp-perm-table", DataTable)
             selector = workbench.query_one("#mcp-perm-tool-profile", Select)
             assert workbench.active_mode == "permissions"
+            _visible(app, workbench.query_one(MCPPermissionsMode))
             assert selector.value == "research"
             assert (
                 workbench._tool_policy_profile_context.revision == lifecycle["revision"]

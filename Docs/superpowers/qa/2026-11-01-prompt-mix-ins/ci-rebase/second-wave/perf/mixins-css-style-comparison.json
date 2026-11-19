@@ -1,0 +1,12 @@
+{
+  "before_states": 473,
+  "after_states": 445,
+  "matched_states": 444,
+  "different_computed_style_or_geometry_states": 2,
+  "differences": [
+    "[\"Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size1]\", \"Size(width=100, height=30)\", \"ConsolePromptsModal\", \"console-mixin-inspect-0\", \"Inspect / Edit\", false, \"mixin-name\"]",
+    "[\"Tests/UI/test_console_prompt_mixins.py::test_real_console_prompts_action_retains_browse_and_controls_runtime[size0]\", \"Size(width=160, height=45)\", \"ConsolePromptsModal\", \"console-mixins-add\", \"Add\", false, \"console-prompts-close\"]"
+  ],
+  "geometry_difference_count": 0,
+  "style_difference_note": "Two unmatched style values are Button active-effect tint after clicks; changed rules contain no tint declarations. These transient click states were not synchronized by the probe. All 444 matched regions/content regions/display values are equal; 442 full computed style maps are equal after excluding node repr/classes."
+}

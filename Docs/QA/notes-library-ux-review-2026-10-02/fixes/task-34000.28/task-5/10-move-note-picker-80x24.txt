@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎────────
+ Library▊                                                              ▎
+  Librar▊  Move "Quotes" to…                                           ▎
+  N   Li▊  ┌────────────────────────────────────────────────────────┐  ▎
+  a   Cr▊  │  Type to narrow folders…                               │  ▎
+  v   fi▊  └────────────────────────────────────────────────────────┘  ▎
+      No▊    Agent_Lessons                                             ▎
+      Fi▊    Journal                                                   ▎
+        ▊    Meetings                                                  ▎
+--->    ▊    Projects                                                  ▎
+        ▊    Projects / App launch                                     ▎
+        ▊    Projects / Thesis                                         ▎
+        ▊    Recipes                                                   ▎
+      ┃ ▊    Research                                                  ▎
+--->    ▊    Study                                                     ▎
+     Sor▊  9 folders                                                   ▎
+     fil▊                                 Cancel          Choose       ▎
+      fi▊                                                              ▎
+      ▾ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+        Quotes · Unfiled · 1h
+
+  n new | / find | g folder | esc rail | F1 · F6 · Ctrl+P · Ctrl+Q

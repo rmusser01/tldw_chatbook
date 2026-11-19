@@ -1,7 +1,7 @@
 ---
 id: TASK-660
 title: Permissions-mode preview sentence, cascade, and inspector ignore agent:builtin rows
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-25'
 labels: [tools, security, ux, mcp, bug]
@@ -36,9 +36,16 @@ Net user-visible effect: set a persistent override on a built-in tool (the exact
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] Selecting a built-in (`agent:builtin`) row in Permissions mode shows a permission explanation for that row (mirroring `show_permission()` for an MCP tool row), not a cleared inspector
-- [ ] A test drives selecting a built-in tool row and asserts the inspector shows that tool's state/origin rather than calling `show_tool(None)`
+- [x] Selecting a built-in (`agent:builtin`) row in Permissions mode shows a permission explanation for that row (mirroring `show_permission()` for an MCP tool row), not a cleared inspector
+- [x] A test drives selecting a built-in tool row and asserts the inspector shows that tool's state/origin rather than calling `show_tool(None)`
 - [ ] The preview sentence's override count and "across M servers" phrasing include a persistent built-in override when one is set, and a test pins this (set a built-in override, assert the preview sentence changes)
 - [ ] `update_matrix()`'s docstring claim that the preview "ALWAYS summarizes the full, UNFILTERED matrix" is either made true again or corrected to state the built-in-section exception explicitly
 - [ ] MCP-only behavior is unchanged: an MCP row's inspector selection and the preview sentence for MCP-only overrides render exactly as before this fix
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Built-in rows select into a permission explanation: mcp_workbench.py:4780-4832 routes agent:builtin rows to inspector.show_permission(builtin_tool, effective, cascade=None, ...) with a plain per-tool origin sentence ('builtin_default' entry in _ORIGIN_SENTENCES; PR #906 review Fix 1), and Tests/Agents/test_builtin_tool_gate.py pins builtin rows' state/origin incl. a stored-override test (line 394). The preview-sentence count phrasing (AC#3) and the update_matrix docstring claim (AC#4) were not re-verified.

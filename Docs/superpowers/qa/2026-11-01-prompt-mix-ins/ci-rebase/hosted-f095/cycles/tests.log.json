@@ -1,0 +1,4 @@
+{
+  "sha256": "179491cd6a86e7c4cb0bbddc34bd0be9d5d594bb65edc40dee1463e2dbc7b60a",
+  "raw_text": "...........                                                              [100%]\n-------- generated xml file: /private/tmp/mixins-f095-cycles/tests.xml ---------\n============================= slowest 25 durations =============================\n2.10s setup    Tests/UI/test_console_first_send_import_cycles.py::test_the_warm_up_imports_no_module_level_cycle[optional-missing]\n2.06s setup    Tests/UI/test_console_first_send_import_cycles.py::test_the_warm_up_imports_no_module_level_cycle[environment]\n\n(23 durations < 1s hidden.)\n11 passed in 6.38s\n"
+}

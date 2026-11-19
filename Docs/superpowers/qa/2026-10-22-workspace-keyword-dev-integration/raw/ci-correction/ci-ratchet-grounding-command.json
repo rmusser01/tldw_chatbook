@@ -1,0 +1,21 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_workspace_guidance.py::test_automatic_evidence_provider_payload_allows_workspace_grounding",
+    "Tests/Chat/test_console_workspace_guidance.py::test_dispatch_retry_provider_payload_allows_workspace_grounding",
+    "Tests/Chat/test_console_workspace_folder_note_contract.py::test_enabled_index_preserves_saved_library_policy_and_scope",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--no-showlocals"
+  ],
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "temp": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase",
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.superpowers\\sdd\\2026-10-22-keyword-dev-integration\\native-temp-rebase\\ci-ratchet-profile-chat",
+  "started_unix": 1792653855.4201741,
+  "elapsed_seconds": 180.35049986839294,
+  "exit_code": 0,
+  "timed_out": false
+}

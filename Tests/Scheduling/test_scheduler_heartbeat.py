@@ -281,3 +281,59 @@ async def test_cancelled_tick_still_completes_the_started_heartbeat_write(
 
 
 
+
+
+# --- TASK-33620.1 AC#5: the Schedules line says the emergency stop holds ----
+#
+# The scheduler already reads the stop every tick (off the loop, TASK-31507)
+# and writes this heartbeat every tick; the hold rides the heartbeat, so the
+# Schedules screen's existing liveness read shows it with no new file read.
+
+
+def test_liveness_line_says_an_emergency_stop_holds_dispatches():
+    from tldw_chatbook.Scheduling.scheduler_heartbeat import scheduler_liveness_line
+
+    held = SchedulerHeartbeat(
+        last_tick_at=_t(0), last_success_at=_t(0), held_by_emergency_stop=True
+    )
+    line = scheduler_liveness_line(held, now=_t(12), poll_interval=30.0)
+    assert "live" in line.lower()
+    assert "scheduled dispatches are held by the emergency stop" in line
+    assert "/emergency-stop clear" in line
+    free = SchedulerHeartbeat(last_tick_at=_t(0), last_success_at=_t(0))
+    assert "emergency" not in scheduler_liveness_line(
+        free, now=_t(12), poll_interval=30.0
+    )
+
+
+def test_the_hold_round_trips_and_an_older_heartbeat_reads_as_free(tmp_path: Path):
+    path = tmp_path / "hb.json"
+    write_heartbeat(
+        path, SchedulerHeartbeat(last_tick_at=_t(0), held_by_emergency_stop=True)
+    )
+    assert read_heartbeat(path).held_by_emergency_stop is True
+    # A heartbeat written before the field existed has no hold to report.
+    path.write_text('{"last_tick_at": "2026-09-01T12:00:00+00:00"}', encoding="utf-8")
+    assert read_heartbeat(path).held_by_emergency_stop is False
+
+
+@pytest.mark.asyncio
+async def test_a_held_dispatch_is_recorded_in_the_next_heartbeat(tmp_path):
+    """``_dispatch_due`` notes the hold; ``_record_heartbeat`` writes it."""
+    from tldw_chatbook.emergency_stop import clear_emergency_stop, set_emergency_stop
+
+    loop = _make_loop(tmp_path)
+    loop._emergency_stop_path = tmp_path / "stop.json"
+    # ``_offload``'s task bookkeeping (the full constructor's, TASK-33620.15.24).
+    loop._maintenance_db_tasks = set()
+    loop._maintenance_changed = asyncio.Event()
+
+    set_emergency_stop(loop._emergency_stop_path, reason="hold")
+    await loop._dispatch_due(_t(0))
+    loop._record_heartbeat(_t(0), error=None)
+    assert read_heartbeat(loop._heartbeat_path).held_by_emergency_stop is True
+
+    clear_emergency_stop(loop._emergency_stop_path)
+    await loop._dispatch_due(_t(30))
+    loop._record_heartbeat(_t(30), error=None)
+    assert read_heartbeat(loop._heartbeat_path).held_by_emergency_stop is False

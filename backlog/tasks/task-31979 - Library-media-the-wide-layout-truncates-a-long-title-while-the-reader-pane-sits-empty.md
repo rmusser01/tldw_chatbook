@@ -48,4 +48,7 @@ Opening restores the split via a new side-effect-free _restore_library_media_rea
 RULING (scope): the empty-reader widening is applied only on the resolver's main (non-starved) path; the width-starved priority early-return has no surplus to reallocate. Interaction with task-31970's two comfort clamps: unchanged -- the new widening is gated on `not custom_widths_enabled` (Custom obeys), so it never widens a hand-typed width; task-31968/31970 left separate.
 
 Files: tldw_chatbook/Utils/adaptive_reader_state.py, tldw_chatbook/Library/library_media_reader_state.py, tldw_chatbook/UI/Screens/library_screen.py, Docs/User_Guide/library/media-and-conversations.md; tests Tests/Library/test_library_adaptive_reader_state.py (3 new unit tests), Tests/UI/test_library_media_reader_shell.py (painted pin at 235x52 + 100x30, resize-test expectation updated), Tests/UI/test_library_media_return_settlement.py (signature pin updated).
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/library/media-and-conversations.md`: Confirmed against the resolver and the shell paint, not re-verified live.
 <!-- SECTION:NOTES:END -->

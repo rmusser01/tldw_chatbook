@@ -1,0 +1,14 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices[removed] _
+Tests/Chat/test_console_prompt_mixin_retry.py:1655: in test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices
+    assert h.entries, dispatch_results
+E   AssertionError: [ConsoleSubmitResult(accepted=False, should_clear_draft=False, visible_copy='Queued messages control the next turn. Re...epoch=None, preparation_id=None, provider_started=False, queue_notice='', cancelled_draft_revision=None, blocker=None)]
+E   assert []
+E    +  where [] = namespace(db=<tldw_chatbook.DB.ChaChaNotes_DB.CharactersRAGDB object at 0x10e51f560>, store=<tldw_chatbook.Chat.consol...x10e752300: unset>, gateway=<tldw_chatbook.Chat.console_provider_gateway.ConsoleProviderGateway object at 0x119a00c80>).entries
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_prompt_mixin_retry.py::test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices[removed]
+1 failed in 1.00s

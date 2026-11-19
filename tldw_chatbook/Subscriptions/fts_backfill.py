@@ -141,8 +141,7 @@ def backfill_subscription_items_fts(
 
     if total:
         logger.info(
-            "Subscription items FTS backfill complete: indexed {} "
-            "pre-existing row(s).",
+            "Subscription items FTS backfill complete: indexed {} pre-existing row(s).",
             total,
         )
     else:

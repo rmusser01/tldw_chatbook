@@ -1,0 +1,66 @@
+2026-10-18 09:38:10.260 | DEBUG    | tldw_chatbook.config:<module>:100 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-10-18 09:38:10.268 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /private/tmp/archive-recovery-profilev2-guard-20261018/offline-counter-lk7o3yec/config.toml
+2026-10-18 09:38:10.269 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6117 - CLI Config file not found at /private/tmp/archive-recovery-profilev2-guard-20261018/offline-counter-lk7o3yec/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-10-18 09:38:10.269 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6126 - Created default CLI config file at /private/tmp/archive-recovery-profilev2-guard-20261018/offline-counter-lk7o3yec/config.toml
+2026-10-18 09:38:10.270 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-10-18 09:38:10.270 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-18 09:38:10.270 | INFO     | tldw_chatbook.config:_load_settings_uncached:1841 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook
+2026-10-18 09:38:10.271 | INFO     | tldw_chatbook.config:_load_settings_uncached:1844 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook
+2026-10-18 09:38:10.271 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:1867 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-18 09:38:10.272 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2188 - Darwin platform-preferred STT provider resolved to: faster-whisper
+Traceback (most recent call last):
+  File "/private/tmp/archive-recovery-profilev2-guard-20261018/check_guard.py", line 169, in <module>
+    asyncio.run(check())
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/private/tmp/archive-recovery-profilev2-guard-20261018/check_guard.py", line 94, in check
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/__init__.py", line 5, in <module>
+    from .chat_conversation_scope_service import ChatConversationScopeService
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/chat_conversation_scope_service.py", line 9, in <module>
+    from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Library/__init__.py", line 16, in <module>
+    from .local_library_tool_service import LocalLibraryToolService
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Library/local_library_tool_service.py", line 69, in <module>
+    from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedError
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Skills_Interop/__init__.py", line 4, in <module>
+    from .server_skills_service import ServerSkillsService
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Skills_Interop/server_skills_service.py", line 7, in <module>
+    from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/runtime_policy/bootstrap.py", line 12, in <module>
+    from tldw_chatbook.Utils.tls_trust import httpx_verify
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Utils/tls_trust.py", line 32, in <module>
+    from ..config import get_cli_setting
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/config.py", line 9609, in <module>
+    settings = load_settings()
+               ^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/config.py", line 1791, in load_settings
+    return _load_settings_uncached(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/config.py", line 3397, in _load_settings_uncached
+    chat_dicts_folder = get_user_data_dir() / "chat_dicts"
+                        ^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Utils/paths.py", line 130, in get_user_data_dir
+    return get_user_data_dir_from_config()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/config.py", line 9022, in get_user_data_dir
+    stack.enter_context(_default_data_root_lock())
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 526, in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/config.py", line 8887, in _default_data_root_lock
+    with open_private_text_append_stream(lock_path) as stream:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Utils/private_paths.py", line 951, in open_private_text_append_stream
+    raise _private_path_error_from_oserror(selected, exc) from None
+tldw_chatbook.Utils.private_paths.PrivatePathError: operation_failed: PermissionError

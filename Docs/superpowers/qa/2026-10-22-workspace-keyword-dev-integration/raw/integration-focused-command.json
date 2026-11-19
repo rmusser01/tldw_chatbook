@@ -1,0 +1,32 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "Tests/Workspaces/test_project_index_service.py::test_history_keeps_live_retired_supervisor_until_cancelled_close_joins",
+    "Tests/Workspaces/test_project_index_service.py::test_completed_refresh_history_is_bounded",
+    "Tests/Workspaces/test_project_index_service.py::test_shutdown_retains_lifetime_through_native_db_closure_and_repeated_cancel",
+    "Tests/Workspaces/test_project_index_service.py::test_failed_supervisor_dispatch_waits_for_started_writer_retirement",
+    "Tests/Workspaces/test_project_index_service.py::test_incremental_refresh_retires_deleted_and_renamed_membership",
+    "Tests/DB/test_workspace_project_index_db.py::test_scan_unit_atomic_receipts_replay_and_indexed_attempt_frontier",
+    "Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc",
+    "Tests/DB/test_workspace_project_index_db.py::test_revoke_is_visible_before_cleanup_and_old_cleanup_cannot_erase_enable",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--no-showlocals"
+  ],
+  "source_sha256": {
+    "tldw_chatbook/Workspaces/project_index/service.py": "d0943ea7236310fd7ab6d585118d43f769f578198dcdd9e777941fb92ed7ed82",
+    "Tests/Workspaces/test_project_index_service.py": "4089b955152ddf45b718e0df302d4e919b4890712c0f6faabc280b0f5f488e6c",
+    "tldw_chatbook/DB/Workspace_Project_Index_DB.py": "2f5516cc05746296d563e92afb6fa9d6eb324e991f9b742455c0c6081292ea1a",
+    "Tests/DB/test_workspace_project_index_db.py": "1bcdc71b2bc92839a8ff711d7e9aae873c168ad1e8e5d87c0cd941c1b7921260",
+    "tldw_chatbook/DB/Workspace_DB.py": "ee1ffab98e0026f7137dbb2a7cc2b51562bf15c998c725b55a9d257ee2480485"
+  },
+  "started_unix": 1792647678.9082391,
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "expected_cases": 10,
+  "isolated_from_root_guards": true,
+  "exit_code": 0,
+  "elapsed_seconds": 368.19511437416077
+}

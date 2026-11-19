@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
@@ -15,8 +15,30 @@ if TYPE_CHECKING:
         MeetingSessionStatusUpdate,
         MeetingShareRequest,
         MeetingTemplateCreate,
-        TLDWAPIClient,
     )
+
+
+class ServerMeetingsClient(Protocol):
+    """Client methods ServerMeetingsService calls (TASK-36953.1)."""
+
+    async def create_meeting_artifact(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_meeting_session(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_meeting_template(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def finalize_meeting_session(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_meeting_session(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_meeting_template(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_meetings_health(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_meeting_artifacts(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_meeting_sessions(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_meeting_templates(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def share_meeting_session_to_slack(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    async def share_meeting_session_to_webhook(
+        self, *args: Any, **kwargs: Any
+    ) -> Any: ...
+    def stream_meeting_session_events(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_meeting_session_status(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerMeetingsService:
@@ -26,7 +48,7 @@ class ServerMeetingsService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerMeetingsClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -61,7 +83,7 @@ class ServerMeetingsService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerMeetingsClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

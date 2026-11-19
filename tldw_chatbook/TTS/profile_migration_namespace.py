@@ -11,7 +11,6 @@ from enum import Enum
 from pathlib import Path
 
 from tldw_chatbook.TTS.profile_migration_native import (
-    _migration_native,
     _native_close,
     _native_open,
     _native_parent,

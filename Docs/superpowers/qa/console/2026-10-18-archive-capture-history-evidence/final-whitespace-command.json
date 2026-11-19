@@ -1,0 +1,28 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook",
+  "env": {
+    "PYTHONPATH": ".",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "argv": [
+    "git",
+    "diff",
+    "--check",
+    "--",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/Chat/console_agent_bridge.py",
+    "tldw_chatbook/Chat/console_trace_service.py",
+    "Tests/Chat/test_console_archive_recovery_followup.py",
+    "Tests/Chat/test_console_trace_service.py",
+    "backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md"
+  ],
+  "exit": 0,
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "128f9efc12e430ea085b08cc82475e85226da6e7a6eb491fd282f28f0c218b13",
+    "tldw_chatbook/Chat/console_runtime.py": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+    "tldw_chatbook/Chat/console_agent_bridge.py": "6496825e63066a05541d900a01e1dd4f790bcd04dfee5af17e630a1ce71bb912",
+    "Tests/Chat/test_console_archive_recovery_followup.py": "524e58a1a77fea5846d8f8a9cbe65bfa134805b1a4dacd75063d6c3a7de23a5c",
+    "tldw_chatbook/Chat/console_trace_service.py": "ac28f7b3676ba55fd0a71adccc3a38e0958b16f949a5f94d7281809748a49efd",
+    "Tests/Chat/test_console_trace_service.py": "624a73f62a88b7585d0211944e39f549b6fe4dcdfe85e81225dde923b6a30f20"
+  }
+}

@@ -1,0 +1,44 @@
+exec(open('/private/tmp/pr2995-task16-runner.py').read().split('mode=sys.argv[1]')[0])
+def ast_map(text):
+ tree=ast.parse(text);rows={}
+ def visit(body,prefix=''):
+  for n in body:
+   if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)):
+    rows[prefix+n.name]=sha(ast.dump(n,include_attributes=False).encode())
+   elif isinstance(n,ast.ClassDef): visit(n.body,prefix+n.name+'.')
+ visit(tree.body)
+ return rows,[ast.unparse(n) for n in tree.body if isinstance(n,(ast.Import,ast.ImportFrom))]
+records=[]
+for exception in S['source_exceptions']:
+ if 'upstream_changed_methods' not in exception:continue
+ p=exception['path'];before=git('show',START+':'+p).decode();after=(WT/p).read_text();bm,bi=ast_map(before);am,ai=ast_map(after)
+ changed=sorted(k for k in set(bm)|set(am) if bm.get(k)!=am.get(k));assert changed==sorted(exception['upstream_changed_methods']),(p,changed,exception['upstream_changed_methods'])
+ assert bi==exception['imports_before'] and ai==exception['imports_after'],p
+ records.append({'path':p,'before_sha256':sha(before.encode()),'after_sha256':sha(after.encode()),'incoming_method_exceptions':changed,'imports_before':bi,'imports_after':ai,'methods_before_ast_sha256':bm,'methods_after_ast_sha256':am})
+carry=[]
+for row in S['runtime_ast_carry']:
+ methods,_=ast_map((WT/row['path']).read_text());assert methods[row['method']]==row['after_ast_sha256'];carry.append({**row,'actual_ast_sha256':methods[row['method']]})
+for p,method in [('tldw_chatbook/UI/Screens/personas_screen.py','PersonasScreen.compose_content'),('tldw_chatbook/UI/Navigation/base_app_screen.py','BaseAppScreen.compose')]:
+ before=ast_map(git('show',START+':'+p).decode())[0][method];after=ast_map((WT/p).read_text())[0][method];assert before==after
+ carry.append({'path':p,'method':method,'before_ast_sha256':before,'after_ast_sha256':after,'ast_identical':True,'prose_correction':'PersonasScreen defines compose_content and inherits BaseAppScreen.compose.'})
+save('method-import-AST-carry',{'incoming_production_owners':records,'named_runtime_method_carry':carry,'source_exceptions_authority':'All47 nonoverlap incoming files byte-identical to selected dev.'})
+paths=[x['path'] for x in S['source_exceptions'] if x['path'].endswith('.py')];r=capture('after-fatal-ruff',[PYTHON,'-m','ruff','check','--select','E9,F63,F7,F82',*paths],hashpaths=paths);assert r.returncode==0
+r=capture('after-format-check',[PYTHON,'-m','ruff','format','--check','--diff',*paths],hashpaths=paths)
+refpaths=S['formatting_carry']['reference_red_paths'];capture('after-feature-format-check',[PYTHON,'-m','ruff','format','--check','--diff',*refpaths],hashpaths=refpaths)
+r=capture('whitespace',['git','diff','--check',START,'HEAD']);assert r.returncode==0
+capture('overlap-incoming-hunks',['git','diff','--unified=8',START,'HEAD','--',*S['path_overlaps']])
+formatter=[]
+for p in sorted(set(paths+refpaths)):
+ current=(WT/p).read_bytes();selected=git('show',(S['selected_dev'] if p in paths and p not in S['path_overlaps'] else START)+':'+p)
+ def formatting(b):
+  r=subprocess.run([PYTHON,'-m','ruff','format','--stdin-filename',p,'-'],input=b,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+  assert r.returncode==0,(p,r.stderr.decode());return r.stdout
+ curf=formatting(current);basef=formatting(selected)
+ owner='combined-overlap' if p in S['path_overlaps'] else 'selected-dev' if p in paths else 'protected-feature'
+ row={'path':p,'owner':owner,'actual_sha256':sha(current),'owner_base_sha256':sha(selected),'format_debt':current!=curf,'owner_base_format_debt':selected!=basef,'whole_owner_exact':current==selected,'formatted_sha256':sha(curf),'owner_formatted_sha256':sha(basef)}
+ if owner=='combined-overlap':
+  assert current==curf,p
+ else:assert current==selected and curf==basef,p
+ formatter.append(row)
+save('formatter-inheritance',{'rows':formatter,'current_red_paths':[x['path'] for x in formatter if x['format_debt']],'no_format_edits':True,'combined_python_overlap_format_exact':True})
+print('AST/import, fatal Ruff, whitespace and formatter attribution verified',flush=True)

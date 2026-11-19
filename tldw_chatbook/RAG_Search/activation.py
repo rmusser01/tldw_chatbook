@@ -281,6 +281,13 @@ class RAGRecoveryReview:
     def to_dict(self):
         return asdict(self)
 
+    @property
+    def owner_names(self):
+        """The reviewed owners as Backup & Restore names them (TASK-41513)."""
+        from tldw_chatbook.Backup_Recovery.recovery_service import owner_label
+
+        return ", ".join(owner_label(owner) for owner in self.owners)
+
 
 def _settings_identity(owner, path):
     """Bind approval to exact finite configuration/definition bytes, never display them."""

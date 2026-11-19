@@ -12,6 +12,9 @@ import pytest
 
 
 PORTABLE_UUID = "123e4567-e89b-42d3-a456-426614174000"
+#: The export goldens' ``producer.version`` (TASK-41112): the version they were
+#: cut at, pinned so a release bump does not move their bytes.
+GOLDEN_PRODUCER_VERSION = "0.1.8.0"
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )

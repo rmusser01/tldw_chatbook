@@ -1,4 +1,4 @@
-"""Switch model's provider parity with the registry (ADR-146, TASK-194).
+"""Switch model's provider parity with the registry (ADR-343, TASK-194).
 
 Rewritten on purpose for TASK-33004.4: the provider Select this pinned is
 gone. The pair list now takes its providers from the same registry-aware
@@ -11,7 +11,7 @@ from Tests.UI.test_console_model_switcher import Recorder, build_switcher
 
 
 def test_model_popover_provider_options_include_registry_entries() -> None:
-    """ADR-146: registry entries are listed and keep their display_name."""
+    """ADR-343: registry entries are listed and keep their display_name."""
     app_config = {
         "custom_endpoints": {
             "vale": {

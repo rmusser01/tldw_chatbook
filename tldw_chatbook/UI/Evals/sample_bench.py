@@ -53,8 +53,18 @@ from ...Chat.provider_readiness import is_valid_provider_api_key
 from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.capture_client import WordBenchCaptureClient
 from ...Evals.word_bench.models import BenchConfig, Snippet, Target
-from ...Evals.word_bench.runner import CancelToken, CaptureClientLike, ProgressFn, WordBenchRunner
-from ...Evals.word_bench.storage import _unique_name, load_bench, model_steering, save_bench
+from ...Evals.word_bench.runner import (
+    CancelToken,
+    CaptureClientLike,
+    ProgressFn,
+    WordBenchRunner,
+)
+from ...Evals.word_bench.storage import (
+    _unique_name,
+    load_bench,
+    model_steering,
+    save_bench,
+)
 from .evals_state import EvalsViewModel
 from .snippet_editor import dataset_snippets, import_snippets_into_dataset
 
@@ -183,13 +193,40 @@ def configured_llama_cpp_url(app_config: Optional[Mapping[str, Any]]) -> Optiona
 
     Returns:
         The normalised root URL, or ``None`` if no ``llama_cpp`` endpoint
-        is configured.
+        is configured or the endpoint contract refuses it.
     """
+    return _llama_cpp_endpoint(app_config)[0]
+
+
+def _llama_cpp_endpoint(
+    app_config: Optional[Mapping[str, Any]],
+) -> tuple[Optional[str], str]:
+    """``configured_llama_cpp_url``'s root, or ``None`` and why there is none."""
     url = _llama_cpp_settings(app_config).get("api_url")
     if not isinstance(url, str) or not url.strip():
-        return None
+        return None, (
+            "No llama.cpp endpoint is configured: set [api_settings.llama_cpp] api_url."
+        )
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+    )
+
     normalized = _normalize_llama_cpp_root(url)
-    return normalized or None
+    # TASK-41131 review I-3: the bench posts through its own client, so a URL
+    # the endpoint contract refuses (127.1, user info, a query the root
+    # normalisation would drop) reads as not configured. The contract reads
+    # what the bench sends to: the root (its own /v1/completions route, which
+    # llama.cpp's chat reading calls ambiguous, is stripped), with the host,
+    # user info, query and fragment as typed.
+    parsed = urlparse(url.strip())
+    sent = (
+        urlunparse(parsed._replace(path=urlparse(normalized).path))
+        if parsed.scheme and parsed.netloc
+        else url
+    )
+    if refusal := endpoint_refusal("llama_cpp", sent):
+        return None, f"The configured llama.cpp endpoint is refused: {refusal}"
+    return normalized, ""
 
 
 def configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> str:
@@ -220,7 +257,9 @@ def configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> st
     return model.strip() if isinstance(model, str) else ""
 
 
-def _configured_llama_cpp_api_key(app_config: Optional[Mapping[str, Any]]) -> Optional[str]:
+def _configured_llama_cpp_api_key(
+    app_config: Optional[Mapping[str, Any]],
+) -> Optional[str]:
     """The llama.cpp API key to send, env-first per this project's
     documented precedence (env vars -> config.toml -> defaults; see
     CLAUDE.md). ``LLAMA_CPP_API_KEY`` is the same env var name
@@ -231,7 +270,11 @@ def _configured_llama_cpp_api_key(app_config: Optional[Mapping[str, Any]]) -> Op
     """
     settings = _llama_cpp_settings(app_config)
     env_var = settings.get("api_key_env_var")
-    env_name = env_var.strip() if isinstance(env_var, str) and env_var.strip() else "LLAMA_CPP_API_KEY"
+    env_name = (
+        env_var.strip()
+        if isinstance(env_var, str) and env_var.strip()
+        else "LLAMA_CPP_API_KEY"
+    )
     env_value = os.environ.get(env_name)
     if env_value and is_valid_provider_api_key(env_value):
         return env_value.strip()
@@ -469,7 +512,11 @@ class SampleBenchResult:
 def _default_client_factory(
     app_config: Optional[Mapping[str, Any]],
 ) -> Callable[[Target], CaptureClientLike]:
-    url = configured_llama_cpp_url(app_config) or "http://localhost:8080"
+    # TASK-41524: no fallback address. A missing or refused URL sends nothing;
+    # the reason reaches the bench's error toast.
+    url, why = _llama_cpp_endpoint(app_config)
+    if url is None:
+        raise RuntimeError(why)
     api_key = _configured_llama_cpp_api_key(app_config)
 
     def _factory(_target: Target) -> CaptureClientLike:
@@ -559,7 +606,9 @@ async def create_and_run_sample_bench(
         RuntimeError: If the evaluation service is unavailable, or no
             target could be resolved (callers should have already checked
             ``provider_is_configured`` and hidden the offer in that case;
-            this is a defensive re-check, not the primary gate).
+            this is a defensive re-check, not the primary gate). Also, with
+            no ``client_factory``, when the llama.cpp endpoint is missing or
+            refused (TASK-41524), before anything is written or sent.
         ValueError: Via ``storage.model_steering``, if the resolved target
             row's ``config`` is corrupt (both ``prefix`` and
             ``system_prompt`` set, or a non-mapping ``config``).
@@ -586,14 +635,14 @@ async def create_and_run_sample_bench(
     if db is None:
         raise RuntimeError("The evaluation service is unavailable.")
 
+    # TASK-41524: resolved first, so an unusable endpoint writes nothing.
+    factory = client_factory or _default_client_factory(app_config)
     # create=True: this IS the click path, the one place a real target row
     # may be persisted (see resolve_sample_target's own `create` docs --
     # the rail's render-time gate must never reach this).
     target_row = resolve_sample_target(view_model, app_config, create=True)
     if target_row is None:
-        raise RuntimeError(
-            "No configured target is available for the sample bench."
-        )
+        raise RuntimeError("No configured target is available for the sample bench.")
 
     dataset_id = db.create_dataset(
         name=_unique_name(SAMPLE_DATASET_NAME),
@@ -627,12 +676,15 @@ async def create_and_run_sample_bench(
     snippets = [
         Snippet(id=s["id"], text=s["text"], group=s["group"]) for s in snippet_dicts
     ]
-    factory = client_factory or _default_client_factory(app_config)
     runner = WordBenchRunner(db, factory)
     try:
         outcome = await runner.run(
-            config, [target], snippets, task_id,
-            progress=progress, cancel_token=cancel_token,
+            config,
+            [target],
+            snippets,
+            task_id,
+            progress=progress,
+            cancel_token=cancel_token,
         )
     except asyncio.CancelledError:
         _mark_orphaned_runs_cancelled(db, task_id)
@@ -791,7 +843,8 @@ async def run_existing_bench(
             targets configured (task-1482: a draft bench created via the
             rail's "+ New bench" starts with ``target_ids=()``), any of
             its targets no longer resolve to a live ``eval_models`` row,
-            its dataset is missing or has no snippets, a resolved target's
+            its dataset is missing or has no snippets, the llama.cpp
+            endpoint is missing or refused (no ``client_factory``), a resolved target's
             stored steering is corrupt (task-1611: ``eval_models.config``
             sets both ``prefix`` and ``system_prompt`` -- see
             ``storage.model_steering``), or ``WordBenchRunner.run`` rejects
@@ -852,8 +905,12 @@ async def run_existing_bench(
         factory = client_factory or _default_client_factory(app_config)
         runner = WordBenchRunner(db, factory)
         outcome = await runner.run(
-            config, targets, snippets, task_id,
-            progress=progress, cancel_token=cancel_token,
+            config,
+            targets,
+            snippets,
+            task_id,
+            progress=progress,
+            cancel_token=cancel_token,
         )
     except asyncio.CancelledError:
         _mark_orphaned_runs_cancelled(db, task_id)

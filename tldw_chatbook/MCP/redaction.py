@@ -8,12 +8,14 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 REDACTED = "***"
+_MAX_URL_NESTING = 8
 
 _SECRET_KEY_RE = re.compile(
     r"(?i)(token|secret|passwd|password|api[-_]?key|private[-_]?key"
     r"|authorization|bearer|credential)"
 )
-_INLINE_ARG_RE = re.compile(r"^(?P<key>[A-Za-z0-9_-]+)=(?P<value>.+)$")
+_INLINE_ARG_RE = re.compile(r"(?P<key>[A-Za-z0-9_-]+)=(?P<value>.+)", re.DOTALL)
+_URI_PREFIX_RE = re.compile(r"^[\x00-\x20]*(?:[A-Za-z][A-Za-z0-9+.-]*:|//)")
 
 #: A token that plausibly names a CLI flag rather than being a flag-shaped
 #: secret. Used to tell `--api-key --verbose` (flag never given a value) from
@@ -39,11 +41,10 @@ def _is_plausible_flag(text: str) -> bool:
     if match is None:
         return False
     limit = (
-        _MAX_LONG_FLAG_NAME
-        if match.group("dashes") == "--"
-        else _MAX_SHORT_FLAG_NAME
+        _MAX_LONG_FLAG_NAME if match.group("dashes") == "--" else _MAX_SHORT_FLAG_NAME
     )
     return len(match.group("name")) <= limit
+
 
 #: Values that are secrets whatever key they arrive under. Key-name matching
 #: alone let `{"note": "sk-live-..."}` through to the approval card.
@@ -105,8 +106,8 @@ def looks_like_secret_value(value: Any) -> bool:
     return any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS)
 
 
-def _redact_value(value: Any) -> Any:
-    """Redact a scalar when its shape betrays it; otherwise return it as-is."""
+def _redact_value(value: Any, *, remaining_url_depth: int = _MAX_URL_NESTING) -> Any:
+    """Redact scalar credential shapes and URI credentials for display only."""
     if isinstance(value, (bytes, bytearray)):
         # Decoded only to test the shape; the original is never returned once
         # it matches, and undecodable bytes are left alone.
@@ -115,7 +116,11 @@ def _redact_value(value: Any) -> Any:
         except (UnicodeDecodeError, AttributeError):
             return value
         return REDACTED if looks_like_secret_value(probe) else value
-    return REDACTED if looks_like_secret_value(value) else value
+    if looks_like_secret_value(value):
+        return REDACTED
+    if isinstance(value, str) and _URI_PREFIX_RE.match(value):
+        return _redact_url(value, remaining_url_depth)
+    return value
 
 
 def _is_present(value: Any) -> bool:
@@ -193,13 +198,22 @@ def redact_args(args: Sequence[str]) -> list[str]:
             # The previous flag was never given a value (this arg really does
             # name another flag) - fall through and re-evaluate `text` so it
             # isn't silently swallowed as a secret value.
-        inline = _INLINE_ARG_RE.match(text)
+        inline = _INLINE_ARG_RE.fullmatch(text)
         if inline and is_secret_key(inline.group("key")):
             redacted.append(f"{inline.group('key')}={REDACTED}")
             continue
-        # A secret can also arrive as a bare positional token with no flag.
-        redacted.append(_redact_value(text))
-        if text.startswith("-") and is_secret_key(text.lstrip("-")):
+        # Check the whole token first so credential-shaped names stay masked.
+        safe = _redact_value(text)
+        if inline and safe == text:
+            key, value = inline.group("key", "value")
+            quote = value[0]
+            if len(value) > 1 and quote in {"'", '"'} and value.endswith(quote):
+                value = f"{quote}{_redact_value(value[1:-1])}{quote}"
+            else:
+                value = _redact_value(value)
+            safe = f"{key}={value}"
+        redacted.append(safe)
+        if not inline and text.startswith("-") and is_secret_key(text.lstrip("-")):
             previous_was_secret_flag = True
     return redacted
 
@@ -217,25 +231,57 @@ def redact_url(url: str) -> str:
 
     Query values are judged by name AND by shape, so a secret under an
     innocuous parameter name does not survive (TASK-26011 review, I6).
+    Nested URL values beyond the inspection limit are masked as a whole.
     """
-    parts = urlsplit(str(url))
-    if not parts.query and "@" not in parts.netloc:
+    return _redact_url(url, _MAX_URL_NESTING)
+
+
+def _redact_url(url: str, remaining_depth: int) -> str:
+    if remaining_depth == 0:
+        return REDACTED
+    try:
+        parts = urlsplit(str(url))
+    except ValueError:
+        return REDACTED
+    if not parts.query and "@" not in parts.netloc and "=" not in parts.fragment:
         return str(url)
+    nested_depth = remaining_depth - 1
+    original_query = parse_qsl(parts.query, keep_blank_values=True)
     query = [
         (
             key,
             REDACTED
-            if is_secret_key(key) or looks_like_secret_value(value)
-            else value,
+            if is_secret_key(key)
+            else _redact_value(value, remaining_url_depth=nested_depth),
         )
-        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        for key, value in original_query
     ]
+    original_fragment = (
+        parse_qsl(parts.fragment, keep_blank_values=True) if "=" in parts.fragment else []
+    )
+    fragment_values = [
+        (
+            key,
+            REDACTED
+            if is_secret_key(key)
+            else _redact_value(value, remaining_url_depth=nested_depth),
+        )
+        for key, value in original_fragment
+    ]
+    fragment = (
+        urlencode(fragment_values)
+        if fragment_values != original_fragment
+        else parts.fragment
+    )
+    netloc = _redact_netloc(parts.netloc)
+    if query == original_query and netloc == parts.netloc and fragment == parts.fragment:
+        return str(url)
     return urlunsplit(
         (
             parts.scheme,
-            _redact_netloc(parts.netloc),
+            netloc,
             parts.path,
             urlencode(query),
-            parts.fragment,
+            fragment,
         )
     )

@@ -61,7 +61,15 @@ def test_exact_index_beats_character_division_on_ragged_text():
     from rich.cells import cell_len
 
     random.seed(7)
-    words = ["a", "to", "the", "quick", "extraordinarily", "fox", "internationalization"]
+    words = [
+        "a",
+        "to",
+        "the",
+        "quick",
+        "extraordinarily",
+        "fox",
+        "internationalization",
+    ]
     lines = [
         " ".join(random.choice(words) for _ in range(random.randint(20, 60)))
         for _ in range(500)
@@ -188,7 +196,9 @@ def test_segment_start_matches_a_running_sum():
             assert index.segment_start(line_index, segment_index) == running
             running += len(segment)
     # Out-of-range indices clamp rather than raise.
-    assert index.segment_start(0, 10_000) == index.segment_start(0, len(index.segments(0)) - 1)
+    assert index.segment_start(0, 10_000) == index.segment_start(
+        0, len(index.segments(0)) - 1
+    )
 
 
 def test_short_ascii_lines_never_reach_rich(monkeypatch):

@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_self_hosted_retry_accounting.py::test_fallback_trace_recovery_keeps_accepted_owner[True-capture_off-corrupt]",
+    "Tests/Chat/test_self_hosted_retry_accounting.py::test_fallback_trace_recovery_keeps_accepted_owner[False-capture_off-corrupt]",
+    "Tests/Wizards/test_first_run_setup_integration.py::test_provider_commit_carries_environment_selector_only_for_environment_source",
+    "Tests/Wizards/test_first_run_setup_integration.py::test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone",
+    "Tests/Chat/test_console_light_surface_context_meter.py::test_a_window_too_small_for_the_light_set_counts_what_the_plan_sends",
+    "Tests/Chat/test_console_light_surface_context_meter.py::test_a_local_reasoning_resolution_still_counts_the_light_set",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/fix-second-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/fix-second.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 1,
+  "elapsed": 17.03768950002268
+}

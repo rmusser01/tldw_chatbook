@@ -1,0 +1,45 @@
+{
+  "scope": "Accepted staged scheduling handoff; portable final source bindings and bounded verification; physical qualification0",
+  "before_revision": "f1a321060e",
+  "observed_on_revision": "86144e60ed81a4d3f609979f4f13023a983c84c2",
+  "hash_basis": "SHA-256 of UTF-8 text with CRLF normalized to LF, matching portable Git text bytes; diagnostic run seals separately bind exact raw bytes.",
+  "files_SHA256": {
+    "tldw_chatbook/Canvas/config_policy.py": "7df5256f4799e28ecb6bd5fe3aaed7421f9e5f69c47993caf7953ef7f76000db",
+    "tldw_chatbook/Chat/console_runtime.py": "6495ee4c4f89c7dfe2cdbe792eea0b9145f1250ad1bda409a1bdaf47d8963ca3",
+    "tldw_chatbook/UI/Console_Modules/config_sync.py": "0c1928ce6d69b22bd2bf0cd5d8fd586bc77772a54eae1e3f91981768c01908da",
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": "05dba1b80822724a3ee24e95f26bf55943dc473a8253b081025a7034b5073ef9",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "c8964f7283830accedf49297942287f4b7678aef2410dfc3e6080dc098aaaa43",
+    "Tests/Canvas/test_canvas_kill_switch.py": "26126f830fa721985b3d5bfff488ff2166d33cadf74a30c83cbe0c952dff2487",
+    "Tests/Backup_Recovery/test_canvas_policy_worker.py": "c49894c03d5fb4c3f90775d49c4f75020f2c96451de22d504cd9999e49e786bc",
+    "Tests/UI/test_console_projection_reads_off_loop.py": "7e4dc792b34ec8dd85cf9b217588c958c338f7fbe98e1eaae4a0d21da694308a",
+    "Docs/superpowers/plans/2026-11-07-console-canvas-policy-poll-cooperation.md": "3cfaa07d177aa9c467fe1b6d664cdab38e88b274b7b0ec250c32d9af812c89d5",
+    "backlog/decisions/121-local-versioned-canvas-artifacts-and-browser-sandbox.md": "3c5e9b3e23ef523dae0b9d861b38fac4866615a9f9de591a68412f26bc6f1ca6",
+    "Docs/superpowers/qa/2026-11-06-console-approval-resync/canvas-staged-handoff-followup.md": "39af7d288ae1c9bd51825bbb53802a8c5c3406522294958f5d3016e91390b3c8"
+  },
+  "physical_qualified_samples": 0,
+  "functional_results": {
+    "original_enabled_finite_reader": 1,
+    "original_malformed_config": 1,
+    "pure_Canvas": 37,
+    "actual_READY_identity_foreign_REBUILD": 1,
+    "permanent_manual_handoff": 1,
+    "corrected_footer_legacy": 3
+  },
+  "legacy_a0_comparison": {
+    "baseline": "a0ae30b7ed9c313fe19cb3a0da5d95ebde182385",
+    "same_original_body_failures": [
+      "watcher_cancel",
+      "dispose_cancel",
+      "restart"
+    ],
+    "root_cause_established": false,
+    "baseline_restored_clean": true
+  },
+  "limits": [
+    "Manual callback/helper unit does not certify actual background timer delivery.",
+    "One Windows/Python3.12 dependency environment; no broad lifetime or fairness claim.",
+    "Failed legacy bodies did not reach guard footer; actual Core residency is unknown there.",
+    "Known inherited eager-import Windows688<688 failure is retained.",
+    "No physical timing distribution or full loaded-module closure is claimed."
+  ]
+}

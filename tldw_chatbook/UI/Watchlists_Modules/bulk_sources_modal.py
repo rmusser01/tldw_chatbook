@@ -157,6 +157,18 @@ class BulkSourcesModal(ModalScreen[None]):
             return
         self.dismiss(None)
 
+    async def confirm_quit(self) -> bool:
+        """Stay while sources are created, as Cancel does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer mid-batch; else True.
+        """
+        if not self._batch_posted:
+            return True
+        from ...Widgets.quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(self, "Sources are still being created.")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         button_id = str(event.button.id)
@@ -219,7 +231,9 @@ class BulkSourcesModal(ModalScreen[None]):
         self._render_rows(self._validation_rows)
         self.query_one("#bulk-sources-decisions").display = False
         if not valid:
-            self._show_status("No valid URLs were found. Return to the draft.", error=True)
+            self._show_status(
+                "No valid URLs were found. Return to the draft.", error=True
+            )
             return
         self._batch_posted = True
         self.query_one("#bulk-sources-create", Button).disabled = True
@@ -334,9 +348,7 @@ class BulkSourcesModal(ModalScreen[None]):
             return
         self._continue_posted = True
         self.query_one("#bulk-sources-continue", Button).disabled = True
-        destination = str(
-            self.query_one("#bulk-sources-destination", Select).value
-        )
+        destination = str(self.query_one("#bulk-sources-destination", Select).value)
         self._post_to_owner(
             BulkSourcesContinueRequested(
                 self,

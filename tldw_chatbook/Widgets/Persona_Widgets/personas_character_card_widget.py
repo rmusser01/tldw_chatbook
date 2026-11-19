@@ -16,7 +16,7 @@ from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, VerticalScroll
 from textual.widgets import Button, Static
 
-from ...UI.character_display_text import (
+from tldw_chatbook.Utils.character_display_text import (
     sanitize_character_display_items,
     sanitize_character_display_label,
     sanitize_character_display_text,

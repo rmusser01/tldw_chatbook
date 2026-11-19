@@ -42,7 +42,10 @@ def _is_sd_cpp_configured(cfg, enabled: bool) -> bool:
         return False
     if not _path_exists(cfg.sd_cpp_binary_path):
         return False
-    return bool(_path_exists(cfg.sd_cpp_diffusion_model_path) or _path_exists(cfg.sd_cpp_model_path))
+    return bool(
+        _path_exists(cfg.sd_cpp_diffusion_model_path)
+        or _path_exists(cfg.sd_cpp_model_path)
+    )
 
 
 def _is_swarmui_configured(cfg, enabled: bool) -> bool:
@@ -54,21 +57,31 @@ def _is_swarmui_configured(cfg, enabled: bool) -> bool:
 def _is_openrouter_configured(cfg, enabled: bool) -> bool:
     if not enabled:
         return False
-    api_key = (getattr(cfg, "openrouter_image_api_key", None) or os.getenv("OPENROUTER_API_KEY") or "").strip()
+    api_key = (
+        getattr(cfg, "openrouter_image_api_key", None)
+        or os.getenv("OPENROUTER_API_KEY")
+        or ""
+    ).strip()
     return bool(api_key)
 
 
 def _is_novita_configured(cfg, enabled: bool) -> bool:
     if not enabled:
         return False
-    api_key = (getattr(cfg, "novita_image_api_key", None) or os.getenv("NOVITA_API_KEY") or "").strip()
+    api_key = (
+        getattr(cfg, "novita_image_api_key", None) or os.getenv("NOVITA_API_KEY") or ""
+    ).strip()
     return bool(api_key)
 
 
 def _is_together_configured(cfg, enabled: bool) -> bool:
     if not enabled:
         return False
-    api_key = (getattr(cfg, "together_image_api_key", None) or os.getenv("TOGETHER_API_KEY") or "").strip()
+    api_key = (
+        getattr(cfg, "together_image_api_key", None)
+        or os.getenv("TOGETHER_API_KEY")
+        or ""
+    ).strip()
     return bool(api_key)
 
 
@@ -87,7 +100,9 @@ def _is_modelstudio_configured(cfg, enabled: bool) -> bool:
 def _is_fal_configured(cfg, enabled: bool) -> bool:
     if not enabled:
         return False
-    api_key = (getattr(cfg, "fal_image_api_key", None) or os.getenv("FAL_KEY") or "").strip()
+    api_key = (
+        getattr(cfg, "fal_image_api_key", None) or os.getenv("FAL_KEY") or ""
+    ).strip()
     return bool(api_key)
 
 
@@ -140,6 +155,7 @@ def _resolve_supported_formats(registry, name: str) -> list[str] | None:
         return None
     cleaned = {str(v).strip() for v in formats if v and str(v).strip()}
     return sorted(cleaned) if cleaned else None
+
 
 def list_image_models_for_catalog() -> list[dict[str, Any]]:
     registry = get_registry()
@@ -250,7 +266,9 @@ def list_image_models_for_catalog() -> list[dict[str, Any]]:
             "type": "image",
             "capabilities": {
                 "image_generation": True,
-                "image_reference_input": resolve_backend_reference_image_capability(name, config=cfg).supported,
+                "image_reference_input": resolve_backend_reference_image_capability(
+                    name, config=cfg
+                ).supported,
             },
             "modalities": {"input": ["text"], "output": ["image"]},
             "is_configured": bool(is_configured),

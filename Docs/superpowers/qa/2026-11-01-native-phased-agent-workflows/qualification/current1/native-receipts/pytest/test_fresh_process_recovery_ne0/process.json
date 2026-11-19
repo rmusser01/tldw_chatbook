@@ -1,0 +1,42 @@
+{
+  "producer_pid": 4418,
+  "producer_wait": -9,
+  "restart_pid": 4429,
+  "restart_wait": 0,
+  "producer_pgid": 4365,
+  "restart_pgid": 4365,
+  "producer_argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "Tests.DB.workflow_restart_child",
+    "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-current1-n3ujb6nz/pytest/test_fresh_process_recovery_ne0",
+    "produce",
+    "prepared"
+  ],
+  "restart_argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "Tests.DB.workflow_restart_child",
+    "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-current1-n3ujb6nz/pytest/test_fresh_process_recovery_ne0",
+    "restart",
+    "prepared"
+  ],
+  "boundary": "prepared",
+  "recovered": {
+    "pid": 4429,
+    "pgid": 4365,
+    "status": "awaiting_resume",
+    "used": {
+      "generation": 0,
+      "child_launch": 0,
+      "model_call": 0,
+      "tokens": 0
+    },
+    "results": 0,
+    "checkpoints": 0,
+    "unresolved_charge": 0,
+    "runs_before_audit": 0,
+    "runs_after_audit": 0
+  },
+  "provider_operations": 0
+}

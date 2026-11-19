@@ -1,0 +1,22 @@
+....F............                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_library_mixin_create_and_filtered_pagination_totals ___________
+Tests/UI/test_library_prompt_mixins.py:302: in test_library_mixin_create_and_filtered_pagination_totals
+    screen.query_one("#library-prompts-new-mixin", Button).press()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match '#library-prompts-new-mixin' on LibraryScreen(classes='shell-header-normal')
+============================= slowest 25 durations =============================
+3.42s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_save_conflict_export_and_dirty_escape
+2.75s call     Tests/UI/test_library_prompt_mixins.py::test_real_console_mixin_consumer_enables_without_touching_composer_or_system
+2.13s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size0]
+2.04s call     Tests/UI/test_library_prompt_mixins.py::test_library_mixin_create_and_filtered_pagination_totals
+2.04s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size2]
+1.89s call     Tests/UI/test_library_prompt_mixins.py::test_literal_editor_production_size_capture[size1]
+1.43s call     Tests/UI/test_library_prompt_mixins.py::test_editor_preserves_literal_body
+
+(18 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_prompt_mixins.py::test_library_mixin_create_and_filtered_pagination_totals
+1 failed, 16 passed in 22.10s

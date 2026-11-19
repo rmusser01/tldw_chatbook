@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-import os
 import hashlib
 import threading
 import uuid
@@ -20,7 +19,7 @@ from loguru import logger
 
 from ..Utils.path_validation import validate_path_simple
 from ..Chat.chat_conversation_service import ChatConversationService
-from ..Chat.assistant_generation_state import render_exported_assistant_content
+from ..DB.assistant_generation_state import render_exported_assistant_content
 from .world_book_manager import WorldBookManager
 
 
@@ -86,9 +85,9 @@ def normalize_policy_rules(value: Any) -> list[dict[str, Any]]:
                 PersonaPolicyRule.model_validate(entry).model_dump(mode="json")
             )
         except Exception as exc:
-            logger.warning(
-                "Dropping malformed persona policy rule; error_type={}",
-                type(exc).__name__,
+            # TASK-39060: constant message; the forwarder appends the class.
+            logger.bind(exception_type=type(exc).__name__).warning(
+                "Dropping malformed persona policy rule"
             )
     return rules
 
@@ -288,23 +287,23 @@ class LocalCharacterPersonaService:
         with _chat_sources.operation(self) as token:
             selected = _chat_sources.selection(self, "persona_sidecar")[0]
             temporary = selected.with_suffix(selected.suffix + ".tmp")
-            raw._mkdirs(token)
+            raw.mkdirs(token)
             try:
-                with raw._file(token, temporary, "w") as stream:
+                with raw.file(token, temporary, "w") as stream:
                     stream.buffer.write(payload)
-                state = raw._check(token, selected, writing=True)
+                state = raw.check(token, selected, writing=True)
                 if _chat_sources.binding(self) is not None and (
-                    _chat_sources._sidecar_identity(selected, writing=True)
+                    _chat_sources.sidecar_identity(selected, writing=True)
                     != state.observed_files.get(selected)
                 ):
                     raise _chat_sources.bootstrap.RecoveryRequired("chat_sidecar_identity_changed")
-                raw._replace(token, temporary, selected)
+                raw.replace(token, temporary, selected)
                 if _chat_sources.binding(self) is not None:
-                    state.observed_files[selected] = _chat_sources._sidecar_identity(selected)
+                    state.observed_files[selected] = _chat_sources.sidecar_identity(selected)
             finally:
                 state = raw._states[token]
                 if temporary in state.created_files and not state.uncertain:
-                    raw._remove_temporary(token, temporary)
+                    raw.remove_temporary(token, temporary)
 
     @_chat_sources.guarded
     def _persist_personas(self) -> None:
@@ -314,6 +313,16 @@ class LocalCharacterPersonaService:
             self._persona_store_bytes(self._persona_store_payload()),
             token=uuid.uuid4().hex,
         )
+
+    def _actor_pack_mutation_scope(self):
+        """Hold this store's paired file and ChaChaNotes admission (TASK-41114).
+
+        The Actor Pack coordinator keeps it from its plan through its commit,
+        so a capture's pause waits for the whole two-store change. Guarded
+        calls inside reuse it; an exception leaving it marks the store's
+        publication incomplete.
+        """
+        return _chat_sources.operation(self)
 
     @_chat_sources.guarded
     def _actor_pack_plan_persona_profile(
@@ -492,7 +501,7 @@ class LocalCharacterPersonaService:
 
             with _chat_sources.operation(self) as token:
                 selected = _chat_sources.selection(self, "persona_sidecar")[0]
-                with raw._file(token, selected, "r") as stream:
+                with raw.file(token, selected, "r") as stream:
                     return stream.buffer.read()
         except FileNotFoundError:
             return b""

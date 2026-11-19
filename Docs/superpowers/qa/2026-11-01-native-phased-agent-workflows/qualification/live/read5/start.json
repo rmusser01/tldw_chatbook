@@ -1,0 +1,14 @@
+{
+  "bound": 360,
+  "cmd": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-read-diagnostic.py",
+    "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-_269eivc",
+    "probe"
+  ],
+  "pgid": 79896,
+  "pid": 79896,
+  "root": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-_269eivc",
+  "signals": [],
+  "started": 1793852713.157214
+}

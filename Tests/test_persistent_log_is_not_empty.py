@@ -181,7 +181,12 @@ def test_no_message_text_reaches_the_persistent_log(tmp_path, monkeypatch):
         # level put a DEBUG record in front of an INFO root logger and lost it.
         # Emitting at INFO keeps this "verbose file, quiet terminal" setup
         # working: the handler admits DEBUG and up, root admits INFO and up.
-        ("DEBUG", logging.INFO, True, "a DEBUG handler behind an INFO root admits INFO"),
+        (
+            "DEBUG",
+            logging.INFO,
+            True,
+            "a DEBUG handler behind an INFO root admits INFO",
+        ),
         # Raised levels legitimately filter the line. `config.py`'s own comment
         # offers WARNING/ERROR/CRITICAL, and at those the user has asked for a
         # quiet log. The install event is not exempted from that by inflating
@@ -257,9 +262,7 @@ def test_the_install_event_is_emitted_at_info_and_level_gated_like_any_other_rec
         )
 
 
-def test_the_already_installed_path_also_emits_the_install_event(
-    tmp_path, monkeypatch
-):
+def test_the_already_installed_path_also_emits_the_install_event(tmp_path, monkeypatch):
     """Returning True without emitting makes "installed" unprovable.
 
     `_configure_private_file_logging` has two success paths: it builds the sink,

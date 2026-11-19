@@ -183,7 +183,30 @@ async def request_conversation_resume(
             from ...Constants import TAB_CHAT
             from ...UI.Navigation.main_navigation import NavigateToScreen
 
-            app.post_message(NavigateToScreen(TAB_CHAT))
+            try:
+                screen_stack = app.screen_stack
+            except AttributeError:
+                screen_stack = ()
+            source_screen = screen_stack[-1] if screen_stack else None
+
+            def resume_same_screen(succeeded: bool) -> None:
+                # Textual does not emit ScreenResume for an already-current Console.
+                if not (succeeded and source_screen is not None and request_current()):
+                    return
+                try:
+                    current_screen = app.screen
+                except AttributeError:
+                    current_screen = None
+                if current_screen is source_screen:
+                    consume = getattr(
+                        source_screen, "_consume_pending_conversation_resume", None
+                    )
+                    if callable(consume):
+                        app.run_worker(consume(), group="resume-saved-conversation")
+
+            app.post_message(
+                NavigateToScreen(TAB_CHAT, on_completion=resume_same_screen)
+            )
         except Exception:  # noqa: BLE001 - retain completed changes across separate stores
             logger.bind(
                 conversation_id=conversation_id, workspace_id=workspace_id

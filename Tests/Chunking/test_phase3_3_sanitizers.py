@@ -7,8 +7,10 @@ import pytest
 # Skipped: FastAPI endpoint module tldw_Server_API.app.api.v1.endpoints.chunking is server-side (spec §10.1 endpoint class). Terminal disposition (2026-08-23 program close):
 # pinned by Tests/Chunking/test_descope_ledger.py; a re-sync regenerates
 # this block verbatim.
-pytest.importorskip("tldw_chatbook.NoSuchDeferredModule",
-                    reason="skipped: FastAPI endpoint module tldw_Server_API.app.api.v1.endpoints.chunking is server-side (spec §10.1 endpoint class)")
+pytest.importorskip(
+    "tldw_chatbook.NoSuchDeferredModule",
+    reason="skipped: FastAPI endpoint module tldw_Server_API.app.api.v1.endpoints.chunking is server-side (spec §10.1 endpoint class)",
+)
 from fastapi import HTTPException
 
 from tldw_Server_API.app.api.v1.endpoints import chunking
@@ -54,7 +56,9 @@ class _BadStrFilename(str):
     def __str__(self) -> str:
         self.calls += 1
         if self.calls == 2:
-            raise RuntimeError("backend exploded at /private/chunking/path SECRET_TOKEN")
+            raise RuntimeError(
+                "backend exploded at /private/chunking/path SECRET_TOKEN"
+            )
         return "safe.py"
 
 
@@ -90,7 +94,9 @@ def _assert_http_exception_is_detached(error: HTTPException) -> None:
     assert error.__context__ is None
 
 
-def _successful_chunker(text: str, options: dict[str, Any], *_args) -> list[dict[str, Any]]:
+def _successful_chunker(
+    text: str, options: dict[str, Any], *_args
+) -> list[dict[str, Any]]:
     return [{"text": text, "metadata": {"method": options["method"]}}]
 
 
@@ -152,7 +158,8 @@ async def test_chunk_text_language_inference_fallback_log_is_sanitized(monkeypat
 
     assert response.chunks[0].text == "print('hello')"
     assert any(
-        level == "debug" and "Failed to infer code language from file extension" in message
+        level == "debug"
+        and "Failed to infer code language from file extension" in message
         for level, message, _args, _kwargs in logger_stub.messages
     )
     rendered = _render_logs(logger_stub)
@@ -198,7 +205,8 @@ async def test_chunk_file_language_inference_fallback_log_is_sanitized(monkeypat
     assert file.closed is True
     assert response.chunks[0].text == "print('hello')"
     assert any(
-        level == "debug" and "Failed to infer cleaned form language from file extension" in message
+        level == "debug"
+        and "Failed to infer cleaned form language from file extension" in message
         for level, message, _args, _kwargs in logger_stub.messages
     )
     rendered = _render_logs(logger_stub)

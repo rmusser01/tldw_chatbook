@@ -7,9 +7,10 @@ global defaults and sparse conversation overrides are persisted.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, fields
 from enum import Enum
-from typing import Mapping
+from typing import Any, Mapping
 
 
 DEFAULT_COMPACTION_TRIGGER_RATIO = 0.80
@@ -238,6 +239,67 @@ def context_policy_overrides_from_console_config(
     return ConsoleContextPolicyOverrides.from_mapping(
         {key: value for key, value in translated.items() if value is not None}
     )
+
+
+#: TASK-33620.15.1 -- the last global-overrides read: (installed config
+#: dict, reader, parser, parsed overrides).
+_LAST_GLOBAL_OVERRIDES: tuple[Any, Any, Any, Any] | None = None
+
+
+def read_global_context_policy_overrides(
+    read_setting: Callable[..., Any],
+    parse: Callable[[dict[str, Any]], Any],
+    keys: tuple[str, ...],
+) -> Any:
+    """Return the parsed global overrides, reusing them for the same config.
+
+    TASK-33620.15.1: live on 46c3959526, the Console sync read these nine
+    ``[console]`` keys on every 0.2 s tick (and again at run start), each time
+    inside a full checked config operation -- storage admission, pause probes
+    and pinned-directory opens to read an unchanged in-memory config; about
+    half of the transcript sync's main-thread samples. The operation predates
+    warm reads: it was one handshake for nine reads (TASK-32628), and since
+    TASK-32804.1 a warm ``get_cli_setting`` read needs none. A read of the
+    same installed config now reuses its parsed result. Any miss goes through
+    the checked operation as before: a save or reload (every publish installs
+    a new dict), an external edit or a changed selector (no warm hit), or a
+    local storage pause (so a pause still refuses).
+
+    Args:
+        read_setting: ``get_cli_setting``-shaped reader.
+        parse: Builds the overrides from the nine raw values.
+        keys: The ``[console]`` keys to read, in order.
+
+    Returns:
+        The parsed overrides (immutable).
+
+    Raises:
+        RecoveryRequired: From the checked operation on a miss (a storage
+            pause or a changed selector), as before.
+    """
+    global _LAST_GLOBAL_OVERRIDES
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Backup_Recovery.config_participants import operation
+
+    last = _LAST_GLOBAL_OVERRIDES
+    if (
+        last is not None
+        and storage_admission._pause is None
+        and last[1] is read_setting
+        and last[2] is parse
+        and config._warm_config_cache_hit() is last[0]
+    ):
+        return last[3]
+    with operation(config):
+        before = config._CONFIG_CACHE
+        values = {key: read_setting("console", key, None) for key in keys}
+        installed = config._CONFIG_CACHE
+    result = parse(values)
+    # Memoize only a read of one installed config (no reload between reads).
+    if installed is not None and installed is before:
+        _LAST_GLOBAL_OVERRIDES = (installed, read_setting, parse, result)
+    return result
 
 
 def merge_context_policy(

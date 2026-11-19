@@ -1,0 +1,67 @@
+{
+  "qualified_source_head": "7c2b8f5aab066035ed9d06f9719a93d184f8e5c3",
+  "tasks": [
+    {
+      "id": "TASK-37266",
+      "path": "backlog/tasks/task-37266 - Preserve-later-Character-Bench-drafts-and-selection-when-queued-Save-publishes.md",
+      "status": "Done",
+      "checked_acceptance_criteria": 4,
+      "notes_sha256": "4e4574b5b21160e94fe09f39ffcc15afe125a62d189c998674337a1411e8abc7"
+    },
+    {
+      "id": "TASK-37267",
+      "path": "backlog/tasks/task-37267 - Keep-Research-Runs-refresh-tied-to-its-current-source-and-selection.md",
+      "status": "Done",
+      "checked_acceptance_criteria": 5,
+      "notes_sha256": "7410eb7675111b9964343b12c3d3a6ce57327d8b372dd6d39b8d773348f97f78"
+    },
+    {
+      "id": "TASK-37268",
+      "path": "backlog/tasks/task-37268 - Keep-Library-note-export-writes-off-the-UI-loop.md",
+      "status": "Done",
+      "checked_acceptance_criteria": 4,
+      "notes_sha256": "a699188c7f857e718cb05abf040363c2210d7251888bfe5f35ef15095aec61b8"
+    }
+  ],
+  "cli_exit_codes": [
+    0,
+    0,
+    0
+  ],
+  "deferred_followup": {
+    "id": "TASK-37330",
+    "status": "To Do"
+  },
+  "source_conservation": {
+    "args": [
+      "git",
+      "-c",
+      "safe.directory=C:/Users/GDesktop-1/.codex/worktrees/textual-settings-patterns/tldw_tui",
+      "-c",
+      "gc.auto=0",
+      "diff",
+      "--exit-code",
+      "7c2b8f5aab066035ed9d06f9719a93d184f8e5c3",
+      "--",
+      "tldw_chatbook",
+      "Tests",
+      "scripts",
+      ".github",
+      "pyproject.toml",
+      "Docs/security"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": "",
+    "unchanged_paths": [
+      "tldw_chatbook",
+      "Tests",
+      "scripts",
+      ".github",
+      "pyproject.toml",
+      "Docs/security"
+    ]
+  },
+  "qualification": "Historical CLI closure transaction7c2b8f5aab\u21923e414ff824 followed green source CI and independent review; only documentation/backlog/evidence changed in that transition. Later test-preparation CI repairs are separately recorded and reviewed in ci-repairs; this receipt does not claim their test sources unchanged or their CI passing. Final actual-head status is recorded in the PR description.",
+  "closure_head": "3e414ff824f88bf8e13a5aef1003be3525481a87"
+}

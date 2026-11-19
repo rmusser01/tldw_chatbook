@@ -755,8 +755,11 @@ class ProgressStep(WizardStep):
         super().on_show()
         # Hide back button during export
         self.wizard.can_go_back = False
-        # Start export process
-        self.export_worker = self.run_worker(self._export_chatbook())
+        # Start export process. Exclusive + named group so a re-entry can
+        # never stack a second export on a running one (TASK-38595).
+        self.export_worker = self.run_worker(
+            self._export_chatbook(), exclusive=True, group="chatbook-export"
+        )
 
     async def _export_chatbook(self) -> None:
         """Export the chatbook with progress updates."""
@@ -928,12 +931,17 @@ class ProgressStep(WizardStep):
                     "status-characters", "active", "⟳ Preparing characters..."
                 )
 
-            # Create the chatbook - this does all the actual work
+            # Create the chatbook - this does all the actual work. It is
+            # fully synchronous (DB reads, media compression, ZIP write);
+            # calling it directly in this coroutine froze the whole TUI for
+            # the duration (TASK-38595). The result tuple is only consumed
+            # after the call returns, so nothing crosses threads mid-run.
             logger.info(
                 f"Starting chatbook creation: {basic_info.get('name', 'Untitled')}"
             )
 
-            success, message, dependency_info = creator.create_chatbook(
+            success, message, dependency_info = await asyncio.to_thread(
+                creator.create_chatbook,
                 name=basic_info.get("name", "Untitled"),
                 description=basic_info.get("description", ""),
                 content_selections=selections,

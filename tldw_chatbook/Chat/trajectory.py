@@ -110,9 +110,7 @@ _PYTHON_STACK_RE = re.compile(
     r"\bfile\s+[\"']?[^\"',\s]+[\\/][^\"',]+[\"']?,\s*line\s+\d+",
     re.IGNORECASE,
 )
-_JS_STACK_RE = re.compile(
-    r"^\s*at\s+.*[\\/][^\s)]+:\d+(?::\d+)?\)?\s*$", re.IGNORECASE
-)
+_JS_STACK_RE = re.compile(r"^\s*at\s+.*[\\/][^\s)]+:\d+(?::\d+)?\)?\s*$", re.IGNORECASE)
 
 
 def contains_local_path(value: str) -> bool:
@@ -161,9 +159,11 @@ def contains_local_path(value: str) -> bool:
                     normalized = re.sub(r"[\s-]+", "_", str(key).lower())
                     if normalized in _PATH_CONTEXT_KEYS and isinstance(nested, str):
                         candidate = nested.strip()
-                        if candidate.lower().startswith("file://") or candidate.startswith(
-                            ("/", "~/", "\\\\")
-                        ) or (len(candidate) > 2 and candidate[1:3] in {":\\", ":/"}):
+                        if (
+                            candidate.lower().startswith("file://")
+                            or candidate.startswith(("/", "~/", "\\\\"))
+                            or (len(candidate) > 2 and candidate[1:3] in {":\\", ":/"})
+                        ):
                             return True
                     if has_path_context(nested):
                         return True
@@ -175,9 +175,11 @@ def contains_local_path(value: str) -> bool:
                     return True
                 if _PYTHON_STACK_RE.search(candidate) or _JS_STACK_RE.search(candidate):
                     return True
-                if candidate.lower().startswith("file://") or candidate.startswith(
-                    ("~/", "\\\\")
-                ) or (len(candidate) > 2 and candidate[1:3] in {":\\", ":/"}):
+                if (
+                    candidate.lower().startswith("file://")
+                    or candidate.startswith(("~/", "\\\\"))
+                    or (len(candidate) > 2 and candidate[1:3] in {":\\", ":/"})
+                ):
                     return True
                 if candidate.startswith("/"):
                     parts = [part for part in candidate.split("/") if part]
@@ -214,7 +216,11 @@ def contains_local_path(value: str) -> bool:
                     r"\b(?:cwd|path|file_path|file|directory)\s*[:=]\s*$", prefix
                 )
             )
-            if explicit_context or not parts or parts[0].lower() not in _SAFE_ROUTE_ROOTS:
+            if (
+                explicit_context
+                or not parts
+                or parts[0].lower() not in _SAFE_ROUTE_ROOTS
+            ):
                 return True
     return False
 

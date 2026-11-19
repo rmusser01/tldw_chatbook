@@ -31,7 +31,10 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
 
 Fidelity = Literal["clean", "full"]
 
@@ -70,6 +73,7 @@ class MarkdownMessage:
         image_label: Label for image-bearing messages, rendered as a
             placeholder (image bytes never enter markdown).
         attachments: Display names of file attachments.
+        metadata: Typed provenance decoded by the source adapter.
     """
 
     role: str
@@ -78,6 +82,7 @@ class MarkdownMessage:
     thinking: str = ""
     image_label: str = ""
     attachments: tuple[str, ...] = field(default=())
+    metadata: MessageMetadata | None = None
 
 
 def render_conversation_markdown(
@@ -103,6 +108,8 @@ def render_conversation_markdown(
     Raises:
         ValueError: On an unknown fidelity value.
     """
+    from tldw_chatbook.Chat.message_metadata import handoff_speaker_label
+
     if fidelity not in ("clean", "full"):
         raise ValueError(f"unknown fidelity: {fidelity!r}")
 
@@ -133,7 +140,12 @@ def render_conversation_markdown(
         if message.role == "system":
             lines.extend(_details("System", message.content))
             continue
-        lines.append(_ROLE_HEADINGS.get(message.role, f"## {message.role.title()}"))
+        heading = (
+            f"## {handoff_speaker_label(message.metadata)}"
+            if message.role == "user"
+            else _ROLE_HEADINGS.get(message.role, f"## {message.role.title()}")
+        )
+        lines.append(heading)
         lines.append("")
         if message.image_label:
             lines.append(f"![image]({_safe_label(message.image_label)})")
@@ -217,10 +229,13 @@ def markdown_messages_from_store(
         Transcript-ordered normalized messages.
     """
 
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
     normalized: list[MarkdownMessage] = []
     for message in store_messages:
         role = _role_value(getattr(message, "role", "assistant"))
         content = str(getattr(message, "content", "") or "")
+        metadata = getattr(message, "metadata", None)
         if role == "tool":
             # Tool rows carry the untruncated result separately; the
             # content field holds the UI preview (PR #2262 review).
@@ -231,6 +246,7 @@ def markdown_messages_from_store(
             MarkdownMessage(
                 role=role,
                 content=content,
+                metadata=metadata if isinstance(metadata, MessageMetadata) else None,
                 tool_label=str(getattr(message, "tool_label", "") or ""),
                 thinking=_thinking_text(getattr(message, "thinking", None)),
                 image_label=str(getattr(message, "attachment_label", "") or ""),
@@ -254,6 +270,8 @@ def markdown_messages_from_db_rows(rows: list[dict]) -> list[MarkdownMessage]:
         Transcript-ordered normalized messages.
     """
 
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
     normalized: list[MarkdownMessage] = []
     for row in rows:
         thinking = ""
@@ -274,6 +292,7 @@ def markdown_messages_from_db_rows(rows: list[dict]) -> list[MarkdownMessage]:
             MarkdownMessage(
                 role=_role_value(row.get("sender", "") or "assistant"),
                 content=str(row.get("content", "") or ""),
+                metadata=MessageMetadata.from_json(row.get("metadata_json")),
                 thinking=thinking,
                 image_label=image_label,
             )

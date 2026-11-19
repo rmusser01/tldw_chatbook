@@ -66,8 +66,9 @@ class ConsoleGenerateImageModal(SafeModalDismissMixin, ModalScreen["str | None"]
     #console-generate-image-modal {
         width: 70;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
@@ -118,9 +119,7 @@ class ConsoleGenerateImageModal(SafeModalDismissMixin, ModalScreen["str | None"]
         with Vertical(id="console-generate-image-modal"):
             yield Static("Generate image", classes="console-modal-header")
             yield Static("Prompt", classes="console-generate-image-label")
-            yield Input(
-                placeholder="what to draw…", id="console-generate-image-prompt"
-            )
+            yield Input(placeholder="what to draw…", id="console-generate-image-prompt")
             yield Static("Backend", classes="console-generate-image-label")
             yield Select(
                 [("Default (config)", DEFAULT_CHOICE)]

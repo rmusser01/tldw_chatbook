@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerToolsClient(Protocol):
+    """Client methods ServerToolsService calls (TASK-36953.1)."""
+
+    async def execute_server_tool(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_server_tools(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerToolsService:
@@ -16,7 +20,7 @@ class ServerToolsService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerToolsClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -51,7 +55,7 @@ class ServerToolsService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerToolsClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

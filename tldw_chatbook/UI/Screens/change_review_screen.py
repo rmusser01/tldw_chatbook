@@ -18,19 +18,13 @@ from __future__ import annotations
 import os
 
 import asyncio
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Sequence
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Workspaces.change_revert import (
-        RevertOutcome,
-        RevertPreflight,
-    )
     from tldw_chatbook.Workspaces.git_workspace import (
         CommitResult,
         CurrentRootStatus,
         GitWorkspaceInfo,
-        GitWorkspaceRefusal,
         PushResult,
     )
 
@@ -46,24 +40,26 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Checkbox, Input, Select, Static, Tree
 
 from tldw_chatbook.Chat.console_display_state import (
-    DiffHunk,
+    _hunk_containing_line,
+    DiffHunk as DiffHunk,  # noqa: PLC0414 -- retain the original module export.
     hunk_excerpt,
     split_unified_diff,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
+# Provider and helpers live in Textual-free Workspaces.change_review_provider.
+from tldw_chatbook.Workspaces.change_review_provider import (
+    AgentRunsChangeReviewProvider,
+    ReviewTurn,
+    _file_count_noun as _file_count_noun,
+    _window_labels,
+)
 from tldw_chatbook.Workspaces.change_tracking import (
     ChangedFile,
     ChangeTrackingError,
-    ShadowRepoService,
 )
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
-
-#: Default per-file diff display cap; the Settings surface is TASK-1979,
-#: but the flat section name is the spec's (dotted sections drop defaults).
-DEFAULT_DIFF_DISPLAY_MAX_LINES = 2000
 
 #: How many nested-repo paths the disclosure banner names before "+N more"
 #: (TASK-1976; Qodo #1254 asked for the limit to be discoverable).
@@ -171,720 +167,6 @@ MULTI_WINDOW_UNDO_REFUSAL = (
     "This turn has multiple change windows for the same workspace. "
     "Revert files individually from one labeled window at a time."
 )
-
-#: User-facing provenance for the three persisted window kinds. Keep this
-#: local to Review: importing the Console bridge for three storage literals
-#: would invert the display/runtime dependency.
-_WINDOW_KIND_LABELS = {
-    "turn": "Turn",
-    "turn_concurrent_subagent": "Turn with sub-agent overlap",
-    "subagent_post_turn": "Sub-agent after turn",
-}
-
-
-def _snapshot_root_key(row: dict) -> str:
-    """Return the card-compatible comparison key for a snapshot root."""
-    root = str(row.get("root") or "")
-    return os.path.normcase(os.path.normpath(root)) if root else ""
-
-
-def _window_labels(rows: "Sequence[dict]") -> dict[int, str]:
-    """Label rows only where one canonical root owns multiple windows.
-
-    Known kinds use concise provenance. Repeated or unknown kinds gain a
-    stable ordinal so every affected row remains distinguishable.
-
-    Args:
-        rows: One run's snapshot rows in storage order.
-
-    Returns:
-        Row-object identities mapped to their visible window labels.
-    """
-    by_root: dict[str, list[dict]] = {}
-    for row in rows:
-        by_root.setdefault(_snapshot_root_key(row), []).append(row)
-
-    labels: dict[int, str] = {}
-    for root_rows in by_root.values():
-        if len(root_rows) < 2:
-            continue
-        base_labels = [
-            _WINDOW_KIND_LABELS.get(str(row.get("kind") or ""), "Change window")
-            for row in root_rows
-        ]
-        totals = {base: base_labels.count(base) for base in set(base_labels)}
-        seen: dict[str, int] = {}
-        for row, base in zip(root_rows, base_labels):
-            seen[base] = seen.get(base, 0) + 1
-            labels[id(row)] = f"{base} {seen[base]}" if totals[base] > 1 else base
-    return labels
-
-
-def _file_count_noun(count: int, *, repeated_root: bool) -> str:
-    """Name an aggregate without calling repeated paths unique files.
-
-    TASK-31665 AC#6: the non-repeated-root branch returned the plural
-    unconditionally, so a one-file turn read "1 files" in the header and
-    the turn selector while the Inspect rail's own row for the same fact
-    read "1 file". The repeated-root branch already pluralized correctly;
-    this makes the two branches agree.
-    """
-    if repeated_root:
-        return "file change" if count == 1 else "file changes"
-    return "file" if count == 1 else "files"
-
-
-@dataclass(frozen=True)
-class ReviewTurn:
-    """One reviewable turn: an agent run's snapshot rows.
-
-    Attributes:
-        run_id: The agent run.
-        label: Selector copy (run timestamp + totals).
-        rows: The run's ``change_snapshots`` rows (one per root).
-    """
-
-    run_id: str
-    label: str
-    rows: tuple[dict, ...]
-
-
-class AgentRunsChangeReviewProvider:
-    """Concrete data source over (AgentRunsDB, ShadowRepoService).
-
-    Used by production AND by tests — the fixture-invented-shapes trap has
-    bitten this repo four separate times, so the tests drive this real
-    provider against a real database and real git.
-    """
-
-    def __init__(
-        self,
-        *,
-        db: AgentRunsDB,
-        service: ShadowRepoService,
-        conversation_id: str,
-        diff_display_max_lines: int | None = None,
-        run_active: "Callable[[], bool] | None" = None,
-    ) -> None:
-        """Create a provider over one conversation's recorded turns.
-
-        Args:
-            db: The runs database holding ``change_snapshots`` rows.
-            service: Shadow-repo service for diff content.
-            conversation_id: Conversation whose turns are reviewable.
-            diff_display_max_lines: Per-file render cap; ``None`` reads the
-                flat ``[change_review]`` config section (default 2000).
-        """
-        self._db = db
-        self._service = service
-        self._conversation_id = conversation_id
-        #: TASK-1974: probe for an active run on this conversation's
-        #: workspace. The revert engine refuses while one is live -- the
-        #: per-root lock covers git ops, not the agent's own file tools.
-        self.run_active = run_active if run_active is not None else (lambda: False)
-        self.run_active_for_root: Callable[[str], bool] = lambda _root: (
-            self.run_active()
-        )
-        if diff_display_max_lines is None:
-            diff_display_max_lines = self._configured_cap()
-        # Review finding: an explicit 0/negative/non-int cap would defeat
-        # the windowing guarantee (negative slicing renders almost the full
-        # diff) or crash mid-render. Same floor as the configured path.
-        try:
-            self.diff_display_max_lines = max(50, int(diff_display_max_lines))
-        except (TypeError, ValueError):
-            self.diff_display_max_lines = DEFAULT_DIFF_DISPLAY_MAX_LINES
-
-    @staticmethod
-    def _configured_cap() -> int:
-        try:
-            from tldw_chatbook.config import get_cli_setting
-
-            value = get_cli_setting(
-                "change_review",
-                "diff_display_max_lines",
-                DEFAULT_DIFF_DISPLAY_MAX_LINES,
-            )
-            return max(50, int(value))
-        except Exception:  # noqa: BLE001 -- a bad config never breaks review
-            return DEFAULT_DIFF_DISPLAY_MAX_LINES
-
-    @staticmethod
-    def git_actions_enabled() -> bool:
-        """Whether the git-modes kill switch (TASK-16801 arc B) is on.
-
-        Reads the flat ``[change_review] git_actions`` config key,
-        default True -- the feature ships ON. This is the ONE gate that
-        makes the whole `current` mode (pseudo-entry, detection, commit/
-        push/PR) disappear from the screen: :meth:`detect_git` returns
-        ``{}`` when this is False, and Task 6's screen offers the
-        pseudo-entry only when that dict is non-empty.
-
-        Same guard shape as :meth:`_configured_cap`: reading and
-        coercing the config value is wrapped in one broad
-        ``except Exception`` that falls back to the default -- a bad or
-        garbage config value must never break Change Review, and it
-        must never silently disable a feature that shipped ON either.
-
-        Returns:
-            True unless config explicitly disables git actions.
-        """
-        try:
-            from tldw_chatbook.config import (
-                coerce_bool_setting,
-                get_cli_setting,
-            )
-
-            # coerce_bool_setting now returns the default for a None value
-            # (TASK-32808.4), so the former None workaround is gone. It also
-            # handles hand-edited spellings like "false" that bool(value)
-            # got wrong (Qodo #2, PR #1914).
-            return coerce_bool_setting(
-                get_cli_setting("change_review", "git_actions", True), True
-            )
-        except Exception:  # noqa: BLE001 -- a bad config never breaks review
-            return True
-
-    def turns(self) -> list[ReviewTurn]:
-        """Reviewable turns, NEWEST first (the screen opens on the latest).
-
-        Returns:
-            One :class:`ReviewTurn` per run that has snapshot rows.
-        """
-        by_run: dict[str, list[dict]] = {}
-        order: list[str] = []
-        for row in self._db.change_snapshots_for_conversation(self._conversation_id):
-            run_id = str(row["run_id"])
-            if run_id not in by_run:
-                by_run[run_id] = []
-                order.append(run_id)
-            by_run[run_id].append(row)
-        return [
-            self._build_review_turn(run_id, by_run[run_id])
-            for run_id in reversed(order)
-        ]
-
-    def turn_for_run(self, run_id: str) -> "ReviewTurn | None":
-        """One run's :class:`ReviewTurn`, read run-scoped (no history scan).
-
-        The turn file card renders exactly one run per card, and a
-        transcript can hold many cards -- resolving each through
-        :meth:`turns` would scan and group the whole conversation's
-        snapshot history per card (Qodo, PR #1728). This reads only the
-        run's own rows and builds the identical ``ReviewTurn`` the scan
-        would have produced.
-
-        Args:
-            run_id: The agent run to load.
-
-        Returns:
-            The run's ``ReviewTurn``, or ``None`` when it has no
-            snapshot rows.
-        """
-        rows = self._db.change_snapshots_for_run_review(run_id)
-        if not rows:
-            return None
-        return self._build_review_turn(str(run_id), rows)
-
-    @staticmethod
-    def _build_review_turn(run_id: str, rows: list[dict]) -> ReviewTurn:
-        """Assemble a :class:`ReviewTurn` from a run's snapshot rows.
-
-        Shared by :meth:`turns` and :meth:`turn_for_run` so the two paths
-        can never disagree about label or row order.
-
-        Args:
-            run_id: The agent run the rows belong to.
-            rows: The run's ``change_snapshots`` rows, oldest first.
-
-        Returns:
-            The assembled turn.
-        """
-        files = sum(int(r["files_changed"] or 0) for r in rows)
-        adds = sum(int(r["adds"] or 0) for r in rows)
-        dels = sum(int(r["dels"] or 0) for r in rows)
-        stamp = str(rows[0].get("created_at", ""))[:19].replace("T", " ")
-        repeated_root = bool(_window_labels(rows))
-        return ReviewTurn(
-            run_id=run_id,
-            label=(
-                f"{stamp} · {files} "
-                f"{_file_count_noun(files, repeated_root=repeated_root)} "
-                f"+{adds} −{dels}"
-            ),
-            rows=tuple(rows),
-        )
-
-    def tool_touched_relpaths(self, row: dict) -> "set[str] | None":
-        """Root-relative paths the run's recorded WRITE tools touched.
-
-        TASK-1978: the badge derivation. Uses the SAME extractor the
-        force-add carve-out runs over the SAME persisted step shape, so
-        the badge and the carve-out can never disagree about provenance.
-
-        Args:
-            row: One ``change_snapshots`` row.
-
-        Returns:
-            The touched set, or ``None`` when the run has no recorded
-            steps (older data) — callers must then render NO badges
-            rather than badging everything.
-        """
-        run = self._db.get_run(str(row.get("run_id") or ""))
-        steps = (run or {}).get("steps") or []
-        if not steps:
-            return None
-        from pathlib import Path as _P
-
-        from tldw_chatbook.Workspaces.change_turn_tracker import (
-            ChangeTurnTracker,
-        )
-
-        root = _P(str(row["root"]))
-        rel: set[str] = set()
-        for raw in ChangeTurnTracker.tool_touched_paths(steps):
-            try:
-                rel.add(_P(raw).expanduser().resolve().relative_to(root).as_posix())
-            except (ValueError, OSError):
-                continue
-        return rel
-
-    def snapshots_pruned(self, row: dict) -> bool:
-        """Whether a row's snapshots no longer exist (retention reset).
-
-        Args:
-            row: One ``change_snapshots`` row.
-
-        Returns:
-            True when either recorded sha is gone from the shadow repo —
-            the row's history was pruned by retention (TASK-1975).
-        """
-        try:
-            repo = self._service.repo_for_root(row["root"])
-            return not (
-                repo.has_snapshot(str(row.get("baseline_sha") or ""))
-                and repo.has_snapshot(str(row.get("end_sha") or ""))
-            )
-        except ChangeTrackingError:
-            # The root itself vanished — the diff is equally unrenderable;
-            # the generic unavailable copy handles it.
-            return False
-
-    def changed_files(self, row: dict) -> list[ChangedFile]:
-        """A snapshot row's changed files (empty for tracking-error rows).
-
-        Args:
-            row: One ``change_snapshots`` row.
-
-        Returns:
-            The row's :class:`ChangedFile` list from the shadow repo.
-        """
-        if row.get("tracking_error") or not row.get("end_sha"):
-            return []
-        repo = self._service.repo_for_root(row["root"])
-        return repo.changed_files(str(row["baseline_sha"]), str(row["end_sha"]))
-
-    def preflight_revert(self, row: dict, paths: list[str]) -> RevertPreflight:
-        """The confirm dialog's data: which paths were edited after E.
-
-        Args:
-            row: One ``change_snapshots`` row.
-            paths: Paths the user asked to revert.
-
-        Returns:
-            The engine's :class:`RevertPreflight`.
-        """
-        from tldw_chatbook.Workspaces.change_revert import preflight_revert
-
-        return preflight_revert(self._service, row, paths)
-
-    def revert(self, row: dict, paths: list[str]) -> list[RevertOutcome]:
-        """Restore ``paths`` to the turn's baseline.
-
-        Args:
-            row: One ``change_snapshots`` row.
-            paths: Paths to restore.
-
-        Returns:
-            The engine's per-path :class:`RevertOutcome` list.
-
-        Raises:
-            RevertRefusedError: A run is active on this workspace.
-        """
-        from tldw_chatbook.Workspaces.change_revert import revert_paths
-
-        return revert_paths(
-            self._service,
-            self._db,
-            row,
-            paths,
-            run_active=lambda: self.run_active_for_root(str(row["root"])),
-        )
-
-    def diff_text(self, row: dict, path: str) -> str:
-        """One file's unified diff for a snapshot row.
-
-        Args:
-            row: One ``change_snapshots`` row.
-            path: Root-relative changed path.
-
-        Returns:
-            Unified diff text.
-        """
-        repo = self._service.repo_for_root(row["root"])
-        return repo.diff_text(str(row["baseline_sha"]), str(row["end_sha"]), path)
-
-    def add_change_note(
-        self,
-        *,
-        run_id: str,
-        root: str,
-        path: str,
-        hunk_index: int,
-        hunk_header: str,
-        hunk_excerpt: str,
-        note: str,
-        snapshot_id: int | None = None,
-        anchor_kind: str = "hunk",
-        diff_line_index: int | None = None,
-        diff_line_text: str | None = None,
-    ) -> int:
-        """Record a user-authored note anchored to a turn's diff.
-
-        Thin delegate onto :meth:`AgentRunsDB.add_change_note` (TASK-16800
-        spec §1/§3, anchor kinds extended by TASK-18060 Task 1 / review-rail
-        spec §4) -- the turn file card and the Review screen's comment
-        affordances write notes through the provider exactly like every
-        other change-review read/write, never touching the database
-        directly.
-
-        Args:
-            run_id: The agent run whose diff this note is anchored to.
-            root: Canonical root path of the changed file.
-            path: The changed file's path (root-relative).
-            hunk_index: 0-based index of the hunk over the file's full diff,
-                or ``-1`` for a ``"file"`` note's sentinel.
-            hunk_header: The hunk's ``"@@ -a,b +c,d @@ ..."`` line, verbatim,
-                or ``""`` for a ``"file"`` note's sentinel.
-            hunk_excerpt: The hunk body captured at note time (already
-                capped/elided by the caller), or ``""`` for a ``"file"``
-                note.
-            note: The user's note text.
-            snapshot_id: The owning ``change_snapshots`` row's own DB
-                ``id`` (Qodo #6, PR #1779 fix round) -- disambiguates
-                which of two same-run/root/path windows this note's hunk
-                came from. ``None`` when the caller has no snapshot row
-                to anchor to.
-            anchor_kind: ``"hunk"`` (default), ``"file"``, or
-                ``"diff_line"`` (TASK-18060 Task 1). The default keeps
-                every existing caller of this delegate byte-compatible.
-            diff_line_index: 0-based index over the file's full diff text,
-                required for ``"diff_line"`` notes and ``None`` otherwise.
-            diff_line_text: The anchored line, captured verbatim at
-                note-creation time, required for ``"diff_line"`` notes and
-                ``None`` otherwise.
-
-        Returns:
-            The newly created note's row id.
-        """
-        return self._db.add_change_note(
-            run_id=run_id,
-            root=root,
-            path=path,
-            hunk_index=hunk_index,
-            hunk_header=hunk_header,
-            hunk_excerpt=hunk_excerpt,
-            note=note,
-            snapshot_id=snapshot_id,
-            anchor_kind=anchor_kind,
-            diff_line_index=diff_line_index,
-            diff_line_text=diff_line_text,
-        )
-
-    def delete_change_note(self, note_id: int) -> bool:
-        """Delete a pending (undelivered) note.
-
-        Thin delegate onto :meth:`AgentRunsDB.delete_change_note`.
-
-        Args:
-            note_id: The note's row id.
-
-        Returns:
-            True if a pending note was deleted; False if the note does
-            not exist or has already been delivered.
-        """
-        return self._db.delete_change_note(note_id)
-
-    def notes_for_run(self, run_id: str) -> list[dict]:
-        """Return a run's change notes, oldest first.
-
-        Thin delegate onto :meth:`AgentRunsDB.notes_for_run`.
-
-        Args:
-            run_id: The agent run id.
-
-        Returns:
-            One dict per note row (all columns), oldest first.
-        """
-        return self._db.notes_for_run(run_id)
-
-    # -- Git modes (TASK-16801 arc B) -----------------------------------
-    #
-    # Thin wrappers over `Workspaces/git_workspace.py` -- no logic here
-    # beyond the kill-switch read, root resolution/dedupe, and straight
-    # delegation. Worker dispatch is the SCREEN's job (Task 6); every
-    # method below is synchronous.
-    #
-    # CONTRACT (binding for every caller -- Tasks 6-8): the wrapped
-    # engine functions have DELIBERATELY ASYMMETRIC error postures,
-    # preserved here exactly:
-    #   - `detect_git` NEVER raises (each entry is Info | Refusal | None).
-    #   - `current_status` / `current_diff_text` / `untracked_preview`
-    #     RAISE `GitWorkspaceError` on a git failure.
-    #   - `commit_selected` RAISES: `CommitRefusedError` (active run) and
-    #     `GitWorkspaceError` (empty files / blank message / git
-    #     failure). Do not wrap this in try/except here -- let it
-    #     propagate; the screen catches it.
-    #   - `push_current` RAISES `GitWorkspaceError` for detached HEAD and
-    #     no-remote; otherwise RETURNS a `PushResult` whose `state` can
-    #     be `"failed"` -- a failed push is a returned value, not an
-    #     exception.
-    #   - `pr_url` NEVER raises -- it returns `str` or
-    #     `GitWorkspaceRefusal`; callers use `isinstance`, never
-    #     try/except.
-
-    def detect_git(
-        self, roots: "Sequence[str]"
-    ) -> "dict[str, GitWorkspaceInfo | GitWorkspaceRefusal | None]":
-        """Detect real git repositories at ``roots``, keyed by resolved root.
-
-        Never raises -- delegates to
-        :func:`~tldw_chatbook.Workspaces.git_workspace.detect_git_workspace`,
-        which itself never raises.
-
-        Args:
-            roots: Candidate workspace roots, any spelling (relative,
-                symlinked, trailing slash, ...).
-
-        Returns:
-            ``{}`` when :meth:`git_actions_enabled` is False -- this
-            single check is what makes the whole `current` mode vanish
-            from the screen. Otherwise one entry per DISTINCT resolved
-            root (``str(Path(root).resolve())``), so two spellings of
-            the same directory dedupe to one detection call and one key.
-            Both :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceInfo.root`
-            and :class:`~tldw_chatbook.Workspaces.git_workspace.CurrentRootStatus.root`
-            are always resolved paths -- keying by the resolved spelling
-            here means a caller that looks a root up by ITS resolved
-            spelling can never get a silent miss because this dict used
-            the raw input spelling instead (the exact bug class Task 2's
-            engine layer was fixed against, by construction).
-        """
-        if not self.git_actions_enabled():
-            return {}
-
-        from pathlib import Path
-
-        from tldw_chatbook.Workspaces.git_workspace import detect_git_workspace
-
-        result: "dict[str, GitWorkspaceInfo | GitWorkspaceRefusal | None]" = {}
-        for raw_root in roots:
-            resolved_key = str(Path(raw_root).resolve())
-            if resolved_key in result:
-                continue
-            result[resolved_key] = detect_git_workspace(Path(raw_root))
-        return result
-
-    def current_status(self, root: str) -> "CurrentRootStatus":
-        """The real working tree's status at ``root``, freshly detected.
-
-        Re-detects (fresh, not cached) before reading status -- spec §4:
-        the `current` mode's worker re-detects on every load, since the
-        repo's branch/upstream/ahead-behind can move between reloads.
-
-        Args:
-            root: Workspace root, any spelling.
-
-        Returns:
-            The root's :class:`~tldw_chatbook.Workspaces.git_workspace.CurrentRootStatus`.
-
-        Raises:
-            GitWorkspaceError: ``root`` is no longer a detectable git
-                repository (removed, or now refused -- e.g. it moved
-                inside another repo since the mode was offered), or the
-                underlying git invocation failed.
-        """
-        from pathlib import Path
-
-        from tldw_chatbook.Workspaces.git_workspace import (
-            GitWorkspaceError,
-            GitWorkspaceInfo,
-            detect_git_workspace,
-            working_tree_status,
-        )
-
-        path = Path(root)
-        info = detect_git_workspace(path)
-        if not isinstance(info, GitWorkspaceInfo):
-            reason = info.reason if info is not None else "not a git repository"
-            raise GitWorkspaceError(
-                f"git workspace detection failed for {root}: {reason}"
-            )
-        return working_tree_status(path, info)
-
-    def current_diff_text(self, root: str, change: "ChangedFile") -> str:
-        """One TRACKED file's unified diff, working tree vs HEAD.
-
-        Tracked-only: an untracked ``change`` (``change.path in
-        status.untracked``) must be routed by the SCREEN through
-        :meth:`untracked_preview` instead -- this method always calls
-        :func:`~tldw_chatbook.Workspaces.git_workspace.working_tree_diff`,
-        which is a fatal git error against an unborn HEAD or an
-        untracked path.
-
-        Args:
-            root: Workspace root.
-            change: The tracked changed file to diff.
-
-        Returns:
-            Unified diff text.
-
-        Raises:
-            GitWorkspaceError: The git invocation failed.
-        """
-        from pathlib import Path
-
-        from tldw_chatbook.Workspaces.git_workspace import working_tree_diff
-
-        return working_tree_diff(Path(root), change.path)
-
-    def untracked_preview(self, root: str, path: str) -> str:
-        """A bounded preview of one untracked file, capped at the screen's limit.
-
-        Args:
-            root: Workspace root.
-            path: Root-relative path of the untracked file.
-
-        Returns:
-            The preview text (see
-            :func:`~tldw_chatbook.Workspaces.git_workspace.untracked_preview`
-            for the exact rendering rules). Never raises -- I/O errors
-            render as an honest one-line message instead.
-        """
-        from pathlib import Path
-
-        from tldw_chatbook.Workspaces.git_workspace import (
-            untracked_preview as _untracked_preview,
-        )
-
-        return _untracked_preview(Path(root), path, self.diff_display_max_lines)
-
-    def commit_selected(
-        self,
-        root: str,
-        files: "Sequence[str]",
-        message: str,
-        new_branch: "str | None",
-    ) -> "CommitResult":
-        """Commit exactly ``files`` at ``root``, threading the run-active probe.
-
-        Passes :attr:`run_active` through as the keyword-only
-        ``run_active=`` argument -- exactly how :meth:`revert` threads it
-        into ``revert_paths``.
-
-        Args:
-            root: Workspace root (must be the repo toplevel).
-            files: Root-relative paths to stage and commit.
-            message: The commit message.
-            new_branch: When set, create and check out this branch
-                before committing. ``None``/empty commits to the current
-                branch.
-
-        Returns:
-            The engine's :class:`~tldw_chatbook.Workspaces.git_workspace.CommitResult`.
-
-        Raises:
-            CommitRefusedError: A run is active on this workspace --
-                this method does NOT catch it; the caller (screen) must.
-            GitWorkspaceError: ``files`` is empty, ``message`` is blank,
-                or a git step failed outside the returned per-step
-                outcomes (the engine still raises for these two
-                preconditions rather than returning a silent no-op).
-        """
-        from pathlib import Path
-
-        from tldw_chatbook.Workspaces.git_workspace import (
-            commit_selected as _commit_selected,
-        )
-
-        return _commit_selected(
-            Path(root),
-            files,
-            message,
-            new_branch,
-            run_active=lambda: self.run_active_for_root(root),
-        )
-
-    def push_current(
-        self, root: str, info: "GitWorkspaceInfo", remote: "str | None"
-    ) -> "PushResult":
-        """Push the current branch at ``root``.
-
-        NOT gated on :attr:`run_active` -- push only ships already-
-        committed state; the working tree is untouched (spec §6
-        states this explicitly, in contrast to commit).
-
-        Args:
-            root: Workspace root (must be the repo toplevel).
-            info: The root's detected
-                :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceInfo`.
-            remote: Explicit target remote name, or ``None`` to derive one.
-
-        Returns:
-            The engine's :class:`~tldw_chatbook.Workspaces.git_workspace.PushResult`.
-            **A failed push is a RETURNED result** (``state ==
-            "failed"``), never an exception -- callers must check
-            ``result.state``, not wrap this call in try/except for the
-            ordinary rejected-push case.
-
-        Raises:
-            GitWorkspaceError: HEAD is detached, or no remote could be
-                resolved. These are precondition failures, not push
-                outcomes, so they raise rather than returning a
-                ``PushResult``.
-        """
-        from pathlib import Path
-
-        from tldw_chatbook.Workspaces.git_workspace import (
-            push_current as _push_current,
-        )
-
-        return _push_current(Path(root), info, remote)
-
-    def pr_url(
-        self, root: str, info: "GitWorkspaceInfo"
-    ) -> "str | GitWorkspaceRefusal":
-        """Build the compare/merge-request URL for the current branch.
-
-        Args:
-            root: Workspace root (used only for the codeberg/Gitea-family
-                local default-branch lookup).
-            info: The root's detected
-                :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceInfo`.
-
-        Returns:
-            The compare URL, or a
-            :class:`~tldw_chatbook.Workspaces.git_workspace.GitWorkspaceRefusal`
-            naming why one can't be built. **Never raises** -- callers
-            must use ``isinstance(result, GitWorkspaceRefusal)``, never
-            try/except.
-        """
-        from pathlib import Path
-
-        from tldw_chatbook.Workspaces.git_workspace import pr_compare_url
-
-        return pr_compare_url(Path(root), info)
-
 
 #: Cursor line background (TASK-18060 Task 6, review-rail spec §3) — an
 #: explicit Rich style, never markup: the cursor is applied by appending a
@@ -1214,55 +496,6 @@ def _root_summary_line(info: "GitWorkspaceInfo", *, name_root: bool) -> str:
     return summary
 
 
-def _hunk_containing_line(
-    hunks: "list[DiffHunk]", line_index: int
-) -> "tuple[int, DiffHunk | None]":
-    """Find the hunk covering ``line_index`` over the file's FULL diff text.
-
-    TASK-18060 Task 7 (review-rail spec §3/§4): a ``diff_line`` note's
-    hunk fields are ALSO populated with the hunk the cursor's line falls
-    in — ``split_unified_diff`` segments a diff into ``DiffHunk``s but
-    does not carry each hunk's absolute line offset, so this reconstructs
-    it by walking the hunks in order: hunk *k* occupies its header line
-    (one line) plus its body lines, contiguously, right after the shared
-    file prelude — ``split_unified_diff``'s own segmentation guarantees no
-    gaps between one hunk's last body line and the next hunk's header.
-
-    Args:
-        hunks: ``split_unified_diff``'s output for the file's full diff.
-        line_index: 0-based index over the SAME full diff text (the
-            screen's own ``_cursor_line``, which under the display cap
-            equals the full-diff line index — the cap truncates only the
-            tail).
-
-    Returns:
-        ``(hunk_index, hunk)`` for the hunk covering ``line_index``. A
-        line in the shared prelude (before any hunk header) degrades to
-        the first hunk rather than reporting "no hunk" — a line comment
-        always has SOME hunk context when the diff has hunks at all. A
-        line past every hunk's tracked span (should not happen for a real
-        cursor line) degrades to the last hunk. ``(-1, None)`` only when
-        ``hunks`` itself is empty.
-    """
-    if not hunks:
-        return -1, None
-    if len(hunks) == 1 and not hunks[0].header:
-        # The fallback shape (binary/rename-no-change, split_unified_
-        # diff's own docstring): no real hunk headers at all — every line
-        # belongs to the one synthetic hunk.
-        return 0, hunks[0]
-    prelude = hunks[0].file_prelude
-    offset = len(prelude.splitlines()) if prelude else 0
-    if line_index < offset:
-        return 0, hunks[0]
-    for index, hunk in enumerate(hunks):
-        span = 1 + len(hunk.body_lines)  # the header line + its body
-        if offset <= line_index < offset + span:
-            return index, hunk
-        offset += span
-    return len(hunks) - 1, hunks[-1]
-
-
 class ChangeReviewDiffPane(VerticalScroll):
     """The diff viewport: hosts the review line cursor, reclaiming keys.
 
@@ -1400,7 +633,8 @@ class ChangeReviewScreen(Screen):
                 tail, then cleared, so a later turn switch reverts to the
                 first leaf. An unmatched path degrades to the first leaf
                 rather than an empty pane.
-            initial_snapshot_id: When given alongside ``initial_path``,
+            initial_snapshot_id: Without a path, open the first file in this exact
+                snapshot or show its empty/unavailable state. With ``initial_path``,
                 prefer the leaf whose owning ``change_snapshots`` row id
                 equals this -- disambiguates two windows of the SAME run
                 that cover the same path (spec §2's same-run
@@ -1965,141 +1199,12 @@ class ChangeReviewScreen(Screen):
         # diff-text memo so a revert-reload of THIS SAME turn (identical
         # row objects, identical path) refetches instead of serving
         # pre-revert content.
-        self._close_any_open_comment_input()
-        self._diff_cache_generation += 1
-        self._diff_cache_key = None
-        self._diff_cache_text = None
-        self._diff_cache_error = None
-        self._active_turn = turn
-        multi_root = len(turn.rows) > 1
-        window_labels = _window_labels(turn.rows)
-        tree = self.query_one("#change-review-tree", Tree)
-        tree.clear()
-        tree.root.expand()
-        self._leaves = []
-        banners: list[str] = []
-        grouped: dict[str, list[tuple[dict, ChangedFile]]] = {}
-        for row in turn.rows:
-            error = str(row.get("tracking_error") or "")
-            if error:
-                banners.append(f"⚠ tracking failed for {row['root']}: {error}")
-                continue
-            nested_raw = row.get("nested_repos") or "[]"
-            try:
-                import json as _json
+        from . import change_review_loading
 
-                nested = [str(p) for p in _json.loads(nested_raw)]
-            except (ValueError, TypeError):
-                nested = []
-            if nested:
-                # TASK-1976: name the holes — changes inside these repos
-                # are not tracked at all.
-                limit = NESTED_BANNER_NAMED_LIMIT
-                shown = ", ".join(nested[:limit]) + (
-                    f" (+{len(nested) - limit} more)" if len(nested) > limit else ""
-                )
-                plural = "ies" if len(nested) != 1 else "y"
-                banners.append(
-                    f"⚠ {len(nested)} nested repositor{plural} inside "
-                    f"{row['root']} not tracked: {shown}"
-                )
-            oversize = int(row.get("untracked_oversize") or 0)
-            if oversize:
-                # TASK-1975 AC#2: cost bounds are honest, not silent.
-                plural = "s" if oversize != 1 else ""
-                banners.append(
-                    f"⚠ {oversize} oversized file{plural} untracked for "
-                    f"{row['root']} (over the size cap)"
-                )
-            try:
-                for change in self._provider.changed_files(row):
-                    grouped.setdefault(change.status, []).append((row, change))
-            except ChangeTrackingError as exc:
-                if self._provider.snapshots_pruned(row):
-                    banners.append(f"history for {row['root']} was pruned by retention")
-                else:
-                    banners.append(f"⚠ diff unavailable for {row['root']}: {exc}")
-
-        touched_by_row: dict[int, "set[str] | None"] = {}
-
-        def _badged(row: dict, change: ChangedFile) -> bool:
-            rid = id(row)
-            if rid not in touched_by_row:
-                try:
-                    touched_by_row[rid] = self._provider.tool_touched_relpaths(row)
-                except Exception as exc:  # noqa: BLE001 -- badge must never break review
-                    logger.warning(
-                        "change_review: badge derivation failed; rendering without "
-                        "badges operation=badge root_sha256={} exception_type={}",
-                        content_fingerprint(str(row.get("root") or "")),
-                        type(exc).__name__,
-                    )
-                    touched_by_row[rid] = None
-            touched = touched_by_row[rid]
-            if touched is None:
-                return False
-            # Qodo #1262: no file tool can DELETE or RENAME — those rows
-            # badge regardless of path membership (a write_file-created
-            # path later script-deleted must not launder the deletion).
-            if change.status in ("D", "R"):
-                return True
-            return change.path not in touched
-
-        self._populate_tree(
-            tree,
-            grouped,
-            multi_root,
-            _badged,
-            window_labels=window_labels,
+        return change_review_loading._load_turn(
+            self,
+            turn,
         )
-
-        self._turn_banner_lines = banners
-        # A turn view carries no current-mode per-root failures.
-        self._current_root_errors = []
-        self._update_banner()
-        # TASK-16801 arc B: a snapshot turn is showing -- commit goes away,
-        # the snapshot-only affordances come back.
-        self._refresh_mode_affordances()
-
-        totals = self.query_one("#change-review-totals", Static)
-        adds = sum(int(r["adds"] or 0) for r in turn.rows)
-        dels = sum(int(r["dels"] or 0) for r in turn.rows)
-        noun = _file_count_noun(len(self._leaves), repeated_root=bool(window_labels))
-        totals.update(f"{len(self._leaves)} {noun}  +{adds} −{dels}")
-
-        # TASK-18060 Task 3: the initials are constructor state consumed
-        # exactly ONCE -- cleared here, UNCONDITIONALLY, so a later turn
-        # switch (this same method, via select_turn/Select.Changed) reverts
-        # to the first leaf like today. This must happen before the
-        # `self._leaves` branch below: a zero-leaf initial turn (a
-        # tracking-error row, or one whose snapshots were pruned) must not
-        # leave the initials sitting around to hijack focus on the NEXT
-        # `_load_turn` call once a later turn happens to contain a
-        # same-named path (reviewer catch on the first cut of this task).
-        initial_path = self._initial_path
-        initial_snapshot_id = self._initial_snapshot_id
-        self._initial_path = None
-        self._initial_snapshot_id = None
-
-        if self._leaves:
-            # A path that doesn't exist in this turn (stale rail cache, a
-            # revert since) degrades to the first leaf rather than an empty
-            # pane -- select_file itself stays a no-op on an unmatched path
-            # so its legacy behavior (external callers with no fallback
-            # expectation) is untouched.
-            if initial_path is not None and any(
-                change.path == initial_path for _row, change in self._leaves
-            ):
-                self.select_file(initial_path, snapshot_id=initial_snapshot_id)
-            else:
-                self._focus_leaf(0)
-        else:
-            self._show_empty("No file changes in this turn.")
-            # TASK-18060 Task 7: `_focus_leaf` is the strip's usual refresh
-            # choke point, but a zero-leaf turn never reaches it — clear
-            # (hide) any stale strip content from a previously focused
-            # turn explicitly.
-            self._refresh_notes_strip()
 
     def _populate_tree(
         self,
@@ -4022,9 +3127,20 @@ class ChangeReviewScreen(Screen):
             row, change = self._leaves[self._focused_leaf]
             notes = self._notes_for_leaf(row, change)
         strip.display = bool(notes)
+        # TASK-34942: build every row, then ONE mount call -- one per note
+        # left each freshly-appended row un-laid-out for up to a tick.
+        rows = []
         for note in notes:
             try:
-                strip.mount(self._build_note_row(note))
+                rows.append(self._build_note_row(note))
+            except Exception as exc:
+                logger.warning(
+                    "change_review: note row build failed exception_type={}",
+                    type(exc).__name__,
+                )
+        if rows:
+            try:
+                strip.mount(*rows)
             except Exception as exc:
                 logger.warning(
                     "change_review: note row mount failed exception_type={}",
@@ -4111,27 +3227,8 @@ class ChangeReviewScreen(Screen):
         self, rows_paths: list[tuple[dict, list[str]]], total: int
     ) -> None:
         """Read whole-turn overwrite warnings without blocking Textual."""
-        all_edited: list[str] = []
-        for row, paths in rows_paths:
-            preflight = await asyncio.to_thread(
-                self._provider.preflight_revert, row, paths
-            )
-            all_edited.extend(preflight.edited_since)
-
-        def _apply(confirmed: bool | None) -> None:
-            if not confirmed:
-                return
-            self.run_worker(
-                self._revert_rows(rows_paths),
-                group="change-review-revert",
-                exit_on_error=False,
-            )
-
-        self.app.push_screen(
-            ChangeRevertConfirmModal(
-                f"Undo all {total} files from this turn?", all_edited
-            ),
-            callback=_apply,
+        await self._prepare_revert_selection(
+            rows_paths, f"Undo all {total} files from this turn?"
         )
 
     def _confirm_and_revert(self, row: dict, paths: list[str], summary: str) -> None:
@@ -4145,23 +3242,90 @@ class ChangeReviewScreen(Screen):
         self, row: dict, paths: list[str], summary: str
     ) -> None:
         """Prepare one confirmation without hashing files on the UI thread."""
-        preflight = await asyncio.to_thread(self._provider.preflight_revert, row, paths)
+        await self._prepare_revert_selection([(row, paths)], summary)
 
-        def _apply(confirmed: bool | None) -> None:
-            if not confirmed:
+    async def _prepare_revert_selection(self, rows_paths, summary):
+        from tldw_chatbook.Workspaces.change_revert_ownership import capture_undo
+
+        provider = self._provider
+
+        def prepare():
+            return [
+                path
+                for row, paths in rows_paths
+                for path in provider.preflight_revert(row, paths).edited_since
+            ]
+
+        try:
+            undo = capture_undo(provider)
+            edited = (
+                await undo.prepare(
+                    prepare,
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack and self._provider is provider
+                    ),
+                )
+                if undo is not None
+                else await asyncio.to_thread(prepare)
+            )
+        except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+            self.notify(str(exc), severity="warning")
+            return
+
+        def apply(confirmed):
+            if not confirmed or not self.is_mounted:
+                return
+            try:
+                if undo is not None:
+                    undo.confirm()
+            except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                self.notify(str(exc), severity="warning")
                 return
             self.run_worker(
-                self._revert_rows([(row, paths)]),
+                self._revert_rows(rows_paths, undo),
                 group="change-review-revert",
                 exit_on_error=False,
             )
 
-        self.app.push_screen(
-            ChangeRevertConfirmModal(summary, preflight.edited_since), callback=_apply
-        )
+        self.app.push_screen(ChangeRevertConfirmModal(summary, edited), callback=apply)
 
-    async def _revert_rows(self, rows_paths: list[tuple[dict, list[str]]]) -> None:
-        """Apply one confirmed selection off-thread, then update the screen."""
+    async def _revert_rows(self, rows_paths, undo=None) -> None:
+        """Apply the complete confirmed selection, retaining original host return."""
+        if undo is not None:
+            from tldw_chatbook.Workspaces.change_revert import RevertOutcome
+
+            provider = self._provider
+
+            def apply():
+                outcomes = []
+                for row, paths in rows_paths:
+                    try:
+                        outcomes.extend(provider.revert(row, paths))
+                    except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                        outcomes.extend(
+                            RevertOutcome(path, False, str(exc)) for path in paths
+                        )
+                return outcomes
+
+            def publish(outcomes, error):
+                if error is not None:
+                    self.notify(str(error), severity="warning")
+                else:
+                    self._report_outcomes(outcomes)
+
+            try:
+                await undo.apply(
+                    apply,
+                    marshal=self.app.call_from_thread,
+                    current=lambda: (
+                        self in self.app.screen_stack and self._provider is provider
+                    ),
+                    publish=publish,
+                )
+            except Exception as exc:  # noqa: BLE001 -- original feature outcome must reach its host
+                self.notify(str(exc), severity="warning")
+            return
         outcomes = []
         for row, paths in rows_paths:
             outcomes.extend(await self._run_revert(row, paths))
@@ -4178,8 +3342,15 @@ class ChangeReviewScreen(Screen):
 
     def _report_outcomes(self, outcomes: list) -> None:
         """Per-path honesty: failures are named, never rolled up silently."""
+        unsettled = [o for o in outcomes if not o.settled]
         failed = [o for o in outcomes if not o.ok]
-        if failed:
+        if unsettled:
+            self.notify(
+                "Undo changed files, but required history or bookkeeping is incomplete. "
+                "Native work remains protected.",
+                severity="error",
+            )
+        elif failed:
             names = ", ".join(f"{o.path} ({o.error})" for o in failed[:5])
             self.notify(
                 f"{len(failed)} file(s) could not be reverted: {names}",

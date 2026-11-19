@@ -121,6 +121,7 @@ async def _wait_for(predicate, pilot, attempts: int = 300) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_quiet_empty_state_with_blocker_offers_recovery_action():
     app = EmptyTranscriptActionHarness()
 
@@ -144,6 +145,7 @@ async def test_quiet_empty_state_with_blocker_offers_recovery_action():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_empty_state_hides_action_when_not_blocked_or_covered():
     app = EmptyTranscriptActionHarness()
 
@@ -275,25 +277,20 @@ async def test_setup_card_shows_plain_language_provider_subtitle():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_footer_hides_send_hint_while_setup_locks_composer(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     host = ConsoleHarness(_blocked_openai_app())
 
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for(
-            lambda: console._console_setup_modal_blocking(), pilot
-        )
+        await _wait_for(lambda: console._console_setup_modal_blocking(), pilot)
         footer = console.query_one(AppFooterStatus)
-        await _wait_for(
-            lambda: "continue setup" in footer.shortcut_text, pilot
-        )
+        await _wait_for(lambda: "continue setup" in footer.shortcut_text, pilot)
         assert "Enter send" not in footer.shortcut_text
 
         # Block lifts (or never applied): the normal send hint returns.
-        monkeypatch.setattr(
-            console, "_console_setup_modal_blocking", lambda: False
-        )
+        monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: False)
         console._register_console_footer_shortcuts()
         await pilot.pause()
         assert "continue setup" not in footer.shortcut_text

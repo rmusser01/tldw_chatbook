@@ -32,10 +32,18 @@ async def test_overview_pane_renders_summary_cards():
         await pilot.pause()
 
         assert pane.query_one("#watchlists-overview-grid")
-        assert "Total sources\n3" in str(pane.query_one("#overview-total-sources").renderable)
-        assert "Active sources\n2" in str(pane.query_one("#overview-active-sources").renderable)
-        assert "Sources in error\n1" in str(pane.query_one("#overview-sources-in-error").renderable)
-        assert "Total items\n12" in str(pane.query_one("#overview-total-items").renderable)
+        assert "Total sources\n3" in str(
+            pane.query_one("#overview-total-sources").renderable
+        )
+        assert "Active sources\n2" in str(
+            pane.query_one("#overview-active-sources").renderable
+        )
+        assert "Sources in error\n1" in str(
+            pane.query_one("#overview-sources-in-error").renderable
+        )
+        assert "Total items\n12" in str(
+            pane.query_one("#overview-total-items").renderable
+        )
         assert "New items\n5" in str(pane.query_one("#overview-new-items").renderable)
         assert "Latest run status\ncompleted" in str(
             pane.query_one("#overview-latest-run-status").renderable
@@ -104,17 +112,31 @@ async def test_latest_run_status_sentinels_render_as_prose_not_raw_literals():
             "failed_runs": [],
         }
 
-        pane.data = {**base, "latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS}
+        pane.data = {
+            **base,
+            "latest_run_status": WatchlistsBackendController.NOT_CONFIGURED_STATUS,
+        }
         await pilot.pause()
-        not_configured_text = str(pane.query_one("#overview-latest-run-status").renderable)
+        not_configured_text = str(
+            pane.query_one("#overview-latest-run-status").renderable
+        )
         assert "Latest run status\nnot connected" in not_configured_text
-        assert WatchlistsBackendController.NOT_CONFIGURED_STATUS not in not_configured_text
+        assert (
+            WatchlistsBackendController.NOT_CONFIGURED_STATUS not in not_configured_text
+        )
 
-        pane.data = {**base, "latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS}
+        pane.data = {
+            **base,
+            "latest_run_status": WatchlistsBackendController.LOOKUP_FAILED_STATUS,
+        }
         await pilot.pause()
-        lookup_failed_text = str(pane.query_one("#overview-latest-run-status").renderable)
+        lookup_failed_text = str(
+            pane.query_one("#overview-latest-run-status").renderable
+        )
         assert "Latest run status\ncouldn't check" in lookup_failed_text
-        assert WatchlistsBackendController.LOOKUP_FAILED_STATUS not in lookup_failed_text
+        assert (
+            WatchlistsBackendController.LOOKUP_FAILED_STATUS not in lookup_failed_text
+        )
 
         assert not_configured_text != lookup_failed_text
 

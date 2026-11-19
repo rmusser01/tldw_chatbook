@@ -15,10 +15,17 @@ def _populate_required_dependencies(preview):
     from contextlib import closing
     from importlib import import_module
 
+    from tldw_chatbook.Chat.console_semantic_revision import (
+        install_semantic_coordination,
+    )
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
     from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
     from tldw_chatbook.TTS.profile_schema import open_profile_store
+
+    # Callers include fresh child processes, each its own composition root;
+    # the chat rows seeded below need the fail-closed port (idempotent).
+    install_semantic_coordination()
 
     # An owner may also declare sidecars (the TTS lease lock, for example).
     # Populate its primary logical record instead of the last path encountered.

@@ -1,0 +1,61 @@
+<?xml version='1.0' encoding='utf-8'?>
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="4" skipped="0" tests="4" time="44.278" timestamp="2026-10-25T11:13:17.665884-07:00" hostname="DESKTOP-BISU2HE">
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-after-shell]" time="11.023">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-retirement-red\pytest\test_start_completion_respects0\private-profile-process\pytest.log&#10;--- child failure: textual.worker.WorkerFailed: Worker raised exception: NoMatches(&quot;No nodes match '#quiz-answer-input' on StudyWindow()&quot;)&#10;request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-after-shell]&gt;&gt;&#10;entry = 'shell', return_before_response = False&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&quot;entry&quot;, [&quot;shell&quot;, &quot;inner&quot;])&#10;    @pytest.mark.parametrize(&#10;        &quot;return_before_response&quot;, [False, True], ids=[&quot;return-after&quot;, &quot;return-before&quot;]&#10;    )&#10;    @private_profile_test&#10;    async def test_start_completion_respects_replaced_quiz_panel(&#10;        request, entry, return_before_response&#10;    ):&#10;        client = Client()&#10;        app = Hos">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-retirement-red\pytest\test_start_completion_respects0\private-profile-process\pytest.log
+E   --- child failure: textual.worker.WorkerFailed: Worker raised exception: NoMatches("No nodes match '#quiz-answer-input' on StudyWindow()")
+E   request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-after-shell]&gt;&gt;
+E   entry = 'shell', re</failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-after-inner]" time="10.986">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-retirement-red\pytest\test_start_completion_respects1\private-profile-process\pytest.log&#10;--- child failure: textual.worker.WorkerFailed: Worker raised exception: NoMatches(&quot;No nodes match '#quiz-answer-input' on StudyWindow()&quot;)&#10;request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-after-inner]&gt;&gt;&#10;entry = 'inner', return_before_response = False&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&quot;entry&quot;, [&quot;shell&quot;, &quot;inner&quot;])&#10;    @pytest.mark.parametrize(&#10;        &quot;return_before_response&quot;, [False, True], ids=[&quot;return-after&quot;, &quot;return-before&quot;]&#10;    )&#10;    @private_profile_test&#10;    async def test_start_completion_respects_replaced_quiz_panel(&#10;        request, entry, return_before_response&#10;    ):&#10;        client = Client()&#10;        app = Hos">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-retirement-red\pytest\test_start_completion_respects1\private-profile-process\pytest.log
+E   --- child failure: textual.worker.WorkerFailed: Worker raised exception: NoMatches("No nodes match '#quiz-answer-input' on StudyWindow()")
+E   request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-after-inner]&gt;&gt;
+E   entry = 'inner', re</failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-before-shell]" time="10.412">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-retirement-red\pytest\test_start_completion_respects2\private-profile-process\pytest.log&#10;--- child failure: assert False&#10; +  where False = any(&lt;generator object test_start_completion_respects_replaced_quiz_panel.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000021EE0629B10&gt;)&#10;request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-before-shell]&gt;&gt;&#10;entry = 'shell', return_before_response = True&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&quot;entry&quot;, [&quot;shell&quot;, &quot;inner&quot;])&#10;    @pytest.mark.parametrize(&#10;        &quot;return_before_response&quot;, [False, True], ids=[&quot;return-after&quot;, &quot;return-before&quot;]&#10;    )&#10;    @private_profile_test&#10;    async def test_start_completion_respects_replaced_quiz_panel(&#10;        request, entry, return_before_response&#10;    ):&#10;        client =">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-retirement-red\pytest\test_start_completion_respects2\private-profile-process\pytest.log
+E   --- child failure: assert False
+E    +  where False = any(&lt;generator object test_start_completion_respects_replaced_quiz_panel.&lt;locals&gt;.&lt;genexpr&gt; at 0x0000021EE0629B10&gt;)
+E   request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-before-</failure>
+    </testcase>
+    <testcase classname="Tests.UI.test_study_quiz_start_responsiveness" name="test_start_completion_respects_replaced_quiz_panel[return-before-inner]" time="10.427">
+      <failure message="Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-retirement-red\pytest\test_start_completion_respects3\private-profile-process\pytest.log&#10;--- child failure: assert False&#10; +  where False = any(&lt;generator object test_start_completion_respects_replaced_quiz_panel.&lt;locals&gt;.&lt;genexpr&gt; at 0x00000235FADCE740&gt;)&#10;request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-before-inner]&gt;&gt;&#10;entry = 'inner', return_before_response = True&#10;&#10;    @pytest.mark.asyncio&#10;    @pytest.mark.parametrize(&quot;entry&quot;, [&quot;shell&quot;, &quot;inner&quot;])&#10;    @pytest.mark.parametrize(&#10;        &quot;return_before_response&quot;, [False, True], ids=[&quot;return-after&quot;, &quot;return-before&quot;]&#10;    )&#10;    @private_profile_test&#10;    async def test_start_completion_respects_replaced_quiz_panel(&#10;        request, entry, return_before_response&#10;    ):&#10;        client =">..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:508: in runtest
+    super().runtest()
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:773: in inner
+    _loop.run_until_complete(task)
+C:\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+Tests\private_profile.py:405: in wrapped
+    pytest.fail(
+E   Failed: C:\Users\GDesktop-1\.codex\worktrees\textual-settings-patterns\tldw_tui\.test-tmp\task-36728-36729\review-retirement-red\pytest\test_start_completion_respects3\private-profile-process\pytest.log
+E   --- child failure: assert False
+E    +  where False = any(&lt;generator object test_start_completion_respects_replaced_quiz_panel.&lt;locals&gt;.&lt;genexpr&gt; at 0x00000235FADCE740&gt;)
+E   request = &lt;FixtureRequest for &lt;Coroutine test_start_completion_respects_replaced_quiz_panel[return-before-</failure>
+    </testcase>
+  </testsuite>
+</testsuites>

@@ -367,6 +367,8 @@ def test_agent_bridge_is_built_from_the_sibling_run_store_and_memoized(tmp_path)
 
     bridge = screen._ensure_console_agent_bridge()
     assert bridge is not None
+    # TASK-36947.6: its note/expand tools get the services bundle's storage.
+    assert bridge._storage_provider() is screen.app_instance.services.storage
     assert bridge.subagent_count("conv-A") == 1
     record = bridge.subagent_run(sub_ids[0])
     assert record is not None and record["task"] == "research"

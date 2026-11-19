@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 from importlib.resources import files
 from threading import RLock
 from types import MappingProxyType
-from typing import Any, Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 from urllib.parse import quote, urlparse
 from uuid import uuid4
 
@@ -55,13 +55,12 @@ from .models import (
     CanvasRenderPlanV2,
     RenderNode,
 )
-from .profiles import (
-    ProfileSnapshot,
-    load_profile_snapshot,
-    resolve_profile,
-    runtime_assets_for,
-)
-from .runtime_assets import CanvasProfileRuntimeAssets
+# Resident once the Console is built (console_canvas_controller loads
+# Canvas.compilation), so module scope would only inflate the ADR-097
+# first-send census; the calls import them.
+if TYPE_CHECKING:
+    from .profiles import ProfileSnapshot
+    from .runtime_assets import CanvasProfileRuntimeAssets
 
 BridgeConfirmationStatus: TypeAlias = Literal["confirmed", "cancelled", "refused"]
 CanvasGatewayEventKind: TypeAlias = Literal[
@@ -465,7 +464,24 @@ class _ServedBridgeReceipt:
 class ServedCanvasControlHandler:
     """Translate private wire requests into one child-owned Canvas authority."""
 
-    def __init__(self, *, preparation_ttl_seconds: float = 300.0) -> None:
+    def __init__(
+        self,
+        *,
+        preparation_ttl_seconds: float = 300.0,
+        relay_decide: Callable[[str, Mapping[str, str]], Any] | None = None,
+    ) -> None:
+        """Bind the handler's translation surfaces.
+
+        Args:
+            preparation_ttl_seconds: Bridge preparation lifetime bound.
+            relay_decide: ADR-236 phone→desktop decision resolver —
+                ``relay_decide(round_id, decisions)`` applies one phone
+                decision on this child's Console controller and returns a
+                truthy value when the round was armed and resolved (the
+                app wires this to the app-owned controller's
+                ``resolve_pending_approval``; ``None`` keeps the branch
+                answering ``delivered: false``). May be sync or async.
+        """
         if (
             isinstance(preparation_ttl_seconds, bool)
             or not isinstance(preparation_ttl_seconds, (int, float))
@@ -478,6 +494,7 @@ class ServedCanvasControlHandler:
         self._prepared: dict[str, _ServedPreparedBridge] = {}
         self._receipts: OrderedDict[str, _ServedBridgeReceipt] = OrderedDict()
         self._preparation_ttl_seconds = float(preparation_ttl_seconds)
+        self._relay_decide = relay_decide
 
     def _clear_prepared(self) -> None:
         for prepared in self._prepared.values():
@@ -576,6 +593,45 @@ class ServedCanvasControlHandler:
         if request.message_type == "shutdown.request":
             self.clear()
             return self._response(request, "shutdown.response", {"status": "closed"})
+        if request.message_type == "relay.decide.request":
+            # ADR-236 phone→desktop decision routing. No canvas scope is
+            # involved, so this branch deliberately precedes the scope
+            # lookup: an unbound handler still answers relay decisions.
+            # The answer is ALWAYS a relay.decide.response — never an
+            # error frame — so the parent's fail-closed path (drop the
+            # round, deny-side governs) is the only failure mode.
+            round_id = request.payload.get("round_id")
+            decisions = request.payload.get("decisions")
+            delivered = False
+            resolver = self._relay_decide
+            if (
+                resolver is not None
+                and isinstance(round_id, str)
+                and bool(round_id)
+                and isinstance(decisions, Mapping)
+            ):
+                try:
+                    delivered = bool(
+                        await _maybe_await(
+                            resolver(
+                                round_id,
+                                {
+                                    key: str(value)
+                                    for key, value in decisions.items()
+                                },
+                            )
+                        )
+                    )
+                except Exception:  # noqa: BLE001 - never an error frame
+                    delivered = False
+            return self._response(
+                request,
+                "relay.decide.response",
+                {
+                    "round_id": round_id if isinstance(round_id, str) else "",
+                    "delivered": delivered,
+                },
+            )
 
         authority, scope = self._current()
         if request.message_type == "scope.snapshot.request":
@@ -1235,6 +1291,8 @@ class CanvasGateway:
             and profile_snapshot is not authority_snapshot
         ):
             raise ValueError("canvas_profile_snapshot_mismatch")
+        from .profiles import load_profile_snapshot
+
         self.profile_snapshot = (
             profile_snapshot or authority_snapshot or load_profile_snapshot()
         )
@@ -1293,6 +1351,11 @@ class CanvasGateway:
                 binding.browser_session_id == browser_session_id
                 for binding in self._shell_bindings.values()
             )
+
+    def revoke_browser_session(self, browser_session_id: str) -> None:
+        """Retire a closed terminal's shell, capabilities and bounded capacity."""
+
+        self._revoke_session_id(browser_session_id)
 
     def mark_browser_session_unavailable(self, browser_session_id: str) -> None:
         """Revoke one shell's content authority while retaining its event lane."""
@@ -1867,6 +1930,14 @@ class CanvasGateway:
             return _error_response("selection_changed", 409)
         except (TypeError, ValueError):
             return _error_response("navigation_refused", 409)
+        # A live parent reconciliation supersedes the original command's result.
+        if (
+            session.selection_epoch != value["selection_epoch"]
+            and session.scope.conversation_session_id
+            == captured.conversation_session_id
+            and self._session_is_current(session, session.scope)
+        ):
+            return _error_response("selection_changed", 409)
         if (
             not self._session_is_current(session, captured)
             or not isinstance(navigation, CanvasGatewayNavigation)
@@ -2810,6 +2881,8 @@ class CanvasGateway:
         )
 
     def _profile_assets(self, profile_id: str) -> CanvasProfileRuntimeAssets | None:
+        from .profiles import resolve_profile, runtime_assets_for
+
         resolved = resolve_profile(
             self.profile_snapshot,
             operation="load",

@@ -207,7 +207,11 @@ def _isolate_splash_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep splash screen config loading away from the developer's config file."""
     from tldw_chatbook.Widgets import splash_screen
 
-    monkeypatch.setattr(splash_screen, "get_cli_setting", lambda _setting, default=None, *_args, **_kwargs: default)
+    monkeypatch.setattr(
+        splash_screen,
+        "get_cli_setting",
+        lambda _setting, default=None, *_args, **_kwargs: default,
+    )
 
 
 @pytest.mark.asyncio
@@ -233,8 +237,12 @@ async def test_animated_splash_card_starts_animation(card_name: str) -> None:
 
         screen = app.screen_under_test
         assert screen is not None
-        assert screen.effect_handler is not None, f"{card_name}: effect handler was not created"
-        assert screen.animation_timer is not None, f"{card_name}: animation timer was not started"
+        assert screen.effect_handler is not None, (
+            f"{card_name}: effect handler was not created"
+        )
+        assert screen.animation_timer is not None, (
+            f"{card_name}: animation timer was not started"
+        )
         screen.close()
 
 

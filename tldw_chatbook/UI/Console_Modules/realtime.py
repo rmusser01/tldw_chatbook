@@ -7,13 +7,13 @@ presentation owner.
 """
 
 import asyncio
-from collections.abc import Callable
-from dataclasses import dataclass
 import logging
 import re
 import threading
 import time
-from typing import Any
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from textual.worker import Worker
@@ -24,26 +24,83 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_hands_free import ExitLoop, ModeChanged, SilenceSpeech
 from tldw_chatbook.Chat.console_realtime_loop import RealtimeLoopController
-from tldw_chatbook.Chat.console_voice_input import (
-    acoustic_barge_in_enabled,
-    realtime_idle_timeout_seconds,
-    realtime_model,
-    realtime_provider,
-    realtime_turn_detection,
-    realtime_vad_silence_ms,
-    realtime_vad_threshold,
-    realtime_voice,
+
+# TASK-22504: `console_voice_input` (and its STT-stack closure) is loaded
+# on FIRST REALTIME USE, not at module import -- this module rides the Chat
+# first-paint leg. The helpers are bound into this module's globals by
+# `_load_console_voice_input` so their call sites keep the bare names.
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_voice_input import (
+        acoustic_barge_in_enabled,  # noqa: TC004
+        realtime_idle_timeout_seconds,  # noqa: TC004
+        realtime_model,  # noqa: TC004
+        realtime_provider,  # noqa: TC004
+        realtime_turn_detection,  # noqa: TC004
+        realtime_vad_silence_ms,  # noqa: TC004
+        realtime_vad_threshold,  # noqa: TC004
+        realtime_voice,  # noqa: TC004
+    )
+
+_CONSOLE_VOICE_INPUT_NAMES = (
+    "acoustic_barge_in_enabled",
+    "realtime_idle_timeout_seconds",
+    "realtime_model",
+    "realtime_provider",
+    "realtime_turn_detection",
+    "realtime_vad_silence_ms",
+    "realtime_vad_threshold",
+    "realtime_voice",
 )
+
+
+class _LazyVoiceFunction:
+    """Call-time lazy binding for one `console_voice_input` helper.
+
+    Bound under its real name at import so tests can ``monkeypatch.setattr``
+    this module's attribute exactly as before (the attribute exists from
+    import; a patched value is called directly and never triggers a load).
+    While still the stub, a call loads the real module, REBINDS every lazy
+    name still pointing at its stub, and then re-resolves the name -- so
+    the load cannot clobber a patch, and a patch cannot be mistaken for a
+    stub.
+    """
+
+    __slots__ = ("_name",)
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        _load_console_voice_input()
+        return globals()[self._name](*args, **kwargs)
+
+
+def _install_lazy_voice_stubs() -> None:
+    for name in _CONSOLE_VOICE_INPUT_NAMES:
+        globals()[name] = _LazyVoiceFunction(name)
+
+
+_install_lazy_voice_stubs()
+
+
+def _load_console_voice_input():
+    """Import `console_voice_input` and rebind the still-stubbed names."""
+    from tldw_chatbook.Chat import console_voice_input as _module
+
+    module_globals = globals()
+    for name in _CONSOLE_VOICE_INPUT_NAMES:
+        current = module_globals.get(name)
+        if isinstance(current, _LazyVoiceFunction):
+            module_globals[name] = getattr(_module, name)
+    return _module
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage, as_seconds
+from tldw_chatbook.config import get_api_key, resolve_provider_api_key
 from tldw_chatbook.LLM_Calls.realtime import RealtimeCallbacks, RealtimeSessionConfig
 from tldw_chatbook.Utils.persistent_diagnostics import (
     persist_event,
     safe_metadata_token,
 )
-from tldw_chatbook.config import get_api_key
-from tldw_chatbook.config import resolve_provider_api_key
-
 
 CONSOLE_REALTIME_SUPPORTED_PROVIDER = "openai"
 CONSOLE_REALTIME_TRANSCRIPTION_MODEL = "whisper-1"
@@ -301,6 +358,7 @@ class ConsoleRealtimeController:
                 transcript becomes this loop's first turn -- see
                 `_console_realtime_adopt_transcript`.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         if self.session is not None:
             return
         provider = str(realtime_provider() or "").strip().lower()
@@ -756,6 +814,7 @@ class ConsoleRealtimeController:
         self, session: ConsoleRealtimeSession, *, attempt: int
     ) -> None:
         """Build and connect one provider session, bounded by a timeout."""
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         config = RealtimeSessionConfig(
             api_key=self._console_realtime_api_key(),
             model=realtime_model(),
@@ -1225,6 +1284,7 @@ class ConsoleRealtimeController:
         `played_ms` -- a barge-in must be measured against THIS reply's
         audio, not everything played since the loop started.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         self._persist_console_realtime_event(
             "realtime_reply_started",
             operation="reply_started",
@@ -1275,6 +1335,7 @@ class ConsoleRealtimeController:
         `on_reply_done`, which closes the row -- so the usage for a reply
         always arrives just after that reply stopped being "current".
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         row_id = session.last_reply_row_id
         if row_id is None:
             return
@@ -1285,6 +1346,14 @@ class ConsoleRealtimeController:
         )
         if usage is None:
             return
+        # Session ledger boundary tap (issue #365): realtime usage events
+        # arrive on the websocket session and never flow through any other
+        # tap. `record_exact` never raises. The import is deferred off the
+        # boot path (UI-ready module census ratchets down, ADR-097); this
+        # handler runs once per realtime reply.
+        from tldw_chatbook.Chat.session_usage import session_usage
+
+        session_usage().record_exact(usage)
         store = self._chat_store_accessor()
         try:
             store.set_message_usage(row_id, usage)
@@ -1419,6 +1488,7 @@ class ConsoleRealtimeController:
         -- the seed on the next reconnect, an export, a summary -- reads
         this row as if it were the whole reply otherwise.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         row_id, session.assistant_row_id = session.assistant_row_id, None
         if row_id is None:
             return

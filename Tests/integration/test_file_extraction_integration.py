@@ -81,8 +81,8 @@ class TestFileExtractionIntegration:
         assert len(dialog._selected_files) == 3  # All selected by default
 
     @pytest.mark.asyncio
-    async def test_chat_message_file_detection(self):
-        """Test that ChatMessageEnhanced detects extractable files."""
+    async def test_message_file_detection(self):
+        """Test that FileExtractor detects extractable files in a message."""
         message_content = """
         Here's a Python script:
         ```python

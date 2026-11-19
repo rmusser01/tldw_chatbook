@@ -9,6 +9,7 @@ import platform
 import shutil
 import threading
 import time
+from contextvars import copy_context
 from pathlib import Path
 from typing import Optional
 from enum import Enum
@@ -134,6 +135,22 @@ class PlaybackState(Enum):
     PAUSED = "paused"
     FINISHED = "finished"
     ERROR = "error"
+    #: TASK-39040: the clip went to the default app through `os.startfile`.
+    #: There is no process, so nothing ever moves it to FINISHED; it stays
+    #: current until `stop()` or the next `play()` releases the slot. A
+    #: distinct state (fix round 2), so a caller can tell it from a clip it
+    #: can watch and stop polling for an end it will never see.
+    HANDED_OFF = "handed_off"
+
+
+#: Ruling (TASK-39040, fix round 2): how long a surface keeps a handed-off
+#: clip's FILE after it has released the in-app slot. ShellExecute returns no
+#: handle, so no surface can see the default app finish, and deleting on
+#: Stop pulled the file from under the app still reading it. One bound for
+#: the Console's clip cache and the Speech playground's WAV copy, equal to
+#: the Console's owned-playback poll bound; a screen's own exit still
+#: releases at once.
+HAND_OFF_RETENTION_SECONDS = 300.0
 
 
 @dataclass
@@ -200,7 +217,17 @@ class SimpleAudioPlayer:
         """Initialize audio player"""
         self._current: AudioPlayerInfo = AudioPlayerInfo()
         self._system = platform.system()
-        self._lock = threading.Lock()  # Thread safety for state management
+        # TASK-38581: this lock MUST be reentrant. pause() and resume()
+        # call other lock-taking methods while still holding it:
+        # pause() -> get_position() + stop() on players without native
+        # pause (afplay, ffplay, paplay, pw-play, aplay), and resume() ->
+        # play() -> stop(). With a plain Lock those paths self-deadlock
+        # permanently -- one Pause click wedged the call forever, and via
+        # AsyncAudioPlayer's single-worker executor it wedged every later
+        # TTS audio call with it. (Scan of this file: pause()/resume() are
+        # the only nested-acquisition sites; every other `with self._lock`
+        # body only touches state directly.)
+        self._lock = threading.RLock()
         self._supports_pause = False  # Whether the player supports native pause
         self._find_player()
 
@@ -218,12 +245,11 @@ class SimpleAudioPlayer:
             if self._player_name is None:
                 logger.warning("No suitable audio player found on Linux")
         elif self._system == "Windows":
-            # Windows Media Player supports pause through COM automation
-            self._player_cmd = [
-                "windows"
-            ]  # Placeholder, actual command built in play()
+            # play() builds the argv or hands off. pause() has no Windows
+            # branch and returns False; True keeps it off stop-and-restart.
+            self._player_cmd = ["windows"]
             self._player_name = "windows"
-            self._supports_pause = True  # We'll use COM automation for pause
+            self._supports_pause = True
         else:
             self._player_cmd = None
             self._player_name = None
@@ -355,18 +381,20 @@ class SimpleAudioPlayer:
 
         try:
             if self._system == "Windows":
-                # Use Windows built-in wmplayer or start command instead of PowerShell
-                # This avoids command injection risks
-                wmplayer_path = Path(
-                    "C:/Program Files/Windows Media Player/wmplayer.exe"
-                )
-                if wmplayer_path.exists():
-                    # Use Windows Media Player directly
-                    cmd = [str(wmplayer_path), "/play", "/close", str(file_path)]
-                else:
-                    # Use start command to open with default application
-                    # The empty string after 'start' is for the window title
-                    cmd = ["cmd", "/c", "start", "", "/wait", str(file_path)]
+                # TASK-39040: no shell parses the path (dev ran `cmd /c start`).
+                from .windows_audio_launch import hand_off, wmplayer_argv
+
+                cmd = wmplayer_argv(file_path)
+                if cmd is None:
+                    if not hand_off(file_path):
+                        return False
+                    with self._lock:
+                        self._current = AudioPlayerInfo(
+                            file_path,
+                            PlaybackState.HANDED_OFF,
+                            start_time=time.time(),
+                        )
+                    return True
             else:
                 # Unix-like systems
                 cmd = self._player_cmd + [str(file_path)]
@@ -573,6 +601,7 @@ class SimpleAudioPlayer:
                 PlaybackState.PLAYING,
                 PlaybackState.PAUSED,
                 PlaybackState.FINISHED,
+                PlaybackState.HANDED_OFF,
             ]:
                 # Only try to terminate if process exists
                 if self._current.process:
@@ -612,17 +641,14 @@ class SimpleAudioPlayer:
                     except Exception:
                         pass
 
-                # Always reset all state when cleaning up
-                self._current.process = None
-                self._current.state = PlaybackState.IDLE
-                self._current.file_path = None  # Clear the file path too
-                self._current.start_time = None
-                self._current.pause_time = None
-                self._current.total_pause_duration = 0.0
-                self._current.position = 0.0
-                self._current.duration = None
+                # Always reset all state when cleaning up. A handed-off clip
+                # plays on in the default app, so it is released, not stopped;
+                # whether its file may go is the caller's call, bounded by
+                # HAND_OFF_RETENTION_SECONDS.
+                handed_off = self._current.state is PlaybackState.HANDED_OFF
+                self._current = AudioPlayerInfo()
                 logger.info("Playback stopped/cleaned up - all state reset")
-                return True
+                return not handed_off
             else:
                 logger.debug(
                     f"Cannot stop - process exists: {self._current.process is not None}, state: {self._current.state}"
@@ -771,8 +797,8 @@ class AsyncAudioPlayer:
     async def play(self, file_path: Path) -> bool:
         """Play audio file asynchronously"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            self._get_executor(), self._player.play, file_path
+        return await loop.run_in_executor(  # caller's context: TASK-39040's toast
+            self._get_executor(), copy_context().run, self._player.play, file_path
         )
 
     async def pause(self) -> bool:

@@ -1,7 +1,7 @@
 ---
 id: task-22250
 title: CI runs are swept by simultaneous burst cancellations
-status: In Progress
+status: Done
 labels:
   - ci
   - infrastructure
@@ -36,8 +36,8 @@ fix it (this is why the proposed workflow edit was put on hold).
 
 - [x] The agent performing the cancellations is identified (account concurrency
       ceiling, manual queue clearing, or workflow configuration)
-- [ ] A PR's test workflows can run to completion without being swept
-- [ ] `Tests` produces a verdict on at least one PR
+- [x] A PR's test workflows can run to completion without being swept
+- [x] `Tests` produces a verdict on at least one PR
 
 ## Implementation Plan
 
@@ -238,8 +238,8 @@ and it affects every contributor's CI, so it is an owner decision.
 
 - [x] The agent performing the cancellations is identified (account concurrency
       ceiling, saturated by a 25-job fan-out; measured 2026-08-28)
-- [ ] A PR's test workflows can run to completion without being swept
-- [ ] `Tests` produces a verdict on at least one PR
+- [x] A PR's test workflows can run to completion without being swept
+- [x] `Tests` produces a verdict on at least one PR
 - [x] Owner picks among the three fan-out/ceiling options above (cap concurrent
       shard fan-out and narrow task-specific evidence triggers)
 
@@ -392,3 +392,54 @@ ADR path: N/A
 
 Reason: this remains an operational GitHub Actions trigger and scheduling
 policy change, not an application architecture boundary.
+
+## Update 2026-09-30 — live verdict evidence: both remaining criteria met
+
+Audited from the live Actions API on 2026-09-30 (run lists plus the per-run
+jobs API, never run status alone) on branch
+`chore/task-22250-closeout-evidence`.
+
+**`Tests` verdict on a PR — run 33821681963, PR #2360, 2026-09-04.** A
+`pull_request`-event `Tests` run on head `2f81cfcb018d`
+(`codex/pypi-main-workflow-activation`, "Activate main-only PyPI
+publishing", merged into `main`). All 13 jobs started together at
+00:24:45Z and ran to natural completion with zero cancellations: 11
+success, `UI Tests` a genuine 44-minute failure (00:24:45 -> 01:08:40),
+`Test Summary` success; run conclusion `failure` at 01:09:04Z. A real,
+un-swept verdict. The three cancelled sibling runs that night each lost
+only their straggler `UI Tests` job after a newer commit's batch started —
+supersession shape, not a burst.
+
+**PR test workflows complete routinely.** Since PR #2208
+(`codex/task-24403-fast-pr-lane`, merged 2026-08-29, same arc as
+#2162/#2193/#2202) PR checking lives in the bounded fast lane inside
+`derived-artifacts.yml`; `test.yml` no longer accepts `pull_request` by
+design, so the 2026-09-04 runs above executed PR #2360's own branch-local
+workflow variant (that PR re-added the trigger for its release work).
+Fast-lane verdicts since 2026-09-20: 54 `success` + 4 `failure`
+pull-request runs. Same-day example: run 36788002726 on PR #2937
+(2026-09-30) — `PR Fast Lane`, `UI Fast Lane`, and `Derived artifacts
+reproduce from their sources` all `success`.
+
+**No systematic burst remains.** Of 707 runs since 2026-09-28, 56 were
+cancelled; 46 match the next batch's creation timestamp on the same branch
+(benign supersession). The rest: four owner-dispatched backup-workflow
+runs, `refactor/app-lifecycle` runs whose jobs ALL reached real verdicts
+despite the run-level `cancelled` label (PR #2895, merged), and three
+isolated single-branch cancellations (36660065398, 36765597536/.82,
+36785298986) — nothing resembling the original 20-check simultaneous
+sweep, and each affected branch got full verdicts on its next batch
+(perf/33263's 21:42:49Z batch: Perf Guard and Derived Artifacts both
+`success`). The queue is live, not starved.
+
+Fix lineage: PRs #2162, #2193, #2202 (all merged 2026-08-29) plus the
+fast-lane move in #2208; the remaining account-side starvation was later
+traced to the sibling `tldw_server` duplicate CI lane and removed (see
+`backlog/docs/lessons-testing-evidence.md`, TASK-33160, 2026-09-27).
+
+ADR required: no
+
+ADR path: N/A
+
+Reason: evidence-only closeout of an operational CI task; no architectural
+decision made or changed.

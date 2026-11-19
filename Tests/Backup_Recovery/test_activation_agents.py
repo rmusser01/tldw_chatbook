@@ -472,7 +472,8 @@ worker_connections=[]
 outcomes=[]
 def reply():
     outcomes.append(run_bridge(bridge,chat_store,session,aid))
-    worker_connections.extend([bridge_db._thread_local.conn, registry.db._thread_local.conn])
+    # Exercise both owners explicitly; the reply may already retire its own handle.
+    worker_connections.extend([bridge_db._held_connection(), registry.db._held_connection()])
 thread=threading.Thread(target=worker_guard(bridge)(reply))
 thread.start()
 thread.join(20)
@@ -498,3 +499,326 @@ print('retired and reopened')
 
 def test_bridge_worker_retires_only_its_new_native_connections(tmp_path):
     _run(tmp_path, "bridge_worker", "approved", script=_BRIDGE_WORKER)
+
+
+_EXPLICIT_LOG_ROOT = (
+    _SCRIPT.split("effects=[]")[0]
+    + r"""
+from tldw_chatbook.Agents import run_log
+from types import MethodType
+local_root = data/'explicit-history'
+local_root.mkdir()
+selected = []
+def global_root():
+    selected.append(True)
+    return data/'global-history'
+run_log.resolve_log_root = global_root
+writer_type = run_log.RunLogWriter
+if route == 'subclass':
+    class CustomWriter(run_log.RunLogWriter):
+        pass
+    writer_type = CustomWriter
+writer = writer_type(root=local_root)
+if route == 'shadow':
+    original = writer.bind
+    def custom_bind(self, run_id):
+        return original(run_id)
+    writer.bind = MethodType(custom_bind, writer)
+if route == 'defaults':
+    run_log.RunLogWriter.bind.__defaults__ = ()
+if route == 'getattribute':
+    def custom_getattribute(self, name):
+        return object.__getattribute__(self, name)
+    run_log.RunLogWriter.__getattribute__ = custom_getattribute
+effects = []
+def chat(**kwargs):
+    effects.append('provider')
+    return {'choices':[{'message':{'content':'completed'}}]}
+service = AgentService(db, ToolCatalogRegistry(), chat_call=chat,
+    run_log_writer=None if route in ('implicit', 'stale_public') else writer)
+if route == 'stale_public':
+    service.run_log_writer = writer
+from tldw_chatbook.Agents import activation as agent_activation
+scopes = []
+at_entry = []
+def observe_entry(frame, event, arg):
+    if event != 'call': return
+    if (frame.f_code is agent_activation.execution.__code__
+            and frame.f_back.f_code is AgentService.run_turn.__code__): scopes.append(True)
+    if frame.f_code is AgentService.run_turn.__wrapped__.__code__: at_entry.append(len(scopes))
+sys.setprofile(observe_entry)
+try:
+    run_id, outcome = service.run_turn(conversation_id='conversation',
+        messages=[{'role':'user','content':'hello'}],
+        config=AgentConfig(model='test', system_prompt=''), api_endpoint='OpenAI')
+    assert outcome.status == RUN_DONE and effects == ['provider']
+    if route == 'stock': assert at_entry == [1], at_entry
+    assert bool(selected) is (route != 'stock'), selected
+    assert service.run_log_writer.log_dir.is_dir()
+    if route == 'stale_public':
+        assert service.run_log_writer is not writer
+finally:
+    sys.setprofile(None)
+    db.close()
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        "stock",
+        "implicit",
+        "stale_public",
+        "subclass",
+        "shadow",
+        "defaults",
+        "getattribute",
+    ],
+)
+def test_run_entry_admits_only_the_actual_stock_explicit_writer(tmp_path, route):
+    _run(tmp_path, route, "ordinary", script=_EXPLICIT_LOG_ROOT)
+
+
+_LAZY_SAVED_HISTORY = (
+    _SCRIPT.split("effects=[]")[0]
+    + r"""
+import threading
+from tldw_chatbook.Agents import agent_service as agents, run_log, run_log_search
+from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
+history = (data if route == 'history' else base)/'saved-history'
+history.mkdir()
+history_selector = history/'other.toml'
+history_selector.write_text('[general]\nusers_name="history"\n')
+history_selector.chmod(0o600)
+if route != 'history': authority.register('saved-history', (history,))
+older = db.create_run(conversation_id='conversation', agent_kind='primary')
+db.set_status(older, 'done', result='done')
+prior = run_log.RunLogWriter(root=history)
+prior.bind(older)
+prior.append(run_id=older, kind='primary', type='model', content='HISTORY_MARKER')
+prior.close()
+history_control = base/'history-operation'
+history_control.mkdir(mode=0o700)
+if route != 'history':
+    register_pending(root, 'history-restore', ('saved-history',), history_control, (history_selector,))
+    with authority.maintenance(('saved-history',), 2) as session:
+        bind_activation(root, 'history-restore', history_selector, 'history-generation',
+            ('config','agents.history'), session=session)
+    (root/('pending-'+bootstrap._key('history-restore')+'.json')).unlink()
+    activation = ActivationStore(history_control/'activation')
+    activation.approve('history-generation', 'config')
+selections = []
+def global_root():
+    selections.append(True)
+    return (data/'ordinary-history' if route == 'writer_denied' else
+        history if len(selections) == 1 else data/'wrong-root')
+run_log.resolve_log_root = global_root
+writer = run_log.RunLogWriter(root=history if route == 'writer_denied' else data/'live-history')
+captured = {}
+original_loop = agents.run_agent_loop
+def observe_loop(config, messages, active, deps):
+    captured['search'] = deps.search_run_log
+    return original_loop(config, messages, active, deps)
+agents.run_agent_loop = observe_loop
+effects = []
+def chat(**kwargs):
+    effects.append('provider')
+    return {'choices':[{'message':{'content':'completed'}}]}
+service = AgentService(db, ToolCatalogRegistry(), chat_call=chat, run_log_writer=writer)
+try:
+    if route == 'writer_denied':
+        try:
+            service.run_turn(conversation_id='conversation', messages=[{'role':'user','content':'hi'}],
+                config=AgentConfig(model='test', system_prompt=''), api_endpoint='OpenAI')
+        except PermissionError as error:
+            assert str(error) == 'agent_activation_required'
+        else:
+            raise AssertionError('unreviewed explicit writer reached provider')
+        assert not effects and writer.log_dir is None
+    else:
+        service.run_turn(conversation_id='conversation', messages=[{'role':'user','content':'hi'}],
+            config=AgentConfig(model='test', system_prompt=''), api_endpoint='OpenAI')
+        assert effects == ['provider'] and not selections
+        observed = []
+        resolver_code = run_log.resolve_existing_log_dir.__code__
+        loader_code = run_log_search.load_records.__code__
+        def observe(frame, event, arg):
+            if event != 'call': return
+            if frame.f_code is resolver_code: observed.append('probe')
+            if frame.f_code is loader_code:
+                observed.append('load')
+                from tldw_chatbook.Agents.activation import _guard
+                active = _guard.context.get()
+                assert ('agents.history', history) in active.sources
+                assert history in active.leases
+                blocked = []
+                def contender():
+                    try:
+                        with authority.maintenance(('profile',), .04):
+                            blocked.append(False)
+                    except AdmissionTimeout:
+                        blocked.append(True)
+                thread = threading.Thread(target=contender)
+                thread.start(); thread.join(3)
+                assert not thread.is_alive() and blocked == [True], blocked
+        sys.setprofile(observe)
+        try:
+            if route == 'history_denied':
+                refused = captured['search']({'scope':'conversation','contains':'HISTORY_MARKER'})
+                assert not refused.ok and 'agent_activation_required' in refused.error
+                assert not observed and len(selections) == 1
+                # Owner review cannot enroll an unbound profile in a foreign source.
+                activation.approve('history-generation', 'agents.history')
+                selections.clear()
+                refused = captured['search']({'scope':'conversation','contains':'HISTORY_MARKER'})
+                assert not refused.ok and 'agent_activation_required' in refused.error
+                assert not observed and len(selections) == 1
+            else:
+                found = captured['search']({'scope':'conversation','contains':'HISTORY_MARKER'})
+                assert found.ok and 'HISTORY_MARKER' in found.content, (found, observed)
+                assert observed.count('probe') == 1 and observed.count('load') == 2, observed
+                assert len(selections) == 1, 'canonical reader reselected an unadmitted root'
+        finally:
+            sys.setprofile(None)
+        db.close()
+        with authority.maintenance(('profile' if route == 'history' else 'saved-history',), 2): pass
+finally:
+    db.close()
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize("route", ["history", "history_denied", "writer_denied"])
+def test_saved_history_is_admitted_at_its_real_read_boundary(tmp_path, route):
+    _run(
+        tmp_path,
+        route,
+        "approved" if route == "history" else "ordinary",
+        script=_LAZY_SAVED_HISTORY,
+    )
+
+
+_HISTORY_READER_ABI = (
+    _SCRIPT.split("effects=[]")[0]
+    + r"""
+from tldw_chatbook.Agents import agent_service as agents, run_log
+history = data/'reader-history'
+older = db.create_run(conversation_id='conversation', agent_kind='primary')
+db.set_status(older, 'done', result='done')
+prior = run_log.RunLogWriter(root=history)
+prior.bind(older)
+prior.append(run_id=older, kind='primary', type='model', content='READER_MARKER')
+prior.close()
+selected = []
+def global_root():
+    selected.append(True)
+    return None if route in ('none', 'custom_none', 'equal_default') else history
+run_log.resolve_log_root = global_root
+calls = []
+def custom_reader(run_id):
+    calls.append(run_id)
+    return prior.log_dir
+if route.startswith('custom'):
+    run_log.resolve_existing_log_dir = custom_reader
+elif route == 'code':
+    run_log._reader_calls = calls
+    run_log._reader_directory = prior.log_dir
+    def changed(run_id):
+        _reader_calls.append(run_id)
+        return _reader_directory
+    run_log.resolve_existing_log_dir.__code__ = changed.__code__
+elif route == 'equal_default':
+    class EqualDefault:
+        def __eq__(self, other):
+            raise AssertionError('qualification executed custom equality')
+    run_log.resolve_existing_log_dir.__kwdefaults__['root'] = EqualDefault()
+    # The ordinary one-argument call must retain the changed root default.
+    # That value is intentionally not a path, producing the existing clean error.
+captured = {}
+original_loop = agents.run_agent_loop
+def observe_loop(config, messages, active, deps):
+    captured['search'] = deps.search_run_log
+    return original_loop(config, messages, active, deps)
+agents.run_agent_loop = observe_loop
+service = AgentService(db, ToolCatalogRegistry(),
+    run_log_writer=run_log.RunLogWriter(root=data/'live-history'),
+    chat_call=lambda **kwargs: {'choices':[{'message':{'content':'completed'}}]})
+try:
+    service.run_turn(conversation_id='conversation', messages=[{'role':'user','content':'hi'}],
+        config=AgentConfig(model='test', system_prompt=''), api_endpoint='OpenAI')
+    assert not selected
+    result = captured['search']({'scope':'conversation','contains':'READER_MARKER'})
+    assert len(selected) == 1, 'saved history was reselected inside one search'
+    if route == 'none':
+        assert result.ok and 'READER_MARKER' not in result.content
+    elif route == 'equal_default':
+        assert not result.ok and result.error.startswith('Invalid search arguments:'), result
+    else:
+        assert result.ok and 'READER_MARKER' in result.content, result
+        if route in ('custom', 'custom_none', 'code'): assert calls == [older], calls
+finally:
+    db.close()
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize(
+    "route", ["stock", "none", "custom", "custom_none", "code", "equal_default"]
+)
+def test_saved_history_reader_preserves_root_and_custom_call_contracts(tmp_path, route):
+    _run(tmp_path, route, "ordinary", script=_HISTORY_READER_ABI)
+
+
+_PASSIVE_WRITER_SOURCE = (
+    _SCRIPT.split("effects=[]")[0]
+    + r"""
+from types import ModuleType
+from tldw_chatbook.Agents import activation as agent_activation, run_log
+writer = run_log.RunLogWriter(root=data/'explicit-history')
+service = AgentService(db, ToolCatalogRegistry(), run_log_writer=writer)
+key = 'tldw_chatbook.Agents.run_log'
+source = sys.modules[key]
+record = vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL']
+effects = []
+class CustomModule(ModuleType):
+    def __getattribute__(self, name):
+        effects.append('module callback')
+        raise AssertionError('custom module inspected before admission')
+class CustomMeta(type):
+    def __getattribute__(self, name):
+        effects.append('metaclass callback')
+        raise AssertionError('custom metaclass inspected before admission')
+class CustomWriter(metaclass=CustomMeta): pass
+try:
+    del sys.modules[key]
+    assert agent_activation._explicit_writer_root(service) is None
+    assert key not in sys.modules, 'qualification imported a missing source'
+    sys.modules[key] = CustomModule(key)
+    assert agent_activation._explicit_writer_root(service) is None
+    sys.modules[key] = source
+    del vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL']
+    assert agent_activation._explicit_writer_root(service) is None
+    vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL'] = (CustomWriter, record[1])
+    assert agent_activation._explicit_writer_root(service) is None
+    vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL'] = (record[0], ())
+    assert agent_activation._explicit_writer_root(service) is None
+    assert not effects, effects
+finally:
+    sys.modules[key] = source
+    vars(source)['_RUN_LOG_PATH_WRITER_ORIGINAL'] = record
+    db.close()
+assert not blocked_attempts()
+print('retired and reopened')
+"""
+)
+
+
+def test_explicit_writer_source_observation_has_no_pre_admission_callbacks(tmp_path):
+    _run(tmp_path, "passive_source", "ordinary", script=_PASSIVE_WRITER_SOURCE)

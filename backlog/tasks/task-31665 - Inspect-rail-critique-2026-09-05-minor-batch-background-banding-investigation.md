@@ -147,4 +147,7 @@ ten test modules (one new).
 `console_rail_handle` vertical geometry, `inspector_compact_access` x2,
 gate1 library core loop, `parallel_runs` navigation guard,
 `workbench_visual_snapshots` x3.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console/context-and-rag.md`: Code-level pass plus a live tmux capture at 235x52 for the background diagnosis; not re-driven live for the rest.
 <!-- SECTION:NOTES:END -->

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Mapping
 from typing import Any
@@ -10,6 +11,10 @@ from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail, ExchangeC
 from tldw_chatbook.Chat.console_semantic_revision import (
     project_semantic_revision_provider_continuations,
     project_semantic_revision_trace_message,
+)
+from tldw_chatbook.Chat.console_trace_continuation import (
+    CONTINUATION_DELTA_COMPONENT,
+    resolve_continuation_node,
 )
 from tldw_chatbook.Chat.console_trace_models import TraceCallState
 from tldw_chatbook.Chat.console_trace_projection import NormalizedTraceCall
@@ -28,9 +33,17 @@ from tldw_chatbook.Chat.console_trace_service import (
     ConsoleTraceService,
     ReconstructedRequestHeader,
 )
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
+_PROVIDER_USAGE_FIELDS = frozenset(
+    field.name for field in dataclasses.fields(ProviderUsage)
+)
 _CONTINUATION_COMPONENTS = frozenset(
-    {"continuation", TraceTransformKind.CONTINUATION_ATTACHMENT.value}
+    {
+        "continuation",
+        CONTINUATION_DELTA_COMPONENT,
+        TraceTransformKind.CONTINUATION_ATTACHMENT.value,
+    }
 )
 _STATUS = {
     TraceCallState.COMPLETE: "complete",
@@ -62,6 +75,150 @@ class ConsoleTraceNativeReader:
         self.database = database
         self.repository = repository or ConsoleTraceRepository()
         self.service = service or ConsoleTraceService(self.repository)
+
+    def read_report_tool_fields(
+        self, conversation_id: str, events: tuple, *, max_source_bytes: int = 65_536,
+        max_total_source_bytes: int = 262_144, max_fields: int = 500,
+    ) -> tuple[Mapping[str, object], ...]:
+        """Read selected immutable tool components; never reconstruct exchanges."""
+        from tldw_chatbook.Chat.console_semantic_revision import project_semantic_revision_trace_tool_fields
+        from tldw_chatbook.Utils.log_sanitizer import sanitize_string
+
+        if not 1 <= max_fields <= 500 or not 1 <= max_source_bytes <= 65_536 or not 1 <= max_total_source_bytes <= 262_144:
+            raise ValueError("report tool read budget")
+        result = []
+        total = 0
+        output_size = 0
+        with self.database.transaction() as cursor:
+            owner = self.repository.get_attached_owner_by_conversation(cursor, conversation_id)
+            if owner is None:
+                return ()
+            fences: dict[str, int | None] = {}
+            segment_id = owner.root_segment_id
+            upper = None
+            while segment_id and len(fences) < 64:
+                if segment_id in fences:
+                    raise ValueError("report lineage cycle")
+                fences[segment_id] = upper
+                segment = self.repository.get_segment(cursor, segment_id)
+                if segment is None:
+                    break
+                segment_id, upper = segment.parent_segment_id, segment.inherited_through_sequence
+            allowed_conversations = {conversation_id}
+            for owned_segment in fences:
+                rows = cursor.execute("SELECT conversation_id FROM console_trace_owners WHERE root_segment_id = ?", (owned_segment,)).fetchall()
+                allowed_conversations.update(str(row[0]) for row in rows)
+            for event in reversed(events[:max_fields]):
+                if event.event_type not in {"tool_call", "tool_result", "surface_append"}:
+                    continue
+                unavailable = {"event_key": event.event_id, "unavailable": "governed_tool_field_unavailable"}
+                try:
+                    if event.segment_id not in fences or (
+                        fences[event.segment_id] is not None and event.sequence > fences[event.segment_id]
+                    ):
+                        raise ValueError("report tool owner mismatch")
+                    current = self.repository._get_event(cursor, event.event_id)
+                    if current != event:
+                        raise ValueError("report tool reference changed")
+                    kind = event.event_type
+                    revision_id, artifact_id = event.semantic_revision_id, event.artifact_id
+                    call_id = event.call_id
+                    if kind == "surface_append":
+                        node = self.repository.get_surface_node(cursor, event.surface_node_id or "")
+                        if node is None or node.segment_id != event.segment_id:
+                            raise ValueError("report tool surface unavailable")
+                        kind = node.component_kind
+                        if kind not in {"tool_call", "tool_result"}:
+                            continue
+                        # Live capture reserves the call before appending its
+                        # surface delta. Never borrow a later call's policy.
+                        boundary = cursor.execute(
+                            """SELECT call_id FROM console_trace_events
+                               WHERE segment_id = ? AND event_type = 'call_boundary'
+                                 AND sequence < ? ORDER BY sequence DESC LIMIT 1""",
+                            (event.segment_id, event.sequence),
+                        ).fetchone()
+                        call_id = boundary[0] if boundary else None
+                        revision_id, artifact_id = node.semantic_revision_id, node.artifact_id
+                    call = self.repository.get_call(cursor, call_id or "")
+                    if call is None or call.segment_id != event.segment_id:
+                        raise ValueError("report tool policy unavailable")
+                    if event.event_type == "surface_append":
+                        head = self.repository.get_surface_node(cursor, call.surface_node_id or "")
+                        if head is None or head.segment_id != node.segment_id or head.sequence < node.sequence:
+                            raise ValueError("report tool call does not own the appended surface")
+                    policy = self.repository.get_policy(cursor, call.policy_id)
+                    if policy is None:
+                        raise ValueError("report tool policy unavailable")
+                    if revision_id is not None:
+                        revision = self.repository.get_semantic_revision(cursor, revision_id)
+                        if revision is None or revision.source_conversation_id not in allowed_conversations or kind != "tool_result":
+                            raise ValueError("report tool revision unavailable")
+                        value = project_semantic_revision_trace_tool_fields(
+                            cursor, revision_id=revision.revision_id,
+                            expected_conversation_id=revision.source_conversation_id,
+                            policy_id=call.policy_id, max_source_bytes=min(max_source_bytes, max_total_source_bytes - total),
+                        )
+                        total += max_source_bytes  # conservative bound for a revision read
+                    elif artifact_id is not None:
+                        row = cursor.execute(
+                            """SELECT length(sanitized_bytes),
+                                      CASE WHEN length(sanitized_bytes) <= ? THEN sanitized_bytes ELSE NULL END
+                                 FROM console_trace_artifacts WHERE artifact_id = ?""",
+                            (min(max_source_bytes, max_total_source_bytes - total), artifact_id),
+                        ).fetchone()
+                        if row is None or row[1] is None:
+                            raise ValueError("report tool artifact budget")
+                        total += int(row[0])
+                        # These immutable provider-only artifacts have already
+                        # crossed the capture-time credential/PII boundary.
+                        value = json.loads(row[1])
+                        checked = CredentialSanitizer().sanitize(value)
+                        if not checked.available or not isinstance(checked.value, Mapping):
+                            raise ValueError("report tool sanitizer unavailable")
+                        governed = checked.value
+                        if kind == "tool_result":
+                            value = {key: governed[key] for key in ("name", "tool_name", "result", "output", "content") if key in governed}
+                        else:
+                            value = {
+                                key: governed[key]
+                                for key in ("name", "tool_name", "args", "arguments")
+                                if key in governed
+                            }
+                            calls = governed.get("tool_calls")
+                            if isinstance(calls, (list, tuple)):
+                                functions = []
+                                for entry in calls:
+                                    if not isinstance(entry, Mapping):
+                                        continue
+                                    function = entry.get("function")
+                                    if isinstance(function, Mapping):
+                                        fields = {
+                                            key: function[key]
+                                            for key in ("name", "arguments")
+                                            if key in function
+                                        }
+                                        if fields:
+                                            functions.append({"function": fields})
+                                if functions:
+                                    value["tool_calls"] = functions
+                        if not value:
+                            raise ValueError("report tool shape unavailable")
+                    else:
+                        raise ValueError("report tool source omitted")
+                    if total > max_total_source_bytes:
+                        raise ValueError("report aggregate tool budget")
+                    text = sanitize_string(json.dumps(value, ensure_ascii=False, sort_keys=True))
+                    if output_size + len(text.encode("utf-8")) > 8_000:
+                        result.append({**unavailable, "unavailable": "tool_output_budget"})
+                        break
+                    output_size += len(text.encode("utf-8"))
+                    result.append({"event_key": event.event_id, "text": text})
+                except (KeyError, TypeError, ValueError, UnicodeError):
+                    result.append(unavailable)
+                if total >= max_total_source_bytes:
+                    break
+        return tuple(reversed(result))
 
     def read_calls(self, message_id: str) -> tuple[NormalizedTraceCall, ...]:
         """Reconstruct native calls attached to one conversation message.
@@ -134,11 +291,28 @@ class ConsoleTraceNativeReader:
             or call.settled_at
             or "recorded-before-dispatch"
         )
-        usage_json = (
-            json.dumps(dict(call.usage), separators=(",", ":"), sort_keys=True)
-            if call.usage is not None
-            else None
-        )
+        # TASK-33621.9: settled usage is the provider's raw nested payload,
+        # frozen all the way down. ``json.dumps(dict(usage))`` raised on its
+        # mappingproxy children, and the raw keys would still fail the
+        # capture contract, which carries normalized ProviderUsage (as the
+        # gateway's own capture does). Usage is supplementary: one that
+        # cannot be normalized is omitted (and listed as such), never the
+        # whole call; an empty payload reported nothing, so it stays None
+        # rather than becoming an all-zero "reported" record.
+        try:
+            usage_json = (
+                _normalized_usage_json(
+                    call.usage,
+                    provider=call.provider_name or "",
+                    model=call.model_name or "",
+                )
+                if call.usage
+                else None
+            )
+        except (TypeError, ValueError, RecursionError):
+            usage_json = None
+        if call.usage and usage_json is None:
+            omitted.append("usage")
         capture = ExchangeCapture(
             run_tag=call.run_id,
             seq=call.call_sequence,
@@ -213,6 +387,15 @@ class ConsoleTraceNativeReader:
                         policy_id=call.policy_id,
                     )
                 destination.append(value)
+            elif component_kind == CONTINUATION_DELTA_COMPONENT:
+                destination.append(
+                    resolve_continuation_node(
+                        self.repository,
+                        cursor,
+                        self.repository.get_surface_node(cursor, identity),
+                        policy_id=call.policy_id,
+                    )
+                )
             elif reference_kind == "artifact":
                 destination.append(
                     self._decode_artifact(
@@ -423,6 +606,56 @@ class ConsoleTraceNativeReader:
         if artifact is None:
             raise ValueError("trace_artifact_unavailable")
         return json.loads(artifact.sanitized_bytes)
+
+
+def _thaw_json(value: object) -> object:
+    """Return plain JSON containers for a repository-frozen value.
+
+    Args:
+        value: A decoded column whose objects are ``MappingProxyType`` and
+            whose arrays are tuples, at any depth.
+
+    Returns:
+        The same value built from ``dict`` and ``list``.
+    """
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
+
+
+def _normalized_usage_json(
+    usage: Mapping[str, object], *, provider: str, model: str
+) -> str | None:
+    """Normalize one call's stored usage into ProviderUsage JSON.
+
+    Args:
+        usage: Stored usage: the provider's raw payload, or ProviderUsage
+            fields for rows imported from legacy captures.
+        provider: The call's provider, used when the payload names none.
+        model: The call's model, used when the payload names none.
+
+    Returns:
+        ``ProviderUsage.to_json()``, or None for an unrecognized shape.
+    """
+    payload = _thaw_json(usage)
+    if not isinstance(payload, dict):
+        return None
+    if set(payload) <= _PROVIDER_USAGE_FIELDS:
+        normalized = ProviderUsage.from_json(json.dumps(payload))
+        if normalized is not None:
+            # A legacy row that never named them takes the call's own.
+            normalized = dataclasses.replace(
+                normalized,
+                provider=normalized.provider or provider,
+                model=normalized.model or model,
+            )
+    else:
+        normalized = ProviderUsage.from_provider_payload(
+            payload, provider=provider, model=model
+        )
+    return None if normalized is None else normalized.to_json()
 
 
 __all__ = ["ConsoleTraceNativeReader"]

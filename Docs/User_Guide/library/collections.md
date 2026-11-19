@@ -144,7 +144,8 @@ It is empty until you select a capture ("Select a capture to read it here."), th
 
 Unsaved **Capture note**, highlight quote and highlight note fields stay with
 that capture while you open **More**, change modes, refresh the reader or visit
-another capture and return. These drafts last only for the current session and
+another capture and return. Resizing the terminal keeps them too.
+These drafts last only for the current session and
 are cleared when the capture authority changes. Use **Save capture note** or
 **Add highlight** to persist them. Highlights shown in Work belong to the loaded
 capture, including after you switch captures while a refresh is pending.
@@ -156,7 +157,11 @@ that the highlight was saved but the list could not refresh; reopen
 
 Saving a capture note keeps its Save action focused and visible, scrolling Work
 when needed. At narrow sizes, use the pane grips and vertical scrolling to reach
-controls outside the current viewport.
+controls outside the current viewport. Below 64 columns with no capture open,
+the capture list takes the whole stage. With a capture open on a narrow
+terminal (up to 82 columns), the list grip gives the list the whole stage
+rather than squeezing the reader beside it, and the same grip returns to the
+capture with focus in it.
 
 ## Features & controls
 
@@ -194,7 +199,14 @@ bounded, read-only inspector of those records with **Export complete
 JSON…** and **Close inspector**. Those records cannot be created, renamed,
 deleted, restored, or added to — the local Collections service refuses
 every one of those writes — so read and export are the only two things you
-can do with them (task-32057).
+can do with them (task-32057). The export picker opens in the folder you last
+exported to this session; if the chosen `.json` file already exists, a
+"Replace existing file?" prompt names it and its folder, with **Cancel**
+focused, and only **Replace** overwrites it. The same prompt opens if
+another program creates that file after you pick it, while the export is
+running: the export never replaces a file it has not asked about. The status
+line then reads
+"Legacy recovery export complete: ~/exp/legacy-collections-recovery.json".
 
 Profiles with no legacy records never see any of this.
 
@@ -268,72 +280,3 @@ and **Escape** returns focus to the rail, as on every Library canvas;
 - **The Chunking Lab strip** above the canvas ("Chunking Lab | Try selected
   text") is not part of Collections — it is a Library-wide developer tool
   that paints on every canvas. See [Library overview](../library.md).
-
-—
-*Verified against fix/media-riders-n — 2026-09-07 (task-31951: the Collections
-reader's two pane grips are one column each, painting `‹`/`›` instead of the
-five-column `<---`/`--->` run; opened live at 235x52, and collapsing the
-Library pane repainted its grip as a one-cell `›`. Retained across the
-2026-09-08 rewrite: it records THIS captures reader's grips, not the
-superseded manager's.)*
-*Verified against fix/library-crit8-docs — 2026-09-08 (task-32057 /
-task-32073: whole-page rewrite. The previous page described a
-create/rename/delete Collections manager that no longer ships; the row
-opens the Quick Capture reading list documented here. Live at 235x52 and
-100x30 on a seeded profile: the rail read `Collections (0)` before the row
-was ever visited, selecting it mounted the six scope sub-rows and left the
-Create section open with no `[library.rail_state] sections` write, and the
-canvas painted `Quick Capture` / `Filters` / `Sort: saved desc` /
-`Filter captures` / "No captures match this scope. Clear filters or save a
-URL with Quick Capture." / `0–0 of 0`. The `legacy_read_only` reason and
-its recovery path are now on the canvas. AC#1 — what the row should BE —
-is a product decision and is deliberately left open.)*
-
-
-*Verified against fix/library-crit8-docs — 2026-09-08 (task-32057 fix round 1:
-the rail's Collections count is now withheld, not replaced by the unfiltered
-whole-library total, while a scoped page is loading or stale -- so the
-"Showing the last good page … the exact total is withheld" behaviour above
-holds for the rail row too. NOTE: this stamp's "a narrower scope's count no
-longer flashes the whole-library number mid-load" overstated the fix -- one
-path was left, and task-32101's sibling task-32103 closed it; see the stamp
-below. The obsolete screenshot of the superseded Collections manager was
-deleted rather than left orphaned.)*
-
-*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32103: the
-flash the stamp above claimed was gone survived on one path -- leaving a
-scoped list and returning reset the canvas page while the scope persisted,
-so the rail borrowed the unfiltered total for one load window. The
-unfiltered prefetch now answers only for the unfiltered scope, a page whose
-authority has gone is never painted, and a count read that fails or runs out
-of deadline shows "(—)" with a Details sentence instead of vanishing.)*
-
-*Verified against fix/library-crit10-pagers — 2026-09-11 (task-32057 AC#1
-decided and task-32352: one name — the canvas heading is "Collections" and
-"Quick Capture" is only the save-a-URL button; the empty state no longer
-tells a profile that never captured anything to clear filters it never set;
-the pager at `0–0 of 0` draws no controls at all, per task-32354's shared
-single-page rule. Live at 235x52, 100x30 and 60x24 on a seeded profile. Fix
-round 1: the empty state gained a third sentence for an empty rail scope,
-which the first cut mis-read as a never-used profile. Bot review round: it no
-longer speaks at all before a page has come back, it describes the page on
-screen rather than the scope being fetched, and a saved search's
-`favorite=False` predicate counts as a scope.)*
-
-*Reviewed on feat/component-pattern-library — 2026-09-15 (TASK-32658):
-annotation continuity, capture-specific highlights, Archive successor, visible
-Undo and compact Save focus. Automated journeys cover 170×48 and 80×24 in both
-themes; native confirmation covers wide dark and compact light. Unsaved drafts
-are session-only. TASK-32659 tracks the remaining browse-control findings.*
-
-*Reviewed on feat/component-pattern-library — 2026-09-15 (TASK-32659): Clear
-resets all search/form predicates, saved searches page with retry and focus
-continuity, and repeated Archive preserves the original Undo. Automated
-journeys cover both themes at 170×48 and 80×24; native checks use wide dark and
-compact light. The wider compact reader toolbar review remains pending.*
-
-*Reviewed on feat/component-pattern-library — 2026-09-15 (TASK-32662):
-compact action/mode bars retain readable keyboard focus with Items open;
-resizing preserves mounted note drafts. Empty or whitespace-only text search
-recovers from relevance sorting. Native checks cover 170×48 dark and 80×24
-light with forward/reverse Tab and Enter; no provider request was made.*

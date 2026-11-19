@@ -291,7 +291,7 @@ async def test_notes_hint_admitted_before_pause_completes_one_round(
 async def test_runtime_close_defers_for_a_foreign_native_borrower(
     tmp_path, local_root, route, borrower
 ):
-    from tldw_chatbook.Backup_Recovery.participants import _core_operation
+    from tldw_chatbook.Backup_Recovery.participants import core_operation
 
     if route == "writing":
         from tldw_chatbook.Writing_Interop.local_writing_service import (
@@ -324,7 +324,7 @@ async def test_runtime_close_defers_for_a_foreign_native_borrower(
         )
         await runtime.start()
         connection = local._get_connection()
-    operation = _core_operation(local) if borrower == "operation" else None
+    operation = core_operation(local) if borrower == "operation" else None
     try:
         if operation is not None:
             operation.__enter__()

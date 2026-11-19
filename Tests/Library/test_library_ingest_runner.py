@@ -23,6 +23,7 @@ that a spawned process can run ``run_parse_job``.
 
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
 import hashlib
 import multiprocessing
@@ -53,6 +54,7 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Library.library_ingest_jobs import (
     IngestJobState,
     LibraryIngestJob,
+    LibraryIngestJobRegistry,
 )
 from tldw_chatbook.Local_Ingestion.ingest_parse_worker import (
     initialize_ingest_parse_worker,
@@ -98,6 +100,12 @@ from tldw_chatbook.STT.executor import (
     WorkerPhase,
 )
 from tldw_chatbook.STT.parakeet_dispatch import ParakeetDispatch
+
+# TASK-38111: the ingest backend resolution, the parse-pool sizing and the
+# Parakeet source service read config (get_cli_setting), which the per-test
+# TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
+# raw_source_selection_changed). Keep the collection-time sandbox profile.
+pytestmark = pytest.mark.bootstrap_profile
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -419,8 +427,42 @@ def _allow_test_external_root(app: _IngestRunnerHarness, root: Path) -> None:
     service._descriptor_for = descriptor
 
 
+#: The Media DBs ``_make_db`` opened in the running test of this module, or
+#: None outside one (another module that imports ``_make_db`` keeps none).
+_OPENED_MEDIA_DBS: list[MediaDatabase] | None = None
+
+
 def _make_db(tmp_path: Path, name: str = "library_ingest.db") -> MediaDatabase:
-    return MediaDatabase(tmp_path / name, client_id="f3-runner-test")
+    db = MediaDatabase(tmp_path / name, client_id="f3-runner-test")
+    if _OPENED_MEDIA_DBS is not None:
+        _OPENED_MEDIA_DBS.append(db)
+    return db
+
+
+@pytest.fixture(autouse=True)
+def _close_the_stores_each_test_opens(monkeypatch):
+    """Close the test's stores, so ``--storage-lease-guard`` sees no live lease.
+
+    TASK-39049: 128 tests left their ``_make_db`` handle open, and three left
+    a WorkspaceDB handle that a research retry opened on the loop's executor
+    thread. Both stores keep every thread's handle in their connection
+    registry, opened with ``check_same_thread=False`` (WorkspaceDB since
+    TASK-39117), so ``close_idle_connections()`` closes them all from here.
+    """
+    global _OPENED_MEDIA_DBS
+    _OPENED_MEDIA_DBS = []
+    workspaces = []
+    opened = WorkspaceDB._on_connection_opened
+
+    def record(self, conn):
+        workspaces.append(self)
+        opened(self, conn)
+
+    monkeypatch.setattr(WorkspaceDB, "_on_connection_opened", record)
+    yield
+    stores, _OPENED_MEDIA_DBS = _OPENED_MEDIA_DBS, None
+    for store in (*stores, *workspaces):
+        store.close_idle_connections()
 
 
 def _write_text_file(tmp_path: Path, name: str, content: str) -> Path:
@@ -441,11 +483,6 @@ class _RecordingAssociationScheduler:
 
     async def resume_startup(self) -> None:
         return None
-
-
-def _exit_ingest_worker_abruptly() -> None:
-    """Picklable spawn-pool target that simulates a hard worker crash."""
-    os._exit(17)
 
 
 async def _wait_for_job_state(
@@ -862,34 +899,87 @@ async def test_clearing_terminal_history_prunes_research_schedule_dedupe(
     assert app._research_source_terminal_jobs_scheduled == set()
 
 
-def test_real_app_wires_research_association_and_restores_before_startup_resume(
+async def _wait_until(predicate: Callable[[], Any], seconds: float = 10.0) -> None:
+    """Poll with ``asyncio.sleep``: the restore runs on a worker thread."""
+
+    deadline = time.monotonic() + seconds
+    while not predicate() and time.monotonic() < deadline:
+        await asyncio.sleep(_POLL_INTERVAL)
+
+
+def _persist_restore_history(path: Path, jobs: list[LibraryIngestJob]) -> None:
+    """Write the prior session's history where the startup restore reads it."""
+
+    store = LibraryIngestJobsDB(path)
+    try:
+        for job in jobs:
+            store.upsert_job(job)
+    finally:
+        store.close()
+
+
+def _run_restore_for_real(
+    app: _IngestRunnerHarness,
+    monkeypatch: pytest.MonkeyPatch,
+    groups: list[str],
+) -> list[Any]:
+    """Keep the real threaded restore; record and close every other worker.
+
+    Returns the stores the restore attaches, for the test to close.
+    """
+
+    real_run_worker = app.run_worker
+    attached: list[Any] = []
+    registry = app.library_ingest_jobs
+    real_attach = registry.attach_store
+
+    def queue_worker(work, **kwargs):
+        if kwargs.get("group") == "ingest_restore":
+            return real_run_worker(work, **kwargs)
+        groups.append(kwargs["group"])
+        work.close()
+
+    def attach(store) -> None:
+        attached.append(store)
+        real_attach(store)
+
+    monkeypatch.setattr(app, "run_worker", queue_worker)
+    monkeypatch.setattr(registry, "attach_store", attach)
+    return attached
+
+
+@pytest.mark.asyncio
+async def test_real_app_wires_research_association_and_restores_before_startup_resume(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
+    # TASK-38954: moved onto the real threaded restore. The synchronous
+    # `_restore_ingest_jobs` stand-in seeded the registry inside the startup
+    # call, which production never does, and so hid that every startup
+    # worker was queued before the restore landed.
     workspace_db = _service_wiring_module.WorkspaceDB(
         tmp_path / "app-workspaces.sqlite",
         client_id="app-wiring-test",
     )
     request.addfinalizer(workspace_db.close)
     provider = SimpleNamespace(get_active_context=lambda: None)
-    server_service = _app_module.ServerNotesWorkspaceService.from_server_context_provider(
-        provider
+    server_service = (
+        _app_module.ServerNotesWorkspaceService.from_server_context_provider(provider)
     )
-    app = _app_module.TldwCli.__new__(_app_module.TldwCli)
+    app = _IngestRunnerHarness(None)
     app.local_workspace_db = workspace_db
-    app.workspace_registry_service = _service_wiring_module.LocalWorkspaceRegistryService(
-        workspace_db
+    app.workspace_registry_service = (
+        _service_wiring_module.LocalWorkspaceRegistryService(workspace_db)
     )
     app.workspace_registry_service.create_workspace(
         workspace_id="restore-workspace",
         name="Restore workspace",
     )
-    app._init_library_ingest_runtime_state()
     app.server_context_provider = provider
     app.server_notes_workspace_service = server_service
 
-    app._wire_research_source_association()
+    _app_module.TldwCli._wire_research_source_association(app)
 
     scheduler = app.research_source_association_scheduler
     coordinator = app.research_source_association_coordinator
@@ -964,9 +1054,7 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
                 job_id=job_id,
                 source_path=f"/restored/source-{index:03d}.txt",
                 state=(
-                    IngestJobState.FAILED
-                    if 55 <= index < 58
-                    else IngestJobState.DONE
+                    IngestJobState.FAILED if 55 <= index < 58 else IngestJobState.DONE
                 ),
                 media_id=None if 55 <= index < 58 else index + 1,
                 research_source_operation_id=operation_id,
@@ -978,79 +1066,160 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
             limit=50
         )
     ] == ["research-op-restored-058", "research-op-restored-059"]
+    jobs_path = tmp_path / "restored-jobs.sqlite"
+    _persist_restore_history(jobs_path, restored_jobs)
+    monkeypatch.setattr(
+        _ingest_queue_module, "get_library_ingest_jobs_db_path", lambda: jobs_path
+    )
 
     groups: list[str] = []
     ui_observations: list[int] = []
     app.library_ingest_jobs.add_listener(
         lambda: ui_observations.append(len(app.library_ingest_jobs.jobs()))
     )
+    attached = _run_restore_for_real(app, monkeypatch, groups)
+    try:
+        async with app.run_test():
+            app._restore_ingest_jobs_and_schedule_research_sources()
+            assert groups == [], "startup work was queued before the restore landed"
+            await _wait_until(lambda: groups)
 
-    def queue_worker(awaitable, *, group: str):
-        groups.append(group)
-        awaitable.close()
+            assert len(app.library_ingest_jobs.jobs()) == 60
+            assert ui_observations == [60]
+            assert groups == [
+                "research_source_held_startup",
+                "research_source_association_startup",
+                "research_paste_staging_startup",
+            ]
+            # The 60 restored terminal jobs belong to the bounded resume_startup:
+            # neither the seeding nor a later mutation starts one worker each.
+            assert app._research_source_terminal_jobs_scheduled == {
+                job.job_id for job in restored_jobs
+            }
+            live = app.library_ingest_jobs.submit(
+                source_path="/live-after-restore.txt",
+                research_source_operation_id="research-op-live-after-restore",
+            )
+            app.library_ingest_jobs.mark_failed(live.job_id, error="live failure")
+            assert groups[3:] == ["research_source_association"]
+    finally:
+        for store in attached:
+            store.close()
 
-    def restore_real_registry() -> None:
-        app.library_ingest_jobs.restore(restored_jobs, next_id=61)
 
-    monkeypatch.setattr(app, "_restore_ingest_jobs", restore_real_registry)
-    monkeypatch.setattr(app, "run_worker", queue_worker)
-
-    app._restore_ingest_jobs_and_schedule_research_sources()
-
-    assert len(app.library_ingest_jobs.jobs()) == 60
-    assert ui_observations == [60]
-    assert groups == [
-        "research_source_association_startup",
-        "research_paste_staging_startup",
-    ]
-    assert app._research_source_terminal_jobs_scheduled == set()
-
-
-def test_restore_suppression_cleans_up_after_exception_and_empty_repeats(
+@pytest.mark.asyncio
+async def test_restore_suppression_cleans_up_after_exception_and_empty_repeats(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    app = _IngestRunnerHarness(_make_db(tmp_path))
+    # TASK-38954: moved onto the real threaded restore, for the reason given
+    # in the test above. The exception now comes from the seeding itself.
+    jobs_path = tmp_path / "jobs.sqlite"
+    monkeypatch.setattr(
+        _ingest_queue_module, "get_library_ingest_jobs_db_path", lambda: jobs_path
+    )
+    app = _IngestRunnerHarness(None)
     app.research_source_association_scheduler = _RecordingAssociationScheduler()
+    registry = app.library_ingest_jobs
     groups: list[str] = []
+    attached = _run_restore_for_real(app, monkeypatch, groups)
+    real_merge = registry.merge_restored
 
-    def queue_worker(awaitable, *, group: str) -> None:
-        groups.append(group)
-        awaitable.close()
-
-    def fail_restore() -> None:
+    def fail_merge(jobs, next_id) -> None:
         raise RuntimeError("restore failed")
 
-    monkeypatch.setattr(app, "run_worker", queue_worker)
-    monkeypatch.setattr(app, "_restore_ingest_jobs", fail_restore)
+    monkeypatch.setattr(registry, "merge_restored", fail_merge)
+    try:
+        async with app.run_test():
+            app._restore_ingest_jobs_and_schedule_research_sources()
+            assert groups == [], "startup work was queued before the restore landed"
+            await _wait_until(lambda: groups)
 
-    with pytest.raises(RuntimeError, match="restore failed"):
-        app._restore_ingest_jobs_and_schedule_research_sources()
+            assert groups == ["research_source_association_startup"]
+            assert app._research_source_restore_in_progress is False
+            live = registry.submit(
+                source_path="/live-after-restore.txt",
+                research_source_operation_id="research-op-live-after-restore",
+            )
+            registry.mark_failed(live.job_id, error="live failure")
+            assert groups[1:] == ["research_source_association"]
+            assert app._research_source_terminal_jobs_scheduled == {live.job_id}
 
-    assert app._research_source_restore_in_progress is False
-    live = app.library_ingest_jobs.submit(
-        source_path="/live-after-restore.txt",
-        research_source_operation_id="research-op-live-after-restore",
+            groups.clear()
+            monkeypatch.setattr(registry, "merge_restored", real_merge)
+            for repeat in (1, 2):
+                app._restore_ingest_jobs_and_schedule_research_sources()
+                await _wait_until(lambda repeat=repeat: len(groups) == repeat)
+
+            assert groups == [
+                "research_source_association_startup",
+                "research_source_association_startup",
+            ]
+            assert app._research_source_terminal_jobs_scheduled == {live.job_id}
+            assert app._research_source_restore_in_progress is False
+    finally:
+        for store in attached:
+            store.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_restore_links_a_held_research_job_once_the_store_attaches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """TASK-38954: the held reconcile needs the restored store, which the
+    restore worker attaches later, on the UI thread. It was checked for while
+    the worker was only starting, so it never ran."""
+
+    jobs_path = tmp_path / "jobs.sqlite"
+    seeding_store = LibraryIngestJobsDB(jobs_path)
+    seeding = LibraryIngestJobRegistry()
+    seeding.attach_store(seeding_store)
+    held = seeding.submit(
+        source_path=str(tmp_path / "managed.txt"),
+        origin="local",
+        research_source_operation_id="operation-held-at-restart",
+        dispatch_held=True,
+        require_persisted=True,
     )
-    app.library_ingest_jobs.mark_failed(live.job_id, error="live failure")
-    assert groups == ["research_source_association"]
-    assert app._research_source_terminal_jobs_scheduled == {live.job_id}
+    seeding_store.close()
+    workspace_db = WorkspaceDB(tmp_path / "workspace.sqlite")
+    operation_store = ResearchSourceOperationStore(workspace_db)
+    operation_store.create(
+        ResearchSourceOperation(
+            operation_id="operation-held-at-restart",
+            idempotency_key="idempotency-operation-held-at-restart",
+            data_source=WorkspaceDataSource.LOCAL,
+            workspace_id="workspace-local",
+            canonical_item_type=CanonicalItemType.LOCAL_LIBRARY,
+            desired_selected=True,
+            created_at="2026-08-24T10:00:00Z",
+            updated_at="2026-08-24T10:00:00Z",
+        )
+    )
+    monkeypatch.setattr(
+        _ingest_queue_module, "get_library_ingest_jobs_db_path", lambda: jobs_path
+    )
+    app = _IngestRunnerHarness(None)
+    app.research_source_operation_store = operation_store
+    dispatched: list[str] = []
+    monkeypatch.setattr(app, "_dispatch_research_source_catalog_job", dispatched.append)
+    try:
+        async with app.run_test():
+            app._restore_ingest_jobs_and_schedule_research_sources()
+            await _wait_until(lambda: dispatched)
 
-    groups.clear()
-
-    def restore_empty_registry() -> None:
-        app.library_ingest_jobs.restore([], next_id=1)
-
-    monkeypatch.setattr(app, "_restore_ingest_jobs", restore_empty_registry)
-    app._restore_ingest_jobs_and_schedule_research_sources()
-    app._restore_ingest_jobs_and_schedule_research_sources()
-
-    assert groups == [
-        "research_source_association_startup",
-        "research_source_association_startup",
-    ]
-    assert app._research_source_terminal_jobs_scheduled == set()
-    assert app._research_source_restore_in_progress is False
+            assert dispatched == [held.job_id]
+            assert app.library_ingest_jobs.get_job(held.job_id).dispatch_held is False
+        operation = operation_store.get("operation-held-at-restart")
+        assert operation is not None
+        assert operation.catalog_status is SourceOperationStatus.IN_PROGRESS
+        assert operation.ingest_job_id == held.job_id
+    finally:
+        store = getattr(app, "_library_ingest_jobs_store", None)
+        if store is not None:
+            store.close()
+        workspace_db.close()
 
 
 @pytest.mark.asyncio
@@ -1064,7 +1233,9 @@ async def test_writer_passes_claimed_generate_embeddings_snapshot_to_persistence
     app = _IngestRunnerHarness(db)
 
     with patch.object(
-        _ingest_queue_module, "persist_parsed_media", return_value=(777, "media-777", "saved")
+        _ingest_queue_module,
+        "persist_parsed_media",
+        return_value=(777, "media-777", "saved"),
     ) as persist:
         async with app.run_test() as pilot:
             job = app.submit_library_ingest_job(
@@ -1097,7 +1268,9 @@ async def test_writer_missing_generic_snapshot_uses_capability_defaults(
         }.get(name, fallback)
 
     with (
-        patch.object(_ingest_queue_module, "generic_option_default", side_effect=schema_default),
+        patch.object(
+            _ingest_queue_module, "generic_option_default", side_effect=schema_default
+        ),
         patch.object(
             _ingest_queue_module,
             "persist_parsed_media",
@@ -1629,7 +1802,8 @@ async def test_real_pool_worker_exit_is_reported_for_owning_generation(
             pool = app._ensure_ingest_parse_pool()
             generation = app._ingest_parse_pool_generation
             app._ingest_parse_jobs_by_generation[generation].add(job.job_id)
-            pool.apply_async(_exit_ingest_worker_abruptly)
+            # A test-module target imports the entire app before it can crash.
+            pool.apply_async(os._exit, (17,))
 
             failed = await _wait_for_job_state(
                 app,
@@ -1902,7 +2076,9 @@ async def test_ebook_waits_for_existing_general_pool_to_retire(
 
         assert requested_processes == [3]
         assert len(pools[0].calls) == 1
-        assert app.library_ingest_jobs.get_job(ebook.job_id).state is IngestJobState.QUEUED
+        assert (
+            app.library_ingest_jobs.get_job(ebook.job_id).state is IngestJobState.QUEUED
+        )
 
         pools[0].trigger_success(0, {"ok": True, "payload": {}})
         for _ in range(_POLL_ATTEMPTS):
@@ -1918,7 +2094,10 @@ async def test_ebook_waits_for_existing_general_pool_to_retire(
             app.library_ingest_jobs.get_job(document.job_id).state
             is not IngestJobState.QUEUED
         )
-        assert app.library_ingest_jobs.get_job(ebook.job_id).state is IngestJobState.PARSING
+        assert (
+            app.library_ingest_jobs.get_job(ebook.job_id).state
+            is IngestJobState.PARSING
+        )
 
 
 @pytest.mark.asyncio
@@ -1945,9 +2124,7 @@ async def test_local_stt_does_not_consume_the_ebook_pool_slot(tmp_path: Path) ->
         audio_path.write_bytes(b"fixture")
         audio = app.submit_library_ingest_job(
             source_path=str(audio_path),
-            ingest_options={
-                "audio_video": {"transcription_provider": "parakeet-onnx"}
-            },
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
         ebooks = []
         for name in ("book-1.epub", "book-2.epub"):
@@ -1956,12 +2133,21 @@ async def test_local_stt_does_not_consume_the_ebook_pool_slot(tmp_path: Path) ->
             ebooks.append(app.submit_library_ingest_job(source_path=str(path)))
         await pilot.pause()
 
-        assert app.library_ingest_jobs.get_job(audio.job_id).state is IngestJobState.PARSING
+        assert (
+            app.library_ingest_jobs.get_job(audio.job_id).state
+            is IngestJobState.PARSING
+        )
         assert len(executor.calls) == 1
         assert len(pools) == 1
         assert len(pools[0].calls) == 1
-        assert app.library_ingest_jobs.get_job(ebooks[0].job_id).state is IngestJobState.PARSING
-        assert app.library_ingest_jobs.get_job(ebooks[1].job_id).state is IngestJobState.QUEUED
+        assert (
+            app.library_ingest_jobs.get_job(ebooks[0].job_id).state
+            is IngestJobState.PARSING
+        )
+        assert (
+            app.library_ingest_jobs.get_job(ebooks[1].job_id).state
+            is IngestJobState.QUEUED
+        )
 
         pools[0].trigger_success(0, {"ok": True, "payload": {}})
         await _wait_for_job_state(
@@ -1972,7 +2158,10 @@ async def test_local_stt_does_not_consume_the_ebook_pool_slot(tmp_path: Path) ->
         )
 
         assert len(pools[0].calls) == 2
-        assert app.library_ingest_jobs.get_job(audio.job_id).state is IngestJobState.PARSING
+        assert (
+            app.library_ingest_jobs.get_job(audio.job_id).state
+            is IngestJobState.PARSING
+        )
 
 
 @pytest.mark.asyncio
@@ -2033,7 +2222,10 @@ async def test_broken_ebook_pool_gates_rebuild_until_teardown_completes(
             await pilot.pause()
             assert len(pools) == 1
             for job in (second, document, late):
-                assert app.library_ingest_jobs.get_job(job.job_id).state is IngestJobState.QUEUED
+                assert (
+                    app.library_ingest_jobs.get_job(job.job_id).state
+                    is IngestJobState.QUEUED
+                )
 
             teardown_release.set()
             await _wait_for_job_state(
@@ -2786,11 +2978,13 @@ def test_unqualified_legacy_v2_folder_cannot_satisfy_a_v3_dispatch(
     monkeypatch.setattr(
         _ingest_queue_module,
         "get_cli_setting",
-        lambda key, *args: str(legacy_v2)
-        if key == "transcription.parakeet_onnx_model_dir"
-        else args[0]
-        if args
-        else None,
+        lambda key, *args: (
+            str(legacy_v2)
+            if key == "transcription.parakeet_onnx_model_dir"
+            else args[0]
+            if args
+            else None
+        ),
     )
     monkeypatch.setattr(
         _parakeet_dispatch_module,
@@ -3380,11 +3574,15 @@ async def test_executor_failure_uses_stable_job_terminal(
         assert terminal.error
         assert "fixture" not in terminal.error
         if code is not TranscriptionFailureCode.CANCELLED:
+            # df22692d70 added the two diagnostic keys. This fake failure
+            # carries no STTFailureDiagnostic, so both read "unknown".
             assert terminal.error_detail == {
                 "category": "stt_failure",
                 "code": code.value,
                 "message": terminal.error,
                 "actions": ["retry_faster_whisper"],
+                "failure_stage": "unknown",
+                "exception_category": "unknown",
             }
 
 
@@ -3434,9 +3632,7 @@ async def test_parakeet_failed_attempt_reaches_faster_whisper_retry_row(
     async with app.run_test() as pilot:
         original = app.submit_library_ingest_job(
             source_path=str(source),
-            ingest_options={
-                "audio_video": {"transcription_provider": "parakeet-onnx"}
-            },
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
         await pilot.pause()
         attempt_id = executor.calls[0]["attempt_id"]
@@ -4366,7 +4562,9 @@ async def test_pool_submission_binds_generation_and_job_and_applies_transient_pr
         generation = app._ingest_parse_pool_generation
         persisted_before_tick = tuple(store.upserts)
         lifecycle_notifications: list[str] = []
-        progress_notifications: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
+        progress_notifications: list[
+            tuple[dict[str, Any] | None, dict[str, Any] | None]
+        ] = []
         app.library_ingest_jobs.add_listener(
             lambda: lifecycle_notifications.append("lifecycle")
         )
@@ -4519,13 +4717,15 @@ async def test_parse_progress_batch_rejects_stale_or_ineligible_events(
         elif fence == "non_parsing":
             assert app.library_ingest_jobs.mark_writing(job.job_id) is not None
         elif fence == "terminal":
-            assert app.library_ingest_jobs.mark_failed(
-                job.job_id, error="settled"
-            ) is not None
+            assert (
+                app.library_ingest_jobs.mark_failed(job.job_id, error="settled")
+                is not None
+            )
         elif fence == "hidden":
-            assert app.library_ingest_jobs.mark_failed(
-                job.job_id, error="hidden"
-            ) is not None
+            assert (
+                app.library_ingest_jobs.mark_failed(job.job_id, error="hidden")
+                is not None
+            )
             assert app.library_ingest_jobs.dismiss(job.job_id) is not None
         elif fence == "payload_ready":
             app._ingest_parsed_payloads[job.job_id] = {"content": "ready"}
@@ -4940,7 +5140,9 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
             assert method == "spawn"
             return _RecordingContext()
 
-    monkeypatch.setattr(ingest_queue_module, "multiprocessing", _RecordingMultiprocessing())
+    monkeypatch.setattr(
+        ingest_queue_module, "multiprocessing", _RecordingMultiprocessing()
+    )
     monkeypatch.setattr(sys, "stderr", _TextualLikeStderr())
 
     mixin = LibraryIngestQueueMixin()
@@ -4987,7 +5189,9 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
             assert method == "spawn"
             return _RecordingContext()
 
-    monkeypatch.setattr(ingest_queue_module, "multiprocessing", _RecordingMultiprocessing())
+    monkeypatch.setattr(
+        ingest_queue_module, "multiprocessing", _RecordingMultiprocessing()
+    )
 
     ambient_stderr = sys.stderr
     assert ambient_stderr.fileno() >= 0  # pytest's capture stream is fd-backed
@@ -5374,7 +5578,9 @@ async def test_reingest_of_unchanged_file_still_resolves_media_id(
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
 @pytest.mark.allow_network
 @pytest.mark.asyncio
-async def test_local_writer_uses_claimed_generic_overwrite_option(tmp_path: Path) -> None:
+async def test_local_writer_uses_claimed_generic_overwrite_option(
+    tmp_path: Path,
+) -> None:
     """A job's snapshot, rather than current form state, controls overwrite."""
     db = _make_db(tmp_path)
     source = _write_text_file(
@@ -5629,7 +5835,10 @@ async def test_cancel_remote_batch_asks_the_server_and_resumes_polling(
 
     class _CancellableService:
         async def cancel_media_ingest_jobs_batch(
-            self, *, batch_id: str | None = None, session_id: str | None = None,
+            self,
+            *,
+            batch_id: str | None = None,
+            session_id: str | None = None,
             reason: str | None = None,
         ):
             # Keyword-only, mirroring the real client/service signature --
@@ -5641,8 +5850,13 @@ async def test_cancel_remote_batch_asks_the_server_and_resumes_polling(
         async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
             return {
                 "batch_id": batch_id,
-                "jobs": [{"id": 11, "status": "cancelled",
-                          "cancellation_reason": "user asked"}],
+                "jobs": [
+                    {
+                        "id": 11,
+                        "status": "cancelled",
+                        "cancellation_reason": "user asked",
+                    }
+                ],
             }
 
     app = _IngestRunnerHarness(_make_db(tmp_path))
@@ -5689,7 +5903,10 @@ async def test_cancel_remote_batch_ignores_an_empty_batch_id(tmp_path: Path) -> 
 
     class _Service:
         async def cancel_media_ingest_jobs_batch(
-            self, *, batch_id: str | None = None, session_id: str | None = None,
+            self,
+            *,
+            batch_id: str | None = None,
+            session_id: str | None = None,
             reason: str | None = None,
         ):
             calls.append(batch_id)
@@ -5758,9 +5975,7 @@ def _use_server_runtime(app) -> None:
     """
     from types import SimpleNamespace
 
-    app.runtime_policy = SimpleNamespace(
-        state=SimpleNamespace(active_source="server")
-    )
+    app.runtime_policy = SimpleNamespace(state=SimpleNamespace(active_source="server"))
 
 
 @pytest.mark.asyncio
@@ -5795,17 +6010,19 @@ async def test_server_backend_submits_remotely_and_attaches_ids(
 
     _use_server_runtime(app)
     with _server_ingest_preference():
-      async with app.run_test() as pilot:
-        job = app.submit_library_ingest_job(source_path=str(source), title="A title")
-        assert job.origin == "server"
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(
+                source_path=str(source), title="A title"
+            )
+            assert job.origin == "server"
 
-        for _ in range(_POLL_ATTEMPTS):
-            current = app.library_ingest_jobs.get_job(job.job_id)
-            if current is not None and current.batch_id:
-                break
-            await pilot.pause(_POLL_INTERVAL)
-        else:
-            raise AssertionError("the remote ids were never attached")
+            for _ in range(_POLL_ATTEMPTS):
+                current = app.library_ingest_jobs.get_job(job.job_id)
+                if current is not None and current.batch_id:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            else:
+                raise AssertionError("the remote ids were never attached")
 
     assert len(service.submissions) == 1
     submitted = service.submissions[0]
@@ -5831,11 +6048,11 @@ async def test_server_backend_without_a_service_fails_the_job_clearly(
 
     _use_server_runtime(app)
     with _server_ingest_preference():
-      async with app.run_test() as pilot:
-        job = app.submit_library_ingest_job(source_path=str(source))
-        failed = await _wait_for_job_state(
-            app, pilot, job.job_id, IngestJobState.FAILED
-        )
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(source_path=str(source))
+            failed = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.FAILED
+            )
 
     assert "server" in failed.error.lower()
 
@@ -5848,11 +6065,13 @@ async def test_server_backend_refuses_a_source_it_cannot_send(tmp_path: Path) ->
 
     _use_server_runtime(app)
     with _server_ingest_preference():
-      async with app.run_test() as pilot:
-        job = app.submit_library_ingest_job(source_path="https://example.com/a-post")
-        failed = await _wait_for_job_state(
-            app, pilot, job.job_id, IngestJobState.FAILED
-        )
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(
+                source_path="https://example.com/a-post"
+            )
+            failed = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.FAILED
+            )
 
     assert "clip" in failed.error.lower()
 
@@ -5866,11 +6085,11 @@ async def test_server_submit_failure_marks_the_job_failed(tmp_path: Path) -> Non
 
     _use_server_runtime(app)
     with _server_ingest_preference():
-      async with app.run_test() as pilot:
-        job = app.submit_library_ingest_job(source_path=str(source))
-        failed = await _wait_for_job_state(
-            app, pilot, job.job_id, IngestJobState.FAILED
-        )
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(source_path=str(source))
+            failed = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.FAILED
+            )
 
     assert failed.error
 
@@ -5987,7 +6206,9 @@ async def test_an_explicit_server_preference_routes_remotely(tmp_path: Path) -> 
     with patch(
         "tldw_chatbook.app_ingest_queue.get_cli_setting",
         side_effect=lambda *a, **k: (
-            "server" if a and a[0] == "library.ingest" and a[1:2] == ("backend",) else None
+            "server"
+            if a and a[0] == "library.ingest" and a[1:2] == ("backend",)
+            else None
         ),
     ):
         async with app.run_test() as pilot:
@@ -6009,12 +6230,14 @@ async def test_remote_poll_follows_pagination(tmp_path: Path) -> None:
     keep fetching that batch forever, which is exactly what the stop condition
     exists to prevent.
     """
+
     class _PagedService:
         def __init__(self) -> None:
             self.offsets: list[int] = []
 
-        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100,
-                                         offset: int = 0):
+        async def list_media_ingest_jobs(
+            self, batch_id: str, *, limit: int = 100, offset: int = 0
+        ):
             self.offsets.append(offset)
             if offset == 0:
                 return {
@@ -6112,6 +6335,7 @@ async def test_a_service_without_offset_reads_one_page_instead_of_looping(
     way to advance would re-fetch the same page ``REMOTE_INGEST_MAX_PAGES``
     times per pass, every pass.
     """
+
     class _UnpagedService:
         def __init__(self) -> None:
             self.calls = 0
@@ -6202,7 +6426,9 @@ class _RecordingClipService:
         self.submissions.append(kwargs)
         return {"batch_id": "batch-9", "jobs": [{"id": 1}]}
 
-    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100, offset: int = 0):
+    async def list_media_ingest_jobs(
+        self, batch_id: str, *, limit: int = 100, offset: int = 0
+    ):
         return {"batch_id": batch_id, "jobs": []}
 
 
@@ -6301,7 +6527,9 @@ class _IdlessSubmitService:
     async def submit_ingest_jobs(self, **kwargs):
         return self.response
 
-    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100, offset: int = 0):
+    async def list_media_ingest_jobs(
+        self, batch_id: str, *, limit: int = 100, offset: int = 0
+    ):
         self.list_calls += 1
         return {"batch_id": batch_id, "jobs": []}
 
@@ -6347,9 +6575,7 @@ async def test_a_submission_we_cannot_track_fails_instead_of_queueing_forever(
                     break
                 await pilot.pause(_POLL_INTERVAL)
             else:
-                raise AssertionError(
-                    f"{why}: job was not failed; states={states}"
-                )
+                raise AssertionError(f"{why}: job was not failed; states={states}")
 
     job = app.library_ingest_jobs.jobs()[0]
     assert "track" in (job.error or "").lower(), job.error

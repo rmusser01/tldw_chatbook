@@ -1,0 +1,27 @@
+{
+  "qualification": "All diagnostic call ASTs across the four exact old/current owners are identical after restoring only the three literal original logger receiver lookups; no message, argument, level, opt setting or sink changed.",
+  "rows": [
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+      "old_calls": 10,
+      "current_calls": 8
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py",
+      "old_calls": 0,
+      "current_calls": 2
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+      "old_calls": 3,
+      "current_calls": 4
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "old_calls": 119,
+      "current_calls": 118
+    }
+  ],
+  "old_total": 132,
+  "current_total": 132
+}

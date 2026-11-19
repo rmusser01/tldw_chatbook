@@ -1,0 +1,157 @@
+# ADR-244: Shared Console ownership and mobile agent supervision
+
+Status: Accepted 2026-10-25 (design only; written review and corrections complete)
+Date: 2026-10-25
+Related Task: [TASK-39433](../tasks/task-39433%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
+Spec: [Shared Console ownership and mobile supervision](../../Docs/superpowers/specs/2026-10-25-shared-console-mobile-supervision-design.md)
+Plan: [Shared Console mobile supervision implementation](../../Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md)
+Supersedes: [ADR-234](234-served-mobile-companion-surface.md), its separate mobile execution/storage contract
+Amends: [ADR-236](236-served-desktop-approval-relay.md), its mounted-card, browser-lifetime and Canvas-coupled relay contract
+Implementation: Not started; existing production behavior remains until verified cutover
+
+## Context
+
+The operator needs to inspect and correct existing Console agents from a phone
+over VPN, including individual subagents, and switch between existing chats.
+Work must survive browser closure and network loss while `--serve` remains alive.
+Served mode is first; native process attachment follows later.
+
+The existing Console already supports viewless execution. `ConsoleRuntime` owns
+the store/controller/bridge and accepted turns above the screen lifetime. The
+current mobile service instead constructs a separate engine graph over three
+databases under `user_data_dir()/mobile`. That isolates phone-created chats,
+workspace bindings and run history from the normal Console. Its partial desktop
+approval relay does not make those chats shared. Separately, served terminal
+WebSocket teardown stops the owning AppService child.
+
+`AgentRunsDB.reconcile_orphaned_runs` also assumes one app instance per data
+directory: its default constructor sweep can mark another process's live runs as
+errors. Consolidating paths without qualifying that recovery owner is unsafe.
+
+The private control broker also disconnects on event-queue overflow, while its
+relay drainer starts only on first mobile use. Applying owner-loss shutdown to
+that unchanged transport would stop healthy agents after ordinary event traffic.
+
+The storage split is an implementation divergence documented in ADR-234's
+2026-10-16 amendment. It must be corrected as part of this work, not retained as
+a second execution system behind an improved mobile UI.
+
+## Decision
+
+1. All served interfaces use canonical profile conversation, workspace and run
+   stores. Remove mobile-only database selection and the separate mobile engine
+   construction. Existing database responsibilities stay separate; phone-created
+   chats become ordinary Console chats.
+2. Keep execution in the existing Console runtime and domain owners. Retain one
+   served child App/runtime per canonical profile/storage identity, containing
+   that profile's open chats. A small served registry routes clients and live
+   chat identities. The executing child/native process holds the OS-backed fence
+   for the actual secured `agent_runs.db` resource before execution-capable opens,
+   run recovery and dispatch. Profile tuples cannot partition a shared run file;
+   validate aliases and safe creation identity. The parent owns routing only.
+   Parent loss closes child admission and begins shutdown without releasing the
+   fence until physical retirement. Native/served entry points, explicit sweeps
+   and auxiliary execution writers must honor it; non-owning reads cannot sweep
+   or migrate another owner's store. No new engine or scheduler is introduced.
+3. Browser connections are revocable attachments. Retain the owning process and
+   output drain across disconnect, and restore terminal modes (mouse, bracketed
+   paste, cursor, alternate screen and sync) plus a full render on reattachment,
+   without restarting the driver input thread or agent. Permit one terminal
+   input/viewport attachment per Console at a time plus concurrent independent
+   phone views. Stale attachments
+   cannot mutate or tear down their successor. Server shutdown and explicit
+   native lifecycle actions retain their cancellation boundaries.
+4. Extend the existing authenticated mobile API and bounded process transport
+   with runtime-owned snapshots, events and explicit commands. Control transport
+   availability is independent of Canvas enablement; Canvas capabilities retain
+   their existing session fences and feature revocation. Mobile view selection
+   never changes the desktop active tab as an implementation shortcut.
+   The served lifecycle starts private event draining before child publication
+   and retains it without phone subscribers or mobile-surface use. Projection
+   overflow drops/coalesces replaceable events and retains bounded reset state
+   until a current snapshot reconciles affected views. It cannot close the host
+   control channel, release its execution fence or trigger owner-loss shutdown.
+   Native decisions and command responses/receipts retain their authority;
+   genuine parent/control-channel loss still invokes bounded shutdown.
+5. Commands identify the owning epoch/runtime, exact chat/session incarnation
+   and applicable run/handle/round/revision. Reuse native admission, queues,
+   hooks, workspace authority, permissions, decision resolution and subagent
+   mailboxes. Add explicit-target seams where native active-tab operations need
+   them; keep existing active-tab callers on the same underlying behavior. Phone
+   Send owns immutable submitted text and checked target revisions. Extend native
+   admission without capturing, clearing or invalidating on desktop drafts,
+   attachments, prefill or staged RAG. Those phone composition features are not
+   introduced in this release; normal committed chat context still applies.
+6. Assign mutations stable command IDs and body-free receipts. Reconnection
+   reconciles authoritative outcomes and a bounded snapshot/event boundary;
+   it never blindly replays a mutation. Preserve unknown outcomes through owner
+   loss instead of claiming exactly-once external effects. Server-issued command
+   tickets bind action, target and epochs to an authenticated immutable five-minute
+   monotonic submission expiry. Keep deduplication evidence for valid tickets;
+   pruning never makes an expired ID executable. Retain unknown outcomes through
+   review/recovery and reuse native turn/round identities where sufficient.
+   Capacity pressure refuses new non-idempotent submissions without blocking
+   exact-target native Stop. Ticket expiry does not cancel accepted work. Answer
+   decisions once through their retained owner, including background/viewless rounds.
+7. Consolidate legacy mobile data using existing maintenance/capture/recovery
+   machinery with explicit coverage of legacy stores and referenced files.
+   Journal source/destination identities, conflict mappings, per-DB committed
+   batches and final verification. Preserve complete history, references and
+   authority restrictions. Legacy source identity is physical, not implied by the
+   active configuration; review ambiguous destination attribution and claim each
+   source once with a receipt bound to its reviewed destination. Quarantine all
+   imported automatic-work/result-delivery authority, including completed runs
+   with undelivered results, until fresh native review. Preserve truthful statuses
+   and delivery stamps; ordinary startup recovery and new manual turns do not
+   approve imported chains. Fence writes through interruption; cut over only
+   after verification. Keep originals as recovery copies; no automatic deletion
+   or replay of imported pending agent work is authorized.
+8. Build on the existing `/m` page, auth and static assets. Open on Chats and
+   provide live transcript/decisions, main-agent controls, and direct subagent
+   guidance/Stop with an always-visible target. Keep page-local navigation and
+   drafts independent, make connection uncertainty visible, and queue no offline
+   commands. Existing browser Library reading remains available.
+9. Scope phone control first to the served runtime. Native discovery/attachment
+   requires the later phase; exclusive native-or-served execution per canonical
+   profile is the first release's coexistence limit. An active native owner or
+   another served server prevents competing execution, while ordinary read-only
+   access can continue without recovery sweeps. Never treat unregistered native
+   rows as remotely controllable or infer owner death from a timeout. Existing
+   dispatch recovery and maintenance admission remain separate authorities.
+
+## Alternatives considered
+
+| Alternative | Reason rejected |
+| --- | --- |
+| Keep mobile databases and add more desktop relay features | Preserves split chat/workspace identities and a second engine that can drift from native hooks, permissions and runtime behavior. |
+| Point the mobile engine at the desktop DB paths | Sharing rows does not share live controllers, pending decisions, mailboxes or cancellation; duplicate runtime ownership remains. |
+| Move agent execution into a new headless daemon | Viewless execution and its native owners already exist. A new daemon would expand the task and duplicate established runtime behavior. |
+| Make the character-grid terminal the primary phone UI | Does not provide adequate touch navigation, reading or explicit per-worker targeting for this use case. |
+| Switch desktop active tabs to implement phone commands | Races with desktop input and can apply the wrong draft, settings or command target. |
+| Persist and replay every disconnected command | Can repeat uncertain sends, approvals or tool effects. Reconciliation must preserve uncertainty instead. |
+| Delete legacy mobile stores or leave them indefinitely active | Deletion loses user history; leaving a normal second write path preserves the rejected design. Verified consolidation and retained recovery copies resolve both. |
+
+## Consequences
+
+The implementation needs served-host lifecycle/attachment handling, a shared
+ownership registry, explicit-target native seams, authenticated projections and
+command receipts, and a recoverable legacy consolidation. This is more than a
+responsive stylesheet change. It does not replace the agent loop or invent a
+second runtime state machine.
+
+Durable mapping/receipt changes require the normal schema version increments,
+executed SQL migrations, exact schema-catalog and backup/restore coverage.
+Legacy mobile backup coverage must be established rather than assumed.
+Consolidation cannot claim atomicity across three independent DB owners; the
+journal and startup fence govern partial progress.
+
+The operator's app authentication continues to authorize phone control; VPN
+access alone grants no app permissions. Existing local-file exclusions, project
+instruction consent, capture/privacy policies and tool gates remain in force.
+Server/child crashes remain normal durable recovery boundaries. UI snapshots,
+timeouts and persisted run rows do not prove dispatch or external effects ended.
+
+The spec records targeted storage/runtime/API tests and real served-browser
+qualification. Full-suite execution remains opt-in. Written-spec review precedes
+the implementation plan and atomic implementation tasks; this ADR records the
+approved design direction without claiming shipped behavior.

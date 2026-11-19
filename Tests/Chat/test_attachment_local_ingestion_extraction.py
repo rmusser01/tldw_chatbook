@@ -227,6 +227,5 @@ async def test_no_handler_output_names_the_retired_media_ingestion_tab(
 
     for site, output in outputs.items():
         assert _RETIRED_DESTINATION not in output, (
-            f"{site} handler output still names the retired destination: "
-            f"{output!r}"
+            f"{site} handler output still names the retired destination: {output!r}"
         )

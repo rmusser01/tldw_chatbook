@@ -174,7 +174,7 @@ async def test_navigation_preserves_real_stream_and_queue_without_retargeting(
         await _boot_settled(app, pilot)
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
         console = app.screen
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
         session_id = controller.store.active_session_id
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)

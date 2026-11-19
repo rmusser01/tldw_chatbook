@@ -476,7 +476,7 @@ def test_current_available_memory_sets_warning_without_changing_capacity() -> No
 def test_ram_working_budget_uses_the_shared_policy(
     total_bytes: int, expected: int
 ) -> None:
-    """The public budget seam must preserve the ADR-080 reserve boundaries."""
+    """The public budget seam must preserve the ADR-327 reserve boundaries."""
     assert ram_working_budget_bytes(total_bytes) == expected
 
 

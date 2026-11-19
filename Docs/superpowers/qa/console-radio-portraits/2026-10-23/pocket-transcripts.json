@@ -1,0 +1,17 @@
+{
+  "pocket-speech.wav": {
+    "transcript": "Hello. This is a portrait preview. Notice the pauses. The final word is complete.",
+    "language": "en",
+    "duration_seconds": 5.32
+  },
+  "device-submitted.wav": {
+    "transcript": "Hello. This is a portrait preview. Notice the pauses. The final word is complete.",
+    "language": "en",
+    "duration_seconds": 5.32
+  },
+  "http-stream-source.wav": {
+    "transcript": "Hello. Pause for a moment. The final word is complete.",
+    "language": "en",
+    "duration_seconds": 3.8
+  }
+}

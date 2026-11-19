@@ -1,0 +1,816 @@
+[
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/affected1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/backup1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/controls1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": [
+      "Tests/Tools/test_edit_patch_preconditions.py"
+    ]
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/current1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/final_native/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_controls/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_green/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_native_final/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_ordinals/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/hook_red2/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8324
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8324
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey2/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8324
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8324
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey3/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8324
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8324
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/journey4/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8328
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8328
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect2/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8328
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8328
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/inspect3/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8328
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8328
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan10/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8327
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8327
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan2/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan3/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan4/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan5/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan6/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan7/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan8/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/plan9/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8327
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8327
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read2/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8327
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8327
+      }
+    ],
+    "deltas": [
+      "Tests/Chat/test_workflow_native_journeys.py"
+    ]
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read3/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8327
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8327
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read4/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8327
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8327
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read5/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8327
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8327
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/read6/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8327
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8327
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart2/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart3/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py",
+      "Tests/Chat/test_workflow_native_journeys.py"
+    ]
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart4/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py"
+    ]
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart5/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py"
+    ]
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart6/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart7/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8326
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8326
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart8/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8327
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8327
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/live/restart9/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8327
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8327
+      }
+    ],
+    "deltas": [
+      "Tests/Agents/test_native_legacy_hooks.py",
+      "Tests/Chat/test_workflow_native_journeys.py"
+    ]
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/logs_off/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/native_compat1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_green/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/reason_red/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/restart1/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_green/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  },
+  {
+    "path": "Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/qualification/retention_red/maps.json",
+    "maps": [
+      {
+        "name": "post.json",
+        "matches": true,
+        "count": 8325
+      },
+      {
+        "name": "pre.json",
+        "matches": true,
+        "count": 8325
+      }
+    ],
+    "deltas": []
+  }
+]

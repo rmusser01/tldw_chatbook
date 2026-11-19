@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from types import SimpleNamespace
 from typing import get_type_hints
 
 import pytest
@@ -100,7 +101,7 @@ async def test_first_frame_media_stage_projects_adaptive_compact_without_legacy_
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     screen = LibraryScreen(app)
     monkeypatch.setattr(
-        screen,
+        screen._media_controller,
         "_reconcile_library_media_stage_presentation",
         lambda: False,
     )
@@ -123,7 +124,7 @@ async def test_same_size_recompose_projects_media_stage_without_reconciliation(
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
     screen = LibraryScreen(app)
     monkeypatch.setattr(
-        screen,
+        screen._media_controller,
         "_reconcile_library_media_stage_presentation",
         lambda: False,
     )
@@ -255,8 +256,8 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
     async with host.run_test(size=COMPACT_SCROLL_SIZE) as pilot:
         screen = await _open_media_list(host, pilot)
         await _wait_for_selector(screen, pilot, "#library-media-row-15")
-        content_signature = screen._library_media_content_signature()
-        layout_signature = screen._library_media_layout_signature()
+        content_signature = screen._media_controller._library_media_content_signature()
+        layout_signature = screen._media_controller._library_media_layout_signature()
         assert content_signature == (
             screen._library_media_browse_controller.applied_scope,
             tuple(
@@ -283,8 +284,8 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
         )
 
         capture_views: list[tuple[str, str]] = []
-        real_content_signature = screen._library_media_content_signature
-        real_layout_signature = screen._library_media_layout_signature
+        real_content_signature = screen._media_controller._library_media_content_signature
+        real_layout_signature = screen._media_controller._library_media_layout_signature
 
         def capture_content_signature() -> tuple[object, ...]:
             capture_views.append(("content", screen._media_state.view))
@@ -295,17 +296,17 @@ async def test_viewer_return_capture_is_frozen_receipt_from_normal_media(
             return real_layout_signature()
 
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_library_media_content_signature",
             capture_content_signature,
         )
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_library_media_layout_signature",
             capture_layout_signature,
         )
         row = screen.query_one("#library-media-row-15", Button)
-        screen._open_library_media_viewer(str(row.media_id))
+        screen._media_controller._open_library_media_viewer(str(row.media_id))
 
         receipt = screen._media_state.viewer_return
         assert type(receipt) is receipt_type
@@ -333,11 +334,11 @@ async def test_trash_return_capture_is_frozen_control_receipt_from_normal_media(
         await _wait_for_selector(screen, pilot, "#library-media-trash-open")
         trash_button = screen.query_one("#library-media-trash-open", Button)
         trash_button.focus()
-        content_signature = screen._library_media_content_signature()
-        layout_signature = screen._library_media_layout_signature()
+        content_signature = screen._media_controller._library_media_content_signature()
+        layout_signature = screen._media_controller._library_media_layout_signature()
         capture_views: list[str] = []
-        real_content_signature = screen._library_media_content_signature
-        real_layout_signature = screen._library_media_layout_signature
+        real_content_signature = screen._media_controller._library_media_content_signature
+        real_layout_signature = screen._media_controller._library_media_layout_signature
 
         def capture_content_signature() -> tuple[object, ...]:
             capture_views.append(screen._media_state.view)
@@ -348,12 +349,12 @@ async def test_trash_return_capture_is_frozen_control_receipt_from_normal_media(
             return real_layout_signature()
 
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_library_media_content_signature",
             capture_content_signature,
         )
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_library_media_layout_signature",
             capture_layout_signature,
         )
@@ -915,9 +916,9 @@ async def test_real_compact_transition_floors_prechange_owner_geometry(
         assert screen._media_state.geometry_floor_owner_identity == id(owner)
         assert screen._media_state.geometry_floor == queued.geometry.revision
         equality_epoch = screen._media_state.presentation_epoch
-        real_settlement_tree = screen._library_media_settlement_tree
+        real_settlement_tree = screen._media_controller._library_media_settlement_tree
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_library_media_settlement_tree",
             lambda: pytest.fail("Equality projection queried settlement authority."),
         )
@@ -926,7 +927,7 @@ async def test_real_compact_transition_floors_prechange_owner_geometry(
         assert screen._reconcile_library_media_stage_presentation() is False
         assert screen._media_state.presentation_epoch == equality_epoch
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_library_media_settlement_tree",
             real_settlement_tree,
         )
@@ -994,14 +995,14 @@ async def test_live_user_row_focus_fences_earlier_queued_geometry(
             if str(getattr(row, "media_id", "")) != media_id
         )
         geometry_arm_focuses: list[object | None] = []
-        real_arm = screen._arm_library_media_return_settlement
+        real_arm = screen._media_controller._arm_library_media_return_settlement
 
         def observe_geometry_arm_focus(*args, **kwargs):
             geometry_arm_focuses.append(screen.focused)
             return real_arm(*args, **kwargs)
 
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_arm_library_media_return_settlement",
             observe_geometry_arm_focus,
         )
@@ -1212,7 +1213,7 @@ async def test_old_media_deadline_cannot_cancel_new_prompts_list_focus_arm() -> 
         await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
         # task-31272: "‹ Back" is not composed in this three-pane layout;
         # the exit seam it shares with Escape is what this test drives.
-        screen._exit_library_media_viewer()
+        screen._media_controller._exit_library_media_viewer()
         await _wait_for_condition(
             pilot,
             lambda: screen._media_state.last_settlement_outcome is not None
@@ -1701,14 +1702,14 @@ async def test_authoritative_content_revision_clamps_once_and_labels_outcome(
             for index, item in enumerate(service.media_items)
             if service._backing_id(item, index) != removed_backing
         ]
-        screen._request_library_media_browse(
+        screen._media_controller._request_library_media_browse(
             controller.mutation_refresh_scope,
             focus_identity=None,
         )
         await _wait_for_condition(
             pilot,
             lambda: not controller.loading
-            and screen._library_media_content_signature()
+            and screen._media_controller._library_media_content_signature()
             != old_request.content_signature,
             message="Authoritative reordered Media content never applied.",
         )
@@ -1810,9 +1811,9 @@ async def test_existing_request_rejects_live_signature_drift(
             real_on_resize,
         )
         signature_method = f"_library_media_{signature_kind}_signature"
-        original_signature = getattr(screen, signature_method)
+        original_signature = getattr(screen._media_controller, signature_method)
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             signature_method,
             lambda: original_signature() + (("drift", signature_kind),),
         )
@@ -1865,14 +1866,14 @@ async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
         request = screen._media_state.return_settlement
         assert request is not None
         rearms: list[int] = []
-        real_arm = screen._arm_library_media_return_settlement
+        real_arm = screen._media_controller._arm_library_media_return_settlement
 
         def observe_rearm(*args, **kwargs):
             rearms.append(request.request_id)
             return real_arm(*args, **kwargs)
 
         monkeypatch.setattr(
-            screen,
+            screen._media_controller,
             "_arm_library_media_return_settlement",
             observe_rearm,
         )
@@ -1887,11 +1888,11 @@ async def test_deadline_uses_one_current_geometry_fallback_and_never_requeues(
 
         monkeypatch.setattr(screen, "set_focus", observe_focus)
         outer_generation = screen._library_list_entry_focus_generation
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
@@ -1938,11 +1939,11 @@ async def test_deadline_without_geometry_fails_once_with_metadata_only_warning(
 
         monkeypatch.setattr(app, "notify", capture_notice)
         outer_generation = screen._library_list_entry_focus_generation
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
-        screen._expire_library_media_return_settlement(
+        screen._media_controller._expire_library_media_return_settlement(
             request.request_id,
             outer_generation,
         )
@@ -1999,7 +2000,7 @@ async def test_stale_request_generation_and_subview_fences_cannot_settle(
                 request,
                 request_id=request.request_id + 1,
             )
-            screen._settle_library_media_return_from_geometry(
+            screen._media_controller._settle_library_media_return_from_geometry(
                 request,
                 owner,
                 geometry.geometry,
@@ -2068,7 +2069,7 @@ async def test_mounted_media_shell_replacement_rejects_delayed_old_owner_geometr
         replacement_shell = LibraryBrowseReaderShell(
             retained_rail,
             old_items,
-            screen._build_library_media_reader(),
+            screen._media_controller._build_library_media_reader(),
             screen._media_state.reader_layout,
             id="library-browse-reader-shell",
         )
@@ -2531,3 +2532,71 @@ async def test_control_exact_return_requires_matching_semantic_row(
         # there is no exact settlement to commit, so the replacement owner stays
         # at the top instead of restoring the deep scroll.
         assert (int(owner.scroll_x), int(owner.scroll_y)) == (0, 0)
+
+
+def test_failed_commit_restores_a_pre_focus_inside_the_screen() -> None:
+    """A failed commit hands focus back when the screen still holds it.
+
+    TASK-36952.3.7 (coordinator ruling R2(a)): the moved
+    ``_commit_library_media_return`` checks ``self._screen in
+    pre_focus.ancestors``. On the controller a bare ``self`` is never a DOM
+    ancestor, so with ``self`` there the rollback would silently drop focus
+    to ``None``. No Pilot test reaches this branch with a real pre-focus
+    widget, so a duck-typed controller drives it directly.
+    """
+    from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+        LibraryMediaController,
+    )
+
+    screen_handle = object()
+    pre_focus = SimpleNamespace(
+        name="pre_focus", is_attached=True, ancestors=[screen_handle]
+    )
+    stray = SimpleNamespace(
+        name="stray", is_attached=True, ancestors=[screen_handle]
+    )
+    target = SimpleNamespace(
+        name="target", is_attached=True, ancestors=[screen_handle]
+    )
+    focus_calls: list[object] = []
+
+    def scroll_to(**_kwargs) -> None:
+        # The scroll moves focus off `pre_focus`; the rollback must undo it.
+        fake.focused = stray
+
+    owner = SimpleNamespace(scroll_x=0, scroll_y=0, scroll_to=scroll_to)
+    receipt = SimpleNamespace(
+        stable_id="local:media:7",
+        layout_signature=("layout",),
+        content_signature=("content",),
+        scroll_offset=(0, 4),
+    )
+    request = SimpleNamespace(
+        request_id=1, focus_anchor=None, receipt=receipt, final_focus_policy="row"
+    )
+    fake = SimpleNamespace(
+        _screen=screen_handle,
+        focused=pre_focus,
+        set_focus=lambda widget, **_kw: focus_calls.append(widget),
+        _library_media_settlement_tree=lambda: (None, None, owner),
+        _library_pending_list_entry_media_return=receipt,
+        _library_media_request_matches_current_authority=lambda *_a: True,
+        _library_media_content_signature=lambda: ("content",),
+        _library_media_layout_signature=lambda: ("layout",),
+        _resolve_library_media_settlement_target=lambda *_a, **_kw: (target, False),
+        _library_media_live_focus_is_allowed=lambda *_a: True,
+        _library_notes_programmatic_focus_target=None,
+        _media_state=SimpleNamespace(
+            last_settlement_attempt=None,
+            selected_media_id="local:media:7",
+            last_settlement_outcome=None,
+        ),
+    )
+
+    # The scroll never reaches (0, 4), so the commit fails and rolls back.
+    committed = LibraryMediaController._commit_library_media_return(
+        fake, request, owner, SimpleNamespace(revision=3), (0, 4), "exact-settled"
+    )
+
+    assert committed is False
+    assert focus_calls == [pre_focus]

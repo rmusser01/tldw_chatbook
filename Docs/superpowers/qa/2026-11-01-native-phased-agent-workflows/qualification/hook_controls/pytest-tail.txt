@@ -1,0 +1,36 @@
+.....................F.................................................. [ 70%]
+..............................                                           [100%]
+=================================== FAILURES ===================================
+_______ test_parallel_finalization_joins_each_original_operation_return ________
+Tests/Agents/test_native_legacy_hooks.py:318: in test_parallel_finalization_joins_each_original_operation_return
+    wait_until(lambda: h.runtime.execution_capacity.snapshot().tool_workers == 1)
+Tests/Agents/test_native_legacy_hooks.py:33: in wait_until
+    assert time.monotonic() < deadline, "hook did not reach its actual boundary"
+E   AssertionError: hook did not reach its actual boundary
+E   assert 2081711.945525875 < 2081711.944043083
+E    +  where 2081711.945525875 = <built-in function monotonic>()
+E    +    where <built-in function monotonic> = time.monotonic
+----------------------------- Captured stderr call -----------------------------
+2026-11-04 20:33:19.813 | INFO     | tldw_chatbook.Agents.run_hooks:_execute_hook:862 - run-hooks: event=PreToolUse session_id=d16487df-fa4b-4ef4-a422-733ac986a7bb run_id=None hook=ee4bb056a34b exit=2 timed_out=False stdout='' stderr='' took_ms=115
+2026-11-04 20:33:19.823 | INFO     | tldw_chatbook.Agents.run_hooks:_execute_hook:862 - run-hooks: event=PreToolUse session_id=d16487df-fa4b-4ef4-a422-733ac986a7bb run_id=None hook=ad28d7038e0d exit=0 timed_out=False stdout='' stderr='' took_ms=132
+--------------------------- Captured stderr teardown ---------------------------
+2026-11-04 20:33:24.881 | INFO     | tldw_chatbook.Chat.console_runtime:_dispose_owned:6913 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+2026-11-04 20:33:24.907 | INFO     | tldw_chatbook.config:_load_settings_uncached:2301 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:33:24.908 | INFO     | tldw_chatbook.config:_load_settings_uncached:2304 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/tldw_chatbook
+2026-11-04 20:33:24.909 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2327 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-11-04 20:33:24.909 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2645 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-11-04 20:33:24.939 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3887 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_jpicqels/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-11-04 20:33:24.940 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3918 - load_settings: Configuration cached for future use
+- generated xml file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-hook_controls/tests.xml -
+============================= slowest 25 durations =============================
+5.34s call     Tests/Agents/test_native_legacy_hooks.py::test_parallel_finalization_joins_each_original_operation_return
+4.73s call     Tests/Chat/test_workflow_native_journeys.py::test_original_workflow_hook_validation_preserves_capture_return[policy]
+4.35s call     Tests/Chat/test_workflow_native_journeys.py::test_original_workflow_hook_validation_preserves_capture_return[source]
+4.29s call     Tests/Chat/test_workflow_native_journeys.py::test_original_workflow_hook_validation_preserves_capture_return[overlap]
+4.20s call     Tests/Chat/test_workflow_native_journeys.py::test_original_workflow_hook_validation_preserves_capture_return[event]
+1.07s call     Tests/Agents/test_workflow_task_scope.py::test_two_real_siblings_share_provider_without_overwriting_scope
+
+(19 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Agents/test_native_legacy_hooks.py::test_parallel_finalization_joins_each_original_operation_return
+1 failed, 101 passed in 63.26s (0:01:03)

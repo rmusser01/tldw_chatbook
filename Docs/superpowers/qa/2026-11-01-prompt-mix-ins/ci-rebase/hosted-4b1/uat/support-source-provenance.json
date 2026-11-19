@@ -1,0 +1,26 @@
+{
+  "Tests/conftest.py": {
+    "sha256": "91bef98dba406eb4fcb7b76c64e6d07290df3ddf3f46bc0748c08e536721cadf",
+    "identical_to_4b1": true
+  },
+  "Tests/private_profile.py": {
+    "sha256": "a9df402fd0d91f7f9585e2ff278b419d22385fd7e3ce48e98a0f739a039341a6",
+    "identical_to_4b1": true
+  },
+  "Tests/uat_project_chat_support.py": {
+    "sha256": "7282ec0d3027035993361f7cd60121a1edca208bbf0e0c05f33c0aea47aff257",
+    "identical_to_4b1": true
+  },
+  "Tests/QA/test_project_chat_uat_reports.py": {
+    "sha256": "c29dbaf15053249d15591134d3d2b86846593940ac2ca65684966178345592f8",
+    "identical_to_4b1": true
+  },
+  "scripts/check_project_chat_uat.py": {
+    "sha256": "e6da2b85b56ab700a0f6811b6cb2b9316d834eccd7bf32d0607e6fb6831cb5a6",
+    "identical_to_4b1": true
+  },
+  ".github/workflows/derived-artifacts.yml": {
+    "sha256": "18eee3c9a80ba48abd9dd389297c771f5325fd8a536ef98329dc8b19ddb06c0a",
+    "identical_to_4b1": true
+  }
+}

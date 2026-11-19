@@ -1,0 +1,63 @@
+{
+  "pid": 5141,
+  "pgid": 4365,
+  "counts": {
+    "first-check": 2,
+    "update-note": 3,
+    "fix-source": 3,
+    "fresh-check": 2,
+    "independent-review": 1
+  },
+  "failed": {
+    "verifier_id": "verify-source",
+    "invocation_id": "turn-1-call-0",
+    "verifier_sha256": "18ba2d1df2601f8d25336bd34b6b4bb02b3fb5d4096ebc7ec51953cb29766d7d",
+    "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "shell_path": "/bin/bash",
+    "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+    "input_manifest": "c2679868b749de1cd1dfa1bbe9a4698c514b94399194caff86d8bc7ba2943f9a",
+    "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+    "exit_code": 7,
+    "complete": true,
+    "cleanup_proven": true,
+    "fresh": true,
+    "stdout": "",
+    "stderr": "",
+    "output_digest": "5e253af543acda876922e6ea0e60324eefe1c66fc349eebb57251ebff525cc1e"
+  },
+  "passed": {
+    "verifier_id": "verify-source",
+    "invocation_id": "turn-1-call-0",
+    "verifier_sha256": "18ba2d1df2601f8d25336bd34b6b4bb02b3fb5d4096ebc7ec51953cb29766d7d",
+    "arguments_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "shell_path": "/bin/bash",
+    "shell_manifest": "acdd09971213dc7f8e4d976880467adc3a25198551b2fec5b84d5f9100a22136",
+    "input_manifest": "aaf17fa82f863b20d19ce36b4642c26bbad3b71bfb0d391dc8137e72bb189b58",
+    "output_manifest": "a4bf9f6893c340bfb28a301f63b39b0c7f35fd208d75919390bbd1e23aed9933",
+    "exit_code": 0,
+    "complete": true,
+    "cleanup_proven": true,
+    "fresh": true,
+    "stdout": "verified\n",
+    "stderr": "",
+    "output_digest": "2727d1e6708bb29f2b89ef354f6ec3ddf59e19d4f054486e26461d226ebf93f0"
+  },
+  "outcomes": [
+    "failed",
+    "passed"
+  ],
+  "handoffs": [
+    "Handoff: first-check",
+    "Handoff: fix-source",
+    "Handoff: update-note",
+    "Handoff: fresh-check",
+    "Handoff: independent-review"
+  ],
+  "git_diff": "diff --git a/note.txt b/note.txt\nindex ddcd63e..8f1188e 100644\n--- a/note.txt\n+++ b/note.txt\n@@ -1 +1 @@\n-unreviewed\n+reviewed\ndiff --git a/source.txt b/source.txt\nindex 4b48dee..c3242b7 100644\n--- a/source.txt\n+++ b/source.txt\n@@ -1 +1,2 @@\n-original\n+user edit\n+corrected\n",
+  "accounting": {
+    "generation": 6,
+    "child_launch": 5,
+    "model_call": 13,
+    "tokens": 130
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "method": "Evaluate original assertion order against captured unmodified helper return; JUnit omits xfail traceback.",
+  "preceding_assertions_pass": true,
+  "first_failing_assertion": "assert report[\"scan_count\"] == 0",
+  "actual": 14,
+  "mixin_both_corpora_indexed": true
+}

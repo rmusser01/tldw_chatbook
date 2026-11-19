@@ -1,0 +1,117 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+___________ test_failed_resume_read_does_not_persist_exception_body ___________
+Tests\UI\test_console_workspace_reconciliation_preparation.py:425: in test_failed_resume_read_does_not_persist_exception_body
+    assert record["exception"] is None
+E   AssertionError: assert (type=<class 'RuntimeError'>, value=RuntimeError('synthetic-private-workspace-path'), traceback=<traceback object at 0x00000206E96284C0>) is None
+---------------------------- Captured stderr setup ----------------------------
+2026-10-31 12:25:34.681 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-31 12:25:34.867 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-10-31 12:25:34.868 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-10-31 12:25:34.870 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+---------------------------- Captured stderr call -----------------------------
+2026-10-31 12:25:34.940 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_reconcile_console_session_with_registry:6018 - Unable to read active workspace during Console resume reconcile
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\windows_private_fixture_runner.py", line 64, in <module>
+    raise SystemExit(main())
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\windows_private_fixture_runner.py", line 60, in main
+    return int(pytest.main(sys.argv[1:]))
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\config\__init__.py", line 175, in main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 330, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 283, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 337, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 362, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 113, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 132, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 241, in call_and_report
+    call = CallInfo.from_call(
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 341, in from_call
+    result: TResult | None = func()
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 242, in <lambda>
+    lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 174, in pytest_runtest_call
+    item.runtest()
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 508, in runtest
+    super().runtest()
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\python.py", line 1627, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\python.py", line 159, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 773, in inner
+    _loop.run_until_complete(task)
+  File "C:\Python312\Lib\asyncio\base_events.py", line 678, in run_until_complete
+    self.run_forever()
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 322, in run_forever
+    super().run_forever()
+  File "C:\Python312\Lib\asyncio\base_events.py", line 645, in run_forever
+    self._run_once()
+  File "C:\Python312\Lib\asyncio\base_events.py", line 1999, in _run_once
+    handle._run()
+  File "C:\Python312\Lib\asyncio\events.py", line 88, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\UI\test_console_workspace_reconciliation_preparation.py", line 418, in test_failed_resume_read_does_not_persist_exception_body
+    controller._reconcile_console_session_with_registry()
+> File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\UI\Console_Modules\workspace.py", line 6011, in _reconcile_console_session_with_registry
+    active = registry_service.get_active_workspace()
+  File "C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\UI\test_console_workspace_reconciliation_preparation.py", line 408, in refused
+    raise RuntimeError(private_detail)
+RuntimeError: synthetic-private-workspace-path
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+
+(3 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_workspace_reconciliation_preparation.py::test_failed_resume_read_does_not_persist_exception_body
+1 failed, 2 warnings in 29.31s

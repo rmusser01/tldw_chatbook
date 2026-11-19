@@ -1,0 +1,4 @@
+{
+  "sha256": "4c71e68929d8458425d5841ee3600c295025a22bf6568d3b8297324887448a5c",
+  "raw_text": ".....                                                                    [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-core-extract-i4xaa7gn/owned-agent.xml -\n============================= slowest 25 durations =============================\n1.04s call     Tests/Chat/test_console_core_extraction.py::test_extracted_agent_reply_preserves_original_boundary_controls[library-provider]\n\n(14 durations < 1s hidden.)\n5 passed in 1.80s\n"
+}

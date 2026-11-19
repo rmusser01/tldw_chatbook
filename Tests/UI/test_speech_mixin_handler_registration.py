@@ -17,6 +17,7 @@ from textual.widgets import Select
 
 from tldw_chatbook.UI.Speech.speech_catalog_mixin import SpeechCatalogMixin
 from tldw_chatbook.UI.Speech.speech_playground_pane import SpeechPlaygroundPane
+
 HOSTS = (SpeechPlaygroundPane,)
 
 

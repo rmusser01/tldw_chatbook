@@ -22,6 +22,8 @@ def test_each_state_modifier_lands_in_prompt(state):
     assert negative == "" and params == {}
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
 def test_personality_included_only_when_nonempty():
     with_p, _, _ = compose_expression_prompt(
         name="A",

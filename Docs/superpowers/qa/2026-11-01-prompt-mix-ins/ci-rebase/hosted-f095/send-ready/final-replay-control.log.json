@@ -1,0 +1,4 @@
+{
+  "sha256": "2226da2026d8892495ed378662bc46d5b1c503628eaba7688c29417d179a8fb8",
+  "raw_text": ".                                                                        [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci-f095-ui3-anqs9n0b/final-replay-control.xml -\n============================= slowest 25 durations =============================\n4.39s call     Tests/UI/test_console_send_ready_attachment.py::test_attachment_readiness_waits_for_checked_config_projection\n\n(2 durations < 1s hidden.)\n1 passed in 6.43s\n"
+}

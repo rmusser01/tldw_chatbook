@@ -94,7 +94,7 @@ that runs past its deadline is a typed tool error that never changes the
 binding's status, with automatic debounced recovery. Nothing is installed,
 persisted, or left behind on the server, and no SSH credentials are stored.
 The remote binding can be the Console working folder, so remote AGENTS.md /
-AGENTS.override.md load under all existing ADR-068/069 rules (byte caps,
+AGENTS.override.md load under all existing ADR-316/069 rules (byte caps,
 untrusted content, activation ledger, first-use consent) and never grant
 tool permission. Server prerequisites: sshd with exec, and `python3` ≥ 3.10
 (overridable per binding via an interpreter setting).
@@ -118,10 +118,10 @@ tool permission. Server prerequisites: sshd with exec, and `python3` ≥ 3.10
 - [Session worker and bundle cache design (2026-09-27 amendment)](../../Docs/superpowers/specs/2026-09-27-ssh-session-worker-and-bundle-cache-design.md)
 - [ADR-005](005-console-workspace-server-readiness.md)
 - [ADR-028](028-settings-workspaces-category-and-folder-roots.md)
-- [ADR-032](032-local-agent-tool-permission-boundary.md)
-- [ADR-069](069-console-project-instruction-local-state-and-preflight.md)
+- [ADR-300](300-local-agent-tool-permission-boundary.md)
+- [ADR-317](317-console-project-instruction-local-state-and-preflight.md)
 - [ADR-101](101-one-shot-pinned-workspace-tool-execution.md)
-- [ADR-102](102-console-run-admitted-local-path-authority.md)
+- [ADR-340](340-console-run-admitted-local-path-authority.md)
 - [ADR-174](174-workspace-binding-exclusions.md)
 - [ADR-175](175-one-strict-json-acceptance-contract.md)
 
@@ -276,3 +276,48 @@ target is a warm call of about one round trip.
   - A fast operation's admitted marker, result and STATUS leave the host
     in one write; the parent holds a running child's output at most 10 ms
     before writing it. Measured: live host over Wi-Fi, 2026-09-28: warm median 11.5-13.8 ms coalesced vs 16.6-17.2 ms without (3.3, 4.7, 5.1 ms lower in three interleaved pairs).
+
+
+### Native SSH request custody (Task8D2 prerequisite S)
+
+An actual AgentService model fs_* call retains its original native tool operation
+through the selected stock provider/RemoteRoot/adapter/executor, every ping/request,
+original cache/result host return and operation.finish return. Exact original
+request identity, validated remote terminal cleanup and local request/IO retirement
+are separate required facts. The same original worker/storage stays retained on
+unknown cleanup; timeout, local SSH death and result text are not proof.
+
+Finite native ssh -G and ssh -O checks reuse ProcessTreeController on the original
+worker, preserving argv/configuration/timeout semantics. The existing ControlMaster
+manager and session registry own healthy shared infrastructure: a private acceptance
+observation binds original invocation/source and actual launcher/IO return to real
+publication or verified exact adoption. Registration, path existence or zero exit
+alone does not establish acceptance. Unlearned/ambiguous setup and unpublished
+session starts require real cleanup or retain native uncertainty. Healthy shared
+connections need not exit for a request to finish. No new owner, protocol, poller,
+permission, binary restriction or master-lifetime service is introduced.
+
+This qualifies existing operation/source retirement, not early ordinary worktree
+coverage. Ordinary covering claims, separately scheduled recovery probes, remote
+guidance and complete child/late integration remain mandatory. Task7 currently
+accepts local roots only and is not SSH positive evidence. Native platform limits
+remain; uncertainty may retain worker/storage/capacity and disposal indefinitely.
+
+
+### Ordinary remote producers (Task8D2 integration contract)
+
+The complete ordinary maximum captures selected SSH descriptors before guidance,
+adapters or recovery dispatch. Goal binding filtering precedes unrelated remote
+enumeration. Recovery probes reserve their own original worker operation/source
+before Thread.start, following existing best-effort/debounce omission policy;
+disabled, debounced or rejected probes create no operation. Retain original
+ping/cache host return and finish return. Model requests consume the already
+qualified S operation/request/terminal/local-IO proof without another owner;
+healthy accepted shared infrastructure keeps its existing manager lifetime.
+
+Direct ordinary preparation reuses the same request/terminal/helper proof. The
+original instruction IO and selected binding/registry/cache, or the original
+scheduled probe executor/config/binding/cache, replace only the model-specific
+provider/adapter association. No fabricated model catalog or authority stands in
+for these direct producers. Admission precedes the original enqueue/start; the
+original source stays live through host return and operation.finish return.

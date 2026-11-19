@@ -46,4 +46,7 @@ Review follow-ups (2026-09-24, fix/theme-ux-wave):
 3. MEDIUM -- the editor filtered every `_READABLE_TEXT_HUES` key, dropping hand-set `text-error` (22 shipped themes). `ensure_readable_text_hues` now records the keys it pinned on the Theme (`pinned_text_hues()`), and only those are filtered. Test: `test_settings_theme_editor_clone_keeps_hand_set_status_hue` (pastel_dreams text-error #87575e kept, AA-pinned text-primary not carried).
 
 Files: `tldw_chatbook/Widgets/settings_theme_editor.py`, `tldw_chatbook/css/Themes/themes.py`, `Tests/UI/test_settings_theme_editor.py`, `Docs/User_Guide/settings.md`.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/settings.md`: Shipped-theme variables, the leave guard and the backup-pause state are covered by automated tests, not re-driven live.
 <!-- SECTION:NOTES:END -->

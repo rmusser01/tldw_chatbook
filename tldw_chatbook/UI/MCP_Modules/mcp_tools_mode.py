@@ -21,6 +21,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click, DescendantFocus, Resize
 from textual.message import Message
+from textual.timer import Timer
 from textual.widgets import Button, DataTable, Input, OptionList, Select, Static
 from textual.widgets._select import SelectCurrent, SelectOverlay
 from textual.widgets.data_table import RowDoesNotExist, RowKey
@@ -215,6 +216,18 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         color: $error;
         text-style: bold;
     }
+    /* task-35151: the master-switch Button sizes to its label (~50 cols),
+    which escaped the canvas once a host pane got narrower than that
+    (Settings' stacked canvas is 44 cols at a 120-col terminal). Same idiom
+    as the inspector's `.console-action-secondary` clamp
+    (_agentic_terminal.tcss): let the label wrap and cap at the canvas
+    width. No-op wherever the label already fits. */
+    #mcp-tools-local-enabled {
+        min-width: 0;
+        max-width: 100%;
+        height: auto;
+        text-wrap: wrap;
+    }
     #mcp-tools-workspace-root {
         width: 1fr;
     }
@@ -319,6 +332,12 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         # widget-state pattern; a Button carries no `.value` of its own).
         self._local_tools_enabled: bool = False
         self.submit_local_master: Callable[[bool, Path | None], None] | None = None
+        # TASK-34394: debounce timer for the free-text filter Input, and a
+        # per-tool schema-verdict cache ("form"/"raw") so `_apply_filter()`
+        # never re-parses a tool's JSON schema per keystroke. Cleared on
+        # every `update_tools()` (the cache's invalidation point).
+        self._filter_text_timer: Timer | None = None
+        self._schema_verdicts: dict[str, str] = {}
         self._workspace_root_saved: str | None = None
         self._workspace_root_draft = ""
         self._workspace_root_dirty = False
@@ -400,6 +419,9 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
     async def on_mount(self) -> None:
         table = self.query_one("#mcp-tools-table", DataTable)
         table.add_columns(*_TABLE_COLUMNS)
+        # TASK-34394: the cached schema verdicts describe THIS catalog --
+        # a fresh catalog invalidates them.
+        self._schema_verdicts.clear()
         await self._sync_server_select()
         self._apply_filter()
 
@@ -538,6 +560,9 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         self._selected_server_key = selected_server_key
         self._empty_diagnosis = empty_diagnosis
         self._has_tags = any(tool.tags for tool in self._tools)
+        # TASK-34394: the cached schema verdicts describe THIS catalog --
+        # a fresh catalog invalidates them.
+        self._schema_verdicts.clear()
         await self._sync_server_select()
         self._apply_filter()
 
@@ -555,6 +580,9 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
             server_key: The server to scope to, or `None` for all servers.
         """
         self._filter_server_key = server_key
+        # TASK-34394: the cached schema verdicts describe THIS catalog --
+        # a fresh catalog invalidates them.
+        self._schema_verdicts.clear()
         await self._sync_server_select()
         self._apply_filter()
 
@@ -635,7 +663,7 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
                 "cache_refresh": "Root saved to file. Restart to refresh live settings.",
                 "invalid": "Root not saved: choose an existing directory. Your edits are kept.",
                 "failed": "Root save failed. Your edits are kept; choose Save root to retry.",
-                "changed": "Configuration changed. Root not saved; reopen MCP before retrying.",
+                "changed": "Configuration changed. Root not saved; reopen Tools & MCP before retrying.",
             }[result.phase]
             same_origin = state.request.draft_identity[0] is self._workspace_root_origin
             if result.phase in {"failed", "invalid"} and not same_origin:
@@ -881,9 +909,18 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
                 suffix = " (stale)" if tool.stale else ""
                 budget = _SERVER_CELL_BUDGET - len(suffix)
                 server_cell = _ellipsize(tool.server_label, budget) + suffix
-                schema_cell = (
-                    "form" if parse_schema(tool.input_schema) is not None else "raw"
-                )
+                # TASK-34394: the form/raw verdict is a pure function of the
+                # tool's own schema, which cannot change while the catalog is
+                # cached -- memoize it so re-filtering never re-parses JSON
+                # schemas per keystroke.
+                schema_cell = self._schema_verdicts.get(tool.tool_id)
+                if schema_cell is None:
+                    schema_cell = (
+                        "form"
+                        if parse_schema(tool.input_schema) is not None
+                        else "raw"
+                    )
+                    self._schema_verdicts[tool.tool_id] = schema_cell
                 row_cells: list[Any] = [Text(tool.name), state_cell, Text(server_cell)]
                 if self._has_tags:
                     tags_cell = ", ".join(tool.tags) if tool.tags else "—"
@@ -953,7 +990,22 @@ class MCPToolsMode(DataTableClickSelectMixin, VerticalScroll):
         if event.input is not current or event.value != current.value:
             return
         self._filter_text = event.value
+        # TASK-34394: debounce keystrokes instead of re-running the full
+        # table rebuild per character.
+        if self._filter_text_timer is not None:
+            self._filter_text_timer.stop()
+        self._filter_text_timer = self.set_timer(
+            0.2, self._run_debounced_filter, name="mcp-tools-filter-debounce"
+        )
+
+    def _run_debounced_filter(self) -> None:
+        self._filter_text_timer = None
         self._apply_filter()
+
+    def on_unmount(self) -> None:
+        if self._filter_text_timer is not None:
+            self._filter_text_timer.stop()
+            self._filter_text_timer = None
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id != "mcp-tools-filter-server":

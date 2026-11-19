@@ -1,0 +1,8 @@
+..........................................                               [100%]
+============================= slowest 25 durations =============================
+67.26s call     Tests/Backup_Recovery/test_selected_owner_absence.py::test_selected_prompts_replace_empty_history_and_rollback_restores_it
+58.78s call     Tests/Backup_Recovery/test_console_artifacts_roundtrip.py::test_accepted_console_artifacts_restore_with_fresh_passive_reads
+1.35s setup    Tests/Backup_Recovery/test_admission_device_renumber.py::test_a_registry_recorded_before_a_renumbering_still_admits
+
+(22 durations < 1s hidden.)
+42 passed in 138.33s (0:02:18)

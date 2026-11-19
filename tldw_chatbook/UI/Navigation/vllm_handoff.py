@@ -7,7 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
-from ...Chat.provider_endpoint_contract import resolve_provider_endpoint
+from ...Provider_Contract.provider_endpoint_contract import resolve_provider_endpoint
 
 if TYPE_CHECKING:
     from ..LLM_Management.vllm_setup import VllmConnectionTarget

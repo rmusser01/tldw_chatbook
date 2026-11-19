@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import sqlite3
 import stat
@@ -22,6 +23,59 @@ from tldw_chatbook.DB import (
 )
 from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
 from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
+
+
+def _resolve_is_admission_ledger_evidence() -> bool:
+    """Whether this ``Path.resolve`` call is the storage-admission ledger's
+    per-call evidence key (TASK-19642.14 reconciliation).
+
+    Since TASK-32628 (b5251e9a6e), ``connect_private_sqlite``'s admitted seam
+    calls ``acquire_storage`` -> ``_execution_selection_for`` AFTER
+    ``_classify_target`` has already accepted the path, and that function
+    resolves the selector's and the target's chains to stamp admission
+    evidence -- pinned deliberately by
+    ``Tests/Backup_Recovery/test_admission_evidence_reuse.py`` ("the reuse
+    path included"), because a symlink swap between calls changes the
+    resolved form and must be seen.
+
+    The privacy invariant these tests enforce is narrower and stays intact:
+    the DB owner layer and the backup helper themselves must never resolve
+    the selected path (resolution before/instead of boundary classification
+    is the leak vector). This helper allow-lists EXACTLY one origin -- the
+    first production frame must be ``storage_admission.py``'s
+    ``_execution_selection_for`` -- so a resolve from private_sqlite, any
+    DB owner module, or the backup helper still fails the test.
+
+    TASK-33620.15.47 routes that resolution through ``storage_admission``'s
+    ``_resolved``, which calls ``Path.resolve`` itself only where its one-walk
+    proof does not apply (a link in the chain, or a platform without macOS's
+    ``O_NOFOLLOW_ANY``, such as Linux CI). Such a call is allowed only when the
+    very next production frame is ``_execution_selection_for``: the origin is
+    unchanged, only one frame deeper.
+    """
+    production = []
+    for frame_info in inspect.stack()[1:]:
+        filename = frame_info.filename
+        if (
+            filename == __file__
+            or "site-packages" in filename
+            or (os.sep + "lib" + os.sep + "python" in filename)
+        ):
+            # this test module's own frames and stdlib/pytest internals
+            continue
+        if "tldw_chatbook" not in filename:
+            continue
+        production.append(
+            (
+                filename.endswith("Backup_Recovery/storage_admission.py"),
+                frame_info.function,
+            )
+        )
+        if len(production) == 2 or production[0] != (True, "_resolved"):
+            break
+    if production and production[0] == (True, "_resolved"):
+        production = production[1:]
+    return bool(production) and production[0] == (True, "_execution_selection_for")
 
 
 @dataclass(frozen=True)
@@ -57,6 +111,8 @@ CORE_OWNER_CASES = (
             "detect_types": sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
             "check_same_thread": False,
             "timeout": 10,
+            # TASK-39118: cursor-use tokens, as ChaChaNotes.
+            "factory": base_db._QuiescentSQLiteConnection,
         },
         {"foreign_keys": 1, "journal_mode": "wal"},
         True,
@@ -89,7 +145,17 @@ CORE_OWNER_CASES = (
         {"journal_mode": "wal", "synchronous": 1},
         True,
     ),
-    OwnerCase("rag_indexing", RAG_Indexing_DB, "db.rag_indexing", {}, {}, False),
+    # TASK-39117: the kernel opener passes check_same_thread=False once the
+    # store joins its file's registry. (This case is red on dev for another
+    # reason: the module no longer imports connect_private_sqlite itself.)
+    OwnerCase(
+        "rag_indexing",
+        RAG_Indexing_DB,
+        "db.rag_indexing",
+        {"check_same_thread": False},
+        {},
+        False,
+    ),
 )
 
 
@@ -381,7 +447,7 @@ def test_core_owner_never_resolves_selected_path(
     real_resolve = Path.resolve
 
     def forbid_selected_resolve(selected: Path, *args: Any, **kwargs: Any) -> Path:
-        if selected == target:
+        if selected == target and not _resolve_is_admission_ledger_evidence():
             pytest.fail("core owner resolved the selected database path")
         return real_resolve(selected, *args, **kwargs)
 
@@ -432,14 +498,12 @@ def test_core_owner_normalizes_relative_path_lexically(
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", recording_raw_connect)
     database = _construct(case, relative_target, monkeypatch, [])
     try:
-        expected_stored_path = (
-            relative_target if case.name == "evals" else expected_target
-        )
-        expected_owner_target = (
-            relative_target if case.name == "evals" else expected_target
-        )
-        assert database.db_path == expected_stored_path
-        assert seen == [(case.owner_id, os.fspath(expected_owner_target))]
+        # TASK-19642.14: EvalsDB lost its store-the-relative-path special
+        # case when b5251e9a6e routed every owner through lexical_path()
+        # normalization -- it now absolutizes lexically exactly like its
+        # sibling owners, never touching the filesystem to do so.
+        assert database.db_path == expected_target
+        assert seen == [(case.owner_id, os.fspath(expected_target))]
         assert prepared == [
             PrepareRequest(
                 path=str(expected_target),
@@ -661,7 +725,7 @@ def test_backup_target_uses_centralized_private_backup_helper(
     real_resolve = Path.resolve
 
     def forbid_backup_path_resolve(selected: Path, *args: Any, **kwargs: Any) -> Path:
-        if selected in {source, target}:
+        if selected in {source, target} and not _resolve_is_admission_ledger_evidence():
             pytest.fail("backup resolved its selected source or target path")
         return real_resolve(selected, *args, **kwargs)
 

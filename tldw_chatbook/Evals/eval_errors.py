@@ -192,6 +192,26 @@ class ModelConfigurationError(EvaluationError):
         )
 
 
+    @staticmethod
+    def provider_refused(provider: str, reason: str) -> "ModelConfigurationError":
+        """A provider call refused before sending (TASK-41131 review I-2).
+
+        Args:
+            provider: The provider key.
+            reason: The refusal's own message, which names no secret.
+        """
+        return ModelConfigurationError(
+            ErrorContext(
+                category=ErrorCategory.MODEL_CONFIGURATION,
+                severity=ErrorSeverity.ERROR,
+                message=f"{provider} cannot be called: {reason}",
+                suggestion="Fix the provider in Settings ▸ Providers & Models, then run again",
+                is_retryable=False,
+                error_code="PROVIDER_CONFIGURATION",
+            )
+        )
+
+
 class APIError(EvaluationError):
     """API communication error."""
 

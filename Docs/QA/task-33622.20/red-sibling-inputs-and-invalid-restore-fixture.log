@@ -1,0 +1,43 @@
+FFFFF                                                                    [100%]
+=================================== FAILURES ===================================
+_ test_production_prior_restore_reports_swallowed_errors_to_coordinator[None] __
+Tests/Chat/test_console_conversation_activation.py:162: in test_production_prior_restore_reports_swallowed_errors_to_coordinator
+    controller._sync_console_chat_core_state = lambda: None
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: property '_sync_console_chat_core_state' of 'ConsoleWorkspaceController' object has no setter
+_ test_production_prior_restore_reports_swallowed_errors_to_coordinator[repaint] _
+Tests/Chat/test_console_conversation_activation.py:162: in test_production_prior_restore_reports_swallowed_errors_to_coordinator
+    controller._sync_console_chat_core_state = lambda: None
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: property '_sync_console_chat_core_state' of 'ConsoleWorkspaceController' object has no setter
+_ test_production_prior_restore_reports_swallowed_errors_to_coordinator[focus] _
+Tests/Chat/test_console_conversation_activation.py:162: in test_production_prior_restore_reports_swallowed_errors_to_coordinator
+    controller._sync_console_chat_core_state = lambda: None
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: property '_sync_console_chat_core_state' of 'ConsoleWorkspaceController' object has no setter
+_ test_character_open_under_quit_question_explains_only_owned_interruption[owned-enter-size2] _
+Tests/UI/test_console_character_activation_presentation.py:426: in test_character_open_under_quit_question_explains_only_owned_interruption
+    assert host.screen is chat, (
+E   AssertionError: (<ConsoleActivationResultKind.FAILED: 'failed'>, 'Could not open chat')
+E   assert ConsoleSessionSwitcherModal() is ChatScreen(classes='shell-header-normal')
+E    +  where ConsoleSessionSwitcherModal() = ConsoleHarness(title='ConsoleHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'}).screen
+_ test_character_open_under_quit_question_explains_only_owned_interruption[owned-click-size3] _
+Tests/UI/test_console_character_activation_presentation.py:426: in test_character_open_under_quit_question_explains_only_owned_interruption
+    assert host.screen is chat, (
+E   AssertionError: (<ConsoleActivationResultKind.FAILED: 'failed'>, 'Could not open chat')
+E   assert ConsoleSessionSwitcherModal() is ChatScreen(classes='shell-header-normal')
+E    +  where ConsoleSessionSwitcherModal() = ConsoleHarness(title='ConsoleHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'nocolor', 'focus'}).screen
+============================= slowest 25 durations =============================
+9.08s call     Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-click-size3]
+8.62s call     Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-enter-size2]
+2.28s setup    Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-enter-size2]
+1.74s setup    Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-click-size3]
+
+(11 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_conversation_activation.py::test_production_prior_restore_reports_swallowed_errors_to_coordinator[None]
+FAILED Tests/Chat/test_console_conversation_activation.py::test_production_prior_restore_reports_swallowed_errors_to_coordinator[repaint]
+FAILED Tests/Chat/test_console_conversation_activation.py::test_production_prior_restore_reports_swallowed_errors_to_coordinator[focus]
+FAILED Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-enter-size2]
+FAILED Tests/UI/test_console_character_activation_presentation.py::test_character_open_under_quit_question_explains_only_owned_interruption[owned-click-size3]
+5 failed, 60 deselected in 26.79s

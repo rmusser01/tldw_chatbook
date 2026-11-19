@@ -9,7 +9,6 @@ This tests:
 4. Integration with chat messages
 """
 
-import asyncio
 from importlib.util import find_spec
 import sys
 from pathlib import Path
@@ -22,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Set up logging
 from loguru import logger
+
+from Tests.app_services_doubles import AliasServices
 
 logger.add(sys.stderr, level="INFO")
 
@@ -55,6 +56,8 @@ class MockSelect:
 
 class MockApp:
     """Mock app with UI elements for testing."""
+
+    services = property(AliasServices)
 
     def __init__(self, rag_settings: Dict[str, Any]):
         # Databases
@@ -182,7 +185,9 @@ async def test_returned_context_carries_its_framing():
     # An empty result is a sentence, not None and not empty framing. Pinned
     # because it is what a user sees when nothing matched.
     if context == "No relevant context found.":
-        pytest.skip("no matching results here; test_context_formatting_is_exact pins the framing")
+        pytest.skip(
+            "no matching results here; test_context_formatting_is_exact pins the framing"
+        )
     assert context is not None
 
     assert "### Context from RAG Search:" in context
@@ -208,8 +213,7 @@ async def test_no_selected_sources_returns_none_and_tells_the_user():
 
     assert await get_rag_context_for_chat(app, "test") is None
     assert any(
-        "select at least one RAG source" in message
-        for message, _ in app.notifications
+        "select at least one RAG source" in message for message, _ in app.notifications
     ), f"user was not told why nothing happened; notifications={app.notifications}"
 
 
@@ -294,6 +298,8 @@ async def test_unreadable_ui_elements_degrade_to_no_context():
     )
 
     class BrokenApp:
+        services = property(AliasServices)
+
         def query_one(self, selector: str):
             if "enable" in selector:
                 raise Exception("UI element not found")
@@ -329,9 +335,9 @@ async def test_search_failure_returns_none_and_tells_the_user():
     # The original looked for "RAG search error", which the product has never
     # emitted -- it says "RAG search failed". Because that check was an `if`
     # around a log line, the mismatch was silent for as long as it existed.
-    assert any(
-        "RAG search failed" in message for message, _ in app.notifications
-    ), f"a failed search was not surfaced; notifications={app.notifications}"
+    assert any("RAG search failed" in message for message, _ in app.notifications), (
+        f"a failed search was not surfaced; notifications={app.notifications}"
+    )
 
 
 @pytest.mark.xfail(

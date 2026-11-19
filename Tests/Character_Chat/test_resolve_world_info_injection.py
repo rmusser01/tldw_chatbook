@@ -26,7 +26,9 @@ def _attach(db, conv_id, key, content, name="Lore"):
 
 def test_returns_text_and_count_on_match(wb_db):
     _attach(wb_db, "c1", "dragon", "Dragons breathe fire.")
-    text, count = resolve_world_info_injection(wb_db, "c1", None, "a dragon appears", [])
+    text, count = resolve_world_info_injection(
+        wb_db, "c1", None, "a dragon appears", []
+    )
     assert "Dragons breathe fire." in text and count == 1
 
 
@@ -43,8 +45,13 @@ def test_no_match_returns_unchanged_zero(wb_db):
 
 
 def test_no_conversation_and_db_error_zero(wb_db):
-    assert resolve_world_info_injection(wb_db, None, None, "a dragon appears", []) == ("a dragon appears", 0)
-    assert resolve_world_info_injection(object(), "cX", None, "a dragon appears", []) == ("a dragon appears", 0)
+    assert resolve_world_info_injection(wb_db, None, None, "a dragon appears", []) == (
+        "a dragon appears",
+        0,
+    )
+    assert resolve_world_info_injection(
+        object(), "cX", None, "a dragon appears", []
+    ) == ("a dragon appears", 0)
 
 
 def test_apply_wrapper_returns_only_text(wb_db):
@@ -70,4 +77,6 @@ def test_legacy_style_wiring_applies_without_character(wb_db):
         chat_history_for_api,
     )
     assert count >= 1 and "Dragons breathe fire." in text
-    assert text != message_text_with_handoff  # matches app.current_world_info_active check
+    assert (
+        text != message_text_with_handoff
+    )  # matches app.current_world_info_active check

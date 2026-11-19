@@ -14,7 +14,7 @@ The installed-wheel entry point exercises callback PCM/identity and AEC before
 its existing corpus gate. Software ABI checks do not qualify a device or release;
 the packaged qualification manifest remains unqualified.
 
-The governing architecture is [ADR-098](../../../backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md).
+The governing architecture is [ADR-338](../../../backlog/decisions/338-low-latency-speculative-duplex-voice-pipeline.md).
 The reviewed WebRTC revision, closure, Abseil pin, license inventory, and declared
 hash-pinned patch series are recorded under `native/voice_aec/vendor/webrtc/`.
 A vendor update is a new security and legal review, not a routine dependency bump.
@@ -25,7 +25,7 @@ or silently exclude repair-discovered runtime DLLs. Keep native allocation
 ownership inside the extension; debug CRT builds are not redistributable.
 Static runtime security updates require rebuilding and requalifying the wheels
 with an appropriately licensed, supported toolchain; they do not arrive through
-an independently updated private DLL. See ADR-098 for the boundary rationale.
+an independently updated private DLL. See ADR-338 for the boundary rationale.
 
 The pybind11 3.1.0 binding headers are independently pinned with
 `pybind11==3.1.0`. The checked-in
@@ -59,7 +59,7 @@ Application 0.2.3 continues the owner-approved app-only release scope,
 without the unavailable native companion.
 Ordinary `speech_recording` dependencies remain; experimental duplex voice stays
 unqualified and unavailable. No acoustic flag or qualification evidence changes.
-The ADR-098 app-only amendment governs this exception.
+The ADR-338 app-only amendment governs this exception.
 
 Run `python Packaging/check_voice_aec_version_sync.py --app-only`: source versions
 must still match, no application dependency or extra may include the companion,

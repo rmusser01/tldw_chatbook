@@ -2,7 +2,7 @@
 id: TASK-21107
 title: >-
   Kanban_Interop defeats tldw_api's lazy facade - 76 pydantic models forced at every boot
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-22'
 labels:
@@ -63,3 +63,47 @@ evidence above is what a re-verification pass measured against dev before dispat
 accepted, close this as "retired on evidence" rather than "won't fix", because the mechanism was
 real and only the cost or the prescribed fix was wrong.
 
+
+## Implementation Plan (2026-10-11 dispatch)
+
+The board audit kept this LIVE past the 2026-08-24 closure recommendation,
+so the fix ships via the revised direction's cheaper neighbour: instead of
+converting `KANBAN_OPERATION_SPECS` to name-based lazy resolution (risky,
+touches the spec table plus its two module-scope readers), TASK-21239's
+keep-path makes the whole Kanban service trio lazy -- and the module-level
+import in `app_service_wiring.py` that dragged `server_kanban_service.py`
+(and through it the 31-name `..tldw_api` import) onto the app import path
+goes function-local. The spec table stays untouched.
+
+1. Remove the module-scope `Kanban_Interop` import from
+   `app_service_wiring.py`.
+2. Defer the trio's construction to first-use properties (see TASK-21239).
+3. Update `Tests/Utils/test_tldw_api_schema_deferral.py`: drop the
+   `kanban_schemas` allowlist entry and add the AC's named assertion.
+4. Pin absence at `_ui_ready` too (census), since construction no longer
+   happens at boot.
+
+## Implementation Notes (2026-10-11, dev `a3c47c6c72`)
+
+- **Fix**: with the trio lazy (TASK-21239), `import tldw_chatbook.app`
+  loads ZERO Kanban modules (was 6, including
+  `tldw_chatbook.tldw_api.kanban_schemas` and its 76 pydantic models). The
+  spec-table shape `server_kanban_service.py` needs is untouched -- the
+  module simply is not imported until a consumer touches the property.
+- **Tests**: `test_kanban_schemas_absent_from_app_import_closure` (fresh
+  subprocess; fails naming the offender if either `kanban_schemas` or any
+  `Kanban_Interop` module re-eagers) + the phase-2 allowlist shrunk to the
+  package facade (+ a reviewed `tldw_api.exceptions` entry for a
+  PRE-EXISTING, unrelated leak from
+  `Audio_Services_Interop/server_audio_services_service.py:11` -- that
+  module uses its exception types in runtime `except` clauses across a
+  dozen methods; the module is stdlib-only exception classes, so deferral
+  buys nothing; the allowlist test was already red at HEAD for this
+  reason, verified by checkout swap). Census
+  `ABSENT_AT_READY_PREFIXES`/`ABSENT_AT_READY_MODULES` pin the package and
+  `kanban_schemas` absent across the whole first-paint window. All green:
+  23 passed across the census + deferral + gate files.
+- **Cost note**: the 2026-08 re-verification billed this ~19 ms warm. The
+  win shipped here is that plus six modules off the `_ui_ready` census
+  (1033 -> 1022 cumulative with TASK-21247), achieved WITHOUT the risky
+  spec-table rewrite the original filing prescribed.

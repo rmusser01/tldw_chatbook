@@ -10,10 +10,15 @@ after it) is left untouched and simply drops off the active path.
 
 import pytest
 
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.console_provider_doubles import provider_resolution
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class StreamingGateway:
@@ -45,56 +50,29 @@ class NotReadyGateway:
         yield ""
 
 
-class _EditResendPersistence:
-    """Records create_message calls; hands back predictable ``msg-N`` ids.
-
-    Mirrors ``_RegeneratePersistence`` in
-    ``test_console_regenerate_branching.py``.
-    """
-
-    def __init__(self):
-        self.created_messages = []
-
-    def create_conversation(self, **kwargs):
-        return "conv-1"
-
-    def create_message(
-        self,
-        *,
-        conversation_id,
-        sender,
-        content,
-        image_data,
-        image_mime_type,
-        message_id=None,
-        parent_message_id=None,
-        feedback=None,
-    ):
-        pid = f"msg-{len(self.created_messages) + 1}"
-        self.created_messages.append(
-            {
-                "id": pid,
-                "conversation_id": conversation_id,
-                "sender": sender,
-                "content": content,
-                "parent_message_id": parent_message_id,
-            }
-        )
-        return pid
-
-    def update_message_content(self, **kwargs):
-        return True
+@pytest.fixture
+def chat_db(tmp_path):
+    db = CharactersRAGDB(tmp_path / "edit-resend.sqlite", "edit-resend")
+    yield db
+    db.close_connection()
 
 
 @pytest.mark.asyncio
-async def test_edit_and_resend_forks_user_sibling_and_streams_reply():
+async def test_edit_and_resend_forks_user_sibling_and_streams_reply(chat_db):
     """Core contract: two USER children under u1's parent, new sibling active,
     an assistant reply forked under it, and u1's old tail preserved off-path.
+
+    TASK-39164: this drove a narrow create-message fake, which a persisted
+    chat outgrew -- the generation projection writer (67599acd6e), the
+    pre-provider mix-in attempt save (7970fbcada) and the branch-mutation
+    transaction each refuse it by design. It now drives the production
+    persistence over a real ChaChaNotes file and reads the rows back.
     """
-    persistence = _EditResendPersistence()
-    store = ConsoleChatStore(persistence=persistence)
+    store = ConsoleChatStore(persistence=ChatPersistenceService(chat_db))
     controller = ConsoleChatController(store=store, provider_gateway=StreamingGateway())
-    session = store.create_session(title="t")
+    session = store.create_session(
+        title="t", settings=ConsoleSessionSettings(provider="llama_cpp")
+    )
     store.active_session_id = session.id
     u1 = store.append_message(
         session.id, role=ConsoleMessageRole.USER, content="original", persist=True
@@ -105,7 +83,6 @@ async def test_edit_and_resend_forks_user_sibling_and_streams_reply():
         content="original-reply",
         persist=True,
     )
-    persistence.created_messages.clear()
 
     result = await controller.edit_and_resend_message(u1.id, "edited")
 
@@ -134,6 +111,17 @@ async def test_edit_and_resend_forks_user_sibling_and_streams_reply():
     assert assistant_reply.content == "edited-reply"
     assert assistant_reply.status == "complete"
     assert assistant_reply.persisted_message_id is not None
+
+    # Both forked rows are durable: the user sibling beside u1 under u1's own
+    # (root) parent, and the reply under the sibling.
+    user_row = chat_db.get_message_by_id(new_user.persisted_message_id)
+    reply_row = chat_db.get_message_by_id(assistant_reply.persisted_message_id)
+    assert user_row["content"] == "edited"
+    assert user_row["parent_message_id"] == (
+        chat_db.get_message_by_id(u1.persisted_message_id)["parent_message_id"]
+    )
+    assert reply_row["content"] == "edited-reply"
+    assert reply_row["parent_message_id"] == new_user.persisted_message_id
 
     # u1 and its old tail (a1) are preserved, untouched, off the active path.
     assert store.get_message(u1.id).content == "original"
@@ -292,7 +280,8 @@ async def test_edit_and_resend_skill_refusal_leaves_no_pending_node():
         session.id, role=ConsoleMessageRole.USER, content="original"
     )
 
-    async def _refuse(provider_messages):
+    # b7dd8e53f2 passes the turn context (and later keywords) to the hook.
+    async def _refuse(provider_messages, _turn_context=None, **_kwargs):
         # 5-tuple contract: (messages, refuse, notes, skill_bindings,
         # skill_bundle_block) — widened by the skill_file reachability work.
         return provider_messages, "Skill refused for testing.", (), (), ""
@@ -343,8 +332,14 @@ async def test_edit_and_resend_carries_anchor_attachments(monkeypatch):
     persisted node AND embedded in the provider payload (multimodal parts),
     instead of silently re-sending text-only."""
     from tldw_chatbook.Chat import console_chat_controller as controller_module
+    from tldw_chatbook.Chat import console_configuration_capture
 
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: True)
+    # The resend's vision gate reads the captured configuration's capability,
+    # computed in console_configuration_capture since 3e618d7119.
+    monkeypatch.setattr(
+        console_configuration_capture, "is_vision_capable", lambda p, m: True
+    )
     store = ConsoleChatStore()
     gateway = _RecordingStreamingGateway()
     controller = ConsoleChatController(
@@ -387,8 +382,14 @@ async def test_edit_and_resend_blocks_attachments_on_non_vision_model(monkeypatc
     """task-573 AC#2: the vision gate applies exactly as on a fresh send, and
     the block fires BEFORE any node is created (mutate-last discipline)."""
     from tldw_chatbook.Chat import console_chat_controller as controller_module
+    from tldw_chatbook.Chat import console_configuration_capture
 
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda p, m: False)
+    # The resend's vision gate reads the captured configuration's capability,
+    # computed in console_configuration_capture since 3e618d7119.
+    monkeypatch.setattr(
+        console_configuration_capture, "is_vision_capable", lambda p, m: False
+    )
     store = ConsoleChatStore()
     controller = ConsoleChatController(
         store=store, provider_gateway=StreamingGateway(), model="text-model"

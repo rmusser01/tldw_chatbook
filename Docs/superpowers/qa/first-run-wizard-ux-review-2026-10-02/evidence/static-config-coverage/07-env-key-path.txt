@@ -1,0 +1,69 @@
+# Env-key installs never see the wizard; toast claims 'ready to chat' regardless of which provider's key
+## should_offer_wizard (first_run_setup_state.py:861-868)
+def should_offer_wizard(
+    app_config: Mapping[str, object], environ: Mapping[str, str]
+) -> bool:
+    """Auto-offer once: no wizard state keys AND nothing configured."""
+    if _wizard_flag(app_config, SETUP_STARTED_KEY):
+        return False
+    if _wizard_flag(app_config, SETUP_COMPLETED_KEY):
+        return False
+
+## app.py toast (app.py:3601-3617)
+            elif action == "none" and (
+                env_key_names := env_keys_that_silenced_first_run(
+                    self.app_config, os.environ
+                )
+            ):
+                # TASK-21147 (UAT E-1): the env-key install skipped the
+                # wizard silently — say so exactly once, and where the
+                # wizard's other value (voice, tools, encryption) lives.
+                shown = ", ".join(env_key_names[:2]) + (
+                    " (and more)" if len(env_key_names) > 2 else ""
+                )
+                self.notify(
+                    f"Found {shown} — you're ready to chat. Run setup any "
+                    "time: Settings ▸ Diagnostics ▸ Run setup wizard.",
+                    title="Provider key detected",
+                    severity="information",
+                    timeout=10,
+
+## Template default provider the Console will use (config.py chat_defaults)
+user_display_name = "User"
+provider = "OpenAI"
+model = "gpt-5.6-terra"
+system_prompt = "You are a helpful AI assistant."
+
+## Console default provider comes from chat_defaults.provider, no env-key auto-pick (console_session_settings.py:1516-1523)
+        _mapping_value(app_config, "chat_defaults")
+    )
+    defaults_provider_id = _canonical_chat_provider_id(
+        _string_setting(chat_defaults, "provider"), app_config
+    )
+    provider_id = _canonical_chat_provider_id(
+        _string_value(provider) or _string_setting(chat_defaults, "provider"),
+        app_config,
+
+## Provider list rows carry no 'key detected' marker (FirstRunSetupWizard.py:904-925)
+def _provider_options(
+    entries: Sequence[ConsoleProviderCatalogEntry],
+) -> list[Option]:
+    """Build grouped provider options with non-selectable heading rows."""
+    options: list[Option] = []
+    for group_title, group in ProviderStep._grouped_sections(entries):
+        options.append(
+            ProviderChoiceOption(
+                Text(group_title, style="bold"),
+                option_id=_provider_group_option_id(group_title),
+                provider_key=None,
+            )
+        )
+        options.extend(
+            ProviderChoiceOption(
+                Text(entry.display_name),
+                option_id=f"provider-{entry.readiness_key}",
+                provider_key=entry.readiness_key,
+            )
+            for entry in group
+        )
+    return options

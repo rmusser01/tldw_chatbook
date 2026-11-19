@@ -417,7 +417,9 @@ def test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary(
         db.close()
 
 
-def test_denied_call_cancelled_before_dispatch_is_not_approval_revoked(tmp_path) -> None:
+def test_denied_call_cancelled_before_dispatch_is_not_approval_revoked(
+    tmp_path,
+) -> None:
     gate = BuiltinToolGate(service=None)
     provider = BuiltinToolProvider(gate=gate)
     provider._tools["credential_result"] = _CredentialResultTool()
@@ -476,7 +478,9 @@ def test_denied_call_cancelled_before_dispatch_is_not_approval_revoked(tmp_path)
         db.close()
 
 
-def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_path) -> None:
+def test_agent_service_actual_request_assembly_captures_safe_context_chain(
+    tmp_path,
+) -> None:
     db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
     try:
         service = AgentService(
@@ -504,9 +508,7 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_p
 
         assert outcome.status == "done"
         durable = db.get_run(run_id)["steps"]
-        lifecycle = [
-            step for step in durable if step["kind"].startswith("agent_run_")
-        ]
+        lifecycle = [step for step in durable if step["kind"].startswith("agent_run_")]
         assert [step["kind"] for step in lifecycle] == [
             "agent_run_created",
             "agent_run_started",
@@ -524,7 +526,9 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_p
         serialized = repr(durable)
         for secret in ("sk-project-secret", "sk-system-secret", "sk-workspace-secret"):
             assert secret not in serialized
-        assert all(name in attached["summary"] for name in ("project", "system", "workspace"))
+        assert all(
+            name in attached["summary"] for name in ("project", "system", "workspace")
+        )
         snapshot = derive_trajectory(
             [],
             {},
@@ -539,12 +543,8 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_p
         )
         records = [record for turn in snapshot.turns for record in turn.records]
         ordered = [record.kind for record in records]
-        assert ordered.index("agent_run_created") < ordered.index(
-            "agent_run_started"
-        )
-        assert ordered.index("agent_run_started") < ordered.index(
-            "context_attached"
-        )
+        assert ordered.index("agent_run_created") < ordered.index("agent_run_started")
+        assert ordered.index("agent_run_started") < ordered.index("context_attached")
         assert ordered.index("context_attached") < ordered.index("context_injected")
         assert ordered.index("context_injected") < ordered.index(
             "model_request_started"
@@ -559,7 +559,9 @@ def test_agent_service_actual_request_assembly_captures_safe_context_chain(tmp_p
         db.close()
 
 
-def test_agent_service_post_response_cancel_persists_causal_observation(tmp_path) -> None:
+def test_agent_service_post_response_cancel_persists_causal_observation(
+    tmp_path,
+) -> None:
     db = AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
     flags = iter((False, True))
     try:
@@ -579,12 +581,16 @@ def test_agent_service_post_response_cancel_persists_causal_observation(tmp_path
 
         assert outcome.status == "cancelled"
         durable = db.get_run(run_id)["steps"]
-        request = next(step for step in durable if step["kind"] == "model_request_started")
+        request = next(
+            step for step in durable if step["kind"] == "model_request_started"
+        )
         completed = next(
             step for step in durable if step["kind"] == "model_response_completed"
         )
         cancelled = next(step for step in durable if step["kind"] == "model_cancelled")
-        assert cancelled["parent_event_id"] == f"agent-step:{run_id}:{completed['index']}"
+        assert (
+            cancelled["parent_event_id"] == f"agent-step:{run_id}:{completed['index']}"
+        )
         assert cancelled["source_event_id"] == f"agent-step:{run_id}:{request['index']}"
         snapshot = derive_trajectory(
             [],

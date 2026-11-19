@@ -1,0 +1,44 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/mixins-7ac-final-five/report.md",
+      "bytes": 1803,
+      "sha256": "401709268e3971cf077b937b51a4361f46bbf6e18d58b7781c86a3383e3bdeba"
+    },
+    {
+      "path": "/private/tmp/mixins-7ac-final-five/source-proof.json",
+      "bytes": 3823,
+      "sha256": "1791c116f3be66831deb2546b72296db327797f87ca7de63494aeba25d0d0dbb"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-probe.py",
+      "bytes": 1590,
+      "sha256": "0e671fdc3e15b81d7d06a185610de510d45640aedfa8c195131656e4c0d4dd1c"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-7ac-final.log",
+      "bytes": 2063,
+      "sha256": "e624008f4550bc3b623e55a25de6277d83d3458776ed90e7fdf193fb45464409"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-7ac-final-test_ui_ready_module_census-_boot_and_census.json",
+      "bytes": 49847,
+      "sha256": "3d37e781185d322dd492b622984fb27ca34fbd7cd56d8a16b73371eff50f7792"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-7ac-final-test_boot_worker_census-_boot_and_census.json",
+      "bytes": 5823,
+      "sha256": "cbd009a140ec2fcb164178b200eef648a29da66810639674a67d59ab0d04ff85"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-7ac-final-test_screen_preimport_payload_budget-_run_census.json",
+      "bytes": 35127,
+      "sha256": "91b0c80c0eaefe59edfffa711c4b4a6c7061d60f8549383ab9148e694e9d51c6"
+    },
+    {
+      "path": "/private/tmp/mixins-perf-7ac-final-test_screen_preimport_payload_budget-warmup.json",
+      "bytes": 24403,
+      "sha256": "08210bc96a9ec8f51a5b8a55feb3f7f2b3deab4bb6f3e493203733b7d6206c26"
+    }
+  ]
+}

@@ -83,6 +83,22 @@ from tldw_chatbook.Widgets.Console.console_prompt_draft_save_dialog import (
 assert ConsolePromptDraftEditor.__name__ == 'ConsolePromptDraftEditor'
 assert ConsolePromptDraftSaveDialog.__name__ == 'ConsolePromptDraftSaveDialog'
 """,
+        """
+import sys
+import tldw_chatbook.UI.Screens.chat_screen
+import tldw_chatbook.UI.Console_Modules.message
+import tldw_chatbook.UI.Console_Modules.wiring
+from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+execution = 'tldw_chatbook.Chat.console_turn_resend'
+assert execution not in sys.modules
+row = ConsoleChatMessage(role=ConsoleMessageRole.USER, content='hello', status='failed')
+transcript = ConsoleTranscript()
+transcript._messages = [row]
+assert 'resend' in [action.action_id for action in transcript._action_groups(row).primary]
+assert execution not in sys.modules
+""",
     ],
     ids=[
         "closed-environment-rail",
@@ -90,6 +106,7 @@ assert ConsolePromptDraftSaveDialog.__name__ == 'ConsolePromptDraftSaveDialog'
         "non-anthropic-readiness",
         "no-custom-pii-rules",
         "prompt-draft-modals",
+        "resend-projection",
     ],
 )
 def test_console_services_load_only_on_first_use(tmp_path: Path, code: str) -> None:

@@ -30,7 +30,9 @@ def _status(job_id, status, **kwargs):
 
 def _server_job(registry, *, remote_job_id, source="/tmp/a.mp3"):
     job = registry.submit(source_path=source, origin="server")
-    return registry.attach_remote(job.job_id, remote_job_id=remote_job_id, batch_id="b1")
+    return registry.attach_remote(
+        job.job_id, remote_job_id=remote_job_id, batch_id="b1"
+    )
 
 
 def test_running_status_moves_the_job_to_parsing():
@@ -153,7 +155,9 @@ def test_a_dict_shaped_status_is_accepted():
     registry = LibraryIngestJobRegistry()
     _server_job(registry, remote_job_id="11")
 
-    applied = reconcile_remote_ingest_jobs(registry, [{"id": 11, "status": "completed"}])
+    applied = reconcile_remote_ingest_jobs(
+        registry, [{"id": 11, "status": "completed"}]
+    )
 
     assert applied == 1
     assert registry.jobs()[0].state is IngestJobState.DONE

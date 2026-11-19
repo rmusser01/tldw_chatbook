@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────╭──────────────────────────────────────────────────────────────────────────╮────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavi│                                                                          │
+ Mode: Providers & Models                                          │  Settings: Providers & Models                                            │
+┌──────────────────────────────┐  │  ┌─────────────────────────────│  How this category works:                                                │───────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                             │  - Save contract: Draft — save with s. Switching categories keeps the    │                   │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: No changes · edits s│  draft; the rail marks it with *.                                        │Console: Alt+M)    │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                             │  - Scope: Applies to new and unused open chats · used chats keep theirs  │                   │  │  │                                         │
+│  category search             │  │  │  Providers & Models         │  (Console: Alt+M)                                                        │                   │  │  │ Selected category: Providers & Models   │
+│                              │  │  │                             │  - Runtime owner: Settings persisted defaults; Console runtime           │                   │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   Connect                   │  selection.                                                              │                   │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Provider                │ O│  - Writes here: yes.                                                     │ted first          │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │  API key                 │ P│  - Boundary: Provider, default model, endpoint, local config API key,    │he saved key       │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │  Env var                 │ O│  credential source, and selected provider+model profile defaults are     │, never the key    │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Endpoint                │ h│  shared with Console.                                                    │default            │  │  │ file.                                   │
+│  Interface                   │  │  │  Key check                Re│  - Recovery: Test provider readiness, then use Console Behavior for      │      Test (t)     │  │  │ Applies to                              │
+│      Appearance              │  │  │                             │  sampling and transport settings.                                        │                   │  │  │  New chats: yes (Ctrl+T, temporary,     │
+│      Theme                   │  │  │   Default model for new chat│  - Test provider (t): Checks the settings, then lists models without     │                   │  │  │  workspace)                             │
+│      Splash Screen           │  │  │  Model                   │ g│  generating: a cloud provider's listing checks the API key, a local      │ID for others      │  │  │  Unused open chats: follow the saved    │
+│      Console Behavior        │  │  │  Applies to               ne│  server's shows it answers. Nothing is saved.                            │                   │  │  │  default                                │
+│  Data & Privacy              │  │  │   ▼ Model defaults · OpenAI │  Shortcuts:                                                              │                   │  │  │  Chats with work: keep their own;       │
+│      Storage                 │  │  │  Temperature             │ 0│  - s: save category                                                      │                   │  │  │  switch there with Alt+M                │
+│      Workspaces              │  │  │  Max tokens              │ t│  - r: revert category                                                    │                   │  │  │  Model defaults: chats that switch to   │
+│      Tool Profiles           │  │  │  Streaming               │ I│  - t: test provider                                                      │                   │  │  │  this model pick them up                │
+│      Privacy & Security      │  │  │  Reasoning effort        │ I│  │                                                                    │  │                   │  │  │ Next new chat will use                  │
+│      Network                 │  │  │  Reasoning summary       │ I│  │                                                                    │  │                   │  │  │  OpenAI · gpt-5.6-sol                   │
+│      My Profile              │  │  │  Verbosity               │ I│  │                                                                    │  │                   │  │  │  T 0.6 · max 4096 · stream Off          │
+│  Troubleshooting             │  │  │   ▶ Sampling · all inherit ·│  │                                                                    │  │                   │  │  │ Focused field guide                   ▇ │
+│      Diagnostics (view)      │  │  │                             │  │                                                                    │  │                   │  │  │  Focused setting: None — Tab to a       │
+│      About (view)            │  │  │   Advanced                  │  │                                                                    │  │                   │  │  │  setting                                │
+│      Agents                  │  │  │   ▶ Context window · unknown│  │                                                                    │  │                   │  │  │  Purpose: Configure the default         │
+│  Expert                      │  │  │   ▶ Saved model list · 14 sa│  │                                                                    │  │                   │  │  │  provider, model, endpoint, and         │
+│      Hooks                   │  │  │   ▶ Catalog refresh · applie│  │                                                                    │  │                   │  │  │  credential source.                     │
+│      Internal Prompts        │  │  │   ▶ Session summary on quit │  │                                                                    │  │                   │  │  │  Save: edits save with s · r reverts    │
+│      Advanced Config         │  │  │   ▶ Custom endpoints · no na│  │                                                                    │  │                   │  │  │  Validation: test provider readiness    │
+│   Domain Defaults ▸ (13)     │  │  │   ▶ Prompt-cache snapshots ·│  └────────────────────────────────────────────────────────────────────┘  │                   │  │  │  before saving these defaults           │
+│                              │  │  │                             │                                                                          │                   │  │  │  ▶ config key                           │
+│                              │  │  │                             │       Close                                                              │                   │  │  │ Key                                     │
+│                              │  │  │                             │                                                                          │                   │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                             ╰──────────────────────────────────────────────────────────────────────────╯                   │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

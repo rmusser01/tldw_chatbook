@@ -1,0 +1,14 @@
+{
+  "captured_utc": "2026-11-05T06:02:47.415766+00:00",
+  "old_index_sha256": "1ec2f9fe116a5a5d7f805fb001d39da7682f27c8dbeb651fcafa9c8d59d34c71",
+  "new_index_sha256": "4e63cf9d39247bb9173c42ea6d905371795f1e76b9dbfdc87fd7f70fcc123c74",
+  "source_records": 111,
+  "unique_full_bodies": 86,
+  "body_bytes": 1854754,
+  "all_old95_raw_records_lookups_metadata_alias_prefix_preserved": true,
+  "all111_source_destination_bytes_sha_counts_dual_lookups": true,
+  "all_four_canonical_lookup_omissions_resolved": true,
+  "local_links": true,
+  "helper_report_sha256": "c28beef8749320ec40d90f9791eda29a8ef8a86e426a3fd4a4ef04019084f237",
+  "scope": "byte integrity only; final code review failed separately and one combined correction active; final census archival/cleanup pending; historical source/driver gaps retained"
+}

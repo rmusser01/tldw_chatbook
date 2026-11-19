@@ -330,42 +330,71 @@ class PaperSearchIngestRequest(BaseModel):
 
 
 class PaperSearchListResponse(BaseModel):
-    """Source-honest provider search response with flexible provider-specific item fields."""
+    """Source-honest provider search response with flexible provider-specific item fields.
+
+    Modeled server endpoints are strict (tldw_server paper_search_schemas.py:259
+    GenericPageSearchResponse); the `*/raw/*` routes pass upstream JSON through
+    unmodeled (paper_search.py:98-120), so non-dict bodies and loose types are kept.
+    """
 
     model_config = ConfigDict(extra="allow")
 
     query_echo: dict[str, Any] = Field(default_factory=dict)
-    items: list[dict[str, Any]] = Field(default_factory=list)
-    total_results: int | None = None
+    items: list[Any] = Field(default_factory=list)
+    total_results: int | float | None = None
     page: int | None = None
     results_per_page: int | None = None
     total_pages: int | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def wrap_non_dict_body(cls, value: Any) -> Any:
+        # Undeclared extra: present in dumps only for a non-dict body, and a
+        # dict body's own "raw" key (a different name) cannot collide with it.
+        return value if isinstance(value, dict) else {"non_dict_body": value}
+
 
 class PaperSearchDetailResponse(BaseModel):
-    """Flexible paper/provider detail payload returned by server paper-search endpoints."""
+    """Flexible paper/provider detail payload returned by server paper-search endpoints.
+
+    Modeled detail routes use `id: Optional[str]` (paper_search_schemas.py:237); raw
+    passthrough routes (paper_search.py:98-120) can emit any JSON, so fields are loose.
+    """
 
     model_config = ConfigDict(extra="allow")
 
-    id: str | None = None
-    title: str | None = None
-    doi: str | None = None
-    url: str | None = None
-    pdf_url: str | None = None
-    provider: str | None = None
+    id: str | int | None = None
+    title: Any = None
+    doi: Any = None
+    url: Any = None
+    pdf_url: Any = None
+    provider: Any = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def wrap_non_dict_body(cls, value: Any) -> Any:
+        # Undeclared extra: present in dumps only for a non-dict body, and a
+        # dict body's own "raw" key (a different name) cannot collide with it.
+        return value if isinstance(value, dict) else {"non_dict_body": value}
 
 
 class PaperSearchOperationResponse(BaseModel):
-    """Wrapper for provider ingest responses whose shape varies by endpoint."""
+    """Wrapper for provider ingest responses whose shape varies by endpoint.
+
+    Ingest routes have no response_model and return plain dicts
+    (paper_search.py:1190); raw/other payloads may be lists, kept under `data`.
+    """
 
     model_config = ConfigDict(extra="allow")
 
-    data: dict[str, Any] = Field(default_factory=dict)
+    data: Any = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
     def wrap_raw_payload(cls, value: Any) -> Any:
-        if isinstance(value, dict) and "data" not in value:
+        if not isinstance(value, dict):
+            return {"data": value}
+        if "data" not in value:
             return {"data": value, **value}
         return value
 

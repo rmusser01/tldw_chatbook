@@ -1,6 +1,6 @@
 """Trajectory export: versioned JSON trace format, writer, and validator.
 
-Implements ADR-067 (``backlog/decisions/067-trajectory-export-format.md``):
+Implements ADR-313 (``backlog/decisions/313-trajectory-export-format.md``):
 one self-contained JSON document per conversation carrying everything the
 trajectory projection (``Chat/trajectory.derive_trajectory``) needs to
 render the exact TrajectoryScreen view -- messages with usage, the
@@ -13,7 +13,7 @@ Purity contract
     writer and validator are pure stdlib. The validator is the import
     seam (task-16320), so export and import can never drift apart.
 
-Privacy contract (ADR-067 §3/§4)
+Privacy contract (ADR-313 §3/§4)
     Tool ``payload_json`` may contain file contents, so redaction is the
     DEFAULT: tool rows get preview-only payload stubs unless the caller
     passes ``include_payloads=True``. The document-level ``redacted``
@@ -27,14 +27,16 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-import os
 import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .assistant_generation_state import normalize_assistant_generation_state
+from loguru import logger
+
+from ..DB.assistant_generation_state import normalize_assistant_generation_state
+
 # One object, re-imported from the stdlib-only leaf (TASK-23020): Chat-leg
 # modules (console_exchange_export and the exchange export dialog) read the
 # profile vocabulary from `trace_export_profiles` so a single-name import
@@ -59,6 +61,11 @@ from tldw_chatbook.Chat.trajectory import (
     TrajectorySnapshot,
     redact_local_paths,
 )
+from tldw_chatbook.Utils.log_sanitizer import (
+    CREDENTIAL_VALUE_PATTERNS,
+    mask_credential_labels,
+    mask_url_query_keys,
+)
 
 __all__ = [
     "TRAJECTORY_EXPORT_FORMAT",
@@ -69,6 +76,7 @@ __all__ = [
     "TraceExportProfile",
     "TraceFieldDecision",
     "TraceExportPreflight",
+    "TraceExportCredentialBlocked",
     "TrajectoryExportError",
     "preflight_trace_export",
     "build_trace_export",
@@ -77,10 +85,10 @@ __all__ = [
     "write_trajectory_export",
 ]
 
-#: Document format marker (ADR-067 §1).
+#: Document format marker (ADR-313 §1).
 TRAJECTORY_EXPORT_FORMAT = "tldw-trajectory"
 
-#: Current format version; a public contract (ADR-067 §2).
+#: Current format version; a public contract (ADR-313 §2).
 TRAJECTORY_EXPORT_VERSION = 1
 
 #: Cap for redacted payload previews, matching the projection's cap.
@@ -92,7 +100,7 @@ TRACE_EXPORT_VERSION = 2
 _TOOL_KINDS = frozenset({"tool_call", "tool_result"})
 _COMPACTION_PURPOSE = "conversation_compaction"
 
-#: Exported per-message fields; image blobs are omitted entirely (ADR-067 §1).
+#: Exported per-message fields; image blobs are omitted entirely (ADR-313 §1).
 _MESSAGE_KEYS = (
     "id",
     "sender",
@@ -104,7 +112,7 @@ _MESSAGE_KEYS = (
 )
 
 #: Reserved conversation-round-trip names that diagnostic V1 must never
-#: accept as additive extensions. ADR-067 keeps other additive fields valid.
+#: accept as additive extensions. ADR-313 keeps other additive fields valid.
 _RESERVED_THINKING_FIELDS = frozenset(
     {"_thinking", "thinking_blocks", "thinking_blocks_json"}
 )
@@ -136,6 +144,15 @@ _AUX_ATTEMPT_LIMIT = 500
 
 class TrajectoryExportError(Exception):
     """Unknown conversation, or an export payload that fails validation."""
+
+
+class TraceExportCredentialBlocked(TrajectoryExportError):
+    """The finished bundle still holds credential-looking text after scrubbing.
+
+    The final privacy backstop, kept distinct so a caller can say what stopped
+    the export rather than reporting a generic validation failure
+    (TASK-33621.8).
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +187,7 @@ def _redacted_payload_json(payload_json: str | None) -> str | None:
     Keeps the ``name`` plus first-120-char single-line previews of the
     result and args; anything unparseable degrades to empty previews
     rather than leaking raw text. Returns JSON text matching the stub
-    shape from ADR-067 §3.
+    shape from ADR-313 §3.
     """
     data: dict = {}
     if payload_json:
@@ -271,6 +288,12 @@ _IDENTITY_DOMAINS = {
     "replacement_event_id": "event",
 }
 _MISSING_STATES = frozenset({"not_available", "capture_failed"})
+_REFERENCE_FIELDS = ("parent_event_id", "source_event_id", "replacement_event_id")
+#: TASK-33621.8: provenance reason for a cleared reference whose target is
+#: not recorded in this snapshot. Usually the event was never written (the
+#: staged-Library orphan); it also covers an event recorded somewhere this
+#: snapshot does not include, since the bundle cannot tell the two apart.
+_REFERENCE_NOT_RECORDED = "reference_not_recorded"
 _NON_OBSERVED_STATES = frozenset(
     {"redacted", "truncated", "omitted", "not_available", "capture_failed"}
 )
@@ -280,6 +303,9 @@ _CREDENTIAL_KEY_RE = re.compile(
     re.IGNORECASE,
 )
 _CREDENTIAL_VALUE_RES = (
+    # TASK-40301: every shape the log sanitizer masks, from its own tuple and
+    # first, so its Bearer and user-info rules see the whole value.
+    *CREDENTIAL_VALUE_PATTERNS,
     re.compile(
         r"-----BEGIN [^-\n]*PRIVATE KEY-----.*?"
         r"-----END [^-\n]*PRIVATE KEY-----",
@@ -287,15 +313,20 @@ _CREDENTIAL_VALUE_RES = (
     ),
     re.compile(r"\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE),
     re.compile(r"\bsk-[A-Za-z0-9_-]{8,}", re.IGNORECASE),
+    # TASK-39149: bare secret and restricted keys, live or test, at the sk-
+    # floor. The body takes no "_", so sk_live_mode_enabled stays readable.
+    re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{8,}", re.IGNORECASE),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    # Review r15tr-rev2: the lookbehind keeps a match from starting inside a
+    # scheme-like run; without it a dash-separated run was quadratic (198 s
+    # on 200 KB), so a shared bundle could hang its import.
     re.compile(
-        r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@",
+        r"\b(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@",
         re.IGNORECASE,
     ),
-    re.compile(
-        r"\b(?:api[_ -]?key|token|password|passwd|secret)\s*[:=]\s*\S+",
-        re.IGNORECASE,
-    ),
+    # TASK-41510: ``token=``, ``password:`` and the other simple labels are
+    # judged by mask_credential_labels, no longer masked whole here, so
+    # ``token = oauth.fetch_token(url,)`` stays readable.
 )
 _CONTENT_KEYS = frozenset(
     {"args", "arguments", "body", "content", "input", "output", "prompt", "result"}
@@ -322,6 +353,11 @@ def _credential_text(value: str) -> tuple[str, bool]:
     redacted = value
     for pattern in _CREDENTIAL_VALUE_RES:
         redacted = pattern.sub("[credential redacted]", redacted)
+    # TASK-41133: then credential labels (client_secret=..., token=...; the
+    # simple ones since TASK-41510), named as logs name them, and a URL's
+    # ``?key=`` value, as logs mask it.
+    redacted = mask_credential_labels(redacted, "[credential redacted]")
+    redacted = mask_url_query_keys(redacted, "[credential redacted]")
     return redacted, redacted != value
 
 
@@ -339,13 +375,25 @@ def _has_credential(value: Any, key: str = "") -> bool:
     return isinstance(value, str) and _credential_text(value)[1]
 
 
-def _has_credential_material(value: Any, *, structural_keys: bool = False) -> bool:
-    """Detect unsanitized credential material in an already-governed document."""
+def _mask_credential_material(value: Any, *, structural_keys: bool = False) -> tuple[Any, bool]:
+    """Mask credential material in an already-governed document the way the
+    export does: a credential-looking key is renamed, a credential-named
+    key's value becomes the redaction marker, and text goes through
+    ``_credential_text``. Returns the masked copy and whether anything
+    changed. Export checks its final bundle with it, and import re-masks an
+    older bundle with it, so the two cannot disagree (TASK-41133, owner
+    decision 2026-11-17, "Re-mask on import")."""
     if isinstance(value, Mapping):
+        output: dict[str, Any] = {}
+        changed = False
         for name, item in value.items():
             key = str(name)
-            if _credential_text(key)[1]:
-                return True
+            masked_key, key_changed = _credential_text(key)
+            if key_changed:
+                masked_key = "[credential key redacted]"
+                while masked_key in output or masked_key in value:
+                    masked_key += "_"
+                changed = True
             if (
                 not structural_keys
                 and key.lower() not in _CREDENTIAL_SAFE_KEYS
@@ -355,19 +403,47 @@ def _has_credential_material(value: Any, *, structural_keys: bool = False) -> bo
                     or item not in _CREDENTIAL_REDACTION_VALUES
                 )
             ):
-                return True
-            if _has_credential_material(
+                output[masked_key] = "[credential redacted]"
+                changed = True
+                continue
+            output[masked_key], item_changed = _mask_credential_material(
                 item,
                 structural_keys=structural_keys or key in _STRUCTURAL_METADATA_KEYS,
-            ):
-                return True
-        return False
+            )
+            changed |= item_changed
+        return output, changed
     if isinstance(value, (list, tuple)):
-        return any(
-            _has_credential_material(item, structural_keys=structural_keys)
+        items = [
+            _mask_credential_material(item, structural_keys=structural_keys)
             for item in value
-        )
-    return isinstance(value, str) and _credential_text(value)[1]
+        ]
+        return [item for item, _changed in items], any(changed for _item, changed in items)
+    if isinstance(value, str):
+        return _credential_text(value)
+    return value, False
+
+
+def _parsed_json(value: Any) -> Any:
+    """``value`` parsed when it is JSON text holding an object or an array,
+    else as is, so masking keeps it JSON (review r16tr-rev2)."""
+    if not isinstance(value, str):
+        return value
+    try:
+        parsed = json.loads(value)
+    except (ValueError, RecursionError):
+        return value
+    return parsed if isinstance(parsed, (dict, list)) else value
+
+
+def _masked(value: Any) -> Any:
+    """A value read from a file, masked as a bundle masks it, for an error
+    message to quote (TASK-41604)."""
+    return _mask_credential_material(value)[0]
+
+
+def _has_credential_material(value: Any, *, structural_keys: bool = False) -> bool:
+    """Detect unsanitized credential material in an already-governed document."""
+    return _mask_credential_material(value, structural_keys=structural_keys)[1]
 
 
 def _preview(value: str) -> tuple[str, bool]:
@@ -791,7 +867,63 @@ def _upsert_field_decision(
     else:
         decisions[existing_index] = decision
 
+
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
+
+
+def _clear_unrecorded_references(
+    records: Sequence[TrajectoryRecord],
+) -> tuple[tuple[TrajectoryRecord, ...], frozenset[tuple[str, str]]]:
+    """Clear references to events the snapshot never recorded.
+
+    A stored trace can name an event that was never written: until
+    TASK-33621.8, staged-Library turns pointed their retrieved-context events
+    at a retrieval event only the live search route records. One such link
+    made the whole conversation unexportable. The link is cleared and its
+    field marked ``not_available``, which lands it in ``missing_metadata``.
+    Each clearing pass logs a metadata-only warning (count, field names and
+    event kinds), so a new producer that leaves orphans shows up in the app
+    log and not only inside the bundles people share.
+
+    Args:
+        records: Snapshot records in ledger order.
+
+    Returns:
+        The records with unrecorded references cleared, and the
+        ``(source event_id, field)`` pairs that were cleared.
+    """
+    known = {str(record.event_id) for record in records}
+    cleared: set[tuple[str, str]] = set()
+    kinds: set[str] = set()
+    result: list[TrajectoryRecord] = []
+    for record in records:
+        fields = [
+            field
+            for field in _REFERENCE_FIELDS
+            if getattr(record, field) and str(getattr(record, field)) not in known
+        ]
+        if fields:
+            record = dataclasses.replace(
+                record,
+                **{field: None for field in fields},
+                field_states={
+                    **record.field_states,
+                    **{field: "not_available" for field in fields},
+                },
+            )
+            cleared.update((str(record.event_id), field) for field in fields)
+            kinds.add(str(record.kind))
+        result.append(record)
+    if cleared:
+        # Names only: event ids embed conversation ids.
+        logger.warning(
+            "Trace export cleared {} reference(s) to unrecorded events "
+            "fields={} event_kinds={}",
+            len(cleared),
+            sorted({field for _, field in cleared}),
+            sorted(kinds),
+        )
+    return tuple(result), frozenset(cleared)
 
 
 def preflight_trace_export(
@@ -815,7 +947,9 @@ def preflight_trace_export(
         ValueError: If ``profile`` is not a supported privacy profile.
     """
     selected = _profile(profile)
-    records = tuple(record for turn in snapshot.turns for record in turn.records)
+    records, unrecorded = _clear_unrecorded_references(
+        tuple(record for turn in snapshot.turns for record in turn.records)
+    )
     aliases = _identity_aliases(records)
     prepared_events: list[dict[str, Any]] = []
     decisions: list[TraceFieldDecision] = []
@@ -873,7 +1007,11 @@ def preflight_trace_export(
                 raise TrajectoryExportError(
                     f"Invalid Trace field state {state!r} for {field!r}"
                 )
-            reason = f"source_{state}"
+            reason = (
+                _REFERENCE_NOT_RECORDED
+                if (str(record.event_id), str(field)) in unrecorded
+                else f"source_{state}"
+            )
             field_provenance[field] = {
                 "state": state,
                 "reason": reason,
@@ -1000,7 +1138,7 @@ def _trace_digest(payload: Mapping[str, Any]) -> str:
 def _lineage(events: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
     edges: list[dict[str, str]] = []
     for event in events:
-        for field in ("parent_event_id", "source_event_id", "replacement_event_id"):
+        for field in _REFERENCE_FIELDS:
             target = event.get(field)
             if target:
                 edges.append(
@@ -1022,7 +1160,7 @@ def _validate_event_references(events: Sequence[Mapping[str, Any]]) -> None:
         )
     known = set(ids)
     for index, event in enumerate(events):
-        for field in ("parent_event_id", "source_event_id", "replacement_event_id"):
+        for field in _REFERENCE_FIELDS:
             target = event.get(field)
             if target and target not in known:
                 raise TrajectoryExportError(
@@ -1172,7 +1310,7 @@ def build_trace_export(
         "integrity": {"algorithm": "sha256", "authenticity": False},
     }
     if _has_credential_material(payload):
-        raise TrajectoryExportError(
+        raise TraceExportCredentialBlocked(
             "Trace export blocked: the final bundle still contains credential material"
         )
     payload["integrity"]["digest"] = _trace_digest(payload)
@@ -1191,7 +1329,7 @@ def build_trajectory_export(
     include_payloads: bool = False,
     variant_sets: Sequence[Any] = (),
 ) -> dict:
-    """Build the export payload for one conversation (ADR-067 §1).
+    """Build the export payload for one conversation (ADR-313 §1).
 
     Reads the same seams the live projection uses:
     ``get_conversation_by_id`` / ``get_messages_for_conversation(...,
@@ -1283,7 +1421,22 @@ def build_trajectory_export(
     }
     if variant_sets:
         payload["variants"] = [_serialize_variant_set(vs) for vs in variant_sets]
-    return payload
+    # TASK-41603: the finished payload is masked as a Trace v2 bundle is
+    # (review r16tr-rev1). A tool payload's JSON object or array is masked as
+    # v2 masks a payload, and stays as written when nothing in it is masked.
+    written = [row["payload_json"] for row in rows_out]
+    parsed = [_parsed_json(value) for value in written]
+    for row, value in zip(rows_out, parsed, strict=True):
+        row["payload_json"] = value
+    masked = _mask_credential_material(payload)[0]
+    for row, before, original in zip(masked["trajectory_rows"], parsed, written, strict=True):
+        if isinstance(row["payload_json"], (dict, list)):
+            row["payload_json"] = (
+                original
+                if row["payload_json"] == before
+                else json.dumps(row["payload_json"], ensure_ascii=False)
+            )
+    return masked
 
 
 # ---------------------------------------------------------------------------
@@ -1359,11 +1512,11 @@ def validate_trajectory_export(payload: Any) -> dict:
     """Validate an export payload and return it normalized (import seam).
 
     Checks the format marker and version (rejecting higher versions with
-    an actionable error per ADR-067 §2), required sections and types, and
+    an actionable error per ADR-313 §2), required sections and types, and
     required keys on each message / trajectory row entry. Optional
     sections (``compaction_records``, ``variants``,
     ``active_leaf_message_id``) are filled to ``[]`` / ``None`` when
-    absent; unknown additive fields are ignored (ADR-067 §2).
+    absent; unknown additive fields are ignored (ADR-313 §2).
 
     Args:
         payload: The parsed JSON document.
@@ -1386,24 +1539,24 @@ def validate_trajectory_export(payload: Any) -> dict:
     if fmt != TRAJECTORY_EXPORT_FORMAT:
         raise TrajectoryExportError(
             f"Invalid trajectory export: 'format' must be "
-            f"'{TRAJECTORY_EXPORT_FORMAT}', got {fmt!r}"
+            f"'{TRAJECTORY_EXPORT_FORMAT}', got {_masked(fmt)!r}"
         )
 
     version = payload.get("version")
     if not isinstance(version, int) or isinstance(version, bool):
         raise TrajectoryExportError(
-            f"Invalid trajectory export: 'version' must be an integer, got {version!r}"
+            f"Invalid trajectory export: 'version' must be an integer, got {_masked(version)!r}"
         )
     if version > TRAJECTORY_EXPORT_VERSION:
         raise TrajectoryExportError(
-            f"Unsupported trajectory export version {version}: this build reads "
+            f"Unsupported trajectory export version {_masked(version)}: this build reads "
             f"version {TRAJECTORY_EXPORT_VERSION}; export with an older version "
             f"or upgrade the app"
         )
     if version < TRAJECTORY_EXPORT_VERSION:
         raise TrajectoryExportError(
             f"Invalid trajectory export: 'version' must be "
-            f"{TRAJECTORY_EXPORT_VERSION}, got {version!r}"
+            f"{TRAJECTORY_EXPORT_VERSION}, got {_masked(version)!r}"
         )
 
     _require(payload, "exported_at", str, "exported_at")

@@ -949,3 +949,140 @@ def test_publication_pending_must_cover_actual_enrolled_profile(tmp_path, select
         prepare()
         publish_candidate(stage, plan, journal, None)
         assert (destination / "note.txt").read_bytes() == b"durable"
+
+
+
+def _published(tmp_path, index, name="target"):
+    return {
+        "path": str(tmp_path / f"{name}-{index}"),
+        "device": 1,
+        "inode": index + 1,
+        "kind": "file",
+        "sha256": "0" * 64,
+        "size": index,
+    }
+
+
+def _published_journal(tmp_path, count):
+    """Prepare ``count + 1`` artifacts, then append and flush ``count``
+    publications one by one, as publication does."""
+    from tldw_chatbook.Backup_Recovery.journal import Journal
+
+    journal = Journal(tmp_path, "op")
+    journal.record(
+        "prepared",
+        {
+            "generation": "g1",
+            "mode": "isolated",
+            "artifacts": [
+                {
+                    "logical_id": f"a{index}",
+                    "candidate": _published(tmp_path, index, "candidate"),
+                    "target": str(tmp_path / f"target-{index}"),
+                    "previous": None,
+                    "retained": None,
+                }
+                for index in range(count + 1)
+            ],
+        },
+    )
+    journal.record("publication_started", {})
+    for index in range(count):
+        journal.record(
+            "artifact_published",
+            {"logical_id": f"a{index}", "observed": _published(tmp_path, index)},
+        )
+        with journal._locked(exclusive=True) as parent:
+            journal._flush_records(parent)
+    return journal
+
+
+def test_append_and_flush_handle_each_record_once(tmp_path, monkeypatch):
+    """TASK-40310: every append and flush re-parsed, re-validated and re-flushed
+    the whole history, so a restore's journal cost grew with the square of its
+    records. Each record is now validated when appended and when first read
+    back, and flushed once while its identity holds."""
+    from collections import Counter
+
+    from tldw_chatbook.Backup_Recovery import journal as module
+
+    validated, flushed = [], []
+    real_validate, real_flush = module._validate, module.Journal._flush_record
+
+    def validate(event, *args, **kwargs):
+        validated.append(event)
+        return real_validate(event, *args, **kwargs)
+
+    def flush(parent, name, *args, **kwargs):
+        flushed.append(name)
+        return real_flush(parent, name, *args, **kwargs)
+
+    monkeypatch.setattr(module, "_validate", validate)
+    monkeypatch.setattr(module.Journal, "_flush_record", staticmethod(flush))
+    journal = _published_journal(tmp_path, 30)
+    with journal._locked(exclusive=False) as parent:
+        records = journal._records(parent)
+    names = [f"{index:06d}.json" for index in range(32)]
+    assert len(records) == 32
+    assert len(validated) <= 2 * len(records), Counter(validated)
+    assert Counter(flushed) == Counter(names)
+    # A byte-identical copy is a new file: its durability is not this journal's.
+    record = journal.root / names[5]
+    copy = journal.root / "copy"
+    copy.write_bytes(record.read_bytes())
+    copy.chmod(0o600)
+    copy.replace(record)
+    flushed.clear()
+    with journal._locked(exclusive=True) as parent:
+        journal._flush_records(parent)
+    assert flushed == [names[5]]
+
+
+@pytest.mark.parametrize(
+    "damage", [None, "tampered", "retyped", "reordered", "truncated"]
+)
+def test_cached_journal_history_still_refuses_changed_records(tmp_path, damage):
+    """TASK-40310: the parsed history a journal keeps is reused only for records
+    whose read contents and order are unchanged, and a warm journal reads
+    exactly what a fresh one does."""
+    from tldw_chatbook.Backup_Recovery.journal import Journal
+
+    journal = _published_journal(tmp_path, 4)
+    third, fourth = journal.root / "000003.json", journal.root / "000004.json"
+    if damage == "tampered":
+        value = json.loads(third.read_bytes())
+        value["evidence"]["observed"]["size"] += 1
+        third.write_text(json.dumps(value))
+    elif damage == "retyped":
+        # Equal under Python's ==, refused by the strict parse (review r14bk-rev1).
+        value = json.loads(third.read_bytes())
+        value["evidence"]["observed"]["device"] = True
+        third.write_text(json.dumps(value))
+    elif damage == "reordered":
+        third.rename(journal.root / "held")
+        fourth.rename(third)
+        (journal.root / "held").rename(fourth)
+    elif damage == "truncated":
+        third.write_bytes(b'{"version":1,')
+    last = {"logical_id": "a4", "observed": _published(tmp_path, 4)}
+    for call in (
+        lambda parent: journal._flush_records(parent),
+        lambda parent: journal._append(parent, "artifact_published", last),
+    ):
+        with journal._locked(exclusive=True) as parent:
+            if damage is None:
+                call(parent)
+            else:
+                with pytest.raises(ValueError):
+                    call(parent)
+    fresh = Journal(tmp_path, "op")
+    with fresh._locked(exclusive=False) as parent:
+        if damage is not None:
+            with pytest.raises(ValueError):
+                fresh._records(parent)
+            return
+        rows = fresh._records(parent)
+    with journal._locked(exclusive=False) as parent:
+        warm = journal._records(parent)
+    assert [row.model_dump() for row in rows] == [row.model_dump() for row in warm]
+    assert len(rows) == 7

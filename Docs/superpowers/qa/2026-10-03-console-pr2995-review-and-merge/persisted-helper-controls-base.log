@@ -1,0 +1,355 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[credential_saved-Credential saved \u2014 checking readiness] _
+
+outcome = <ConversationSettingsReturnOutcome.CREDENTIAL_SAVED: 'credential_saved'>
+expected_copy = 'Credential saved — checking readiness'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("outcome", "expected_copy"),
+        (
+            (
+                ConversationSettingsReturnOutcome.CREDENTIAL_SAVED,
+                "Credential saved — checking readiness",
+            ),
+            (
+                ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
+                "Provider settings saved — checking readiness",
+            ),
+            (
+                ConversationSettingsReturnOutcome.WITHOUT_SAVING,
+                "Returned without saving — readiness unchanged",
+            ),
+        ),
+    )
+    async def test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft(
+        outcome,
+        expected_copy,
+    ):
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_native_chat_flow.py:352: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c425e50>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 19:37:53.446 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 19:37:53.510 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 19:37:53.656 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 19:37:53.659 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_ test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[provider_settings_saved-Provider settings saved \u2014 checking readiness] _
+
+outcome = <ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED: 'provider_settings_saved'>
+expected_copy = 'Provider settings saved — checking readiness'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("outcome", "expected_copy"),
+        (
+            (
+                ConversationSettingsReturnOutcome.CREDENTIAL_SAVED,
+                "Credential saved — checking readiness",
+            ),
+            (
+                ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
+                "Provider settings saved — checking readiness",
+            ),
+            (
+                ConversationSettingsReturnOutcome.WITHOUT_SAVING,
+                "Returned without saving — readiness unchanged",
+            ),
+        ),
+    )
+    async def test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft(
+        outcome,
+        expected_copy,
+    ):
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_native_chat_flow.py:352: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c425e50>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[without_saving-Returned without saving \u2014 readiness unchanged] _
+
+outcome = <ConversationSettingsReturnOutcome.WITHOUT_SAVING: 'without_saving'>
+expected_copy = 'Returned without saving — readiness unchanged'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("outcome", "expected_copy"),
+        (
+            (
+                ConversationSettingsReturnOutcome.CREDENTIAL_SAVED,
+                "Credential saved — checking readiness",
+            ),
+            (
+                ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
+                "Provider settings saved — checking readiness",
+            ),
+            (
+                ConversationSettingsReturnOutcome.WITHOUT_SAVING,
+                "Returned without saving — readiness unchanged",
+            ),
+        ),
+    )
+    async def test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft(
+        outcome,
+        expected_copy,
+    ):
+>       app = _build_test_app()
+              ^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_native_chat_flow.py:352: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c425e50>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+________ test_console_successful_send_does_not_leave_empty_send_tooltip ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1162e8b90>
+
+    @pytest.mark.asyncio
+    async def test_console_successful_send_does_not_leave_empty_send_tooltip(monkeypatch):
+>       app = _build_console_send_test_app()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_native_chat_flow.py:4968: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/test_console_native_chat_flow.py:235: in _build_console_send_test_app
+    app = _build_test_app(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c425e50>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+============================= slowest 25 durations =============================
+1.00s setup    Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[credential_saved-Credential saved \u2014 checking readiness]
+
+(11 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[credential_saved-Credential saved \u2014 checking readiness]
+FAILED Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[provider_settings_saved-Provider settings saved \u2014 checking readiness]
+FAILED Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[without_saving-Returned without saving \u2014 readiness unchanged]
+FAILED Tests/UI/test_console_native_chat_flow.py::test_console_successful_send_does_not_leave_empty_send_tooltip
+4 failed in 20.16s

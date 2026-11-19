@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "git",
+    "-c",
+    "gc.auto=0",
+    "commit",
+    "-m",
+    "test(console): supply Session consumers in reconciliation fixture"
+  ],
+  "staged_paths": [
+    "Tests/UI/test_console_runtime_ownership.py"
+  ]
+}

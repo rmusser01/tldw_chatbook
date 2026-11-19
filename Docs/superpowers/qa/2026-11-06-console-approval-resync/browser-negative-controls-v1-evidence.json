@@ -1,0 +1,62 @@
+{
+  "scope": "Two actual browser trace-admission refusals only; no positive card, input, worker or presentation timing qualification. Historical source scope is explicit.",
+  "revision": "5ada3279414d40f78599e63f10acf788a61cbeca",
+  "freeze_sha256": "96d6b706a9683753c32d08cff18845a449fd7ccbc61bfc6710dfeee1d54870be",
+  "protected_original_summary_sha256": "c077cb0f1144b4bd6fffafa7d848afd4086aed911b44bb5439e30f58a4ffd4a5",
+  "qualified": false,
+  "product_samples": 0,
+  "trace_controls": [
+    {
+      "control": "temporary_capture_on",
+      "actual_exception": "TemporaryCaptureRequiresSave",
+      "scripted_turns_consumed": 0,
+      "chat_post_entry_delta": 0
+    },
+    {
+      "control": "durable_capture_on_missing_provenance",
+      "actual_exception": "TraceProvenanceAlignmentError",
+      "scripted_turns_consumed": 0,
+      "chat_post_entry_delta": 0
+    }
+  ],
+  "aggregate_chat_post_entries": 0,
+  "aggregate_scripted_turns": 0,
+  "actual_positive_stage_attempts": 0,
+  "actual_terminal_cells": [
+    133,
+    42
+  ],
+  "geometry_or_presentation_qualification": false,
+  "browser_version": "157.0.4341.42",
+  "frozen_raw_inputs": 3486,
+  "copied_runtime_files": 19,
+  "all_frozen_and_runtime_bytes_stable": true,
+  "source_closures": {
+    "parent_imported_chatbook_modules": 105,
+    "parent_imported_Core_modules": 0,
+    "child_imported_modules": 1748,
+    "child_imported_Core_modules": 9,
+    "source_mismatches": 0,
+    "real_profile_refusals": 0,
+    "original_home_guard_before_redirection": true
+  },
+  "network": {
+    "chat_POST_entries": 0,
+    "browser_background_proxy_denials": 5,
+    "browser_page_route_denials": 0,
+    "external_success_claimed": false
+  },
+  "runtime_exit_code": 0,
+  "child_app_exit_code": 0,
+  "forced_cleanup": false,
+  "authenticated_owned_PID_count": 5,
+  "all_known_owned_PIDs_absent": true,
+  "exact_run_process_scan_remaining": 0,
+  "cleanup_ms": 1420.864,
+  "actual_trace_admission_evidence_sha256": {
+    "smoke-result.json": "4ff1bf522857a684b4315b66538d68d4f9a489132753ba1a62d049b39e909948",
+    "product-child-exit.json": "228f88bf5e78593daae6084743249c21f35f6c1bcda2abfefadfddd5addaee1b",
+    "source-selection.json": "1868e69583d05a8a5adf083489a4029c954608ed312c436f85c8af10e5c005bc",
+    "prepared-environment.json": "537579238c2e9a737a16b2c040f136316c4eb1b8ab8de49310c7474988f0cb42"
+  }
+}

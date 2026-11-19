@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Mapping  # noqa: UP035
 from loguru import logger
 
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
-from tldw_chatbook.config import CLI_APP_CLIENT_ID, get_chachanotes_db_lazy
+from tldw_chatbook.config import CLI_APP_CLIENT_ID
 from tldw_chatbook.Constants import MODEL_CATALOG_REFRESH_WORKER_GROUP
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import ModelCatalogRefreshed
@@ -253,7 +253,7 @@ class FeatureGlueMixin:
         index (state = ``messages_fts_docsize`` membership, in the DB
         itself).
 
-        Uses the app's shared ``CharactersRAGDB`` singleton -- thread-local
+        Uses the app's ``CharactersRAGDB`` (``services.storage``) -- thread-local
         connections are exactly what makes that safe from a worker thread
         (see ``_backfill_subscription_items_fts`` for the incident that
         taught this). Unlike that worker, no ``close()`` here: pooled threads
@@ -288,7 +288,10 @@ class FeatureGlueMixin:
         should_abort = (lambda: worker.is_cancelled) if worker is not None else None
 
         try:
-            db = get_chachanotes_db_lazy()
+            # TASK-38462: never open (and so CREATE) the database here -- that
+            # is every schema step plus seeding, seconds on Windows, in a run
+            # no cancel can stop. Only the database the app already opened.
+            db = self.services.storage.chachanotes
             if db is None:
                 logger.debug(
                     "ChaChaNotes messages FTS backfill skipped: no database instance."
@@ -592,16 +595,14 @@ class FeatureGlueMixin:
             if refreshed:
                 self.post_message(ModelCatalogRefreshed(providers=refreshed))
             message = format_refresh_notification(report)
-            if message:
-                has_failure = report.disk_write_failed or any(
-                    outcome.status == "failed" or outcome.write_failed
-                    for outcome in report.outcomes
-                )
-                self.notify(
-                    message,
-                    title="Model catalog",
-                    severity="warning" if has_failure else "information",
-                )
+            has_failure = report.disk_write_failed or any(
+                outcome.status == "failed" or outcome.write_failed
+                for outcome in report.outcomes
+            )
+            # TASK-34100.5 AC#11: the pass setup released is news only if it failed.
+            if message and (has_failure or not getattr(self, "_model_catalog_notice_quiet", False)):
+                severity = "warning" if has_failure else "information"
+                self.notify(message, title="Model catalog", severity=severity)
         except Exception as exc:
             # No traceback: the log file sink runs with diagnose=True, which
             # would dump frame locals (potentially API keys) into the log file.
@@ -657,6 +658,7 @@ class FeatureGlueMixin:
             return True
 
         self._startup_model_catalog_refresh_scheduled = True
+        self._model_catalog_notice_quiet = after_setup_completion
         self.run_worker(
             self._refresh_model_catalogs,
             exclusive=True,
@@ -735,6 +737,7 @@ class FeatureGlueMixin:
         exclusive group, so the two paths can never run concurrently.
         """
         self._startup_model_catalog_refresh_scheduled = True
+        self._model_catalog_notice_quiet = True  # setup's own choice (AC#11)
         self.run_worker(
             self._refresh_model_catalogs,
             exclusive=True,

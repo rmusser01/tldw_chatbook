@@ -27,7 +27,7 @@ from tldw_chatbook.Constants import (
     TAB_SKILLS,
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 
@@ -49,7 +49,12 @@ CORE_FIRST_USE_ROUTES = (
     # tab "library") and checks the skills canvas's own empty-state copy
     # rather than the retired SkillsScreen's.
     (TAB_SKILLS, TAB_LIBRARY, "LibraryScreen", ("No skills yet", "New skill")),
-    (TAB_MCP, TAB_MCP, "MCPScreen", ("MCP", "Model Context Protocol")),
+    # ADR-240: the MCP destination retired into Settings > Tools & MCP; the
+    # legacy "mcp" route lands SettingsScreen (canonical tab "settings") via
+    # the alias + default context. TASK-35155: the pane's purpose copy is
+    # now the plain-language three-questions line; the MCP identity rides
+    # the "Tools & MCP" category name -- same shape as the skills row above.
+    (TAB_MCP, TAB_SETTINGS, "SettingsScreen", ("Tools & MCP", "what asks first")),
     (TAB_SETTINGS, TAB_SETTINGS, "SettingsScreen", ("Settings", "Providers & Models")),
 )
 

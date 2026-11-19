@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "Tests/Agents/test_native_legacy_hooks.py::test_parallel_finalization_joins_each_original_operation_return",
+    "--basetemp",
+    "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-hook_ordinals-me3lvbiw/pytest",
+    "--junitxml",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-hook_ordinals/tests.xml"
+  ],
+  "basetemp": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/t10-hook_ordinals-me3lvbiw",
+  "elapsed": 12.616448750020936,
+  "pgid": 95668,
+  "pid": 95668,
+  "primary": 1,
+  "process_wait": 1,
+  "signals": [],
+  "source_deltas": [],
+  "sources": 8325,
+  "started": 1793853497.355158,
+  "whole_bound": 60
+}

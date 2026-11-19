@@ -271,9 +271,7 @@ async def test_staged_context_tray_counts_sources_not_display_rows() -> None:
         await pilot.click("#console-staged-source-primary-0")
 
         assert detail.display is True
-        detail_text = " ".join(
-            str(item.renderable) for item in detail.query(Static)
-        )
+        detail_text = " ".join(str(item.renderable) for item in detail.query(Static))
         assert "Body 1" in detail_text
         assert "Authority: local" in detail_text
         assert "Freshness: Current" in detail_text

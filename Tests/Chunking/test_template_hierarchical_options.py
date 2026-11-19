@@ -31,7 +31,9 @@ def test_template_hierarchical_forwards_method_options():
     chunks = processor.process_template(text, template)
 
     assert chunks, "Expected hierarchical chunking to return chunks"
-    assert chunks[0]["text"].startswith("Hi. Ok."), "Expected short sentences to be combined via method options"
+    assert chunks[0]["text"].startswith("Hi. Ok."), (
+        "Expected short sentences to be combined via method options"
+    )
 
 
 def test_template_string_false_does_not_enable_hierarchical():
@@ -58,5 +60,9 @@ def test_template_string_false_does_not_enable_hierarchical():
     chunks = processor.process_template(text, template)
 
     assert chunks
-    assert all("paragraph_kind" not in (chunk.get("metadata") or {}) for chunk in chunks)
-    assert all("ancestry_titles" not in (chunk.get("metadata") or {}) for chunk in chunks)
+    assert all(
+        "paragraph_kind" not in (chunk.get("metadata") or {}) for chunk in chunks
+    )
+    assert all(
+        "ancestry_titles" not in (chunk.get("metadata") or {}) for chunk in chunks
+    )

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -23,6 +24,7 @@ from tldw_chatbook.Chat import chat_persistence_service
 from tldw_chatbook.Chat import console_runtime as runtime_module
 from tldw_chatbook.Chat.console_exchange_capture import capture_to_blob
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from tldw_chatbook.Chat import console_trace_maintenance as maintenance_module
 from tldw_chatbook.Chat.console_trace_legacy import LegacyTraceNormalizer
 from tldw_chatbook.Chat.console_trace_maintenance import (
     LegacyTraceMaintenance,
@@ -32,8 +34,56 @@ from tldw_chatbook.Chat.console_trace_maintenance import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+_WORKERS = ("LegacyTraceMaintenance", "TraceGarbageCollector", "PhysicalTraceCompactor")
+
+
+class _InertCollector:
+    """A GC worker with nothing to collect (default double)."""
+
+    def __init__(self, _database: object) -> None:
+        pass
+
+    def current_graph_epoch(self) -> int:
+        return 0
+
+    def collect(self, *, request_id: str) -> SimpleNamespace:
+        del request_id
+        return SimpleNamespace(marked_epoch=0)
+
+
+class _InertCompactor:
+    """A compactor with nothing to compact (default double)."""
+
+    def __init__(self, _database: object, **_kwargs: object) -> None:
+        pass
+
+    def run_after_gc(self, _result: object) -> SimpleNamespace:
+        return SimpleNamespace(completed=True, reason_code="complete")
+
+
+def fake_maintenance_module(**doubles: object) -> ModuleType:
+    """A copy of the real maintenance module with its workers swapped for doubles.
+
+    The loop's helpers stay real: 6125fbc5b8 moved
+    ``maintenance_error_must_propagate``, ``call_owned_maintenance`` and
+    ``runtime_provider_active`` here, and a bare stub without them failed
+    every loop test with an ImportError (TASK-41134). A GC worker not passed
+    is an inert double, so the physical pass runs and does nothing. A double
+    must name a worker the real module still has, so a rename fails here.
+    """
+    assert set(doubles) <= set(_WORKERS) and all(
+        hasattr(maintenance_module, name) for name in _WORKERS
+    ), f"unknown worker double: {sorted(set(doubles) - set(_WORKERS))}"
+    module = ModuleType(maintenance_module.__name__)
+    module.__dict__.update(vars(maintenance_module))
+    module.TraceGarbageCollector = _InertCollector  # type: ignore[attr-defined]
+    module.PhysicalTraceCompactor = _InertCompactor  # type: ignore[attr-defined]
+    module.__dict__.update(doubles)
+    return module
+
+
 def _install_fake_maintenance(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
-    """A normalization worker that is always complete; no GC classes (test double)."""
+    """A normalization worker that is always complete (test double)."""
 
     class _Maintenance:
         def __init__(self, _database: object, **_kwargs: object) -> None:
@@ -43,8 +93,7 @@ def _install_fake_maintenance(monkeypatch: pytest.MonkeyPatch, calls: list[str])
             calls.append("batch")
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
 
 
@@ -111,6 +160,76 @@ async def test_an_exchange_write_signal_wakes_parked_maintenance(
 
 
 @pytest.mark.asyncio
+async def test_a_signal_wake_tells_the_pass_it_has_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33801: a pass woken by an exchange write skips the idle check.
+
+    Args:
+        monkeypatch: Swaps in the fake worker and shortens the loop's sleeps.
+    """
+    flags: list[bool] = []
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            self.expect_work = True
+
+        def run_batch(self) -> SimpleNamespace:
+            flags.append(self.expect_work)
+            self.expect_work = False
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtime = _fast_runtime(monkeypatch)
+
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    await _until_parked(flags)
+    parked_at = len(flags)
+    chat_persistence_service.signal_trace_maintenance_work()
+    await _until(lambda: len(flags) > parked_at)
+    await runtime.dispose()
+
+    assert flags[parked_at] is True, f"the woken pass was not told it has work: {flags}"
+
+
+@pytest.mark.asyncio
+async def test_work_written_during_an_unparked_pass_is_flagged_for_the_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33801: a write landing while a pass runs is flagged for the next one.
+
+    Not only a write that wakes a parked loop: one landing during a pass, or
+    the physical cleanup after it, is flagged too (Qodo, #2959).
+
+    Args:
+        monkeypatch: Swaps in the fake worker and shortens the loop's sleeps.
+    """
+    flags: list[bool] = []
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            self.expect_work = True
+
+        def run_batch(self) -> SimpleNamespace:
+            flags.append(self.expect_work)
+            self.expect_work = False
+            if len(flags) == 1:  # a write lands while the first pass runs
+                chat_persistence_service.signal_trace_maintenance_work()
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtime = _fast_runtime(monkeypatch)
+
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    await _until(lambda: len(flags) >= 2)
+    await runtime.dispose()
+
+    assert flags[1] is True, f"the pass after a mid-pass write was not told: {flags}"
+
+
+@pytest.mark.asyncio
 async def test_one_signal_wakes_every_parked_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -131,8 +250,7 @@ async def test_one_signal_wakes_every_parked_runtime(
             calls.append(self._database)
             return SimpleNamespace(logical_complete=True, admitted=True)
 
-    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
-    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
     monkeypatch.setitem(sys.modules, module.__name__, module)
     runtimes = [_fast_runtime(monkeypatch), _fast_runtime(monkeypatch)]
     databases = ["db-a", "db-b"]
@@ -259,6 +377,118 @@ async def test_a_real_exchange_append_wakes_parked_maintenance(
         await _until(lambda: LegacyTraceNormalizer(db).read_calls(second))
     finally:
         await runtime.dispose()
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_a_signal_woken_real_pass_opens_only_its_write_transaction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-33801 end to end: a signal-woken real pass opens one transaction.
+
+    The real worker, woken by an exchange written through the production
+    writer, opens only its immediate write transaction -- no read-only idle
+    check first (Qodo, #2959).
+
+    Args:
+        monkeypatch: Records the transactions each pass opens; shortens sleeps.
+        tmp_path: Holds the real ChaChaNotes database.
+    """
+    db, conversation_id = _real_db(tmp_path)
+    first = _message(db, conversation_id, "answer-0")
+    _append_exchange(db, first, 0)
+    passes: list[list[bool]] = []
+    # Only the thread running the pass: the test's own polling reads the
+    # database concurrently and must not be billed to it.
+    in_pass = threading.local()
+    real_run_batch = LegacyTraceMaintenance.run_batch
+
+    def bracketed_run_batch(self):
+        passes.append([])
+        in_pass.active = True
+        try:
+            return real_run_batch(self)
+        finally:
+            in_pass.active = False
+
+    real_transaction = db.transaction
+
+    def recording_transaction(*, immediate: bool = False):
+        if getattr(in_pass, "active", False):
+            passes[-1].append(immediate)
+        return real_transaction(immediate=immediate)
+
+    monkeypatch.setattr(LegacyTraceMaintenance, "run_batch", bracketed_run_batch)
+    monkeypatch.setattr(db, "transaction", recording_transaction)
+    runtime = _fast_runtime(monkeypatch)
+
+    runtime._schedule_legacy_trace_maintenance(db, lambda: LegacyTraceNormalizer(db))
+    try:
+        await _until(lambda: LegacyTraceNormalizer(db).read_calls(first))
+        await _until_parked(passes)
+        woken_at = len(passes)
+        second = _message(db, conversation_id, "answer-1")
+        _append_exchange(db, second, 1)
+        await _until(lambda: LegacyTraceNormalizer(db).read_calls(second))
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+    assert passes[woken_at] == [True], f"the signal-woken pass opened {passes[woken_at]}"
+
+
+@pytest.mark.asyncio
+async def test_a_real_write_landing_mid_pass_flags_the_next_real_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-33801 end to end: a write landing during a real pass is flagged.
+
+    The exchange is appended through the production writer just after the
+    first real pass returns -- after the loop read the write generation,
+    before its next comparison -- so the next pass (after the physical
+    cleanup) must open only its immediate write transaction (Qodo, #2959).
+
+    Args:
+        monkeypatch: Records the transactions each pass opens; shortens sleeps.
+        tmp_path: Holds the real ChaChaNotes database.
+    """
+    db, conversation_id = _real_db(tmp_path)
+    first = _message(db, conversation_id, "answer-0")
+    second = _message(db, conversation_id, "answer-1")
+    _append_exchange(db, first, 0)
+    passes: list[list[bool]] = []
+    in_pass = threading.local()
+    real_run_batch = LegacyTraceMaintenance.run_batch
+
+    def bracketed_run_batch(self):
+        passes.append([])
+        in_pass.active = True
+        try:
+            return real_run_batch(self)
+        finally:
+            in_pass.active = False
+            if len(passes) == 1:  # lands mid-pass, as the loop sees it
+                _append_exchange(db, second, 1)
+
+    real_transaction = db.transaction
+
+    def recording_transaction(*, immediate: bool = False):
+        if getattr(in_pass, "active", False):
+            passes[-1].append(immediate)
+        return real_transaction(immediate=immediate)
+
+    monkeypatch.setattr(LegacyTraceMaintenance, "run_batch", bracketed_run_batch)
+    monkeypatch.setattr(db, "transaction", recording_transaction)
+    runtime = _fast_runtime(monkeypatch)
+
+    runtime._schedule_legacy_trace_maintenance(db, lambda: LegacyTraceNormalizer(db))
+    try:
+        await _until(lambda: LegacyTraceNormalizer(db).read_calls(second))
+    finally:
+        await runtime.dispose()
+        db.close_connection()
+
+    assert passes[1] == [True], f"the pass after a mid-pass write opened {passes[1]}"
 
 
 @pytest.mark.asyncio
@@ -304,3 +534,98 @@ async def test_parked_maintenance_still_collects_once_per_interval(
         await _until(lambda: len(collects) >= 2)
     finally:
         await runtime.dispose()
+        db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_a_missing_physical_worker_fails_the_loop_before_any_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-41134 review r15tr-rev1: a renamed GC worker used to be skipped
+    silently (``except ImportError``) for the life of the process. The loop
+    now fails at start, and disposal re-raises it."""
+    calls: list[str] = []
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            pass
+
+        def run_batch(self) -> SimpleNamespace:
+            calls.append("batch")
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    module = fake_maintenance_module(LegacyTraceMaintenance=_Maintenance)
+    del module.TraceGarbageCollector
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtime = _fast_runtime(monkeypatch)
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    task = runtime._legacy_trace_maintenance_task
+    try:
+        await asyncio.wait({task}, timeout=5)
+        assert task.done(), "the loop kept running without its GC worker"
+        assert isinstance(task.exception(), ImportError)
+        assert "TraceGarbageCollector" in str(task.exception())
+        assert calls == []
+        with pytest.raises(ImportError):
+            await runtime.dispose()
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_disposal_retains_original_maintenance_return_through_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+    fail: bool,
+) -> None:
+    """The finite native offload returns before cancellation or its exact error."""
+    entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+    failure = RuntimeError("original maintenance failure")
+    calls = []
+
+    class Maintenance:
+        def __init__(self, _database, **_kwargs):
+            pass
+
+        def run_batch(self):
+            calls.append("batch")
+            entered.set()
+            try:
+                assert release.wait(5)
+                if fail:
+                    raise failure
+                return SimpleNamespace(logical_complete=True, admitted=True)
+            finally:
+                returned.set()
+
+    module = fake_maintenance_module(LegacyTraceMaintenance=Maintenance)
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtime = _fast_runtime(monkeypatch)
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    assert await asyncio.to_thread(entered.wait, 5)
+    disposal = asyncio.create_task(runtime.dispose())
+    try:
+        await _real_sleep(0.02)
+        for _ in range(2):
+            disposal.cancel()
+            runtime._legacy_trace_maintenance_task.cancel()
+            await _real_sleep(0.01)
+            assert not disposal.done()
+            assert not returned.is_set()
+    finally:
+        release.set()
+    if fail:
+        with pytest.raises(RuntimeError) as caught:
+            await disposal
+        assert caught.value is failure
+        # An already-done original maintenance failure is never discarded.
+        with pytest.raises(RuntimeError) as repeated:
+            await runtime.dispose()
+        assert repeated.value is failure
+    else:
+        with pytest.raises(asyncio.CancelledError):
+            await disposal
+    assert returned.is_set()
+    assert calls == ["batch"]

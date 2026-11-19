@@ -1,0 +1,100 @@
+w_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24898 - Started outermost transaction on thread 6195802112.
+2026-11-04 20:36:26.269 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8393 - Checking DB schema 'rag_char_chat_schema'. Current version: 81. Code supports: 81
+2026-11-04 20:36:26.270 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8411 - Database schema 'rag_char_chat_schema' is up to date (Version 81).
+2026-11-04 20:36:26.270 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 6195802112.
+2026-11-04 20:36:26.270 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2974 - CharactersRAGDB initialization completed successfully db_sha256=0a1827bd9d15
+2026-11-04 20:36:26.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): 
+    SELECT id, name, extensions, deleted
+      FROM character_cards
+     WHERE CASE WHEN json_valid(extensions)
+                THEN json_extract(extensions, '$."tldw/builtin_id"')
+           END = 'samira'
+     ORDER BY id
+     LIMIT 1
+... Params: None
+2026-11-04 20:36:26.273 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): SELECT * FROM visual_identity_packs
+             WHERE owner_user_id = 0 AND source_kind = 'builtin' ORDER BY id... Params: None
+2026-11-04 20:36:26.274 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): SELECT * FROM visual_identity_bindings
+                     WHERE owner_user_id = 0 AND actor_kind = 'character'
+                       AND actor_id = ? ORDER BY id... Params: (2)
+2026-11-04 20:36:26.274 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3647 - Executing SQL (script=False): SELECT p.*, v.pack_id AS version_pack_id,
+                  (SELECT COUNT(*) FROM visual_identity_assets a
+                    WHERE a.pack_version_id = v.id AND a.deleted = 0) AS asset_count,
+                  (SELECT COUNT(*) FROM visual_identity_assets a
+                    WHERE a.pack_version_i... Params: (1, 1)
+2026-11-04 20:36:26.275 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24898 - Started outermost transaction on thread 6195802112.
+2026-11-04 20:36:26.275 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24867 - Entered nested transaction level 2 on thread 6195802112.
+2026-11-04 20:36:26.276 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 6195802112.
+2026-11-04 20:36:26.276 | SUCCESS  | tldw_chatbook.config:get_chachanotes_db_lazy:11710 - ChaChaNotes_DB lazy-initialized successfully at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db
+INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService: Verified base directory: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user
+INFO:tldw_chatbook.Notes.Notes_Library:NotesInteropService initialized with unified DB template: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db
+2026-11-04 20:36:26.276 | INFO     | tldw_chatbook.app:_init_notes_service:2082 - NotesInteropService successfully initialized for user 'default_user'.
+2026-11-04 20:36:26.276 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3458 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=0a1827bd9d15 thread=6195802112.
+2026-11-04 20:36:26.276 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3464 - WAL checkpoint TRUNCATE executed db_sha256=0a1827bd9d15.
+2026-11-04 20:36:26.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_close_connection_handle:3491 - Closed SQLite connection db_sha256=0a1827bd9d15 thread=6195802112.
+2026-11-04 20:36:26.277 | INFO     | tldw_chatbook.app:__init__:1389 - Parallel init task 'notes_service' completed in 0.101s
+INFO:root:App __init__: Determined initial tab value: chat
+2026-11-04 20:36:26.333 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 20:36:26.387 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/tldw_chatbook_workspaces.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 20:36:26.452 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/tldw_chatbook_subscriptions.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 20:36:26.460 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ClientNotificationsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/tldw_chatbook_notifications.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 20:36:26.462 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 20:36:26.463 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-11-04 20:36:26.514 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/tldw_chatbook_scheduled_tasks.db [Client: default]
+2026-11-04 20:36:26.588 | DEBUG    | tldw_chatbook.app:__init__:1460 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-11-04 20:36:26.588 | DEBUG    | tldw_chatbook.app:__init__:1463 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+INFO:root:Assigned prompts_interop.get_db_instance() to self.prompts_db
+INFO:root:Assigned lazy-loaded chachanotes_db to self.chachanotes_db as fallback.
+2026-11-04 20:36:26.650 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3129 - Opened/Reopened SQLite connection db_sha256=0a1827bd9d15 thread=8461753728
+2026-11-04 20:36:26.654 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24898 - Started outermost transaction on thread 8461753728.
+2026-11-04 20:36:26.654 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24963 - Transaction (outermost) committed successfully on thread 8461753728.
+2026-11-04 20:36:26.660 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/config/eval_overrides.yaml
+2026-11-04 20:36:26.710 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/task10-live-jp4_gyzp/home/.local/share/tldw_cli/default_user/evals.db
+2026-11-04 20:36:26.710 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-11-04 20:36:26.751 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:_init_worker_handlers:2211 - Worker handler registry initialized with all handlers
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1653 - === STARTUP TIMING SUMMARY ===
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1654 - Total initialization time: 0.647 seconds
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1660 -   basic_init: 0.067s (10.3%)
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1660 -   attribute_init: 0.000s (0.0%)
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1660 -   parallel_init: 0.102s (15.7%)
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1673 -     - notes_service: 0.101s (99.5% of parallel_init)
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1673 -     - media_db: 0.073s (72.2% of parallel_init)
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1673 -     - prompts_service: 0.062s (61.5% of parallel_init)
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1673 -     - providers_models: 0.001s (0.9% of parallel_init)
+2026-11-04 20:36:26.751 | INFO     | tldw_chatbook.app:__init__:1677 - ==============================
+INFO:root:Splash screen enabled: False
+2026-11-04 20:36:27.050 | DEBUG    | tldw_chatbook.app:on_mount:3355 - Notes-sync start gate: no configuration evidence; runtime not constructed this boot.
+INFO:tldw_chatbook.diagnostics.app:event=app_started component=app
+INFO:root:--- _setup_logging START (from Logging_Config.py) ---
+INFO:root:Loguru: All pre-existing sinks removed.
+INFO:root:Loguru: Configured to forward its messages to standard Python logging system.
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py:287: RuntimeWarning: coroutine 'ChatScreen._sync_native_console_chat_ui' was never awaited
+  if hasattr(lock, '_release_save'):
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 341, in <module>
+    asyncio.run(main())
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-10-live.py", line 229, in main
+    app.screen.query_one('#workflow-saved',Select).value=saved["workflow"]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/reactive.py", line 374, in __set__
+    self._set(obj, value)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/reactive.py", line 340, in _set
+    value = private_validate_function(value)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/widgets/_select.py", line 594, in _validate_value
+    raise InvalidSelectValueError(
+textual.widgets._select.InvalidSelectValueError: Illegal select value '27061b38-fb42-4f92-ba75-79b1a4ec3931'.

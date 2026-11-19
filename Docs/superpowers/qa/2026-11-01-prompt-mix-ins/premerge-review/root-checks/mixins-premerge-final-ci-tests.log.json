@@ -1,0 +1,4 @@
+{
+  "sha256": "8d7fa9957cbd961279b17433a39ede5600c9759034460752a132a69096fe175f",
+  "raw_text": "........................................................................ [ 28%]\n........................................................................ [ 56%]\n........................................................................ [ 85%]\n......................................                                   [100%]\n============================= slowest 25 durations =============================\n8.40s call     Tests/CI/test_ui_pr_gate_census_checker.py::test_the_committed_census_is_currently_valid\n2.24s call     Tests/CI/test_derived_artifacts_workflow.py::test_every_node_id_target_in_a_pr_lane_step_resolves\n2.09s call     Tests/CI/test_derived_artifacts_workflow.py::test_pr_step_contract_rejects_location_and_target_drift[unresolved]\n\n(22 durations < 1s hidden.)\n254 passed in 34.34s\n"
+}

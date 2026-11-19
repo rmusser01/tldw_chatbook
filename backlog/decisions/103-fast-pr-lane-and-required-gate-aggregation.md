@@ -1,11 +1,56 @@
 # ADR-103: Fast PR lane and required gate aggregation
 
-Status: Accepted (amended 2026-08-30 for admin/current-base enforcement); amended 2026-09-27 (nightly disabled, guards removed, GGUF evidence narrowed)
+Status: Accepted (amended 2026-08-30 for admin/current-base enforcement); amended 2026-09-27 (nightly disabled, guards removed, GGUF evidence narrowed); amended 2026-10-28 for bounded UI capacity
 Date: 2026-08-29
 Related Tasks: [TASK-24403](../tasks/task-24403%20-%20Fast-PR-lane-preserves-required-gate-and-full-coverage-cadence.md), [TASK-25705](../tasks/task-25705%20-%20Reconcile-diagnostic-inventory-and-enforce-the-dev-required-gate.md)
 Supersedes: N/A
 
+## Proposed tier-policy amendment (2026-11-13)
+
+[ADR-366](366-tiered-development-and-release-ci.md) records the owner-requested
+opt-in dev smoke, nightly regression and exact-candidate release policy. Existing
+requirements below remain active until that rollout qualifies and is enabled.
+
 ## Decision
+
+### Amendment 2026-10-29: observe qualification cost (TASK-38100)
+
+The owner requested the remaining CI audit improvements. Add one checkout-free
+reporting step after the existing aggregate verdicts, with actions-read permission
+and a one-minute step limit. This diagnostic alone tolerates failure; every
+verdict and prerequisite stays fail-closed. It adds no runner job or test skipping.
+
+Report observed completed-job execution minutes for the current attempt and all
+recorded attempts separately, plus created-to-start job wait. Deduplicate job IDs,
+exclude skipped jobs, and disclose unavailable/inverted times and the exclusion
+of the running aggregate and later queue tick. This is not a billing estimate.
+Warn above 500 cumulative observed runner-minutes (the audit's 397-minute median
+first attempt plus roughly 26 percent headroom), without failing or shortening
+qualification. Reassess against hosted observations when coverage grows.
+
+Spec: `Docs/superpowers/specs/2026-10-29-ci-cost-reporting.md`.
+Plan: `Docs/superpowers/plans/2026-10-29-ci-cost-reporting.md`.
+
+### Amendment 2026-10-29: preflight before test fan-out (TASK-38413)
+
+The owner approved early rejection after the backlog audit measured a median
+209-minute gate and 397 runner-minutes per successful first attempt. Move all
+13 artifact guards to a preflight job before the application lanes; retain
+their ordering and report-all behavior. Preflight also runs the existing static
+selector-overlap and node-resolution tests with pytest/PyYAML only and without
+application conftests. This narrowly replaces the historical install-free
+checker-job constraint; application dependencies and selected tests do not change.
+
+Every application lane needs successful preflight. The stable required context
+is a verdict-only aggregate with `always()`, explicitly rejecting unsuccessful
+preflight on every event and unsuccessful selected test lanes. Artifact guards
+still run on pushes and queue kicks, and full manual dispatch semantics remain.
+Moving checks earlier is preferable to duplicating them, broad path filtering,
+larger timeouts or shrinking the test census. It adds a small serial preflight
+to passing runs while preventing invalid runs from launching 34 application jobs.
+
+Spec: `Docs/superpowers/specs/2026-10-29-ci-preflight-and-superseded-runs.md`.
+Plan: `Docs/superpowers/plans/2026-10-29-ci-preflight-and-superseded-runs.md`.
 
 Pull requests into `dev` use one serial, minimal-dependency fast-test job whose
 result is aggregated by the existing required `Derived artifacts reproduce from
@@ -104,11 +149,22 @@ cron entry on `dev`.
 - The fast-test jobs and derived-artifact job remain separate. The required job
   declares both fast lanes as prerequisites, runs with `always()`, and fails
   explicitly on pull requests unless both prerequisite results are `success`.
-- The required workflow runs its two fast lanes in parallel (at most two
-  runners at a time), then the install-free derived-artifact checks. With
-  one routine path-scoped guard (perf-guard), an ordinary unlabeled, non-GGUF PR has a
-  peak of at most three runners instead of approximately thirteen.
-- That three-runner figure is not a global maximum. The two path-scoped GGUF
+- The required workflow runs its test lanes in parallel, then the install-free
+  derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
+  (at most two runners at a time), three runners with the one routine
+  path-scoped guard (perf-guard), instead of approximately thirteen. It has
+  grown since: the UI lane currently runs 42 shards, with at most 21 UI jobs running at once (TASK-37236, TASK-37266..37268 and the
+  dated capacity amendments below), the Console P0 gate is a third lane (TASK-33621.27), and the PR
+  Fast Lane's admission-sensitive half (two jobs since TASK-35575, three since Roleplay frame B2b), the Dreams
+  tracking tests, the Dreams and Guardian boundary contracts, the
+  Architecture guard contracts, the architecture-review tests, the
+  recovered suites and native plugin recovery UI are jobs of their own
+  (TASK-34916, TASK-34929, TASK-34986, TASK-38989, PR #3399, owner decision
+  2026-11-06, TASK-41217, owner decision 2026-11-18), so an
+  ordinary unlabeled,
+  non-GGUF PR now requests 35 test runners in parallel, 36 with perf-guard
+  (see the dated notes below).
+- That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
   the opt-in TASK-19637 label can add three more. Those exceptional evidence
   suites retain their explicit contracts.
@@ -166,5 +222,446 @@ cron entry on `dev`.
   failures are `RecoveryRequired: raw_source_selection_changed`). So until that
   harness gate is fixed (CI throughput sub-project 3), an edit confined to `app.py`,
   `config.py` or `css/**` does not exercise the GGUF screens on any PR.
+- **GGUF source evidence narrowed again (2026-10-11, owner decision).** `task-2062-2` no longer
+  fires on `Tests/UI/app_factory.py` or `Tests/private_profile.py`. In the 13 days after the
+  first narrowing, 110 of its 230 runs (1,706 of 3,903 runner-minutes) were fired by those two
+  files and no other trigger path. The two-week review (TASK-33160) measured the changed
+  workflows at 70% below baseline against an 80% target; replaying those 13 days without the two
+  paths gives 82%. `pyproject.toml` and both `conftest.py` files still trigger both workflows.
+  The gap this adds: an edit confined to `app_factory.py` or `private_profile.py` does not
+  exercise the GGUF source screens on any PR.
 - **Strict.** Restored on 2026-09-27 (see the note under the 2026-08-30 amendment).
 - Spec: `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`.
+
+2026-10-03: the required check is now also started by the merge queue's `workflow_dispatch` (input `pr`); see ADR-218.
+
+2026-10-10 (TASK-33621.27): the UI census (`scripts/ui_pr_gate_census.txt`) may list
+one test's pytest node id as well as a whole file, so a P0 regression test whose
+file is too slow for the lane can be gated on its own. The census checker
+verifies a node id's file still defines the test, rejects an entry with
+whitespace, rejects a node id beside its own whole file (the overlap rule
+above), and resolves a bracketed parametrize id statically, refusing one it
+cannot resolve. The same overlap helper pins every PR-lane pytest step.
+
+The Console review's P0 regression tests run in the census (mounted
+private-profile node ids) and in a third parallel lane, `console-p0-gate`
+("Console P0 regression gate"), with the PR Fast Lane's plugin set and its
+sandboxed / admission-sensitive split. They first went into the PR Fast Lane,
+which then took 33m41s of its 35-min cap (run 38064483856). The required check
+now `needs` all three lanes and fails when any of them is not `success`. This is
+one more runner per PR: the PR Fast Lane, four UI shards and the P0 gate make
+six concurrent test runners, then the aggregate.
+`Tests/CI/test_console_p0_regression_gate.py` pins where each P0 test runs. The
+required context name, event cadence and dependency boundary are unchanged.
+
+2026-10-14 (TASK-34916): the PR Fast Lane's admission-sensitive pytest invocation
+runs in its own job, `pr-fast-lane-admission` ("PR Fast Lane (admission-sensitive)"),
+with the same install line, the same targets in the same order, and the same 35-min
+cap; the required check `needs` it and fails when it is not `success`. Over 90
+pull-request runs to 2026-10-14 the two invocations in one job took median 31.5 /
+max 39.5 min and four runs were cancelled at the cap; each half replays at max
+20.8 and 20.1 min. One more runner per PR: seven concurrent test runners, then
+the aggregate.
+
+2026-10-14 (TASK-34917): the UI Fast Lane runs six round-robin shards (was four);
+the census and its order are unchanged. Four shards measured shard 3 at max 19.7
+min against the 20-min cap; a replay of 26 PR runs' shard logs put the heaviest
+shard at 17.4 min with five and 14.1 with six. Two more runners per PR: nine
+concurrent test runners, then the aggregate.
+
+2026-10-14 (TASK-34929): `Tests/Dreams/test_track_service.py`, in no pull-request
+lane before, runs whole on every pull request in its own job, `dreams-tracking`
+("Dreams tracking tests", 20-min cap, the PR Fast Lane's plugin set); the required
+check `needs` it and fails when it is not `success`. It is not path-filtered: the
+file also imports Notifications, Scheduling and the egress guard, and a skipped
+job would fail the aggregate's verdict. Its own job, so no existing lane moves
+toward its cap; its first run (38588725796) took 6m50s. One more runner per PR:
+ten concurrent test runners, then the aggregate.
+
+2026-10-14 (TASK-34986): PR2921's two Dreams/Guardian steps ("Run Dreams and
+Guardian boundary contracts", "Run Dreams admission-sensitive contracts") run in
+their own job, `dreams-boundary` ("Dreams and Guardian boundary contracts"),
+moved verbatim from `console-p0-gate` with the same install line and 20-min cap;
+the required check `needs` it and fails when it is not `success`. With them the
+Console P0 regression gate measured median 16.1 / max 18.7 min over 76 PR runs
+and was cancelled at the cap twice; replaying the 76 runs, the gate keeps median
+11.6 / max 13.9 min and the new job takes median 5.2 / max 6.7. In the two cancelled
+runs the gate's own steps took ~17.5 (a failing run) and ~16.1 min with setup, so
+its worst case keeps about 4 min of headroom. One more runner
+per PR: eleven concurrent test runners, then the aggregate.
+
+2026-10-14 (TASK-33007, PR #3057): Phase 7 of the model-configuration redesign
+took the UI lane to ten shards (was six). Its 92 census entries sit at the census
+tail, ordered by `scripts/ui_lane_shard_replay.py`, and are 66-72 of the
+lane's 109-119 pytest minutes in the PR's three CI runs. Replayed over eight
+runs' shard logs (those three and five six-shard runs after TASK-34917), each
+file at its slowest, the heaviest shard carries 15.2 pytest minutes with nine
+shards, 13.7 with ten and 12.4 with eleven, plus ~1.1-1.7 min of setup. Ten is
+the fewest that leaves a hung private-profile test's ~3.3-minute report room
+under the 20-min cap, as TASK-34917 requires (~15.4 + 3.3 of 20). Four more
+runners per PR: that made fifteen concurrent test runners per PR, then the
+aggregate, and the matrix sets no `max-parallel`. Those runners bear on the
+required check's wall-clock tail that TASK-34917 and TASK-34916 left open for an
+owner decision; the owner chose to land the ten shards without `max-parallel`
+(2026-10-15).
+
+2026-10-19 (TASK-35575, owner decision): the PR Fast Lane's admission-sensitive
+suites run in two jobs. `pr-fast-lane-admission` keeps the 41 targets `dev` had;
+Phase 9 of the model-configuration redesign put its 54 (the 52 moved, plus
+TASK-33666's two Stop-claim nodes) in a second job,
+`pr-fast-lane-admission-2` ("PR Fast Lane (admission-sensitive 2)"), with the same
+install line, 35-min cap and `--timeout=300`; the required check `needs` it and
+fails when it is not `success`. With all 93 in one job, PR #3169's two runs took
+29.8 and 27.4 min of the 35, so one hung test's ~5.3-minute report would have
+passed the cap. Over 20 PR runs (2026-10-18/19) `dev`'s 41 alone took median
+17.5 / max 20.0 min; the 52 alone ran in 266.9 s serial in the job's install set.
+One more runner per PR: that makes sixteen concurrent test runners per PR, then
+the aggregate.
+
+
+2026-10-20 (TASK-35834): thirteen UI shards replace ten, retaining the serial
+round-robin checker, all gated tests, dependencies, 20-minute job cap,
+180-second test timeout and fail-closed aggregation. TASK-35834: thirteen UI
+shards. At that point the total was nineteen concurrent test runners per PR,
+twenty including perf-guard. Historical counts retain their dates.
+
+The model-defaults whole-file selector becomes all 16 function selectors,
+including every parameter case (415 -> 430 census entries). Only the existing
+92-entry Phase 7 block is rebalanced; its first entry stays fixed. Two green
+runs' worst file/node costs project 995s pytest at ten shards, 829s at twelve,
+774s at thirteen and 797s at fourteen. Adding 110s setup and 15% runner variance
+makes thirteen the smallest evaluated layout below the 1020s acceptance cap
+(1000s). More shards are not monotonically better. All duration phases are
+logged to correct node attribution; unknown costs in older top-25 logs share
+only the unmeasured file remainder. Hosted qualification, including three
+post-change PR attempts, is recorded in the TASK-35834 QA report.
+
+
+2026-10-23 (TASK-36454..36458 CI qualification): repeated 20-minute UI job
+cancellations require the existing replay/reorder/add-capacity policy. Current
+UI lane at that checkpoint: 17 shards, with 23 eligible test jobs per PR;
+Perf Guard can add one more. This is a scheduling count, not a concurrency or
+queue-latency guarantee. Every selected test, the serial minimal-dependency
+checker, 20-minute job cap, 180-second test timeout and fail-closed aggregate
+remain unchanged. Timing qualification and the bounded inherited reordering
+are recorded in the pending-draft QA report; no hosted pass is implied here.
+
+Worst-observed file/node timing replay over the two recorded layouts requires
+at least 17 shards even with ideal balance under the existing 1020s target
+(110s setup reserve plus 15% variance). The selected bounded reordering projects
+999.83s at seventeen; this is an estimate requiring current-head hosted CI.
+The first 181 and last 104 census entries stay fixed, with all 720 unique
+selectors preserved. See [qualification evidence](../../Docs/superpowers/qa/2026-10-23-textual-pending-draft-followups.md).
+
+The same follow-up later appends two completion-safety regressions after the
+original 720 positions (722 selectors total). The seventeen-shard matrix,
+existing caps and aggregation policy stay unchanged; the QA report separates
+the earlier passing component timings from final-head qualification.
+
+
+## Amendment (2026-10-28, TASK-37236): smaller slices with bounded concurrency
+
+At that checkpoint the UI lane had 28 shards and 34 eligible test jobs per PR.
+The UI matrix sets `max-parallel: 17`; the six other required application lanes
+therefore retain a peak of 24 test runners, or 25 with Perf Guard (23 and 24 before Roleplay frame B2b's third admission lane).
+Eligible job count and peak concurrency are distinct. The existing required
+aggregate waits for all 28 shards; every shard stays serial with the same
+minimal dependencies, 20-minute job cap and 180-second test timeout. No selected
+target, gate or failure condition is removed. The 1,140 census entries are
+conserved exactly once, including complete parameter selections.
+
+Three observed 17-shard layouts failed through timeouts despite limited-prefix
+reordering; separate assertion failures remain failures to repair, not timing
+passes. The last observed checkout consumed 289 seconds in shard 1 and 131 in
+shard 13 before pytest could use the remaining job budget. Call-only tail models
+also omitted roughly 50–145 seconds of per-case teardown in many jobs. Keeping
+most positions fixed and treating checkout variance as a fixed per-shard cost
+did not provide reliable capacity.
+
+Use the existing `scripts/ui_lane_shard_replay.py` progress and all-phase costs
+at their worst observation across the retained runs, then deterministic
+longest-processing-time placement over the complete census. The measured
+workload is 16,850.38 seconds including a 120-second allowance for TASK-37235's two
+new native controls (116.644 seconds in actual loaded local Windows XML).
+That local measurement is an allowance input, not hosted capacity proof. Comparing
+17, 18, 20, 22, 24, 26, 28 and 30 shards makes 28 the smallest tested layout
+meeting the existing 1,020-second target with a 310-second setup/checkout reserve
+and 15 percent work variance: `602.73 * 1.15 + 310 = 1003.14` seconds. This remains
+a forecast requiring actual final-head hosted CI. Update the projection if the
+new control measurement exceeds its allowance; no hosted pass is inferred.
+
+The additional eligible jobs can run in a later wave. This adds checkout/setup
+work and can lengthen the tail of a workflow, but it preserves instantaneous
+runner demand and avoids repeated whole-matrix retries or timeout increases.
+Keeping 17 shards with the measured LPT ordering forecasts 1,450.75
+seconds under the same reserve/variance basis; increasing the job timeout would
+hide the capacity problem. Raising simultaneous UI runners would increase
+account-wide queue pressure, so the concurrency ceiling stays 17.
+
+GitHub's native [matrix concurrency control](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations#defining-the-maximum-number-of-concurrent-jobs)
+bounds simultaneous matrix jobs independently of the number of variations.
+CI contracts pin the ceiling, matrix membership, eligible-versus-parallel
+counts, unchanged limits and the fail-closed aggregation. Task and QA records
+retain the failed runs, exact selected-target conservation, measured replay
+inputs and scoped Superpowers review. This amendment implements the existing
+replay/reorder/add-capacity policy rather than creating a second required gate.
+
+Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds under the same assumptions, above the target; 28 is therefore the smallest feasible count in this model, not merely the first sampled success.
+
+## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
+
+Current UI lane: 42 shards. The current total is 56 eligible test jobs per PR
+(2026-11-02: includes the third admission-sensitive lane; 2026-11-06: and the
+Architecture guard contracts job, TASK-38989, and the architecture-review
+tests' own job, `pr-fast-lane-arch`, split out of the PR Fast Lane at its
+35-min cap, PR #3399; 2026-11-07: and `recovered-suites` and four more UI
+shards, below; 2026-11-13: and two more Console P0 profile jobs, TASK-40724;
+2026-11-15: and two more UI shards and native plugin recovery UI, below;
+2026-11-17: and four more UI shards, below).
+As of this amendment, the `max-parallel: 17` ceiling (18 since 2026-11-07,
+19 since 2026-11-15, 21 since 2026-11-17, below), minimal dependencies, serial execution, 20-minute job cap,
+180-second test timeout and fail-closed required aggregation remain unchanged.
+All 1,140 inherited selectors remain exactly once. The 43 new concrete native
+cases and the previously unenrolled canonical-class governance control bring
+the census and its floor to 1,184; split-file contracts protect all new cases.
+
+The existing full-census replay policy applies. The inherited worst-observed
+model is updated using only the 28 UI job logs of the last qualified head;
+unrelated lane logs are excluded to avoid counting shared selectors twice.
+Its 17,138.65 seconds plus 2,004.23 seconds of measured local parent-case work
+produce a 19,142.88-second workload. Native parent costs include subprocess and
+case setup/call/teardown; Character cases retain the larger successful earlier
+or final observation. The canonical-class control's Windows failure supplies
+only its timing, never passing evidence. Collection/session overhead remains
+outside case costs and is covered by the existing reserve.
+
+Deterministic longest-processing-time placement respects each round-robin
+shard's exact slot count. Comparing every size from 28 through 36 selects 32:
+`599.34 * 1.15 + 310 = 999.24` seconds against the existing 1,020-second target.
+Even ideal balance at 31 forecasts 1,020.14 seconds, so 32 is the smallest
+feasible count in this model. The four additional jobs add setup and later-wave
+work without raising simultaneous runner demand. This is a forecast, not
+hosted capacity or queue-latency proof; final-head CI must qualify it, including
+the old Notes Escape/Replace control and the canonical-class guard.
+
+The [implementation QA](../../Docs/superpowers/qa/2026-10-28-textual-followups-implementation.md)
+retains source pins, complete-phase timing inputs, selector conservation,
+candidate comparisons, native receipts and Superpowers review. This amendment
+extends the existing gate policy; it adds no required-check owner or dependency.
+
+2026-10-31 (Roleplay frame B2b, TASK-33910.4, owner decision): a third
+admission-sensitive job, `pr-fast-lane-admission-3` ("PR Fast Lane
+(admission-sensitive 3)"), runs B2b's mounted Roleplay suites
+(`test_roleplay_import_app.py`, `test_roleplay_item_list_app.py` and the painted
+search-placeholder contrast test), moved out of lanes 1 and 2, with the same
+install line, 35-min cap and `--timeout=300`; the required check `needs` it and
+fails when it is not `success`. On PR #3334's run 41169081459 lane 2 with these
+suites hit its 35-min cap at 99% (about 17 CI-min for 211 mounted tests, 485 s
+serial locally). One more runner per PR: 24 concurrent test runners, 25 with
+perf-guard, 35 eligible test jobs.
+
+2026-11-07 (owner decision 2026-11-06; TASK-39142, TASK-39043, TASK-39049,
+TASK-38976): a job of its own, `recovered-suites` ("PR lane (recovered
+suites)"), runs the non-UI suites that were red in no PR lane and are runnable
+again (TASK-38111, TASK-38973, TASK-38756), serially under
+`--storage-lease-guard` with the same install line, 20-min cap and
+`--timeout=180`; the required check `needs` it and fails when it is not
+`success`. It keeps them out of the Dreams boundary job, which keeps its
+margin, and out of pr-fast-lane, at its 35-min cap. One more runner per PR:
+27 concurrent test runners, 28 with perf-guard. (The peak-runner sentence of
+the 2026-10-28 amendment above predates the Architecture guard and
+architecture-review jobs, which already made it 26.)
+
+2026-11-07 (TASK-39144; owner decision 2026-11-06: re-deal by measured weight
+first, add shards only if that cannot keep the 5-min margin): the UI lane runs
+34 shards. Per-entry weights from 22 PR runs' shard logs (each entry at its
+slowest), with round 12's new and untimed entries at their local serial
+seconds, put 452 pytest min over the census: a 14.1-min floor per shard at 32,
+about 15.8 min a job with setup, so no order of 32 reaches 15. At 34,
+`scripts/ui_lane_shard_replay.py --rebalance` (79 swaps in all) projects
+15.0 min a job on every shard with those entries at their local seconds, and
+about 14.7 at the median CI-to-local ratio (0.73) measured on twelve timed
+entries; 35 shards would project about 14.6.
+
+2026-11-07, later (TASK-39144, owner decision 2026-11-07: "36 shards, 18 at
+once"): once the other round-12 branches' tail entries joined, the census was
+estimated at about 465 worst-case pytest min, so 34 shards would project about
+15.3 min a job and no re-deal would reach 15. The UI lane runs 36 shards with
+`max-parallel: 18`: still two waves of UI jobs, so no wall-clock change per
+PR, and one more peak runner (28 concurrent test runners, 29 counting
+perf-guard; 46 eligible test jobs). Measured on the stacked census (1913
+entries, on dev 3a6498ae14, 2026-11-09), with weights from the 22 latest PR
+runs whose UI shards all finished and 92 untimed entries at their local serial
+seconds: 430 worst-case pytest min, and `--rebalance 12.7` projects 13.1-14.4
+min a job across the 36 shards.
+
+
+## Amendment (2026-11-13, TASK-40724): independent Console P0 profiles
+
+The first sustained eight-worker local run 43487945840 reached the Console P0
+20-minute job cap during its sandboxed invocation; its admission-sensitive
+invocation never started. Those two unchanged commands now run in separate
+matrix jobs with fail-fast disabled. The required aggregator still requires
+the entire Console P0 matrix to succeed. Each job uses the existing long-lane
+35-minute budget, below the 45-minute controller deadline. Dreams/Guardian
+also uses 35 minutes after reaching 91% of its final test group at its 20-minute
+cap. Per-test 180/300-second deadlines and test selection are unchanged.
+This adds one eligible job and follows ADR-359's disposable runner boundary.
+
+
+Follow-up in the same task: run 43496035687 passed Dreams in 21m08s and P0
+admission in 13m27s. P0 sandboxed still exhausted 35 minutes: the three
+response-rule restore selectors alone completed in 25m46s before Canvas tests.
+Those unchanged selectors now run as a third P0 profile with the same 180-second
+per-test deadline and 35-minute job limit. This adds one more eligible job;
+all existing selectors remain exactly once across the three required profiles.
+
+2026-11-12 (TASK-40307; owner decision 2026-11-12, "Push-to-dev job only"): a
+job of its own, `backup-owner-suites-dev` ("Backup_Recovery owner suites (push
+to dev)"), runs the 13 Backup_Recovery owner suites that ran on no lane (27 of
+their nodes had gone red on dev unseen, TASK-40306) and the restore-journal
+file, whole, with 3 red nodes deselected by name (11 at first; review
+r14bk-rev1 re-admitted three, TASK-40307; TASK-41116 five more), on every push to dev and
+never on a pull request, like `library-shell-dev`. It is not in the required
+check's `needs`, so no PR runner and no PR verdict: the counts above are
+unchanged (30 concurrent test runners, 31 with perf-guard, 48 eligible test
+jobs per PR). A dev push starts one more job, about 40 runner-minutes. It runs
+`-n 4` (the fast-lane install line plus hypothesis and pytest-xdist): serially
+its two rollback files alone would take over an hour. Three local runs took
+31-43 min at load 22-57 on a shared 18-core host, so its step cap is 50 min
+and its job cap 55; the first CI runs should set both.
+
+2026-11-15 (round 15, TASK-41118 and TASK-41125): the same job also runs
+eleven sandboxed files that ran on no lane: two Backup_Recovery files of
+TASK-41125 and nine Personal Context backup/restore files of TASK-41118
+(five Backup_Recovery, `Tests/Personal_Context`'s three and
+`Tests/App/test_personal_context_wiring.py`). Its caps rise by 20 min to 70
+(step) and 75 (job). TASK-41112's Actor Pack export file joins the existing
+`recovered-suites` step and TASK-41125's known-profiles file the UI census
+tail. None of this adds a job or a runner: the counts above are unchanged.
+Some tests in the job run past the job's 300 s per-test limit at -n 4 on a
+loaded host, so they carry measured `timeout` marks, each about 2x a complete
+loaded run. `test_replace_restore_...` and the two roundtrip capture nodes
+get 840 s (332-417 s at load 67-110). The
+fresh-process later rollback gets 1050 s (212 s setup and a 301 s child at
+load 100-129). The marks raise only those tests' hang bounds, not the
+step's measured time: 31-43 min before, plus about 12.5 min for
+`test_restore_data_groups` and about 7.5 min for the other new files at
+-n 4, is about 51-63 min, inside the 70 min step cap.
+
+## Amendment (2026-11-15, TASK-39144): 38 shards, 19 at once
+
+Owner decision, relayed by the coordinator at the round-14 closeout: "38
+shards, 19 at once". Round 14 appended 111 census entries (2145 in all), each
+charged its local serial time from its task's notes, about 36 pytest min.
+Replayed over the 25 latest PR runs whose 36 UI shards all finished
+(2026-11-14 03:20Z to 19:32Z: 17 on GitHub-hosted runners, 8 on the
+self-hosted runners of ADR-359), each entry at its slowest, the census carries
+about 493 worst-case pytest min: a 13.7-min floor a shard at 36, so no re-deal
+of 36 keeps every job 5 min under the 20-min cap. At 38,
+`scripts/ui_lane_shard_replay.py --rebalance 13.0` (46 swaps) puts every
+shard at 12.94-12.99 pytest min; 12.97 is the floor.
+
+Against the measured slowest job per shard over those runs (the census before
+round 14, replayed the same way), a GitHub-hosted job ran a median 1.82 min
+above its replay (0.57-4.25) and a self-hosted job 0.58 min above (-1.03 to
+3.08). The 38-shard deal therefore projects about 14.8 min a job at the median
+on GitHub-hosted runners and about 13.5 on self-hosted ones.
+
+The UI matrix runs 38 shards with `max-parallel: 19`: still two waves of UI
+jobs on GitHub-hosted runners, so no wall-clock change per PR there; on the
+self-hosted fleet (ADR-359, eight test slots) the slots, not this ceiling,
+bound how many run at once. From dev's counts before this change
+(30 concurrent test runners, 31 with perf-guard, 48 eligible test jobs), the
+two new shard jobs make 50 eligible test jobs per PR, and the one-higher
+ceiling makes 31 concurrent test runners, 32 counting perf-guard.
+`Tests/CI/test_ui_lane_shard_count_statements.py` derives all three from the
+workflow. At 38 the census has no re-deal margin left: the next tail entries
+need another shard-count decision.
+
+## Amendment (2026-11-15, TASK-41217): qualified plugin recovery UI evidence
+
+PR #3524's Derived Artifacts run 43750308318, attempt 2, failed both
+TASK-40308 recovery UI journeys on Linux with `plugin runtime platform is
+unqualified`. They call the real managed plugin service directly; unlike the
+existing native-runtime fixtures and service tests, they did not declare its
+64-bit Darwin capability. ADR-162 keeps native single-owner storage qualified
+only by platform evidence, so Linux must not impersonate the APFS runtime.
+
+The two cases retain their Linux UI census entries and its floor, and declare
+the existing managed-runtime capability. A separate `plugins-recovery-ui` job
+executes exactly those two cases serially on `macos-latest`, with Python 3.12,
+the existing minimal UI dependencies and their 300-second test deadlines. The
+job has a 15-minute cap, needs successful preflight and uses the existing PR
+and full-gate-dispatch admission expression. Its JUnit report must contain two
+executed passing cases; skipped evidence cannot qualify recovery.
+
+The unchanged required context depends on this job and rejects every result
+other than success through the existing fail-closed aggregate pattern. This
+adds one macOS application job per gate: 51 eligible test jobs, at most 32
+concurrent test runners (33 with perf-guard). The Linux shard matrix and the
+bounded self-hosted pool of ADR-359 stay unchanged. The broad, path-selected
+plugin-qualification workflow remains separate; running its entire three-OS
+suite is not necessary to qualify these two UI journeys.
+
+## Amendment (2026-11-17, TASK-39144): 42 shards, 21 at once
+
+Owner decision of 2026-11-16, applied by the coordinator at the round-15
+closeout: "42 shards, 21 at once (Recommended)". The 38-shard deal of
+2026-11-15 left no re-deal margin. Round 15, stacked on dev 5e3c8b2bd4, adds
+97 census entries: 96 at the tail and one renamed in place, 2243 in all. Each
+is charged a local serial time recorded for it, about 34 pytest min: the time
+in its own task's notes, except the 48 libtests entries (TASK-41127 and
+TASK-41303). Those are priced by per-entry times from their task's notes,
+scaled to the group totals of the later rev2 re-measurement in the round's
+ledger. Their heaviest entry, literal history, is charged its loaded
+per-process time from that task's notes (140 s).
+
+Replayed over the 33 latest PR runs whose 38 UI shards all finished and whose
+jobs GitHub served (2026-11-15 18:54Z to 2026-11-17 09:38Z: 27 on
+GitHub-hosted runners, 4 on the self-hosted runners of ADR-359, 2 with jobs
+on both; 43898439593 is left out because it returned HTTP 502), each entry at
+its slowest, the census carries about 520 worst-case pytest min. That is a
+13.67-min floor a shard at 38, so no re-deal of 38 keeps every job 5 min
+under the 20-min cap. At 42, `scripts/ui_lane_shard_replay.py --rebalance
+13.0` (19 swaps, then 1 after the re-charge) puts every shard at
+11.66-12.80 pytest min; 12.37 is the floor.
+
+Against the measured slowest job per shard over those runs (dev's census,
+replayed the same way), a GitHub-hosted job ran a median 1.73 min above its
+replay (0.12 to 2.46) and a self-hosted job 0.47 min below (-1.58 to 1.43).
+The 42-shard deal therefore projects at most about 14.5 min a job at the
+median on GitHub-hosted runners (15.3 at the high end) and about 12.3 on
+self-hosted ones. Over the same runs, priced as the replay prices them, the
+CI worst case of round 14's 111 entries was 0.40x of their local charges
+(867.3 s against 2174.8 s), so loaded local charges overstate CI time.
+
+The UI matrix runs 42 shards with `max-parallel: 21`: still two waves of UI
+jobs on GitHub-hosted runners, so no wall-clock change per PR there; on the
+self-hosted fleet the slots, not this ceiling, bound how many run at once.
+From dev's counts before this change (51 eligible test jobs, 32 concurrent
+test runners, 33 with perf-guard, which include TASK-41217's
+`plugins-recovery-ui` job), the four new shard jobs make 55 eligible test
+jobs per PR, and the two-higher ceiling makes 34 concurrent test runners, 35
+counting perf-guard. `Tests/CI/test_ui_lane_shard_count_statements.py`
+derives all three from the workflow. At 42 the floor leaves about 0.63
+pytest min a shard, about 26 min of new entries, before the next
+shard-count decision.
+
+## Amendment (2026-11-18): a fourth admission-sensitive job
+
+Owner decision of 2026-11-18, "New job (Recommended)". The follow-ups
+burn-down of TASK-41306..41320 repaired or added nine `bootstrap_profile`
+files that ran on no PR lane (TASK-41307, TASK-41310, TASK-41313..41316):
+about 16.7 min serially on a host at load 15-34. No existing job had that
+room. Over the ten PR runs before this, the recovered suites measured
+15.4-19.6 of their 20 min, and admission lanes 1-3 measured up to 27, 33 and
+20 of 35. `pr-fast-lane-admission-4` ("PR Fast Lane (admission-sensitive
+4)") runs them, shaped like lane 3 (`Tests/CI`'s `ADMISSION_4_TARGETS` pins
+the list). The same PR appends three UI files and five node ids from a fourth to the UI
+census (one `--rebalance 13.0` swap; every shard replays at 12.9 pytest min or
+less over six recent 42-shard runs) and puts TASK-41319's wrapped-collaborator
+Send file in the Console P0 gate's admission-sensitive step.
+
+One more job: 56 eligible test jobs per PR, 35 concurrent test runners, 36
+counting perf-guard.

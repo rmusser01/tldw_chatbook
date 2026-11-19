@@ -1,0 +1,28 @@
+github:
+  app_id: 0  # Replace with the registered private GitHub App ID.
+  installation_id: 0  # Install on rmusser01/tldw_chatbook only.
+  private_key_path: ${CREDENTIALS_DIRECTORY}/app-key.pem
+state_dir: /var/lib/github-qemu-runner
+images:
+  auto_refresh: false
+pools:
+  - name: test
+    scope: repo
+    repo: rmusser01/tldw_chatbook
+    count: 8
+    cpus: 2
+    memory_mb: 6144
+    disk_gb: 20
+    labels: [self-hosted, linux, x64, tldw-ci-test]
+    drain_timeout: 45m
+    job_timeout: 45m
+  - name: control
+    scope: repo
+    repo: rmusser01/tldw_chatbook
+    count: 1
+    cpus: 1
+    memory_mb: 2048
+    disk_gb: 20
+    labels: [self-hosted, linux, x64, tldw-ci-control]
+    drain_timeout: 15m
+    job_timeout: 15m

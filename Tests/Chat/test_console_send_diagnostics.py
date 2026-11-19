@@ -19,6 +19,11 @@ from tldw_chatbook.Utils.persistent_diagnostics import PersistentDiagnosticFilte
 from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 
+# The log collector imports the real app/config owner after collection.
+# Keep that already admitted source, as the real controller fixture requires.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 @pytest.fixture
 def sinks(tmp_path):
     path = tmp_path / "diagnostic.log"

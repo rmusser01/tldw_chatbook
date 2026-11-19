@@ -1,0 +1,50 @@
+{
+  "calls": [
+    {
+      "adapter_defaults_json": "{\"artifact_policy_id\":\"8f3a3a20-af0a-4bbd-865d-2b6abe4c37f0\",\"handler_projection\":[{\"name\":\"temp\",\"redacted\":false},{\"name\":\"input_data\",\"redacted\":false},{\"name\":\"streaming\",\"redacted\":false},{\"name\":\"top_p\",\"redacted\":false},{\"name\":\"top_k\",\"redacted\":false},{\"name\":\"min_p\",\"redacted\":false},{\"name\":\"model\",\"redacted\":false},{\"name\":\"n_predict\",\"redacted\":false},{\"name\":\"api_base_url\",\"redacted\":false},{\"name\":\"provider_name\",\"redacted\":false}],\"header_provenance_omissions\":{},\"header_sources\":{},\"header_transforms\":{},\"literal_surface_field\":\"messages\",\"normalization_version\":\"canonical-json-v1\",\"parameter_sources\":{\"chat_template_kwargs\":\"adapter_default\",\"frequency_penalty\":\"adapter_default\",\"max_tokens\":\"explicit\",\"minp\":\"explicit\",\"presence_penalty\":\"adapter_default\",\"prompt_caching\":\"adapter_default\",\"reasoning_effort\":\"adapter_default\",\"reasoning_summary\":\"adapter_default\",\"response_format\":\"adapter_default\",\"seed\":\"adapter_default\",\"streaming\":\"explicit\",\"temp\":\"explicit\",\"thinking_budget_tokens\":\"adapter_default\",\"thinking_effort\":\"adapter_default\",\"topk\":\"explicit\",\"topp\":\"explicit\",\"verbosity\":\"adapter_default\"},\"provider_overlays\":[{\"kind\":\"credential_redaction\",\"source\":\"mandatory_filter\"}],\"response_projection\":{\"model\":\"unsloth/Qwen3.8-27B-GGUF:Q8_0\",\"protocol\":\"chat_completions\",\"provider\":\"llama_cpp\",\"source_format\":\"start_anchored_think\",\"thinking_round_trip_version\":1,\"thinking_stream_disposition\":\"displayable\",\"version\":1},\"surface_omissions\":{},\"surface_sources\":{\"rendered_system\":1},\"surface_transforms\":{}}",
+      "endpoint_identity": "http://127.0.0.1:8010/v1/chat/completions",
+      "generation_parameters_json": "{\"max_tokens\":4096,\"maxp\":0.95,\"minp\":0.05,\"streaming\":true,\"temp\":0.6,\"topk\":50,\"topp\":0.95}",
+      "reasoning_controls_json": "{}",
+      "route_identity": "agent_first"
+    },
+    {
+      "adapter_defaults_json": "{\"artifact_policy_id\":\"8f3a3a20-af0a-4bbd-865d-2b6abe4c37f0\",\"handler_projection\":[{\"name\":\"temp\",\"redacted\":false},{\"name\":\"input_data\",\"redacted\":false},{\"name\":\"streaming\",\"redacted\":false},{\"name\":\"top_p\",\"redacted\":false},{\"name\":\"top_k\",\"redacted\":false},{\"name\":\"min_p\",\"redacted\":false},{\"name\":\"model\",\"redacted\":false},{\"name\":\"n_predict\",\"redacted\":false},{\"name\":\"api_base_url\",\"redacted\":false},{\"name\":\"provider_name\",\"redacted\":false}],\"header_provenance_omissions\":{},\"header_sources\":{\"thinking\":1,\"tool_call\":1},\"header_transforms\":{\"thinking_attachment\":1},\"literal_surface_field\":\"messages\",\"normalization_version\":\"canonical-json-v1\",\"parameter_sources\":{\"chat_template_kwargs\":\"adapter_default\",\"frequency_penalty\":\"adapter_default\",\"max_tokens\":\"explicit\",\"minp\":\"explicit\",\"presence_penalty\":\"adapter_default\",\"prompt_caching\":\"adapter_default\",\"reasoning_effort\":\"adapter_default\",\"reasoning_summary\":\"adapter_default\",\"response_format\":\"adapter_default\",\"seed\":\"adapter_default\",\"streaming\":\"explicit\",\"temp\":\"explicit\",\"thinking_budget_tokens\":\"adapter_default\",\"thinking_effort\":\"adapter_default\",\"topk\":\"explicit\",\"topp\":\"explicit\",\"verbosity\":\"adapter_default\"},\"provider_overlays\":[{\"kind\":\"credential_redaction\",\"source\":\"mandatory_filter\"}],\"rendered_system_slot\":0,\"response_projection\":{\"model\":\"unsloth/Qwen3.8-27B-GGUF:Q8_0\",\"protocol\":\"chat_completions\",\"provider\":\"llama_cpp\",\"source_format\":\"start_anchored_think\",\"thinking_round_trip_version\":1,\"thinking_stream_disposition\":\"displayable\",\"version\":1},\"surface_omissions\":{},\"surface_sources\":{\"rendered_system\":1,\"thinking\":1,\"tool_call\":1,\"tool_result\":1},\"surface_transforms\":{\"message_rewrite\":1,\"thinking_attachment\":1}}",
+      "endpoint_identity": "http://127.0.0.1:8010/v1/chat/completions",
+      "generation_parameters_json": "{\"max_tokens\":4096,\"maxp\":0.95,\"minp\":0.05,\"streaming\":true,\"temp\":0.6,\"topk\":50,\"topp\":0.95}",
+      "reasoning_controls_json": "{}",
+      "route_identity": "tool_loop"
+    }
+  ],
+  "thinking": [
+    {
+      "blocks": [
+        {
+          "block_id": "thinking-0b9f2a99c802df7d113a-b779e2af626e4873bfd8011c2e64f68a-0-0",
+          "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+          "protocol": "chat_completions",
+          "provider": "llama_cpp",
+          "round_ordinal": 0,
+          "source_format": "reasoning_content:tool_call",
+          "status": "complete",
+          "text_chars": 1079,
+          "text_sha256": "20d776be8f425fa79d9b5a3781262b35f2257a2dd0098f36dac287c2b37044c1",
+          "visibility": "displayable"
+        },
+        {
+          "block_id": "thinking-0b9f2a99c802df7d113a-b779e2af626e4873bfd8011c2e64f68a-1-1",
+          "model": "unsloth/Qwen3.8-27B-GGUF:Q8_0",
+          "protocol": "chat_completions",
+          "provider": "llama_cpp",
+          "round_ordinal": 1,
+          "source_format": "reasoning_content",
+          "status": "complete",
+          "text_chars": 1035,
+          "text_sha256": "fc40305a009656a008570819766afbdaab2ad86e3ccca8e1db2b1249ea9d70f6",
+          "visibility": "displayable"
+        }
+      ],
+      "message_id": "972ef865-3cb9-49d7-83d0-85113b89693f",
+      "version": 1
+    }
+  ]
+}

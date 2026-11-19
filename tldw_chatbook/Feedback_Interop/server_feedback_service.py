@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerFeedbackClient(Protocol):
+    """Client methods ServerFeedbackService calls (TASK-36953.1)."""
+
+    async def delete_feedback(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_feedback(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_feedback(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def submit_explicit_feedback(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_feedback(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerFeedbackService:
@@ -16,7 +23,7 @@ class ServerFeedbackService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerFeedbackClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -51,7 +58,7 @@ class ServerFeedbackService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerFeedbackClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ...Character_Chat.local_chat_dictionary_service import _entry_from_payload
-
 
 @dataclass(frozen=True)
 class ValidationFinding:
@@ -48,6 +46,10 @@ def validate_entries(entries: list[dict]) -> list[ValidationFinding]:
 
         if etype == "regex":
             try:
+                from ...Character_Chat.local_chat_dictionary_service import (
+                    _entry_from_payload,
+                )
+
                 probe = _entry_from_payload(entry)
             except Exception:
                 probe = None  # malformed sibling fields: skip the regex probe, other checks still run

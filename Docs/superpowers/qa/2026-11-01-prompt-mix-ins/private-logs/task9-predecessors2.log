@@ -1,0 +1,17 @@
+........................................................................ [ 13%]
+........................................................................ [ 26%]
+........................................................................ [ 40%]
+........................................................................ [ 53%]
+........................................................................ [ 66%]
+........................................................................ [ 80%]
+........................................................................ [ 93%]
+....................................                                     [100%]
+============================= slowest 25 durations =============================
+3.88s call     Tests/Chat/test_console_native_commit_integration.py::test_lifecycle_outlives_original_grace_and_repeated_cancellation_until_native_retirement[dispose]
+3.18s call     Tests/Chat/test_console_native_commit_integration.py::test_close_retains_issued_save_while_executor_work_is_still_queued
+2.87s call     Tests/Chat/test_console_native_commit_integration.py::test_lifecycle_outlives_original_grace_and_repeated_cancellation_until_native_retirement[close]
+2.75s call     Tests/Chat/test_console_native_commit_integration.py::test_cancelled_accepted_settlement_keeps_loop_and_native_owner_live_under_sqlite_lock
+1.17s call     Tests/Chat/test_console_native_commit_integration.py::test_revoked_continuation_rolls_back_real_acceptance_and_releases_native_owner
+
+(20 durations < 1s hidden.)
+540 passed in 37.83s

@@ -1,0 +1,14 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_____ test_native_started_callback_preserves_app_context_for_observer_task _____
+Tests/TTS/test_console_speech_presentation.py:416: in test_native_started_callback_preserves_app_context_for_observer_task
+    assert await asyncio.wait_for(observed, 2) is app
+E   AssertionError: assert None is App(title='App', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})
+___ test_owned_file_started_callback_preserves_app_context_for_observer_task ___
+Tests/TTS/test_console_speech_presentation.py:456: in test_owned_file_started_callback_preserves_app_context_for_observer_task
+    assert await asyncio.wait_for(observed, 2) is app
+E   AssertionError: assert None is App(title='App', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus', 'nocolor'})
+=========================== short test summary info ============================
+FAILED Tests/TTS/test_console_speech_presentation.py::test_native_started_callback_preserves_app_context_for_observer_task
+FAILED Tests/TTS/test_console_speech_presentation.py::test_owned_file_started_callback_preserves_app_context_for_observer_task
+2 failed, 11 deselected in 1.08s

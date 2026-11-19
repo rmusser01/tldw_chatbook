@@ -12,6 +12,7 @@ the shapes that matter are the three keyword builders, the semantic/vector
 row, and the hybrid FTS-leg row whose `source_id` is a *document* id rather
 than a source id.
 """
+
 from __future__ import annotations
 
 import pytest

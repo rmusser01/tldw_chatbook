@@ -6,16 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "tldw-profile-core"
 version = "0.1.0"
 description = "Canonical Personal Context Profile contract"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = ["pydantic>=2.0,<3", "rfc8785==0.1.4"]
 
 [tool.setuptools.package-data]
-tldw_profile_core = ["schemas/*.json", "fixtures/v1/*.json"]
+tldw_profile_core = ["schemas/*.json", "fixtures/v1/*.json", "fixtures/evidence_binding/v1/*.json", "fixtures/claim_meaning/v2/*.json", "fixtures/v2/*.json"]
 
 [tool.setuptools.data-files]
 "schemas" = [
     "schemas/personal-context-v1.json",
     "schemas/personal-context-v1-meta.json",
+    "schemas/personal-context-v2.json",
+    "schemas/personal-context-v2-meta.json",
 ]
 "fixtures/v1" = [
     "fixtures/v1/01-manifest.json",
@@ -64,6 +66,13 @@ tldw_profile_core = ["schemas/*.json", "fixtures/v1/*.json"]
     "fixtures/v1/44-string-schema-version.json",
     "fixtures/v1/45-out-of-range-proposal-confidence.json",
 ]
+
+"fixtures/evidence_binding/v1" = ["fixtures/evidence_binding/v1/01-unicode-message.json"]
+
+"fixtures/claim_meaning/v2" = ["fixtures/claim_meaning/v2/01-standing-preference.json"]
+
+
+"fixtures/v2" = ["fixtures/v2/01-manifest.json", "fixtures/v2/02-active-record.json", "fixtures/v2/03-archived-record.json", "fixtures/v2/04-deleted-record.json", "fixtures/v2/05-create-proposal.json", "fixtures/v2/06-update-proposal.json", "fixtures/v2/07-resolved-proposal.json", "fixtures/v2/08-stale-claim.json", "fixtures/v2/09-substituted-binding.json", "fixtures/v2/10-stale-approval.json", "fixtures/v2/11-support-before-capture.json", "fixtures/v2/12-proposal-parent.json", "fixtures/v2/13-unknown-semantics.json", "fixtures/v2/14-short-expiry.json"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

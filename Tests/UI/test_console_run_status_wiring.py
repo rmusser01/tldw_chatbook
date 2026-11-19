@@ -33,7 +33,7 @@ async def test_status_surfaces_reflect_active_run_end_to_end():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
 
         # Idle: header ready, inspector not generating.
         assert not console._console_run_active()

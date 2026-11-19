@@ -299,3 +299,534 @@ def test_selected_absence_does_not_borrow_another_owner_or_unavailable_status(
         for row in case.target.items))
     with pytest.raises(ValueError, match="target_owner_unclassified|target_owner_mismatch"):
         case.review(target)
+
+
+def _personal_context_archive(tmp_path, data):
+    from Tests.Backup_Recovery.test_restore_plan import sealed
+
+    document = _document(("config", "personal_context.repository")).model_dump(mode="json")
+    for row in document["owners"]:
+        if row["owner_id"] == "personal_context.repository":
+            row["schema_version"] = 9
+    for row in document["files"]:
+        row.update(
+            relative_path="config.toml"
+            if row["owner_id"] == "config"
+            else "tldw_chatbook_personal_context.db",
+            size=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+        )
+    return sealed(
+        tmp_path, data=data, mutate=lambda doc: (doc.clear(), doc.update(document))
+    )
+
+
+@pytest.mark.parametrize("mode", ["replace", "isolated"])
+def test_restore_plan_refuses_an_unreadable_personal_context_copy(tmp_path, mode):
+    """TASK-40135/40136: every restore now publishes the repository, so its plan
+    reads the archived copy first; one that is not a database refuses by name
+    instead of planning an outcome it cannot state."""
+    from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
+    from tldw_chatbook.Backup_Recovery.restore_groups import available_group_ids
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+
+    data = b'[general]\nusers_name="default_user"\n'
+    archive = _personal_context_archive(tmp_path, data)
+    assert "personal_context" in available_group_ids(verify_sealed(archive))
+    restored = tmp_path / "restored"
+    with pytest.raises(ValueError, match="^personal_context_validation_unavailable$"):
+        plan_restore(
+            archive,
+            mode="isolated",
+            destinations={
+                "root:config": restored / "config",
+                "root:personal_context.repository": restored / "data",
+                "profile:profile:paths.data_dir": restored / "data",
+            },
+            target=None,
+            profile_names={"profile": "restored"},
+        ) if mode == "isolated" else _replace_plan(tmp_path, archive, data)
+
+
+def _replace_plan(tmp_path, archive, data):
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+
+    live = tmp_path / "live"
+    live.mkdir(mode=0o700)
+    profile = hashlib.sha256(str(live / "config.toml").encode()).hexdigest()[:24]
+    items = []
+    for owner, name in (
+        ("config", "config.toml"),
+        ("personal_context.repository", "tldw_chatbook_personal_context.db"),
+    ):
+        path = live / name
+        path.write_bytes(data)
+        path.chmod(0o600)
+        key = "profile:" + profile + ":" + owner
+        items.append(
+            StorageItem(
+                owner, key, path, "included",
+                () if owner == "config" else ("profile:" + profile + ":config",),
+                metadata=FileMetadata(
+                    1, key, name, None, "file", 0o600, path.stat().st_mtime_ns, "private"
+                ),
+            )
+        )
+    return plan_restore(
+        archive,
+        mode="replace",
+        destinations={"root:config": live, "root:personal_context.repository": live},
+        target=Inventory(tuple(items), True, "independent-local-review", ()),
+        profile_names={"profile": "default_user"},
+    )
+
+
+# TASK-40135: real backups and replace restores of a profile holding Personal
+# Context, through RecoveryService in a scratch child. Both "devices" are
+# in-process SecureKeyring dicts; the child never reaches an OS keyring.
+_PERSONAL_CONTEXT_RESTORE = r'''
+import json
+import os
+import tomllib
+from pathlib import Path
+from threading import Event
+from Tests import network_guard
+network_guard.install()
+os.environ['PYTHON_KEYRING_BACKEND'] = 'keyring.backends.null.Keyring'
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from Tests.Personal_Context.test_key_protector import SecureKeyring
+devices = {'a': SecureKeyring(), 'b': SecureKeyring()}
+current = {}
+
+def use(name):
+    current['device'] = devices[name]
+
+use('a')
+from Tests.Architecture.test_backup_owner_inventory import _device_only_record
+from tldw_chatbook.Backup_Recovery import bootstrap, credentials, publication
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+from tldw_chatbook.Backup_Recovery.later_rollback import preview_rollback
+from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+from tldw_chatbook.Personal_Context.key_protector import (
+    KeyringProfileKeyProtector, ProfileKeyMaterial, ProfileLockedError)
+from tldw_chatbook.Personal_Context.repository import PersonalContextRepository
+from tldw_chatbook.Personal_Context.service import PersonalContextService
+from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
+
+credentials._credential_store = lambda: KeyringServerCredentialStore(
+    keyring_backend=current['device'])
+SCENARIO, MODE = SCENARIO_VALUE, MODE_VALUE
+source = Path(os.environ['TLDW_CONFIG_PATH'])
+SERVICE = 'tldw_chatbook.personal_context'
+GROUP = ('personal_context',)
+ROLLBACK = b'rollback-test-password'
+
+PREPARE = """
+import os
+from pathlib import Path
+from Tests import network_guard
+network_guard.install()
+from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
+from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
+selector = Path(os.environ['TLDW_CONFIG_PATH'])
+_populate_required_dependencies(preview_capture((selector,), options={'allow_partial': True}))
+assert not network_guard.blocked_attempts()
+"""
+
+def set_config(name):
+    import subprocess
+    import sys
+    data = Path(os.environ['XDG_DATA_HOME']) / name
+    data.mkdir(mode=0o700, exist_ok=True)
+    source.write_text('[general]\nusers_name="default_user"\n[paths]\ndata_dir='
+                      + json.dumps(str(data)) + '\n')
+    source.chmod(0o600)
+    root = user_data_dir(tomllib.loads(source.read_text()))
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # The installed required stores, as a real profile has them.
+    done = subprocess.run([sys.executable, '-c', PREPARE], capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-4000:]
+    return root / 'tldw_chatbook_personal_context.db'
+
+def repository(path):
+    return PersonalContextRepository(
+        path, key_protector=KeyringProfileKeyProtector(current['device']))
+
+def records(path):
+    return sorted(row.record_id for row in repository(path).list_records())
+
+def account(path):
+    import sqlite3
+    from contextlib import closing
+    with closing(sqlite3.connect(path)) as connection:
+        return connection.execute('SELECT key_account FROM profile_meta').fetchone()[0]
+
+def tables(path):
+    """Every row of every table, without ``profile_meta.key_account``."""
+    import sqlite3
+    from contextlib import closing
+    with closing(sqlite3.connect(path)) as connection:
+        dump = {}
+        for (name,) in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"):
+            cursor = connection.execute(f'SELECT * FROM "{name}"')
+            columns = [column[0] for column in cursor.description]
+            dump[name] = sorted(
+                tuple(v for c, v in zip(columns, row)
+                      if (name, c) != ('profile_meta', 'key_account'))
+                for row in cursor)
+        return dump
+
+STATUS = """
+import os, sys
+os.environ['PYTHON_KEYRING_BACKEND'] = 'keyring.backends.null.Keyring'
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from Tests import network_guard
+network_guard.install()
+from tldw_chatbook.Personal_Context.bootstrap import bootstrap_personal_context_service
+# As production starts it: the default protector, here with no secure keyring,
+# as an isolated copy (and a device without one) always has.
+status = bootstrap_personal_context_service(db_path=sys.argv[1]).status()
+print(status.locked, status.reason_code)
+"""
+
+def status(path):
+    """A fresh start (another process, null keyring, default protector) reads the
+    locked reason from the copy alone."""
+    import subprocess
+    import sys
+    done = subprocess.run([sys.executable, '-c', STATUS, str(path)], capture_output=True,
+                          text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-4000:]
+    return done.stdout.split()[-2:]
+
+def succeeded(operation):
+    result = service.wait(operation)
+    assert result['state'] == 'succeeded', dict(result)
+    return result
+
+RETENTION = []
+
+def reviewed(start, acknowledged=(), state='succeeded'):
+    """Run one operation; an unacknowledged credential review aborts and retries."""
+    result = service.wait(start(acknowledged))
+    new = set(result['review_issues']) - set(acknowledged)
+    if result['kind'] == 'restore' and 'credential_isolated_retention_required' in new:
+        # TASK-41124: whether the review may say this restore installs the key.
+        RETENTION.append(result['result'].get('personal_context_keys_installed', False))
+    if result['state'] != 'succeeded' and new:
+        pending = result['result'].get('journal_operation_id')
+        if pending:
+            assert succeeded(service.start_recovery(pending, action='abort'))['result']['aborted']
+        return reviewed(start, tuple(sorted(set(acknowledged) | new)), state)
+    assert result['state'] == state, dict(result)
+    return result
+
+def plan_for(acknowledged=()):
+    return service.preview_restore(
+        inspection, mode='replace', profile_bases={}, target_configs={profile: source},
+        external_destinations={}, profile_names={},
+        target=service.preview_backup((source,), options={}), data_groups=GROUP,
+        acknowledged_credential_issues=acknowledged)
+
+admission_authority(bootstrap.default_bootstrap_root())
+live = set_config('fixture')
+original = repository(live)
+PersonalContextService(original).create_profile()
+original.commit_record_version(_device_only_record(original), expected_version_id=None)
+original_account = account(live)
+# TASK-40139 AC#7: this device's link keys (device wrapping key, a staged
+# integrity key, a dataset staging key) must never reach an archive.
+LINK = 'tldw_chatbook.personal_context.link'
+CANARIES = {('device-wrapping-rsa-v1', 'rsa-private-pkcs8-v1:LINKCANARYWRAP'),
+            ('staged-binding', 'staged-integrity-v1:LINKCANARYSTAGED'),
+            ('storage-binding', 'dataset-staging-v1:LINKCANARYSTORAGE')}
+for name, value in CANARIES:
+    current['device'].values[(LINK, name)] = value
+service = RecoveryService(Path.home() / 'recovery-control')
+try:
+    destination = Path.home() / 'pc.tldw-backup.zip.age'
+    password = b'pc-test-password'
+
+    def backup(acknowledged):
+        options = {'data_groups': GROUP, 'encrypted': True, 'credential_mode': MODE,
+                   'acknowledged_credential_issues': acknowledged}
+        preview = service.preview_backup((source,), options=options)
+        return service.start_backup((source,), preview.scope_digest, destination,
+                                    options=options, password=password)
+
+    reviewed(backup)
+    archived = tables(live)
+    inspection = service.start_inspection(destination, password=password)
+    succeeded(inspection)
+    import zipfile
+    with zipfile.ZipFile(service.inspection(inspection).path) as sealed:
+        members = b''.join(sealed.read(name) for name in sealed.namelist())
+    assert b'personal_context' in members  # the repository and its record are there
+    # Positive control: the scan sees captured keyring values (the profile key).
+    assert (current['device'].values[(SERVICE, original_account)].encode()
+            in members) is (MODE == 'include')
+    assert not [value for _, value in CANARIES if value.encode() in members]
+    assert LINK.encode() not in members
+    profile = service.summary(inspection)['profile_ids'][0]
+    assert 'personal_context' in {
+        row['group_id'] for row in service.summary(inspection)['data_groups']}
+    if SCENARIO.startswith('isolated'):
+        # TASK-40136: an isolated copy is published locked, keyring untouched.
+        if SCENARIO == 'isolated_elsewhere':
+            use('b')  # no account on this device opens the copy
+        before = dict(current['device'].values)
+        (Path.home() / 'isolated').mkdir(mode=0o700)
+        base = Path.home() / 'isolated' / 'copy'
+        result = reviewed(lambda ack: service.start_restore(inspection, service.preview_restore(
+            inspection, mode='isolated', profile_bases={profile: base},
+            external_destinations={}, profile_names={profile: 'restored'}, target=None,
+            data_groups=GROUP, acknowledged_credential_issues=ack)))
+        (copy,) = [p for p in base.rglob('tldw_chatbook_personal_context.db')]
+        reason = ('personal_context_key_not_in_backup' if SCENARIO == 'isolated_elsewhere'
+                  else 'personal_context_keyring_unavailable')
+        assert account(copy) == 'recovery:setup_required:' + reason
+        assert current['device'].values == before
+        assert tables(copy) == archived
+        assert status(copy) == ['True', reason]
+        assert account(live) == original_account
+        print('retired and reopened')
+        raise SystemExit(0)
+    if SCENARIO == 'no_keyring':
+        # TASK-40136 AC#1/#6: no secure keyring (the production store refuses),
+        # then a second restore from the same archive once one is there.
+        from tldw_chatbook.runtime_policy.server_credentials import CredentialStoreUnavailable
+        store = credentials._credential_store
+
+        def no_store():
+            raise CredentialStoreUnavailable('no secure keyring')
+
+        credentials._credential_store = no_store
+        before = dict(current['device'].values)
+        locked = 'personal_context_restore_locked:personal_context_key_install_unavailable:'
+        assert any(i.startswith(locked) for i in plan_for().issues)
+        reviewed(lambda ack: service.start_restore(
+            inspection, plan_for(ack), rollback_password=ROLLBACK))
+        reason = 'personal_context_key_install_unavailable'
+        assert account(live) == 'recovery:setup_required:' + reason
+        assert current['device'].values == before
+        assert tables(live) == archived
+        assert status(live) == ['True', reason]
+        assert RETENTION == [False], RETENTION  # a locked key is not installed
+        credentials._credential_store = store
+        assert 'personal_context_restore_readable:' + next(
+            key for key, path in plan_for().restore if path == live) in plan_for().issues
+        reviewed(lambda ack: service.start_restore(
+            inspection, plan_for(ack), rollback_password=ROLLBACK))
+        assert account(live).startswith('personal-context:recovery_')
+        assert records(live) == ['record-device-only']
+        assert RETENTION == [False, True], RETENTION
+        print('retired and reopened')
+        raise SystemExit(0)
+    if SCENARIO == 'other_device':
+        # The relocation advice: another device (empty keyring), another path.
+        use('b')
+        target = set_config('elsewhere')
+        assert target != live and not target.exists()
+    else:
+        target = live
+        # A record made after the backup: the restore replaces it.
+        from tldw_profile_core import PreferencePayload, SemanticKey
+        original.commit_record_version(
+            _device_only_record(original).model_copy(update={
+                'record_id': 'record-after-backup',
+                'version_id': 'record-after-backup-v1',
+                'payload': PreferencePayload(
+                    subject='response.length', polarity='like', value='v'),
+                'semantic_key': SemanticKey(
+                    namespace='preference', subject='response.length'),
+            }), expected_version_id=None)
+        assert records(live) == ['record-after-backup', 'record-device-only']
+    before = dict(current['device'].values)
+    plan = plan_for()
+    assert [i for i in plan.issues if i.startswith('personal_context_restore_')] == [
+        'personal_context_restore_readable:' + next(
+            key for key, path in plan.restore if path == target)], plan.issues
+    assert target in {path for _, path in plan.restore}
+    if SCENARIO == 'finalize_fails':
+        # Review r14pcc-rev2: a finalize failure inside replace() rolls back on
+        # its own; the account this restore installed must go with it.
+        finalize = publication.finalize_candidate
+
+        def refused(*args, **kwargs):
+            raise ValueError('injected finalize failure')
+
+        publication.finalize_candidate = refused
+        reviewed(lambda ack: service.start_restore(
+            inspection, plan_for(ack), rollback_password=ROLLBACK), state='failed')
+        publication.finalize_candidate = finalize
+        assert account(live) == original_account
+        assert records(live) == ['record-after-backup', 'record-device-only']
+        assert {k for k in current['device'].values if k[0] == SERVICE} - set(before) == set()
+        assert {k: v for k, v in current['device'].values.items() if k in before} == before
+        print('retired and reopened')
+        raise SystemExit(0)
+    if SCENARIO in ('finish', 'rollback'):
+        # AC#9: interrupted after the key step, before publication completes.
+        class Stop(Exception):
+            pass
+
+        publish = publication.publish_candidate
+
+        def stopped(*args, **kwargs):
+            raise Stop('interrupted after the key step')
+
+        publication.publish_candidate = stopped
+        pending = reviewed(lambda ack: service.start_restore(
+            inspection, plan_for(ack), rollback_password=ROLLBACK),
+            state='recovery_required')['result']['journal_operation_id']
+        publication.publish_candidate = publish
+        installed = {k for k in current['device'].values if k[0] == SERVICE} - set(before)
+        assert len(installed) == 1, installed
+        assert account(live) == original_account
+        succeeded(service.start_recovery(
+            pending, action='finish' if SCENARIO == 'finish' else 'rollback',
+            rollback_password=ROLLBACK))
+        named = account(live)
+        assert (SERVICE, named) in current['device'].values
+        if SCENARIO == 'finish':
+            assert {(SERVICE, named)} == installed
+            assert records(live) == ['record-device-only']
+        else:
+            assert named == original_account
+            assert records(live) == ['record-after-backup', 'record-device-only']
+            # Spec Q4: the rollback deletes the account this restore created.
+            assert not installed & set(current['device'].values), installed
+        assert {k: v for k, v in current['device'].values.items() if k in before} == before
+        print('retired and reopened')
+        raise SystemExit(0)
+    restored = reviewed(lambda ack: service.start_restore(
+        inspection, plan_for(ack), rollback_password=ROLLBACK))
+    assert 'personal_context_key_unverified' not in restored['issues']
+    # TASK-41124: the only retained credential is the key this restore installs.
+    assert RETENTION == ([True] if MODE == 'include' else []), RETENTION
+    # AC#1/#2/#4/#11: readable, from a new account; every earlier entry unchanged.
+    restored_account = account(target)
+    assert restored_account.startswith('personal-context:recovery_')
+    assert restored_account != original_account
+    assert {k: v for k, v in current['device'].values.items() if k in before} == before
+    assert records(target) == ['record-device-only']
+    if SCENARIO == 'other_device':
+        assert {k for k in current['device'].values if k[0] == SERVICE} == {
+            (SERVICE, restored_account)}
+        print('retired and reopened')
+        raise SystemExit(0)
+    if SCENARIO == 'reviewed':
+        # TASK-41120: the review re-encrypts while this restore's recovery copy
+        # may name the restored account, so that account is kept; deleting the
+        # copy, the last one, deletes it. Nothing else changes.
+        from tldw_chatbook.Backup_Recovery import service_storage
+        service_storage.default_control_root = lambda: service.control_root
+        new_account = PersonalContextService(repository(target)).reencrypt_after_restore()
+        assert account(target) == new_account != restored_account
+        assert (SERVICE, restored_account) in current['device'].values
+        kept = dict(current['device'].values)
+        succeeded(service.start_delete_copy(
+            restored['result']['journal_operation_id'], user_selected=True))
+        assert set(kept) - set(current['device'].values) == {(SERVICE, restored_account)}
+        assert {k: v for k, v in kept.items() if k[1] != restored_account} == dict(
+            current['device'].values)
+        assert records(target) == ['record-device-only']
+        print('retired and reopened')
+        raise SystemExit(0)
+    # AC#7/#8: the restored profile links (its own account is replaced) or is
+    # removed (its own account is deleted); a rollback still opens the originals.
+    protector = KeyringProfileKeyProtector(current['device'])
+    if SCENARIO == 'link':
+        protector.replace(restored_account, ProfileKeyMaterial(b'l' * 32, b'k' * 32, 2))
+    elif SCENARIO == 'remove':
+        PersonalContextService(repository(target)).remove_local_profile(
+            confirm_only_copy=True)
+        assert (SERVICE, restored_account) not in current['device'].values
+    assert current['device'].values[(SERVICE, original_account)] == before[
+        (SERVICE, original_account)]
+    if SCENARIO == 'lost_keyring':
+        # TASK-41122: the keyring loses the original account before a later rollback.
+        del current['device'].values[(SERVICE, original_account)]
+    operation = restored['result']['journal_operation_id']
+
+    def rollback(acknowledged):
+        current_target = service.preview_backup((source,), options={})
+        plan = service.preview_rollback(
+            operation, old_password=ROLLBACK, target=current_target,
+            acknowledged_credential_issues=acknowledged)
+        return service.start_rollback(operation, plan, old_password=ROLLBACK,
+                                      new_password=b'second-safety-password')
+
+    kept = dict(current['device'].values)
+    reviewed(rollback)
+    if SCENARIO == 'lost_keyring':
+        # AC#1: the rollback copy's escrowed key goes into a fresh account,
+        # which the rolled-back database names; nothing else changes.
+        named = account(live)
+        assert named.startswith('personal-context:recovery_'), named
+        assert set(current['device'].values) - set(kept) == {(SERVICE, named)}
+        assert {k: v for k, v in current['device'].values.items() if k in kept} == kept
+    else:
+        # AC#2: the original account is still there, so the keyring is unchanged.
+        assert current['device'].values == kept
+        assert account(live) == original_account
+    assert records(live) == ['record-after-backup', 'record-device-only']
+    assert not network_guard.blocked_attempts()
+finally:
+    service.close()
+print('retired and reopened')
+'''
+
+
+# TASK-41118 review r15bt-rev1: at -n 4 and load 67-110 the slowest cases ran
+# 343-417 s to completion (link, remove, no_keyring), past the job's 300 s
+# per-test limit; this is about 2x the 417 s.
+@pytest.mark.timeout(840)
+@pytest.mark.parametrize(
+    ("scenario", "mode"),
+    [
+        ("link", "include"),
+        ("remove", "include"),
+        ("other_device", "include"),
+        ("link", "exclude"),
+        ("finish", "include"),
+        ("rollback", "include"),
+        ("no_keyring", "include"),
+        ("isolated", "include"),
+        ("isolated_elsewhere", "exclude"),
+        ("finalize_fails", "include"),
+        ("lost_keyring", "include"),
+        ("reviewed", "include"),
+    ],
+)
+def test_replace_restore_makes_personal_context_readable_and_rolls_back(
+    tmp_path, scenario, mode
+):
+    """TASK-40135 AC#1, #2, #4, #7-#11: a replace restore (with the key in the
+    backup, or same-device without it) opens and lists the restored records from
+    a new account, leaves every earlier entry unchanged, and a rollback after the
+    restored profile links or is removed opens the originals. ``other_device`` is
+    the portable relocation advice: another keyring, another data path, a backup
+    with credentials, then Replace. ``finish``/``rollback``: interrupted after
+    the key step, either recovery leaves a reference to an account that exists
+    and opens it. TASK-40136: ``no_keyring`` (AC#1, #2, #6) and the two isolated
+    cases (AC#1, #2) end locked with their reason, keyring and rows untouched.
+    TASK-41122: ``lost_keyring`` loses the original account before a later
+    rollback, which reinstalls the rollback copy's escrowed key into a fresh
+    account; the other later rollbacks leave the keyring unchanged.
+    TASK-41120: ``reviewed`` re-encrypts while the restore's recovery copy is
+    kept, then deletes the copy, which deletes the kept account."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    script = _PERSONAL_CONTEXT_RESTORE.replace("SCENARIO_VALUE", repr(scenario)).replace(
+        "MODE_VALUE", repr(mode)
+    )
+    _run(tmp_path, "personal-context", "success", script=script, timeout=300)

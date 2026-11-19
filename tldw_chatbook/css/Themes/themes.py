@@ -18,11 +18,16 @@
 #   footer-key-foreground, ...) DO override, and are gated for readability by
 #   Tests/UI/test_theme_contrast.py.
 # - TASK-33003.6: `GUARD_VARIABLES` are the app's own such names
-#   (`$ds-grid-line`/`$ds-control-edge` -> BOUNDARY_VARIABLE, `Button:focus`
-#   -> FOCUS_FILL_VARIABLE), so EVERY theme must carry them (an undefined
+#   (`$ds-grid-line`/`$ds-column-line`/`$ds-control-edge` -> BOUNDARY_VARIABLE, `Button:focus`
+#   -> FOCUS_FILL_VARIABLE, the active top tab's outline -> ACTIVE_EDGE_VARIABLE),
+#   so EVERY theme must carry them (an undefined
 #   `$name` fails the stylesheet parse). ensure_readable_text_hues sets them
 #   on the shipped, built-in and user-theme load paths, and
 #   ThemeVariableDefaultsMixin supplies them for any theme that skipped it.
+# - TASK-38229: `CARET_VARIABLES` (Textual's `input-cursor-background` /
+#   `input-cursor-foreground`) are generated names too; the guard pins them
+#   per theme where the caret Textual paints falls under WCAG 1.4.11 on a
+#   focused field's fill. Zero CSS bytes: no sheet names them.
 import contextlib
 import copy
 import dataclasses
@@ -31,6 +36,7 @@ from pathlib import Path
 
 from textual.theme import BUILTIN_THEMES, Theme
 from textual.color import Color
+from textual.css.constants import VALID_STYLE_FLAGS
 
 
 #: Longest slice of untrusted file text (a key or value) quoted in a message.
@@ -140,8 +146,30 @@ _NON_TEXT_RATIO = 3.0
 FOCUS_FILL_VARIABLE = "tldw-focus-fill"
 #: task-31284's floor: a focus fill shifts the pane it sits on at least 1.25x.
 _FOCUS_SHIFT = 1.25
+#: TASK-33641.1: the active top tab's outline (components/_navigation.tcss),
+#: 3:1 on the tab's $primary-darken-1 fill. $primary, which painted it,
+#: measured 1.19 to 1.34:1 there on every theme.
+ACTIVE_EDGE_VARIABLE = "tldw-active-edge"
 #: The names the guard generates that no tcss defines and the tcss references.
-GUARD_VARIABLES = (BOUNDARY_VARIABLE, FOCUS_FILL_VARIABLE)
+GUARD_VARIABLES = (BOUNDARY_VARIABLE, FOCUS_FILL_VARIABLE, ACTIVE_EDGE_VARIABLE)
+
+#: TASK-38229 (WCAG 1.4.11): the caret Textual paints in every Input and
+#: TextArea (textual/widgets/_input.py `&>.input--cursor`): a block in
+#: CARET_BLOCK_VARIABLE with the letter under it in CARET_INK_VARIABLE. Both
+#: are generated names no tcss defines, so a theme's entry paints (mechanism
+#: note above); Textual defaults them to the theme's $foreground and
+#: $background, never measured against the fill a focused field takes here
+#: (components/_forms.tcss `Input:focus`: $ds-input-focus-bg, the house tint
+#: over the pane). On dev the block was under 3:1 on 7 of the 89 measurable
+#: themes (pastel_dreams 1.77:1 on $panel) and the letter under it under
+#: 4.5:1 on 4 (pastel_dreams 2.53:1); ensure_readable_text_hues fixes both.
+CARET_BLOCK_VARIABLE = "input-cursor-background"
+CARET_INK_VARIABLE = "input-cursor-foreground"
+CARET_VARIABLES = (CARET_BLOCK_VARIABLE, CARET_INK_VARIABLE)
+#: Textual's `Input:focus` tints the focused field's fill 5% toward $foreground
+#: (`background-tint: $foreground 5%`), applied to the fill colour before it
+#: composites over the pane (textual/widget.py `_get_styles_background`).
+_FOCUS_TEXT_TINT = 0.05
 
 #: Review finding #3: ensure_readable_text_hues records the keys it wrote on
 #: the Theme under this attribute. A key a theme set by hand (22 shipped
@@ -285,6 +313,50 @@ def _opaque(value: object) -> Color | None:
     return color if color.a == 1 else None
 
 
+def _caret(generated: dict, defaults: dict, surfaces: list[Color], pole: Color) -> dict[str, str]:
+    """The caret entries ``theme`` needs, or {} when the ones it paints read.
+
+    TASK-38229. The block (CARET_BLOCK_VARIABLE) sits on a focused field's
+    fill: the house focus tint ($ds-input-focus-bg, the theme's
+    ``block-cursor-blurred-background``), tinted _FOCUS_TEXT_TINT toward
+    ``foreground`` as Textual's `Input:focus` does, over each pane fields
+    lay on (``surface``, ``panel``, ``background``). The block is kept where
+    it clears 3:1 (WCAG 1.4.11) on every one of them, else blended toward
+    white or black, whichever first clears; the theme's own entry, where it
+    has one, is the start. The letter under it (CARET_INK_VARIABLE) is kept
+    where it reads at 4.5:1 on the block, else blended toward the pole that
+    reads better on the block (one of them always clears 4.5:1).
+
+    Args:
+        generated: The theme's generated table, its own entries included.
+        defaults: Textual's table for the same theme without its entries.
+        surfaces: The theme's opaque ``surface`` and ``panel``.
+        pole: White on dark surfaces, black on light; the fallback block.
+
+    Returns:
+        The entries to pin, by variable name; empty when nothing changes.
+    """
+    tint = _measured("block-cursor-blurred-background", generated, defaults)
+    text = _measured("foreground", generated, defaults).with_alpha(_FOCUS_TEXT_TINT)
+    panes = list(surfaces)
+    background = _opaque(generated.get("background"))
+    if background is not None:
+        panes.append(background)
+    fills = [pane + tint.tint(text) for pane in panes]
+    white, black = Color(255, 255, 255), Color(0, 0, 0)
+    entries: dict[str, str] = {}
+    block = _measured(CARET_BLOCK_VARIABLE, generated, defaults)
+    if not _clears(block, fills, _NON_TEXT_RATIO):
+        found = _blend_until(block, (white, black), lambda c: _clears(c, fills, _NON_TEXT_RATIO))
+        block = found or pole
+        entries[CARET_BLOCK_VARIABLE] = block.hex
+    ink = _measured(CARET_INK_VARIABLE, generated, defaults)
+    if _contrast_ratio(ink, block) < _AA_RATIO:
+        ink_pole = white if _contrast_ratio(white, block) >= _contrast_ratio(black, block) else black
+        entries[CARET_INK_VARIABLE] = _blend_to_floor(ink, ink_pole, [block], _AA_RATIO)
+    return entries
+
+
 def ensure_readable_text_hues(theme: Theme) -> Theme:
     """Pin the ``text-*`` tints to AA and the boundary colour to 3:1, in place.
 
@@ -303,11 +375,19 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     way until it clears 3:1 (WCAG 1.4.11) on both surfaces; an explicit
     entry below that floor is replaced. ``FOCUS_FILL_VARIABLE`` is the house
     focus tint wherever that keeps a focused default button at least as far
-    from its card as at rest (``_focus_fill``). Themes whose surfaces cannot
-    be resolved (ANSI palettes, an 'auto NN%' surface) still get both, because
-    the tcss references them: the first of the old values
-    (``surface-lighten-2``, the focus tint) and Textual's ANSI ``border-blurred``
-    and ``ansi-background`` that paints a colour (Qodo #2937).
+    from its card as at rest (``_focus_fill``). TASK-33641.1:
+    ``ACTIVE_EDGE_VARIABLE`` (the active top tab's outline) starts from the
+    theme's own entry or ``primary`` and blends toward white or black,
+    whichever first reaches 3:1 on the tab's ``primary-darken-1`` fill.
+    TASK-38229: the caret's block (``CARET_BLOCK_VARIABLE``) and the letter
+    under it (``CARET_INK_VARIABLE``) are pinned by ``_caret`` only where
+    the ones the theme paints fall under 3:1 on a focused field's fill or
+    4.5:1 on the block; a theme whose caret already reads keeps it.
+    Themes whose surfaces cannot be resolved (ANSI palettes, an 'auto NN%'
+    surface) still get all three, because the tcss references them: the first
+    of the old values (``surface-lighten-2``, the focus tint, ``primary``) and
+    Textual's ANSI ``border-blurred`` and ``ansi-background`` that paints a
+    colour (Qodo #2937).
     The entries the guard reads (``text``, the focus tint,
     ``surface-lighten-2``) are measured as Textual paints them, the
     '<colour> NN%' form included; one with no colour to measure ('auto NN%'
@@ -338,6 +418,7 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
         sources = (
             ("surface-lighten-2", "border-blurred"),
             ("block-cursor-blurred-background", "ansi-background"),
+            ("primary",),
         )
         for name, keys in zip(GUARD_VARIABLES, sources):
             if name not in variables:
@@ -366,6 +447,21 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     if fill is not None:
         pinned.add(FOCUS_FILL_VARIABLE)
         variables[FOCUS_FILL_VARIABLE] = fill
+    tab = surfaces[0] + _measured("primary-darken-1", generated, defaults)
+
+    def outlines(color: Color) -> bool:
+        return _contrast_ratio(color, tab) >= _NON_TEXT_RATIO
+
+    outline = _opaque(variables.get(ACTIVE_EDGE_VARIABLE))
+    if outline is None or not outlines(outline):
+        start = outline or surfaces[0] + _measured("primary", generated, defaults)
+        # White or black always clears 3:1 on any fill, so a step is found.
+        found = _blend_until(start, (Color(255, 255, 255), Color(0, 0, 0)), outlines)
+        pinned.add(ACTIVE_EDGE_VARIABLE)
+        variables[ACTIVE_EDGE_VARIABLE] = (found or pole).hex
+    for name, value in _caret(generated, defaults, surfaces, pole).items():
+        pinned.add(name)
+        variables[name] = value
     theme.variables = variables
     setattr(theme, _PINNED_ATTR, frozenset(pinned))
     return theme
@@ -404,17 +500,43 @@ class ThemeVariableDefaultsMixin:
 _VARIABLE_NAME = re.compile(r"[a-z0-9-]+")
 _TEXT_STYLES = frozenset({"bold", "italic", "underline", "reverse", "strike", "dim", "none"})
 _ALPHA_SUFFIX = re.compile(r"(.+) (\d{1,3})%")
+_GENERATED = Theme(name="_", primary="#000000").to_color_system().generate()
+#: TASK-33003.16: Textual's CSS takes 'auto NN%' as a text colour only; as a
+#: background or a border colour it is a stylesheet error. The names Textual
+#: itself sets to auto (text, text-muted, link-color, ...) are safe wherever
+#: a stylesheet uses them, and a name no stylesheet knows paints nothing.
+#: Every other name Textual generates, and the guard's own, drops auto. That is
+#: a safe superset: about 20 of them are only ever a text or scrollbar colour
+#: (footer-key-foreground, scrollbar, ...) and could paint it, but a list by
+#: use needs a scan of every stylesheet, and a miss is a crash at startup
+#: (this app paints text-primary as a fill and as a border).
+_NO_AUTO_NAMES = frozenset(GUARD_VARIABLES) | {
+    name for name, value in _GENERATED.items() if not str(value).startswith("auto")
+}
+#: TASK-33003.16 AC#4: the names Textual generates as a text style (link-style,
+#: block-cursor-text-style, ...) take no colour, and every other generated
+#: name, and the guard's own, takes no text style: `color: bold` and
+#: `link-style: #ff0000` are stylesheet errors too.
+_STYLE_NAMES = frozenset(
+    name for name, value in _GENERATED.items() if set(str(value).split()) <= VALID_STYLE_FLAGS
+)
+_COLOUR_NAMES = (frozenset(GUARD_VARIABLES) | _GENERATED.keys()) - _STYLE_NAMES
 
 
-def _is_safe_variable_value(value: object) -> bool:
+def _is_safe_variable_value(name: str, value: object) -> bool:
     # Color.parse accepts "#fff\n"; nothing non-printable is a CSS value.
     if not isinstance(value, str) or not value or not value.isprintable():
         return False
-    if all(word in _TEXT_STYLES for word in value.split(" ")):
-        return True
+    words = value.split(" ")
+    if all(word in _TEXT_STYLES for word in words):
+        # Textual takes `none` on its own only: "none bold" or "none none"
+        # ends the app when the style paints (StyleValueError).
+        return name not in _COLOUR_NAMES and (words == ["none"] or "none" not in words)
+    if name in _STYLE_NAMES:
+        return False
     match = _ALPHA_SUFFIX.fullmatch(value)
     if match and match.group(1) == "auto":
-        return True
+        return name not in _NO_AUTO_NAMES
     try:
         Color.parse(match.group(1) if match else value)
     except Exception:  # noqa: BLE001 - anything unparseable is dropped
@@ -430,7 +552,12 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
     ``"red; } Screen { display: none"`` or a bare number escapes every
     try/except and kills the app (every launch, if it is the default theme).
     Kept: lowercase-hyphen names whose value is a colour (optionally
-    ``" NN%"``), ``"auto NN%"``, or space-separated text-style keywords.
+    ``" NN%"``), space-separated text-style keywords (``none`` only on its
+    own), or ``"auto NN%"`` on a
+    name that can take it (TASK-33003.16: not one a stylesheet may paint as
+    a background, ``_NO_AUTO_NAMES``). A value of the wrong kind for a name
+    Textual generates is dropped too: a text style on a colour name
+    (``_COLOUR_NAMES``), a colour on a text-style name (``_STYLE_NAMES``).
 
     Args:
         variables: The raw ``[variables]`` table from a theme file.
@@ -445,7 +572,7 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
         return {}
     safe: dict[str, str] = {}
     for key, value in variables.items():
-        if isinstance(key, str) and _VARIABLE_NAME.fullmatch(key) and _is_safe_variable_value(value):
+        if isinstance(key, str) and _VARIABLE_NAME.fullmatch(key) and _is_safe_variable_value(key, value):
             safe[key] = value
         else:
             # Name only (truncated), never the value: file content must not

@@ -96,7 +96,7 @@ BASELINE: dict[tuple[str, str, str], str] = {
     # (b5251e9a6e, "feat(backup): complete Python backup and selectable
     # recovery", 2026-09-16): `_load_user_themes` no longer calls `.glob`
     # directly, it reads through the backup-recovery gate
-    # (`raw._scope(...)` / `raw._check(operation).observed_files`, from
+    # (`raw.scope(...)` / `raw.check(operation).observed_files`, from
     # `Backup_Recovery.raw_participants`). That call is opaque to this
     # guard's per-file call graph, so the finding disappeared. Inherited
     # stale from origin/dev, not introduced by this branch -- removed per
@@ -282,15 +282,19 @@ def test_no_new_blocking_io_is_reachable_from_a_message_handler():
     findings = _scan_package()
     unexpected = {key: chain for key, chain in findings.items() if key not in BASELINE}
 
-    assert not unexpected, "blocking I/O is reachable from a message handler:\n" + "\n".join(
-        f"  {path}::{handler}\n      {' -> '.join(chain)}"
-        for (path, handler, _call), chain in sorted(unexpected.items())
-    ) + (
-        "\n\nTextual runs handlers on a serialized pump, so this freezes the whole "
-        "app for the duration. Move the work off the pump (a thread for blocking "
-        "calls, a worker for awaited ones) -- and if you defer into a worker, pass "
-        "exit_on_error=False so a failure cannot exit the app. If the cost is "
-        "genuinely negligible, add it to BASELINE with the measurement."
+    assert not unexpected, (
+        "blocking I/O is reachable from a message handler:\n"
+        + "\n".join(
+            f"  {path}::{handler}\n      {' -> '.join(chain)}"
+            for (path, handler, _call), chain in sorted(unexpected.items())
+        )
+        + (
+            "\n\nTextual runs handlers on a serialized pump, so this freezes the whole "
+            "app for the duration. Move the work off the pump (a thread for blocking "
+            "calls, a worker for awaited ones) -- and if you defer into a worker, pass "
+            "exit_on_error=False so a failure cannot exit the app. If the cost is "
+            "genuinely negligible, add it to BASELINE with the measurement."
+        )
     )
 
 
@@ -353,7 +357,9 @@ class Thing:
                 pass
 """
     functions, _ = _analyse(source)
-    calls = {chain[-1].strip("<>") for chain in _paths_to_blocking(functions, "on_mount")}
+    calls = {
+        chain[-1].strip("<>") for chain in _paths_to_blocking(functions, "on_mount")
+    }
 
     assert calls == {"self._dir.glob", "ZipFile"}, (
         f"expected both blocking calls to be reported, got {sorted(calls)}: a new "

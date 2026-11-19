@@ -37,12 +37,21 @@ def test_includes_disabled_attached_book(wb_db):
 
 def test_empty_when_none_attached(wb_db):
     wb_db.add_conversation({"id": "c3", "title": "C"})
-    assert summarize_active_world_books(wb_db, "c3", None) == {"world_books": [], "source": "local"}
+    assert summarize_active_world_books(wb_db, "c3", None) == {
+        "world_books": [],
+        "source": "local",
+    }
 
 
 def test_no_conversation_returns_empty(wb_db):
-    assert summarize_active_world_books(wb_db, None, None) == {"world_books": [], "source": "local"}
+    assert summarize_active_world_books(wb_db, None, None) == {
+        "world_books": [],
+        "source": "local",
+    }
 
 
 def test_db_error_returns_empty():
-    assert summarize_active_world_books(object(), "cX", None) == {"world_books": [], "source": "local"}
+    assert summarize_active_world_books(object(), "cX", None) == {
+        "world_books": [],
+        "source": "local",
+    }

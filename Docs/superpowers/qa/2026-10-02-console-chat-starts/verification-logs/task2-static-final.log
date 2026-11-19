@@ -1,0 +1,16 @@
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff check --select E9,F63,F7,F82 Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py Tests/Chat/test_console_chat_create_confirm.py Tests/Chat/test_console_chat_create_integration.py Tests/Chat/test_console_fleet_wake.py Tests/DB/test_chachanotes_console_library_policy_migration.py Tests/UI/test_console_launch_wake.py Tests/UI/test_console_prompt_queue.py Tests/UI/test_console_runtime_ownership.py tldw_chatbook/Agents/tool_catalog.py tldw_chatbook/Chat/chat_persistence_service.py tldw_chatbook/Chat/console_agent_bridge.py tldw_chatbook/Chat/console_chat_controller.py tldw_chatbook/Chat/console_chat_models.py tldw_chatbook/Chat/console_chat_store.py tldw_chatbook/Chat/console_dispatch_checkpoint.py tldw_chatbook/Chat/console_dispatch_repository.py tldw_chatbook/Chat/console_fleet_wake.py tldw_chatbook/Chat/console_prompt_queue_coordinator.py tldw_chatbook/Chat/console_roleplay_identity.py tldw_chatbook/Chat/console_runtime.py tldw_chatbook/Chat/console_turn_preparation.py tldw_chatbook/Chat/message_metadata.py tldw_chatbook/DB/ChaChaNotes_DB.py tldw_chatbook/UI/Console_Modules/prompt_queue.py tldw_chatbook/UI/Screens/chat_screen.py tldw_chatbook/Widgets/Chat_Widgets/chat_create_confirm_card.py tldw_chatbook/Widgets/Console/console_composer_bar.py tldw_chatbook/Chat/console_chat_start.py Tests/Chat/test_console_chat_start.py Tests/DB/test_chachanotes_v74_agent_chat_starts_migration.py
+All checks passed!
+EXIT: 0
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m ruff format --check tldw_chatbook/Chat/console_chat_start.py Tests/Chat/test_console_chat_start.py Tests/DB/test_chachanotes_v74_agent_chat_starts_migration.py
+3 files already formatted
+EXIT: 0
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --baseline .superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/task2-format.json
+EXIT: 0
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --baseline .superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/task2-format-extra.json
+EXIT: 0
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --baseline .superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/task2-format-composer.json
+EXIT: 0
+COMMAND: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python scripts/terminal_qualification/format_ratchet.py verify --baseline .superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/task2-format-queue-ui.json
+EXIT: 0
+COMMAND: git diff --check
+EXIT: 0

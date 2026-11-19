@@ -22,6 +22,11 @@ from Tests.Chat.conftest import StreamingGateway
 from Tests.console_provider_doubles import provider_resolution
 from Tests.console_provider_doubles import persisted_console_store
 
+# TASK-39154: the controller's send path reads settings through the guarded
+# config loader, which the per-test TLDW_CONFIG_PATH redirect refuses
+# (RecoveryRequired raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 # `controller_with_two_sessions` (and its `StreamingGateway` provider stub)
 # moved to `Tests/Chat/conftest.py` (Task 7 brief) so

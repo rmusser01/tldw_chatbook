@@ -2,6 +2,7 @@
 Phase 2, the chat card) call run_generation() from a thread worker — never on the
 UI loop, because the adapters are synchronous and blocking.
 """
+
 from __future__ import annotations
 
 import threading
@@ -14,7 +15,9 @@ from tldw_chatbook.Image_Generation.capabilities import (
     resolve_backend_reference_image_capability,
 )
 from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
-from tldw_chatbook.Image_Generation.request_validation import validate_image_generation_request
+from tldw_chatbook.Image_Generation.request_validation import (
+    validate_image_generation_request,
+)
 
 
 def build_request(
@@ -58,9 +61,17 @@ def build_request(
         A frozen :class:`ImageGenRequest`.
     """
     return ImageGenRequest(
-        backend=backend, prompt=prompt, negative_prompt=negative_prompt,
-        width=width, height=height, steps=steps, cfg_scale=cfg_scale, seed=seed,
-        sampler=sampler, model=model, format=image_format,
+        backend=backend,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        width=width,
+        height=height,
+        steps=steps,
+        cfg_scale=cfg_scale,
+        seed=seed,
+        sampler=sampler,
+        model=model,
+        format=image_format,
         extra_params=dict(extra_params or {}),
         reference_image=reference_image,
         cancel_event=cancel_event,

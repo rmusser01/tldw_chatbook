@@ -671,7 +671,9 @@ class TestNotificationSettingsAreWrittenAtomically:
 # === 5. WorkspaceDB (task-15480): autocommit + guarded nesting ===
 
 
-def _insert_workspace_record(conn: sqlite3.Connection, workspace_id: str, name: str) -> None:
+def _insert_workspace_record(
+    conn: sqlite3.Connection, workspace_id: str, name: str
+) -> None:
     """Bare INSERT against ``workspace_records``, bypassing ``transaction()``.
 
     No production call site does this today (task-15480's audit found every
@@ -776,9 +778,7 @@ class TestWorkspaceDBAutocommitAndNesting:
                     pass
 
         assert db._held_connection().in_transaction is False
-        assert {
-            record.workspace_id for record in service.list_workspaces()
-        } == before
+        assert {record.workspace_id for record in service.list_workspaces()} == before
         db.close()
 
 
@@ -942,7 +942,9 @@ class TestTask22224StoresUseAutocommit:
         finally:
             probe.close()
 
-    @pytest.mark.parametrize("store", _T22224_MANAGER_PROBES, ids=_T22224_MANAGER_PROBES)
+    @pytest.mark.parametrize(
+        "store", _T22224_MANAGER_PROBES, ids=_T22224_MANAGER_PROBES
+    )
     def test_bare_dml_then_write_transaction_still_begins(self, tmp_path, store):
         """The review's repro: bare DML must not degrade ``transaction()``.
 

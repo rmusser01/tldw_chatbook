@@ -113,23 +113,29 @@ def test_writer_lease_revocation_fails_closed_without_recreating_root(tmp_path):
         access_scope=functools.partial(manager.lease, snapshot),
     )
     writer.bind("run-a")
-    assert writer.append(
-        run_id="run-a",
-        kind="primary",
-        type="model",
-        content="before close",
-    ) == 1
+    assert (
+        writer.append(
+            run_id="run-a",
+            kind="primary",
+            type="model",
+            content="before close",
+        )
+        == 1
+    )
 
     with manager.lease(snapshot):
         manager.close("chat-a")
         assert snapshot.root.exists()
 
-    assert writer.append(
-        run_id="run-a",
-        kind="primary",
-        type="model",
-        content="after close",
-    ) is None
+    assert (
+        writer.append(
+            run_id="run-a",
+            kind="primary",
+            type="model",
+            content="after close",
+        )
+        is None
+    )
     assert manager.wait_for_cleanup(timeout_seconds=2.0)
     assert not snapshot.root.exists()
 
@@ -185,6 +191,7 @@ def test_writer_failure_logs_do_not_persist_private_scratch_locator(
     assert "secret-token" not in warning_text
 
 
+@pytest.mark.bootstrap_profile
 def test_builtin_tool_result_log_does_not_persist_private_scratch_locator(tmp_path):
     scratch = tmp_path / "private-scratch"
     scratch.mkdir()
@@ -231,9 +238,7 @@ def test_builtin_tool_result_log_does_not_persist_private_scratch_locator(tmp_pa
 
     assert writer.log_dir is not None
     tool_results = [
-        record
-        for record in all_records(writer.log_dir)
-        if record.type == "tool_result"
+        record for record in all_records(writer.log_dir) if record.type == "tool_result"
     ]
     assert len(tool_results) == 1
     assert str(scratch) not in tool_results[0].content
@@ -374,8 +379,7 @@ def test_real_model_output_is_private_at_log_and_terminal_db_boundaries(wired):
             ("/Users/alice/work/app.py",),
         ),
         (
-            '{"status":"done","path":"/Users/alice/work/app.py",'
-            '"tests":"passed"}',
+            '{"status":"done","path":"/Users/alice/work/app.py","tests":"passed"}',
             ('"status": "done"', '"tests": "passed"', "[local path withheld]"),
             ("/Users/alice/work/app.py",),
         ),
@@ -477,6 +481,7 @@ def test_disabled_writer_leaves_the_run_untouched(wired, monkeypatch):
     assert not (root / "agent-runs").exists()
 
 
+@pytest.mark.bootstrap_profile
 def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired, inline_spawns):
     """Round-1 review fix: the prior version of this suite only ever proved
     sharing by manually calling ``writer.append`` on the object the test
@@ -524,6 +529,7 @@ def test_a_real_spawn_shares_the_parent_log_directory_and_counter(wired, inline_
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_parent_spawn_tool_call_record_precedes_the_childs_own_records(
     wired, inline_spawns
 ):
@@ -676,6 +682,14 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
     )
     for value in safe_values:
         assert isinstance(on_record("tool_result", {"content": value}), int)
+    from types import SimpleNamespace
+
+    def trajectory_json(loads):
+        # Patch trajectory's own ``json`` name, not the shared stdlib function.
+        return SimpleNamespace(
+            loads=loads, dumps=json.dumps, JSONDecodeError=json.JSONDecodeError
+        )
+
     real_loads = trajectory_module.json.loads
     decode_count = 0
 
@@ -684,7 +698,7 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         decode_count += 1
         return real_loads(value)
 
-    monkeypatch.setattr(trajectory_module.json, "loads", counted_loads)
+    monkeypatch.setattr(trajectory_module, "json", trajectory_json(counted_loads))
     assert isinstance(
         on_record("tool_result", {"content": '{"endpoint":"/api/safe"}'}), int
     )
@@ -693,9 +707,9 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
     def exhausted_decoder(_value):
         raise MemoryError
 
-    monkeypatch.setattr(trajectory_module.json, "loads", exhausted_decoder)
+    monkeypatch.setattr(trajectory_module, "json", trajectory_json(exhausted_decoder))
     assert on_record("tool_result", {"content": '{"file_path":"/api/private"}'}) is None
-    monkeypatch.setattr(trajectory_module.json, "loads", real_loads)
+    monkeypatch.setattr(trajectory_module, "json", json)
 
     records = read_all(root)
     persisted = "\n".join(record.content for record in records)
@@ -703,7 +717,9 @@ def test_real_run_log_omits_sensitive_tool_args_and_results(wired, monkeypatch):
         assert value not in persisted
     assert "private internal plan" not in persisted
     assert "private-key-body" not in persisted
-    assert all(any(record.content == value for record in records) for value in safe_values)
+    assert all(
+        any(record.content == value for record in records) for value in safe_values
+    )
 
 
 def test_run_turn_called_twice_on_one_service_gets_two_separate_logs(wired):

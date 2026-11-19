@@ -1,0 +1,4 @@
+llama.cpp first request: keys=['model', 'messages', 'stream', 'temperature', 'top_p', 'min_p', 'top_k', 'max_tokens']
+system prompt chars=20839; native tools array=None
+fenced tool names in system prompt=['check_agents', 'discard_agent_worktree', 'find_tools', 'fork_chat', 'install_skill', 'load_tools', 'merge_agent_worktree', 'new_chat', 'read_agent_messages', 'run_log_slice', 'run_log_stats', 'run_skill_script', 'search_run_log', 'send_to_agent', 'spawn_subagent', 'wait_agents']
+chat_with_llm present=False

@@ -1,0 +1,89 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook",
+  "base": "38cf68612508d23e9ae70a5deecf76a913fff3e0",
+  "phases": [
+    {
+      "phase": "red-native",
+      "exit": 1,
+      "result": "2 failed; both valid product RED: terminal artifact instead of revision",
+      "raw_bytes": 135738,
+      "raw_sha256": "b7cb972b21a89ea4e78b18ddd690b6c6b228fa3023db0d1a9c9bea820b07e46b",
+      "artifact": "red-native.log.gz",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_archive_recovery_followup.py -k 'test_captured_native_turn_restores_original_second_row and structured' -q -p no:cacheprovider"
+    },
+    {
+      "phase": "red-settlement",
+      "exit": 1,
+      "result": "32 failed, 66 passed, 4 deselected: 6 product RED, 26 harness failures",
+      "raw_bytes": 391281,
+      "raw_sha256": "ec2f55d5721ae4db7162600b3228e768d25d387a7bf5f359a7990c0a4f1215f0",
+      "artifact": "red-settlement.log.gz",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_trace_thinking_settlement.py -k 'new_local_profile or (requires_exact_evidence and (exact or format))' -q -p no:cacheprovider"
+    },
+    {
+      "phase": "green-focused",
+      "exit": 1,
+      "result": "36 failed, 68 passed, 55 deselected: frozen-array representation mismatch plus retained harness issues",
+      "raw_bytes": 622491,
+      "raw_sha256": "e68872ab6247e8822532704e0bab0d78496e0a06638b5501acc9a350079c01c9",
+      "artifact": "green-focused.log.gz",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_trace_thinking_settlement.py Tests/Chat/test_console_archive_recovery_followup.py -k 'requires_exact_evidence or new_local_profile or test_captured_native_turn_restores_original_second_row' -q -p no:cacheprovider --basetemp=/private/tmp/task4-green-focused"
+    },
+    {
+      "phase": "green-covering",
+      "exit": 1,
+      "result": "149 passed, 3 baseline settlement failures",
+      "raw_bytes": 112073,
+      "raw_sha256": "b8d9baadc1bdb5af178511981115b59dd64172337eba856b8ba0615ec0b6b3ec",
+      "artifact": "green-covering.log.gz",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_trace_thinking_settlement.py Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority Tests/Chat/test_console_trace_settlement.py -q -p no:cacheprovider --basetemp=/private/tmp/task4-green-covering"
+    },
+    {
+      "phase": "baseline-controls-phase1",
+      "exit": 1,
+      "result": "Harness bootstrap failure before pytest: normal config metadata read, denied data-root lock",
+      "raw_bytes": 7832,
+      "raw_sha256": "9d2ec44c41d214ed1506d452ca1819d57d9a5ad72e3b700a2389726f32e77f4c",
+      "artifact": "baseline-controls-phase1.log.gz",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python /private/tmp/task4-baseline-controls.py (initial script without Tests.conftest bootstrap)"
+    },
+    {
+      "phase": "baseline-controls-phase2",
+      "exit": 1,
+      "result": "3 baseline failures reproduced with original baseline functions and test module; 3 assert rewrite warnings",
+      "raw_bytes": 114918,
+      "raw_sha256": "6be62b7aedd4dddb3618c77535e01efa51e9b5783f3ecf3741e85290f0aed5ec",
+      "artifact": "baseline-controls-phase2.log.gz",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python /private/tmp/task4-baseline-controls.py (retained corrected script)"
+    },
+    {
+      "phase": "green-final",
+      "exit": 1,
+      "result": "134 passed, 5 ignored-resolution constructor harness failures",
+      "raw_bytes": 12477,
+      "raw_sha256": "5d85ecfd3d56f6ffd62e9a9c6b0a55178b475ea327522811f8ba2694a69a311c",
+      "artifact": "green-final.log.gz",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_trace_thinking_settlement.py Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority -q -p no:cacheprovider --basetemp=/private/tmp/task4-green-final"
+    },
+    {
+      "phase": "green-confirmed",
+      "exit": 0,
+      "result": "139 passed in 69.46s",
+      "raw_bytes": 1419,
+      "raw_sha256": "49f0114fc329aeb921780add9632d53eb004da7b03e5b417340ebcdc08201e80",
+      "artifact": "green-confirmed.log.gz",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_trace_thinking_settlement.py Tests/Chat/test_console_archive_recovery_followup.py::test_captured_native_turn_restores_original_second_row Tests/Chat/test_console_archive_recovery_followup.py::test_native_archive_reseal_releases_exact_admitted_authority -q -p no:cacheprovider --basetemp=/private/tmp/task4-green-confirmed"
+    },
+    {
+      "phase": "helper-callers",
+      "exit": 0,
+      "result": "13 passed in 23.13s",
+      "raw_bytes": 1614,
+      "raw_sha256": "0ff4cd671a35e68b4b11d482f8b1ceadbfe9cf98ea855a90bb1b628e55fa45da",
+      "artifact": "helper-callers.log.gz",
+      "command": "PYTHONDONTWRITEBYTECODE=1 /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest Tests/Chat/test_console_archive_recovery_followup.py::test_archive_reseal_preserves_canonical_history_owners Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_composes_existing_transform_without_changing_its_source Tests/Chat/test_console_archive_recovery_followup.py::test_archive_rider_reseal_refuses_unowned_or_non_text_changes -q -p no:cacheprovider --basetemp=/private/tmp/task4-helper-callers"
+    }
+  ],
+  "static_command": "python3 /private/tmp/task4-static-checks.py",
+  "static_exit": 0
+}

@@ -1,0 +1,21 @@
+{
+  "head": "f09597cdd5a2b5af1b07dea7eabe2eb6d33d9c80",
+  "files": [
+    {
+      "path": "tldw_chatbook/Chat/console_first_send_modules.py",
+      "sha256": "ac715afaaaa95fe17861c4be03cedf4b930dde95c00324ca2fedaeff3f5e17f2"
+    },
+    {
+      "path": "tldw_chatbook/Tools/web_tool_impls.py",
+      "sha256": "32c1e6dbcafd5e7aa49b4b627206ce745b23cdcf71138cf4b936eb1798c6e754"
+    },
+    {
+      "path": "Tests/UI/test_console_first_send_preimport.py",
+      "sha256": "431d6b37ea0d30e582ff46c3d464f2cbad6650d435c05d57fa9e11848f6bfdc0"
+    },
+    {
+      "path": "Tests/Tools/test_web_deep_search.py",
+      "sha256": "03cfadb36de4a18878438a6bf147672665393a1b0ea0c724e007fe7ca1150dc8"
+    }
+  ]
+}

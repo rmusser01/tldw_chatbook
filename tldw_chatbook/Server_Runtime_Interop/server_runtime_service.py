@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerRuntimeClient(Protocol):
+    """Client methods ServerRuntimeService calls (TASK-36953.1)."""
+
+    async def get_flashcards_import_limits(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_jobs_config(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_server_docs_info(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_server_health(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_server_liveness(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_server_metrics(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_server_readiness(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_server_security_health(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_tokenizer_config(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_config_providers(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def update_tokenizer_config(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def validate_provider_key(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerRuntimeService:
@@ -16,7 +30,7 @@ class ServerRuntimeService:
 
     def __init__(
         self,
-        client: Optional[TLDWAPIClient] = None,
+        client: Optional[ServerRuntimeClient] = None,
         *,
         policy_enforcer: Any | None = None,
         client_provider: Any | None = None,
@@ -55,7 +69,7 @@ class ServerRuntimeService:
     ) -> "ServerRuntimeService":
         return cls(client_provider=provider, policy_enforcer=policy_enforcer)
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerRuntimeClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

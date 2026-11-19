@@ -1,0 +1,98 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "monotonic": {
+    "implementation": "GetTickCount64()",
+    "monotonic": true,
+    "adjustable": false,
+    "resolution": 0.015625
+  },
+  "perf_counter": {
+    "implementation": "QueryPerformanceCounter()",
+    "monotonic": true,
+    "adjustable": false,
+    "resolution": 1e-07
+  },
+  "runs": [
+    {
+      "clock_safe": false,
+      "native_worker": false,
+      "clock_resolution_seconds": 0.015625,
+      "poll_seconds": 0.005,
+      "heartbeat_seconds": 0.01,
+      "elapsed_ms": 2000.0457999994978,
+      "main_thread_cpu_ms": 1968.75,
+      "loop_iterations": 261448,
+      "selector_calls": 261448,
+      "zero_timeout_selects": 261448,
+      "poll_counts": {
+        "input": 130722,
+        "attach": 130722,
+        "heartbeat": 130722
+      },
+      "worker": {}
+    },
+    {
+      "clock_safe": true,
+      "native_worker": false,
+      "clock_resolution_seconds": 0.015625,
+      "poll_seconds": 0.03125,
+      "heartbeat_seconds": 0.03125,
+      "elapsed_ms": 2042.4898000055691,
+      "main_thread_cpu_ms": 0.0,
+      "loop_iterations": 92,
+      "selector_calls": 92,
+      "zero_timeout_selects": 48,
+      "poll_counts": {
+        "input": 44,
+        "attach": 44,
+        "heartbeat": 44
+      },
+      "worker": {}
+    },
+    {
+      "clock_safe": false,
+      "native_worker": true,
+      "clock_resolution_seconds": 0.015625,
+      "poll_seconds": 0.005,
+      "heartbeat_seconds": 0.01,
+      "elapsed_ms": 2000.046300003305,
+      "main_thread_cpu_ms": 2000.0,
+      "loop_iterations": 246522,
+      "selector_calls": 246522,
+      "zero_timeout_selects": 246522,
+      "poll_counts": {
+        "input": 123259,
+        "attach": 123259,
+        "heartbeat": 123259
+      },
+      "worker": {
+        "thread_cpu_ms": 218.75,
+        "elapsed_ms": 2000.12300000526,
+        "native_calls": 25628
+      }
+    },
+    {
+      "clock_safe": true,
+      "native_worker": true,
+      "clock_resolution_seconds": 0.015625,
+      "poll_seconds": 0.03125,
+      "heartbeat_seconds": 0.03125,
+      "elapsed_ms": 2024.0124999982072,
+      "main_thread_cpu_ms": 0.0,
+      "loop_iterations": 92,
+      "selector_calls": 92,
+      "zero_timeout_selects": 48,
+      "poll_counts": {
+        "input": 44,
+        "attach": 44,
+        "heartbeat": 44
+      },
+      "worker": {
+        "thread_cpu_ms": 1984.375,
+        "elapsed_ms": 2024.0554000047268,
+        "native_calls": 7258397
+      }
+    }
+  ]
+}

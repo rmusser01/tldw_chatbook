@@ -1,0 +1,21 @@
+{
+  "server": "gmi",
+  "base_url": "https://api.gmi-serving.com/v1",
+  "probe_model": "probe-model",
+  "listing": {
+    "status": 401,
+    "body": {
+      "group": "api_key",
+      "message": "API key is required."
+    }
+  },
+  "chat_no_key": {
+    "status": 404,
+    "body": "No matching target server found for model probe-model"
+  },
+  "chat_bad_key": {
+    "status": 404,
+    "body": "No matching target server found for model probe-model"
+  },
+  "probed_at": "2026-09-30T04:19:55+00:00"
+}

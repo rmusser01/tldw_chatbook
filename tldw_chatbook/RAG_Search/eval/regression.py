@@ -277,7 +277,9 @@ class RegressionDetector:
 
         thresholds = thresholds or {}
         gating_config: GatingConfig | None
-        gating_config = self.gating_config or GatingConfig() if self.use_quality_gating else None
+        gating_config = (
+            self.gating_config or GatingConfig() if self.use_quality_gating else None
+        )
 
         lower_is_better = set(self.lower_is_better)
         if gating_config:
@@ -307,10 +309,18 @@ class RegressionDetector:
             # For "higher is better" metrics, a negative delta is bad
             if name in lower_is_better:
                 # Higher current = worse
-                regressed = delta > abs(baseline_value * threshold) if baseline_value != 0 else delta > 0
+                regressed = (
+                    delta > abs(baseline_value * threshold)
+                    if baseline_value != 0
+                    else delta > 0
+                )
             else:
                 # Lower current = worse
-                regressed = (-delta) > abs(baseline_value * threshold) if baseline_value != 0 else delta < 0
+                regressed = (
+                    (-delta) > abs(baseline_value * threshold)
+                    if baseline_value != 0
+                    else delta < 0
+                )
 
             if baseline_value != 0:
                 delta_percent = delta / baseline_value * 100
@@ -342,19 +352,24 @@ class RegressionDetector:
         # Build summary
         if has_regression:
             regressed_names = [
-                r.metric_name for r in results
+                r.metric_name
+                for r in results
                 if r.regressed and r.category == MetricCategory.STABLE
             ]
-            summary = f"Regression detected in stable metrics: {', '.join(regressed_names)}"
+            summary = (
+                f"Regression detected in stable metrics: {', '.join(regressed_names)}"
+            )
             if has_warnings:
                 warn_names = [
-                    r.metric_name for r in results
+                    r.metric_name
+                    for r in results
                     if r.regressed and r.category == MetricCategory.UNSTABLE
                 ]
                 summary += f". Warnings in unstable metrics: {', '.join(warn_names)}"
         elif has_warnings:
             warn_names = [
-                r.metric_name for r in results
+                r.metric_name
+                for r in results
                 if r.regressed and r.category == MetricCategory.UNSTABLE
             ]
             summary = (
@@ -423,7 +438,9 @@ class RegressionDetector:
             raise
 
 
-def environment_mismatch(baseline: MetricBaseline, fingerprint: dict[str, Any]) -> list[str]:
+def environment_mismatch(
+    baseline: MetricBaseline, fingerprint: dict[str, Any]
+) -> list[str]:
     """Compare a baseline's recorded environment against a current fingerprint.
 
     Chatbook-side addition -- not present in the ported server module. Task 7

@@ -1,6 +1,6 @@
 """Ask before a close gesture discards unapplied Chat settings edits.
 
-TASK-33003.5 (ADR-031 task-16211): Esc, a backdrop click and Cancel never
+TASK-33003.5 (ADR-299 task-16211): Esc, a backdrop click and Cancel never
 discard an edited Chat settings draft by themselves. The modal's close guard
 gains an ``unsaved`` mode, after the memory-reset and compaction modes, that
 names the edited fields and offers Apply to this chat (Enter), Discard (d)
@@ -13,8 +13,11 @@ transfer), otherwise the value the controls showed once the modal finished its
 initial sync. The second half keeps values the controls merely normalize at
 mount (a blank committed endpoint shown as its configured default) from
 reading as edits. A suspended draft (credential round-trip) carries the first
-modal's baseline, because the reopened modal composes its Provider, Model,
-Endpoint and Streaming controls from the draft's edits.
+modal's baseline, because the reopened modal composes its pair, Endpoint and
+Streaming controls from the draft's edits. The provider·model pair is one
+field, "Model", the MODEL row's label (spec rule 1, TASK-33006.4). The
+modal's title counts the same edits: "Chat settings · <chat> · 2 unsaved
+edits" (TASK-33006.5).
 
 Ctrl+Q asks too (TASK-33622.10): it is a priority binding, so the app's quit
 flow can start while this modal is open, and ``confirm_quit`` asks before
@@ -27,6 +30,7 @@ module sits at its ADR-097 size ceiling; the modal keeps only the wiring.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Any
 
@@ -43,12 +47,19 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     ChatDisplayNameError,
     normalize_chat_display_name,
 )
+from tldw_chatbook.Chat.console_session_settings import (
+    normalize_console_model_value,
+)
 from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
+from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
+from tldw_chatbook.Utils.character_display_text import sanitize_character_display_label
 
+#: The modal's name everywhere it is named (TASK-33006.5, spec §3).
+CHAT_SETTINGS_NAME = "Chat settings"
+#: The provider·model pair: one field, labelled as the MODEL row shows it.
+_PAIR_LABEL = "Model"
 #: Session-settings fields Apply commits, with the label each editor shows.
 _SETTINGS_FIELDS = {
-    "provider": "Provider",
-    "model": "Model",
     "base_url": MODEL_FIELD_LABELS["endpoint"],
     **{name: MODEL_FIELD_LABELS[name] for name in GENERATION_FIELD_REQUEST_KEYS},
 }
@@ -69,7 +80,7 @@ _NAME_LABEL = "Your name in this chat"
 _CONTEXT_INVALID_LABEL = "Context and memory"
 _BASELINE_LABELS = frozenset(
     (*_SETTINGS_FIELDS.values(), *_CONTEXT_FIELDS.values())
-) | {_NAME_LABEL, _CONTEXT_INVALID_LABEL}
+) | {_PAIR_LABEL, _NAME_LABEL, _CONTEXT_INVALID_LABEL}
 _MISSING = object()
 _GUARD_BUTTONS = "#console-settings-close-guard Button"
 
@@ -89,8 +100,10 @@ def chat_settings_values(
     Returns:
         Effective values keyed by the field label the editors show.
     """
+    # A scalar, so a baseline can travel in a suspended draft.
     values: dict[str, object] = {
-        label: getattr(settings, name) for name, label in _SETTINGS_FIELDS.items()
+        _PAIR_LABEL: f"{settings.provider or ''}\x1f{settings.model or ''}",
+        **{label: getattr(settings, name) for name, label in _SETTINGS_FIELDS.items()},
     }
     if context_overrides is None:
         # The key's presence is the signal; a primitive value lets a baseline
@@ -126,6 +139,135 @@ def unsaved_baseline(
     return {
         label: value if opened.get(label) == committed.get(label) else committed.get(label)
         for label, value in mounted.items()
+    }
+
+
+def rebased_unsaved_baseline(
+    baseline: Mapping[str, object],
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the baseline after a pick rebased the draft (TASK-33006.16).
+
+    What the rebase changed is not the user's edit: a field the user had not
+    edited counts as unedited at its rebased value, and so does an edit the
+    rebase did not carry (blanked because the new provider rejects it, or
+    replaced by the new pair's own value). Only an edit it carried still
+    counts. The pair keeps its baseline, so the pick itself counts as Model.
+
+    Args:
+        baseline: The baseline before the pick.
+        before: The values just before the pick.
+        after: The values the rebase left.
+
+    Returns:
+        A new baseline.
+    """
+    rebased = dict(baseline)
+    for label in _SETTINGS_FIELDS.values():
+        edited = before.get(label) != baseline.get(label)
+        if not (edited and after.get(label) == before.get(label)):
+            rebased[label] = after.get(label)
+    return rebased
+
+
+def _pair_key(provider: object, model: object) -> tuple[str, str | None]:
+    """A provider·model pair as its identity, however it is spelled."""
+    return provider_identity_key(provider), normalize_console_model_value(model)
+
+
+def followed_suspended_draft(snapshot: Any, committed: Any) -> Any:
+    """Move a suspended draft's untouched fields the chat itself moved.
+
+    TASK-36534: a credential handoff's own Settings save can move an unused
+    chat to new defaults (D1), a new Endpoint say. As with a pick's rebase
+    (TASK-33006.16), what moved is not the user's edit: a settings field the
+    draft left alone takes the chat's value when the chat's own value changed
+    since the capturing modal opened and the draft holds the chat's pair, so
+    the reopened modal shows it and Apply cannot write the old one back.
+    Edits stay as they are.
+
+    Args:
+        snapshot: A ``ConsoleSettingsDraftSnapshot``; its baseline names the
+            fields the user had edited, ``unsaved_committed`` the chat's
+            committed values when the capturing modal opened.
+        committed: The chat's current ``ConsoleSessionSettings``, or ``None``.
+
+    Returns:
+        The snapshot itself when nothing follows, else a followed copy.
+    """
+    edited, before = snapshot.unsaved_baseline, snapshot.unsaved_committed
+    if committed is None or edited is None or before is None:
+        return snapshot
+    after = chat_settings_values(committed, None, None)
+
+    def moved(label: str) -> bool:
+        return label not in edited and before.get(label) != after.get(label)
+
+    draft = snapshot.settings
+    changes: dict[str, object] = {}
+    raw = dict(snapshot.raw_values)
+    models = dict(snapshot.provider_model_drafts)
+    urls = dict(snapshot.provider_base_url_drafts)
+    chat_pair = _pair_key(committed.provider, committed.model)
+    if moved(_PAIR_LABEL):
+        changes.update(provider=chat_pair[0], model=chat_pair[1])
+        models[chat_pair[0]] = chat_pair[1]
+    provider = changes.get("provider", draft.provider)
+    if _pair_key(provider, changes.get("model", draft.model)) != chat_pair:
+        return snapshot  # another pair: the user's pick keeps its own values
+    for name, label in _SETTINGS_FIELDS.items():
+        value = getattr(committed, name)
+        if moved(label) and value != getattr(draft, name):
+            changes[name] = value
+            raw.pop(f"console-settings-{name.replace('_', '-')}", None)
+            if name == "base_url":
+                urls.pop(provider, None)
+    if not changes:
+        return snapshot
+    return replace(
+        snapshot,
+        settings=replace(draft, **changes),
+        raw_values=raw,
+        provider_model_drafts=models,
+        provider_base_url_drafts=urls,
+    )
+
+
+def reopened_unsaved_baseline(
+    edited: Mapping[str, object],
+    mounted: Mapping[str, object],
+    before: Mapping[str, object] | None,
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Return the baseline of a modal reopened on a suspended draft.
+
+    A field the draft left alone counts as unedited at what the reopened
+    modal shows (``followed_suspended_draft`` moved it to the chat's value),
+    or at the chat's value when the modal shows none (the Context and memory
+    fields while that view holds an invalid value, so fixing it is no edit).
+    An edit keeps the first modal's baseline, or takes the chat's value when
+    the chat's own value moved meanwhile (TASK-36534), so an edit the chat
+    now holds is not unsaved.
+
+    Args:
+        edited: The first modal's baseline for the fields it had edited.
+        mounted: Values the reopened controls showed after the initial sync.
+        before: The chat's values when the capturing modal opened, or
+            ``None`` for a draft that carries none.
+        after: The chat's values now.
+
+    Returns:
+        The value each field counts as unedited at.
+    """
+    has_committed = before is not None
+    return {
+        label: mounted.get(label, after.get(label))
+        if label not in edited
+        else after.get(label)
+        if has_committed and before.get(label) != after.get(label)
+        else edited[label]
+        for label in {**after, **mounted, **edited}
     }
 
 
@@ -167,7 +309,7 @@ def unsaved_labels(
 
 
 def esc_hint_copy(count: int, *, pending: str | None = None) -> str:
-    """Return the Esc hint for ``count`` unsaved edits (ADR-031 task-16211).
+    """Return the Esc hint for ``count`` unsaved edits (ADR-299 task-16211).
 
     Args:
         count: How many fields are unsaved.
@@ -182,13 +324,32 @@ def esc_hint_copy(count: int, *, pending: str | None = None) -> str:
     return f"Esc close (asks: {count} unsaved)" if count else "Esc close"
 
 
+def chat_settings_title(chat_title: str, count: int) -> str:
+    """Return the modal's title: its name, the chat's title, unsaved edits.
+
+    Args:
+        chat_title: The chat's title; blank leaves it out.
+        count: How many fields are unsaved; zero leaves the count out.
+
+    Returns:
+        For example ``"Chat settings · Refactor plan · 2 unsaved edits"``.
+    """
+    parts = [CHAT_SETTINGS_NAME]
+    title = sanitize_character_display_label(chat_title, max_characters=60)
+    if title:
+        parts.append(title)
+    if count:
+        parts.append(f"{count} unsaved edit{'' if count == 1 else 's'}")
+    return " · ".join(parts)
+
+
 def unsaved_prompt_copy(labels: Iterable[str], *, can_apply: bool = True) -> str:
     """Return the unsaved-edits prompt copy naming ``labels``.
 
     Args:
         labels: The edited fields' labels.
         can_apply: Whether Apply to this chat is available; the key line
-            names only the keys that work (ADR-031 rule 4).
+            names only the keys that work (ADR-299 rule 4).
 
     Returns:
         The prompt's message: the edited fields, then the keys.
@@ -247,9 +408,12 @@ class ConsoleSettingsUnsavedGuardMixin:
 
     _unsaved_committed: tuple[Any, Any, object]
     _unsaved_baseline: dict[str, object] | None = None
+    #: Each pair's baseline when a pick left it, so a pick back restores it.
+    _unsaved_pair_baselines: dict[object, dict[str, object]] | None = None
     _unsaved_labels: tuple[str, ...] = ()
     _unsaved_retry: Callable[[], object] | None = None
     _unsaved_discard_approved = False
+    _chat_title = ""
 
     def _current_chat_settings_values(self) -> dict[str, object]:
         try:
@@ -269,34 +433,85 @@ class ConsoleSettingsUnsavedGuardMixin:
             if not self.query_one(control, Input).value.strip():
                 values[_SETTINGS_FIELDS[field]] = None
         # Streaming's Inherit/On/Off choice, not the effective bool: Inherit ->
-        # On over an On default is an edit (TASK-33003.10), and so is a model
-        # switch re-basing an explicit On to Inherit.
+        # On over an On default is an edit (TASK-33003.10). A pick re-basing
+        # an explicit On to Inherit is not (TASK-33006.16).
         values[_SETTINGS_FIELDS["streaming"]] = self._streaming_draft
         return values
+
+    def _unsaved_committed_values(self) -> dict[str, object]:
+        """The chat's committed values, as ``chat_settings_values`` keys them."""
+        settings, context_state, name = self._unsaved_committed
+        overrides = self._draft.context_policy_overrides
+        if context_state is not None:
+            overrides = context_state.overrides
+        return chat_settings_values(settings, overrides, name)
+
+    def _edited_unsaved_baseline(self) -> dict[str, object] | None:
+        """The baseline of the fields edited so far, for a suspended draft."""
+        if self._unsaved_baseline is None:
+            return None
+        try:
+            current = self._current_chat_settings_values()
+        except (NoMatches, QueryError):
+            return dict(self._unsaved_baseline)  # every field counts as edited
+        # Over the edited labels, not the baseline's: an invalid Context and
+        # memory value is an edit whose label no baseline holds (None here).
+        return {
+            label: self._unsaved_baseline.get(label)
+            for label in unsaved_labels(current, self._unsaved_baseline)
+        }
 
     def _capture_unsaved_baseline(self) -> None:
         """Record the unedited values once the initial control sync is done."""
         carried = getattr(self._suspended_draft, "unsaved_baseline", None)
-        if carried is not None:
-            self._unsaved_baseline = dict(carried)
-            self._sync_unsaved_hint()
-            return
-        settings, context_state, name = self._unsaved_committed
-        opened_overrides = self._draft.context_policy_overrides
-        committed = chat_settings_values(
-            settings,
-            opened_overrides if context_state is None else context_state.overrides,
-            name,
-        )
-        opened = chat_settings_values(
-            self._settings, opened_overrides, self._user_display_name_override
-        )
+        committed = self._unsaved_committed_values()
         try:
             mounted = self._current_chat_settings_values()
         except (NoMatches, QueryError):
             return
-        self._unsaved_baseline = unsaved_baseline(mounted, opened, committed)
+        if carried is not None:
+            self._unsaved_baseline = reopened_unsaved_baseline(
+                carried, mounted, self._suspended_draft.unsaved_committed, committed
+            )
+        else:
+            opened = chat_settings_values(
+                self._settings,
+                self._draft.context_policy_overrides,
+                self._user_display_name_override,
+            )
+            self._unsaved_baseline = unsaved_baseline(mounted, opened, committed)
         self._sync_unsaved_hint()
+
+    def _rebase_to_pick(self, provider: str, model: str) -> bool:
+        """Rebase the draft to a picked pair, counting only the user's edits.
+
+        A pair seen earlier in this open gets back the baseline it had; any
+        other pair is re-based by ``rebased_unsaved_baseline``
+        (TASK-33006.16).
+
+        Args:
+            provider: The picked provider.
+            model: The picked model.
+
+        Returns:
+            Whether the rebase landed.
+        """
+        try:
+            before = self._current_chat_settings_values()
+        except (NoMatches, QueryError):
+            before = None
+        if not self._rebase_to(provider, model):
+            return False
+        baseline = self._unsaved_baseline
+        if baseline is not None and before is not None:
+            after = self._current_chat_settings_values()
+            if self._unsaved_pair_baselines is None:
+                self._unsaved_pair_baselines = {}
+            self._unsaved_pair_baselines[before[_PAIR_LABEL]] = baseline
+            self._unsaved_baseline = self._unsaved_pair_baselines.get(
+                after[_PAIR_LABEL]
+            ) or rebased_unsaved_baseline(baseline, before, after)
+        return True
 
     def _unsaved_field_labels(self) -> tuple[str, ...]:
         if self._unsaved_baseline is None:
@@ -399,8 +614,9 @@ class ConsoleSettingsUnsavedGuardMixin:
         )
 
     def _sync_unsaved_hint(self) -> None:
-        try:
+        try:  # a deferred call can land while a dismissed modal unmounts
             hint = self.query_one("#console-settings-esc-hint", Static)
+            title = self.query_one("#console-settings-modal-title", Static)
         except (NoMatches, QueryError):
             return
         # Same precedence as _request_settings_close: reset > compaction > unsaved.
@@ -409,7 +625,15 @@ class ConsoleSettingsUnsavedGuardMixin:
             if self._memory_reset_token is not None
             else "compaction running" if self._compaction_is_active() else None
         )
-        hint.update(esc_hint_copy(len(self._unsaved_field_labels()), pending=pending))
+        labels = self._unsaved_field_labels()
+        hint.update(esc_hint_copy(len(labels), pending=pending))
+        # The title counts the same edits (TASK-33006.5).
+        text = chat_settings_title(self._chat_title, len(labels))
+        if str(title.content) != text:
+            title.update(text)
+        # The same edited set marks each Model view row "edited *" (TASK-33006.1).
+        self._sync_field_rows(labels)
+        self._sync_saved_defaults_action()
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         """Route Esc, backdrop and Cancel; in the prompt they keep editing."""
@@ -455,3 +679,38 @@ class ConsoleSettingsUnsavedGuardMixin:
 
     def on_select_changed(self, _event: object) -> None:
         self.call_after_refresh(self._sync_unsaved_hint)
+
+
+    def _parse_float_input(self, input_id: str, fallback: float) -> object:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if not raw_value:
+            return fallback
+        try:
+            return float(raw_value)
+        except ValueError:
+            return raw_value
+
+
+    def _parse_optional_float_input(self, input_id: str) -> object:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if not raw_value:
+            return None
+        try:
+            return float(raw_value)
+        except ValueError:
+            return raw_value
+
+
+    def _parse_optional_int_input(self, input_id: str) -> object:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if not raw_value:
+            return None
+        try:
+            return int(raw_value)
+        except ValueError:
+            return raw_value
+
+
+    def _parse_optional_text_input(self, input_id: str) -> str | None:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        return raw_value or None

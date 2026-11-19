@@ -1,0 +1,12 @@
+import ast,copy,hashlib,json,pathlib,subprocess
+root=pathlib.Path.cwd(); pairs={'tldw_chatbook/UI/Screens/personas_screen.py':['tldw_chatbook/Widgets/Persona_Widgets/personas_state.py','tldw_chatbook/UI/Persona_Modules/personas_preview_coordinator.py','tldw_chatbook/Widgets/Persona_Widgets/personas_character_tts_widget.py','tldw_chatbook/UI/Persona_Modules/character_avatar_helpers.py'],'tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py':['tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py'],'tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py':['tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py']};results=[]
+for oldpath,dests in pairs.items():
+ old=ast.parse(subprocess.check_output(['git','show','ba1cafc55d:'+oldpath],text=True)); now=ast.parse(pathlib.Path(oldpath).read_text()); oldn={x.name:x for x in ast.walk(old) if isinstance(x,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef))}; nown={x.name:x for x in ast.walk(now) if isinstance(x,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef))}
+ for dest in dests:
+  for x in ast.parse(pathlib.Path(dest).read_text()).body:
+   if not isinstance(x,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)) or x.name not in oldn:continue
+   if x.name in nown and ast.dump(oldn[x.name])==ast.dump(nown[x.name]):continue
+   comp=copy.deepcopy(oldn[x.name]);comp.decorator_list=[d for d in comp.decorator_list if not isinstance(d,ast.Name) or d.id!='staticmethod'];same=ast.dump(comp)==ast.dump(x)
+   results.append({'source':oldpath,'destination':dest,'name':x.name,'equal_except_original_staticmethod_descriptor':same})
+files=set(pairs)|{x for values in pairs.values() for x in values}|{'tldw_chatbook/UI/Console_Modules/session.py','tldw_chatbook/UI/Console_Modules/session_prompt_seed.py','tldw_chatbook/UI/Console_Modules/workspace.py','tldw_chatbook/Workspaces/display_state.py','tldw_chatbook/Widgets/Console/console_transcript.py','tldw_chatbook/Widgets/Console/console_selection_geometry.py'}
+out={'base':'ba1cafc55dd5ac9b6b1f066c936206e652ed6b65','moved_declarations':results,'source_inventory':[{'path':x,'sha256':hashlib.sha256(pathlib.Path(x).read_bytes()).hexdigest()} for x in sorted(files)]};pathlib.Path('/private/tmp/mixins-pr3346-ui-review-proof.json').write_text(json.dumps(out,indent=2)+'\n');print('Declarations',len(results),'AST matches',sum(r['equal_except_original_staticmethod_descriptor'] for r in results));print('Adaptations',[r['name'] for r in results if not r['equal_except_original_staticmethod_descriptor']])

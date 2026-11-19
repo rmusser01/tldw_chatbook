@@ -15,7 +15,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
     ProviderThinkingDelta,
     ProviderToolCalls,
 )
-from tldw_chatbook.Chat.thinking_blocks import (
+from tldw_chatbook.Provider_Contract.thinking_blocks import (
     MAX_THINKING_ENVELOPE_BYTES,
     MAX_THINKING_TEXT_BYTES,
     DisplayableThinkingBlock,
@@ -250,6 +250,8 @@ class ThinkingCapture:
                 "local_vllm",
                 "ollama",
                 "local_ollama",
+                "strata",
+                "polystrata",
             }
             and current.source_format
             in {"start_anchored_think", "reasoning_content", "reasoning"}

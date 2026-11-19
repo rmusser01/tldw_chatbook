@@ -19,7 +19,6 @@ import struct
 import threading
 from types import MappingProxyType
 
-from tldw_chatbook.Utils.local_stt_providers import LOCAL_STT_PROVIDERS
 
 from .voice_process_types import VoiceTransportFailure
 
@@ -353,6 +352,13 @@ def _check_scalar(value: object, kind: str) -> None:
         if kind == "positive_int" and value == 0:
             raise ProtocolError()
         return
+    # TASK-22504 follow-up (PR #3089): deferred to this validation use so
+    # this protocol module stays import-light for the stts pre-import route
+    # (pass ratchet 558).
+    from tldw_chatbook.Utils.local_stt_providers import (  # noqa: PLC0415
+        LOCAL_STT_PROVIDERS,
+    )
+
     choices = {
         "reason": _REASONS,
         "outcome": _OUTCOMES,

@@ -8,6 +8,7 @@ private cache-dir resolver directly, with `os.environ` monkeypatched — no
 `config.search.media_db_path` (Qodo PR #1428 finding 1), the precedent
 Qodo PR #1458 finding 3 asked this module to mirror.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -54,14 +55,18 @@ def test_invalid_escape_hatch_override_degrades_to_the_default_with_a_warning(
     with a logged warning naming the rejected value.
     """
     messages: list[str] = []
-    sink_id = environment.logger.add(messages.append, level="WARNING", format="{message}")
+    sink_id = environment.logger.add(
+        messages.append, level="WARNING", format="{message}"
+    )
     monkeypatch.setenv(environment.MODEL_CACHE_ENV_VAR, "/tmp/evil;rm -rf /")
     try:
         resolved = environment._resolve_model_cache_dir()
     finally:
         environment.logger.remove(sink_id)
 
-    assert resolved == environment._unsandboxed_home() / ".cache" / "huggingface" / "hub"
+    assert (
+        resolved == environment._unsandboxed_home() / ".cache" / "huggingface" / "hub"
+    )
     rendered = "\n".join(messages)
     assert environment.MODEL_CACHE_ENV_VAR in rendered
     assert "/tmp/evil;rm -rf /" in rendered

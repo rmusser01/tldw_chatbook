@@ -53,8 +53,15 @@ def show_notification(
             persistent=(timeout is None),
         )
     else:
-        # Fallback to built-in notify
-        app.notify(message, severity=severity, timeout=timeout)
+        # Fallback to built-in notify -- in fact the only branch that runs:
+        # nothing in the app defines ``show_toast``. ``markup=False``
+        # because the message is runtime text (a rule's name, a reminder's
+        # title, a research query): with Rich markup left on, an unmatched
+        # closing tag in it exited the app at render time, a bracketed
+        # word was swallowed, and ``[@click=...]`` became a live action
+        # link (TASK-34803; review of #2921, round 4, C1). No caller
+        # passes markup of its own.
+        app.notify(message, severity=severity, timeout=timeout, markup=False)
 
 
 #

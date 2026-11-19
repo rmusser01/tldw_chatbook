@@ -1,20 +1,24 @@
 """Pure presentation records for task-oriented provider Settings."""
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 
 from ...Chat.console_provider_endpoints import (
+    configured_provider_endpoint,
     first_configured_endpoint,
     safe_endpoint_display,
 )
+from ...Chat.provider_setup_persistence import MLX_HOST_PORT_PROVIDER_KEYS
 from ...Chat.console_session_settings import normalize_llamacpp_base_url
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
+    ENDPOINT_FAMILIES,
     ENV_VAR_NAME_RULE_COPY,
     CustomEndpointEntry,
     build_entry_mutation,
+    custom_endpoint_refusals,
     derive_slug,
     family_execution_key,
     family_normalizes_like_llama,
@@ -22,11 +26,22 @@ from ...Chat.custom_endpoint_registry import (
     split_custom_endpoint_id,
     validate_entry,
 )
-from ...Chat.provider_catalog import PROVIDER_CUSTOM_GROUP_KEYS, provider_display_name
-from ...Chat.provider_readiness import provider_config_key
+from ...Chat.provider_catalog import (
+    PROVIDER_CUSTOM_GROUP_KEYS,
+    PROVIDER_LEGACY_ALIAS_KEYS,
+    provider_display_name,
+)
+from ...Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+    provider_credential_source,
+)
 from ...config import (
+    DEFAULT_CONFIG_FROM_TOML,
+    ProviderSettingsError,
     delete_settings_from_cli_config,
     normalize_provider_config_key,
+    provider_settings_for_key,
     save_settings_to_cli_config,
 )
 from ...Utils.input_validation import validate_env_var_reference
@@ -145,6 +160,8 @@ _PROVIDER_GROUPS = (
     ("local", "Local"),
     ("custom", "Custom & legacy aliases"),
 )
+#: TASK-33007.2: providers the user set up lead the picker.
+_CONFIGURED_GROUP = ("configured", "Configured")
 
 
 def _overview_rows(
@@ -188,19 +205,51 @@ def _matches_query(option: ProviderPickerOption, query: str) -> bool:
     return not query or query in option.search_text.casefold()
 
 
+def provider_matches_query(label: object, provider_id: object, query: object) -> bool:
+    """Settings' provider-search rule, shared with first-run setup (TASK-34100.6).
+
+    Args:
+        label: The provider's display name.
+        provider_id: Its readiness key.
+        query: The typed filter text.
+
+    Returns:
+        True when the trimmed, case-folded query occurs in "label id".
+    """
+    normalized = str(query or "").strip().casefold()
+    return not normalized or normalized in f"{label} {provider_id}".casefold()
+
+
 def build_provider_picker_groups(
     catalog: Sequence[ProviderCatalogEntry],
     saved_provider: object,
     query: object,
+    configured: Collection[str] = (),
 ) -> tuple[ProviderPickerGroup, ...]:
-    """Build stable searchable provider groups without normalizing saved display text."""
+    """Build stable searchable provider groups without normalizing saved display text.
+
+    TASK-33007.2: providers in ``configured`` lead in a "Configured" group,
+    then Cloud, Local, and Custom & legacy aliases. A configured custom slot
+    leads too; a legacy alias always stays last (task-180, ADR-311).
+
+    Args:
+        catalog: Selectable provider catalog entries.
+        saved_provider: The saved provider text, kept verbatim when unknown.
+        query: Filter text matched against display name and provider id.
+        configured: Provider keys, any spelling, that have a credential or
+            an endpoint of the user's own.
+
+    Returns:
+        The non-empty groups in display order, ending with the manual action.
+    """
 
     normalized_query = str(query or "").strip().casefold()
+    configured_keys = {normalize_provider_config_key(key) for key in configured}
     known_provider_keys = {
         normalize_provider_config_key(entry.readiness_key) for entry in catalog
     }
     grouped: dict[str, list[ProviderPickerOption]] = {
-        group_id: [] for group_id, _label in _PROVIDER_GROUPS
+        group_id: [] for group_id, _label in (_CONFIGURED_GROUP, *_PROVIDER_GROUPS)
     }
     for entry in catalog:
         provider_id = str(entry.readiness_key)
@@ -210,8 +259,16 @@ def build_provider_picker_groups(
             label=label,
             search_text=f"{label} {provider_id}".casefold(),
         )
-        if _matches_query(option, normalized_query):
-            grouped[_provider_group_id(entry)].append(option)
+        if not _matches_query(option, normalized_query):
+            continue
+        group_id = _provider_group_id(entry)
+        provider_key = normalize_provider_config_key(provider_id)
+        if (
+            provider_key in configured_keys
+            and provider_key not in PROVIDER_LEGACY_ALIAS_KEYS
+        ):
+            group_id = _CONFIGURED_GROUP[0]
+        grouped[group_id].append(option)
 
     groups: list[ProviderPickerGroup] = []
     saved_text = str(saved_provider or "")
@@ -230,7 +287,7 @@ def build_provider_picker_groups(
                 ProviderPickerGroup("saved", "Saved provider", (saved_option,))
             )
 
-    for group_id, label in _PROVIDER_GROUPS:
+    for group_id, label in (_CONFIGURED_GROUP, *_PROVIDER_GROUPS):
         options = tuple(
             sorted(
                 grouped[group_id],
@@ -260,6 +317,91 @@ def build_provider_picker_groups(
     return tuple(groups)
 
 
+def provider_picker_summary(groups: Sequence[ProviderPickerGroup]) -> str:
+    """Say in one line how the unfiltered provider list is ordered.
+
+    Args:
+        groups: ``build_provider_picker_groups`` output for an empty query.
+
+    Returns:
+        E.g. "3 of 60 configured · listed first": counts, not names, so it
+        fits the Provider row's help at 211x44 (TASK-33007 capture fix 5).
+    """
+    listed = {_CONFIGURED_GROUP[0], *(group_id for group_id, _ in _PROVIDER_GROUPS)}
+    counts = {
+        group.group_id: len(group.options)
+        for group in groups
+        if group.group_id in listed
+    }
+    configured = counts.get(_CONFIGURED_GROUP[0], 0)
+    total = sum(counts.values())
+    if not configured:
+        return f"none of {total} configured yet"
+    return f"{configured} of {total} configured · listed first"
+
+
+def configured_provider_keys(
+    catalog: Sequence[ProviderCatalogEntry],
+    app_config: Mapping[str, object],
+    endpoint_keys: Sequence[str],
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> frozenset[str]:
+    """Return the catalog providers the user has set up (TASK-33007.2 AC#2).
+
+    A provider counts when it has a credential (a key saved in config or one
+    its env var resolves) or an endpoint the user changed. Every profile
+    carries the shipped template's localhost endpoints, so an endpoint equal
+    to the template's proves nothing (``any_provider_configured``'s rule).
+
+    Args:
+        catalog: The provider catalog to check.
+        app_config: The live configuration snapshot.
+        endpoint_keys: The ``api_settings`` fields that hold an endpoint.
+        environ: Environment mapping, injectable for tests.
+
+    Returns:
+        The normalized keys of the configured providers.
+    """
+    api_settings = app_config.get("api_settings")
+    shipped_settings = DEFAULT_CONFIG_FROM_TOML.get("api_settings")
+    configured: set[str] = set()
+    for entry in catalog:
+        provider_key = normalize_provider_config_key(entry.readiness_key)
+        # A saved key counts before readiness can send with it (a base URL
+        # still to set); readiness adds a ready Claude subscription.
+        if (
+            provider_credential_source(entry.readiness_key, app_config, environ=environ)
+            or get_provider_readiness(
+                entry.readiness_key,
+                app_config,
+                environ=environ,
+                background_credentials=True,
+            ).api_key_source
+        ):
+            configured.add(provider_key)
+            continue
+        try:
+            own = provider_settings_for_key(api_settings, provider_key)
+            shipped = provider_settings_for_key(shipped_settings, provider_key)
+        except ProviderSettingsError:
+            continue
+        if provider_key in MLX_HOST_PORT_PROVIDER_KEYS:
+            # TASK-41145 review r15ep-rev2 I-2: MLX-LM's endpoint is its host
+            # and port; the old template's api_url placeholder is ignored.
+            if configured_provider_endpoint(provider_key, own) != (
+                configured_provider_endpoint(provider_key, shipped)
+            ):
+                configured.add(provider_key)
+            continue
+        if any(
+            str(own.get(key) or "").strip() and own.get(key) != shipped.get(key)
+            for key in endpoint_keys
+        ):
+            configured.add(provider_key)
+    return frozenset(configured)
+
+
 #: User-facing family labels for the custom endpoints overview rows.
 _CUSTOM_ENDPOINT_FAMILY_LABELS = {
     "llama_cpp": "llama.cpp",
@@ -267,14 +409,14 @@ _CUSTOM_ENDPOINT_FAMILY_LABELS = {
     "ollama": "Ollama",
 }
 
-#: The built-in provider slots eligible for one-way conversion (ADR-146).
+#: The built-in provider slots eligible for one-way conversion (ADR-343).
 _CONVERTIBLE_SLOT_IDS = frozenset({"custom", "custom_2"})
 
 
 def custom_endpoint_rows(
     app_config: Mapping[str, object],
 ) -> tuple[SettingsOverviewRow, ...]:
-    """Build one overview row per registry entry (ADR-146 task-7).
+    """Build one overview row per registry entry (ADR-343 task-7).
 
     Each row carries the display name, family label,
     ``safe_endpoint_display(base_url)`` (credentials never render), and the
@@ -287,14 +429,19 @@ def custom_endpoint_rows(
 
     Returns:
         Rows keyed by the entry's ``custom-ep:<slug>`` provider id; empty
-        when the registry has no valid entries.
+        when the registry has no entries. An entry refused at load follows
+        the valid ones and reads "not loaded" with its reason in place of
+        its endpoint (TASK-40300), so it can be edited or deleted here.
     """
     rows: list[SettingsOverviewRow] = []
-    for entry in load_custom_endpoints(app_config).values():
+    refusals = custom_endpoint_refusals(app_config)
+    for entry in load_custom_endpoints(app_config, include_refused=True).values():
         family_label = _CUSTOM_ENDPOINT_FAMILY_LABELS.get(
             entry.family, entry.family
         )
         endpoint_display = safe_endpoint_display(entry.base_url) or "not set"
+        if entry.slug in refusals:
+            endpoint_display = f"not loaded: {refusals[entry.slug]}"
         model_count = len(entry.models)
         models_label = f"{model_count} model" if model_count == 1 else f"{model_count} models"
         rows.append(
@@ -348,6 +495,71 @@ def _detach_base_url(
     return entry.base_url
 
 
+class DetachRefused(RuntimeError):
+    """Detach would move conversations onto a URL Console refuses (TASK-40300).
+
+    Attributes:
+        user_copy: What the Custom endpoints status line says; it names the
+            entry, never its URL.
+    """
+
+    def __init__(self, user_copy: str) -> None:
+        super().__init__(user_copy)
+        self.user_copy = user_copy
+
+
+def _detach_refusal(entry: CustomEndpointEntry, urls: list[str | None]) -> str:
+    """Why detaching ``entry`` is refused, or "" (review r14ep-rev2 M-e).
+
+    Detach moves each conversation to the family provider with ``urls``, the
+    endpoint each would keep; that provider's reading must accept every one
+    (review r14ep-rev3 I-2: an ollama ``?token=`` entry and a conversation's
+    own relaxed URL moved). An OpenAI-compatible base such as DeepInfra's
+    ``/v1/openai`` that only a named entry accepts (owner decision
+    2026-11-13) gets its own copy: the entry keeps working.
+    """
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+    )
+
+    name = entry.display_name
+    if urls and entry.family not in ENDPOINT_FAMILIES:
+        # TASK-41144: no adapter serves a family Chatbook does not know (one
+        # hand-written in config.toml), so its conversations have nowhere to
+        # go. The family string is never shown: it is untrusted config text.
+        return (
+            f"Detach blocked: '{name}' has an endpoint family Chatbook does not "
+            "know, so its conversations have no provider to move to. Switch "
+            "those conversations to another provider, then delete it."
+        )
+    provider = family_execution_key(entry.family)
+    refused = [url for url in urls if endpoint_refusal(provider, url or "")]
+    if not refused:
+        return ""
+    if entry.family != "openai_compatible" or any(
+        endpoint_refusal(provider, url or "", custom_endpoint=True) for url in refused
+    ):
+        if entry.base_url not in refused:
+            # Review r14ep-rev4 M-1: only conversations' own URLs are refused,
+            # which Edit cannot change.
+            return (
+                f"Detach blocked: some '{name}' conversations keep their own "
+                "endpoint URL, which Console refuses. Switch those conversations "
+                "to another provider, then delete it."
+            )
+        return (
+            f"Detach blocked: '{name}' conversations would move to an endpoint "
+            "URL Console refuses. Fix it with Edit, or switch those "
+            "conversations to another provider, then delete it."
+        )
+    return (
+        f"Detach blocked: '{name}' conversations use an OpenAI-compatible base "
+        "that only a named endpoint accepts (its v1 is not the last part of the "
+        f"path), so they would lose their endpoint. '{name}' keeps working; "
+        "switch those conversations to another provider, then delete it."
+    )
+
+
 def detach_and_delete_entry(
     app_config: Mapping[str, object],
     store: CustomEndpointReferenceStore | None,
@@ -373,6 +585,9 @@ def detach_and_delete_entry(
         provider_id: A ``custom-ep:<slug>`` id naming a valid entry.
 
     Raises:
+        DetachRefused: Referencing sessions would move onto a URL Console
+            refuses (TASK-40300 review r14ep-rev2 M-e), or to a family no
+            adapter serves (TASK-41144); nothing changes.
         KeyError: Unknown session id reported by the store.
         RuntimeError: The config delete failed (referencing sessions that
             were detached keep their conversation-only endpoints; retrying
@@ -381,23 +596,30 @@ def detach_and_delete_entry(
     slug = split_custom_endpoint_id(provider_id)
     if slug is None:
         return
-    entry = load_custom_endpoints(app_config).get(slug)
+    entry = load_custom_endpoints(app_config, include_refused=True).get(slug)
     if entry is None:
         return
     family_provider = family_execution_key(entry.family)
-    if store is not None:
-        for session_id in conversations_referencing_endpoint(store, provider_id):
-            settings = store.session_settings(session_id)
-            if settings is None:
-                continue
-            store.replace_session_settings(
-                session_id,
-                replace(
-                    settings,
-                    provider=family_provider,
-                    base_url=_detach_base_url(entry, settings),
-                ),
-            )
+    references = (
+        conversations_referencing_endpoint(store, provider_id) if store is not None else []
+    )
+    moves = [
+        (
+            session_id,
+            replace(
+                settings,
+                provider=family_provider,
+                base_url=_detach_base_url(entry, settings),
+            ),
+        )
+        for session_id in references
+        if store is not None
+        and (settings := store.session_settings(session_id)) is not None
+    ]
+    if refusal := _detach_refusal(entry, [settings.base_url for _, settings in moves]):
+        raise DetachRefused(refusal)
+    for session_id, settings in moves:
+        store.replace_session_settings(session_id, settings)
     if not delete_settings_from_cli_config("custom_endpoints", [slug]):
         logger.warning(
             "Custom endpoint '%s' was detached but could not be deleted "
@@ -491,7 +713,7 @@ def convert_slot_to_named_endpoint(
 
     The entry (family ``openai_compatible``, ``created_from`` = the slot id)
     is persisted through ``save_settings_to_cli_config``; the slot's own
-    config is left untouched (ADR-146's one-way convert). Only the
+    config is left untouched (ADR-343's one-way convert). Only the
     credential *reference* (``api_key_env``, a variable name) is carried
     over -- stored secrets are never duplicated into the registry.
 

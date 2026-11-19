@@ -54,6 +54,9 @@ from tldw_chatbook.Chat.console_prompt_queue import (
 )
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import _PromptChain
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.Chat.test_console_agent_bridge import (
+    _retire_original_run_databases,  # noqa: F401 - exact constructor-owner fixture
+)
 from tldw_chatbook.Tools.raw_cli_executor import RawCliResult
 from tldw_chatbook.UI.Console_Modules.raw_cli import ConsoleRawCliController
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
@@ -148,7 +151,9 @@ def _message_rows(db) -> int:
     )
 
 
-def test_console_session_close_cancels_raw_invocations_before_store_removal() -> None:
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_console_session_close_cancels_raw_invocations_before_store_removal() -> None:
     store = ConsoleChatStore()
     session = store.create_session(title="raw close")
     observations: list[tuple[str, bool]] = []
@@ -166,13 +171,25 @@ def test_console_session_close_cancels_raw_invocations_before_store_removal() ->
         cancel_raw_cli_session=cancel_raw_cli_session,
     )
 
-    controller.close_session(session.id)
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    runtime = ConsoleRuntime(SimpleNamespace())
+    runtime._chat_store = store
+    runtime.set_chat_controller(controller)
+    try:
+        await runtime.close_session(
+            session.id,
+            expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+        )
+    finally:
+        await runtime.dispose()
 
     assert observations == [(session.id, True)]
     assert store.sessions() == []
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_queued_follow_up_cannot_be_admitted_while_the_durable_commit_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -285,6 +302,7 @@ async def test_queued_follow_up_cannot_be_admitted_while_the_durable_commit_runs
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_healthy_live_owner_admits_a_queued_follow_up_drained_strictly_after(
     tmp_path: Path,
 ) -> None:
@@ -348,6 +366,7 @@ async def test_healthy_live_owner_admits_a_queued_follow_up_drained_strictly_aft
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_unhealthy_recovery_owner_still_blocks_submission_and_a_queued_turn(
     tmp_path: Path,
 ) -> None:
@@ -384,10 +403,18 @@ async def test_unhealthy_recovery_owner_still_blocks_submission_and_a_queued_tur
     coordinator = controller.prompt_queue_coordinator
     registry = coordinator.registry
     begun = registry.begin_chain(session_id, context_epoch=0, expected_revision=0)
+    from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
+
     entry = registry.admit(
         session_id,
         text="queued retry",
         expected_revision=begun.snapshot.revision,
+        custody_request=ConsoleTurnCustodyRequest(
+            turn_id="queued-recovery-control",
+            session_id=session_id,
+            draft="queued retry",
+            configuration=controller.resolve_turn_configuration_snapshot(session_id),
+        ),
     )
     assert entry.entry_id is not None
     coordinator._chains[session_id] = _PromptChain()
@@ -420,6 +447,7 @@ async def test_unhealthy_recovery_owner_still_blocks_submission_and_a_queued_tur
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_follow_up_admitted_mid_run_is_refused_when_the_owner_turns_unhealthy(
     tmp_path: Path,
 ) -> None:
@@ -478,6 +506,7 @@ async def test_follow_up_admitted_mid_run_is_refused_when_the_owner_turns_unheal
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
     tmp_path: Path,
 ) -> None:
@@ -547,6 +576,7 @@ async def test_raw_cli_worker_runs_while_model_owner_is_active_without_queueing(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_raw_first_persistence_refuses_provider_reservation_then_reuses_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

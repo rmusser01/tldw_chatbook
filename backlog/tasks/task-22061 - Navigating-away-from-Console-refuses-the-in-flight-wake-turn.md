@@ -1,18 +1,22 @@
 ---
-id: task-22061
+id: TASK-22061
 title: Navigating away from Console refuses the in-flight wake turn
-status: In Progress
+status: Done
 assignee:
-  - '@claude'
+  - '@codex'
+created_date: ''
+updated_date: '2026-09-29 19:39'
 labels:
   - console
   - agents
   - regression
+dependencies: []
 priority: high
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 `ConsoleChatController.leave_console` documents an explicit owner ruling: an
 in-flight `AGENT_WAKE` turn is NOT cancelled when the user navigates away,
 because "cancelling it would re-create the exact 'only completes if you stay'
@@ -25,23 +29,28 @@ sets.
 Result: a wake that fires while Console is mounted, stalls on the provider
 readiness probe (an everyday cold llama.cpp probe), and completes after the
 user navigates away is refused, stamps no ledger row, and retries.
+<!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
-- [x] A wake turn parked in the readiness probe completes after a nav-away
-- [x] App exit (`begin_shutdown`) still refuses a wake
-- [x] The wake's ledger row is stamped exactly once
-- [x] No regressions across the surrounding Console suites
+<!-- AC:BEGIN -->
+- [x] #1 A wake turn parked in the readiness probe completes after a nav-away
+- [x] #2 App exit (`begin_shutdown`) still refuses a wake
+- [x] #3 The wake's ledger row is stamped exactly once
+- [x] #4 No regressions across the surrounding Console suites
+<!-- AC:END -->
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 1. Trace the refusal to its flag and its setter
 2. Confirm against the known-good commit that this is a regression, not a born-red test
 3. Exempt AGENT_WAKE at each gate using the mechanism the ruling already uses
 4. A/B the surrounding Console suites against clean dev
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Bisected: the file's four tests were green at `10361e2ad` (2026-08-15). Both
 `leave_console`'s `_shutdown_requested.set()` and its prompt-queue tombstone
 predate that commit, so neither is the cause; the three gates that read the flag
@@ -76,3 +85,8 @@ rather than hand-building it.
 Modified: `tldw_chatbook/Chat/console_chat_controller.py`,
 `tldw_chatbook/Chat/console_prompt_queue_coordinator.py`,
 `Tests/UI/test_console_store_continuity.py`.
+
+2026-09-29 closeout revalidation: existing production navigation-away repair remains in place. The actual mounted navigation/persistence/ledger regression passes (1 test, 112s) after using its supported private-profile process and adding the gateway double's missing cached_context_window method through the real offline resolver. Shutdown/failed-stream/agent-teardown targeted selection passes 3; two config-aware controller nodes now retain collection bootstrap profiles. No production admission gate was bypassed. ADR required: no new ADR; direct verification of ADR-134/135 wake ownership. Evidence: /private/tmp/agent-burndown-wake-continuity3.log and /private/tmp/agent-burndown-shutdown2.log. Independent combined review pending; no full suite run.
+
+Final disposition 2026-09-29: fresh actual mounted navigation-away/wake/transcript regression passed after progress scheduler integration (1 passed in 32.02s; /private/tmp/agent-burndown-final-nav-wake.log). Earlier current shutdown, failed-stream and agent-teardown selection passed three cases. No production repair was necessary: the original defect was already resolved. All acceptance criteria, current qualification, documentation and status reconciliation are complete; task is Done. No historical CI counts, full-suite or live-provider results are claimed.
+<!-- SECTION:NOTES:END -->

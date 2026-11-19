@@ -292,7 +292,7 @@ def test_toggle_reviewed_failure_notifies(tmp_path):
     fake._review_set_service = lambda: _Boom()
     fake._library_media_item_traversal_active = lambda: True
 
-    LibraryScreen.action_library_media_toggle_reviewed(fake)  # must not raise
+    LibraryMediaController.action_library_media_toggle_reviewed(fake)  # must not raise
 
     assert any(severity == "error" for _msg, severity in fake._notices)
 
@@ -317,7 +317,7 @@ def test_exit_review_deactivates_but_keeps_the_set(tmp_path):
     fake._library_media_item_traversal_active = lambda: True
     fake._sync_library_media_viewer_or_recompose = lambda: None
 
-    LibraryScreen.action_library_media_exit_review(fake)
+    LibraryMediaController.action_library_media_exit_review(fake)
 
     assert service.get_active_review_set() is None
     assert [rs.set_id for rs in service.list_review_sets()] == [set_id]  # not deleted
@@ -333,10 +333,10 @@ def test_toggle_reviewed_marks_and_unmarks_the_loaded_item(tmp_path):
     fake._sync_library_media_viewer_or_recompose = lambda: None
     fake._media_state.reader_session = SimpleNamespace(loaded_backing_id=10)
 
-    LibraryScreen.action_library_media_toggle_reviewed(fake)
+    LibraryMediaController.action_library_media_toggle_reviewed(fake)
     assert service.get_review_set(set_id).items[0].done is True
 
-    LibraryScreen.action_library_media_toggle_reviewed(fake)
+    LibraryMediaController.action_library_media_toggle_reviewed(fake)
     assert service.get_review_set(set_id).items[0].done is False
 
 
@@ -828,16 +828,16 @@ def test_dismiss_undo_and_receipt_close_cannot_race(tmp_path):
     )
     event = SimpleNamespace(stop=lambda: None)
 
-    LibraryScreen.handle_library_media_review_dismiss_undo(fake, event)
+    LibraryMediaController.handle_library_media_review_dismiss_undo(fake, event)
     assert fake._review_dismiss_undo_in_flight is True
 
     # A second Undo press while in flight schedules nothing (it would
     # cancel the first via the exclusive group).
-    LibraryScreen.handle_library_media_review_dismiss_undo(fake, event)
+    LibraryMediaController.handle_library_media_review_dismiss_undo(fake, event)
     assert len(scheduled) == 1
 
     # Receipt-close while in flight is refused: the receipt still stands.
-    LibraryScreen.handle_library_media_review_dismiss_receipt_close(
+    LibraryMediaController.handle_library_media_review_dismiss_receipt_close(
         fake, event
     )
     assert fake._media_state.review_dismiss_receipt == ("set-1", "X", True)
@@ -1166,6 +1166,9 @@ def _auto_resume_fake(service, *, live_ids=None):
     fake._library_selected_row_id = "browse-media"
     fake._media_state.view = "list"
     fake.is_current = True
+    # TASK-34000.22 fix round 2 (R2-1): the ambient resume is gated on the
+    # Media authoring forms' dirty predicate; "" = no form holds text.
+    fake._library_media_editor_dirty = lambda: ""
     for name in (
         "_auto_resume_review_set_worker",
         "_resolve_active_review_set_landing",
@@ -1314,7 +1317,7 @@ def test_row_press_and_open_by_id_cancel_a_pending_resume():
     pinned at the source level because the handlers need a live screen."""
     import inspect
 
-    row_src = inspect.getsource(LibraryScreen.handle_library_media_row)
+    row_src = inspect.getsource(LibraryMediaController.handle_library_media_row)
     open_src = inspect.getsource(LibraryScreen._open_library_item_by_id)
     assert "_cancel_pending_review_set_resume()" in row_src
     assert "_cancel_pending_review_set_resume()" in open_src
@@ -1423,7 +1426,7 @@ def test_browse_rows_carry_the_active_sets_reviewed_marks(tmp_path):
     service.mark_item_done(set_id, backing_media_id=10, done=True)
     fake = _walker_fake(service)
 
-    rows = LibraryScreen._decorate_library_media_reviewed(
+    rows = LibraryMediaController._decorate_library_media_reviewed(
         fake, (_row(10), _row(11), _row(12))
     )
 
@@ -1437,7 +1440,7 @@ def test_browse_rows_carry_no_marks_without_an_active_set(tmp_path):
     service.deactivate_active()
     fake = _walker_fake(service)
 
-    rows = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    rows = LibraryMediaController._decorate_library_media_reviewed(fake, (_row(10),))
 
     assert [row["reviewed"] for row in rows] == [None]
 
@@ -1448,12 +1451,12 @@ def test_marking_the_loaded_item_done_flips_its_browse_row(tmp_path):
     service.create_review_set("X", origin="browse", items=[(10, "A"), (11, "B")])
     fake = _walker_fake(service, loaded=10)
 
-    before = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    before = LibraryMediaController._decorate_library_media_reviewed(fake, (_row(10),))
     assert before[0]["reviewed"] is False
 
     fake._toggle_reviewed_unguarded(service)
 
-    after = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    after = LibraryMediaController._decorate_library_media_reviewed(fake, (_row(10),))
     assert after[0]["reviewed"] is True
 
 
@@ -1467,7 +1470,7 @@ def test_decoration_fails_open_on_a_storage_error(tmp_path):
     fake = _walker_fake(_service(tmp_path))
     fake._review_set_service = lambda: _Boom()
 
-    rows = LibraryScreen._decorate_library_media_reviewed(fake, (_row(10),))
+    rows = LibraryMediaController._decorate_library_media_reviewed(fake, (_row(10),))
 
     assert [row["reviewed"] for row in rows] == [None]
 
@@ -1560,10 +1563,11 @@ def test_create_keeps_the_cap_warning_the_banner_cannot_carry(tmp_path):
 
 
 class _ReviewSelectedControllerFake:
-    """The one production hop the "Review selected" delegator makes.
+    """The controller seam the "Review selected" tests call directly.
 
     (wave-7 round-2 merge) ``handle_library_media_review_selected`` lives on
-    ``LibraryMediaController``; the screen keeps a one-line delegator. The
+    ``LibraryMediaController``. The screen's one-line delegator is gone
+    (Phase C task 3 moved the ``@on`` row to ``LibraryMediaCanvas``). The
     controller reaches the two state fields through its GENERATED shims, the
     worker through a group-(e) late-binding property, and ``run_worker`` as a
     framework service -- all three reproduced here so the REAL controller body
@@ -1586,6 +1590,12 @@ class _ReviewSelectedControllerFake:
     @property
     def _review_selected_worker(self):
         return self._screen._review_selected_worker
+
+    # TASK-34000.22 fix round 1 (C-1 audit): the handler refuses while a
+    # Media authoring form holds unsaved text; "" = clean, so the real body
+    # runs on to the id coercion these tests pin.
+    def _library_media_editor_dirty(self):
+        return ""
 
     @property
     def run_worker(self):
@@ -1628,11 +1638,11 @@ def test_review_selected_handler_shares_the_one_id_coercion():
         _review_selected_worker=worker,
         run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
     )
-    fake._media_controller = _ReviewSelectedControllerFake(fake)
+    # TASK-36952.2: the controller seam is called directly, not through an
+    # attribute on the fake screen.
+    controller = _ReviewSelectedControllerFake(fake)
 
-    fake._media_controller.handle_library_media_review_selected(
-        SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_review_selected(SimpleNamespace(stop=lambda: None))
 
     assert captured["ids"] == (7, 3)
     assert len(started) == 1, started
@@ -1653,10 +1663,10 @@ def test_review_selected_handler_starts_nothing_when_no_id_coerces():
         _review_selected_worker=lambda backing_ids: "unused",
         run_worker=lambda work, **kwargs: started.append({"work": work, **kwargs}),
     )
-    fake._media_controller = _ReviewSelectedControllerFake(fake)
+    # TASK-36952.2: the controller seam is called directly, not through an
+    # attribute on the fake screen.
+    controller = _ReviewSelectedControllerFake(fake)
 
-    fake._media_controller.handle_library_media_review_selected(
-        SimpleNamespace(stop=lambda: None)
-    )
+    controller.handle_library_media_review_selected(SimpleNamespace(stop=lambda: None))
 
     assert started == []

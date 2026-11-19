@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "pytest",
+    "-q",
+    "--maxfail=2",
+    "-o",
+    "faulthandler_timeout=90",
+    "--junitxml=Docs\\superpowers\\qa\\2026-10-31-pr3162-backlog-rebase\\current-dev\\conflicts.xml",
+    "Tests/Chat/test_console_async_mcp_snapshot.py::test_actual_screen_wiring_prepares_native_mcp_sources_off_ui_loop",
+    "Tests/Chat/test_console_async_mcp_snapshot.py::test_actual_queued_capture_rejects_replaced_controller_before_queue_or_draft_commit",
+    "Tests/UI/test_console_prompt_queue.py::test_dispatch_uses_replaced_sync_capture_inside_precapture",
+    "Tests/UI/test_console_prompt_queue.py::test_dispatch_refuses_sync_capture_replacement_during_async_capture",
+    "Tests/DB/test_journal_mode_statement_retention.py"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\current-dev-d1c31a8b31",
+  "outer_timeout_seconds": 270
+}

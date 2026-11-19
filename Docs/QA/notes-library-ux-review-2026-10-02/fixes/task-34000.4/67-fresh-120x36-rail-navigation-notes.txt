@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃12026-10-05 13:48:55 [WARNING ] huggingface_hub.utils._http:904 - Warning: You are sending unauthenticated requests t.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│   a  │ Library notes · Ready · Next: Create a note or add     │  o                                                   │
+│   v  │ from files.                                            │  t                                                   │
+│      │ Notes (0)                                              │  e                                                   │
+│      │ These notes live in the Library's own database — for   │  s                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │                                                      │
+│      │ files. To copy or keep a folder synced, choose Add     │                                                      │
+│      │ from files.                                            │                                                      │
+│      │                                                        │                                                      │
+│ ---> │ Filter                                                 │                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│      │ ▊ Filter notes… (Enter)                              ▎ │                                                      │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│      │                                                        │<---                                                  │
+│      │    New     Sort: Newest     ○ Select                   │                                                      │
+│      │    Add from files…     Export                          │                                                      │
+│      │ Folders & placement                                    │                                                      │
+│      │    New folder     ○ Add to folder     ○ Move note      │                                                      │
+│ ---> │    ○ Remove placement                                  │                                                      │
+│      │ Note actions unavailable — select a note in the list   │                                                      │
+│      │                                                        │                                                      │
+│      │                                                        │                                                      │
+│      │ No notes yet. Create your first note.                  │                                                      │
+│      │                                                        │                                                      │
+│      │  ▸ Agent_Lessons — where Console agents file reusabl…  │                                                      │
+│      │                                                        │                                                      │
+│      │                                                        │                                                      │
+│      └────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc focus rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

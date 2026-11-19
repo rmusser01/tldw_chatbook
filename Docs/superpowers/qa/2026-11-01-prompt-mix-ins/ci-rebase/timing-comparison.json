@@ -1,0 +1,158 @@
+{
+  "current": {
+    "package": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/tldw_chatbook/__init__.py",
+    "test": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook/Tests/Performance/test_ui_latency_guardrails.py",
+    "destinations": {
+      "ctrl+1": {
+        "press": 0.6066846249159425,
+        "arrival_and_settle": 3.916654541157186,
+        "total": 4.523339166073129,
+        "screen_at_wait": "HomeScreen",
+        "css_sources": 25,
+        "css_parse": 0,
+        "css_reparse": 0
+      },
+      "ctrl+2": {
+        "press": 0.34659466589801013,
+        "arrival_and_settle": 5.225950625026599,
+        "total": 5.572545290924609,
+        "screen_at_wait": "ChatScreen",
+        "css_sources": 25,
+        "css_parse": 0,
+        "css_reparse": 0
+      },
+      "ctrl+3": {
+        "press": 1.1057047920767218,
+        "arrival_and_settle": 0.48290266608819366,
+        "total": 1.5886074581649154,
+        "screen_at_wait": "LibraryScreen",
+        "css_sources": 26,
+        "css_parse": 0.021810458041727543,
+        "css_reparse": 0
+      },
+      "ctrl+4": {
+        "press": 1.2978293329942971,
+        "arrival_and_settle": 0.5034967500250787,
+        "total": 1.8013260830193758,
+        "screen_at_wait": "PersonasScreen",
+        "css_sources": 33,
+        "css_parse": 0.011688666185364127,
+        "css_reparse": 0
+      },
+      "ctrl+7": {
+        "press": 1.0727555411867797,
+        "arrival_and_settle": 0.48113383282907307,
+        "total": 1.5538893740158528,
+        "screen_at_wait": "SchedulesWorkbench",
+        "css_sources": 37,
+        "css_parse": 0.006811584113165736,
+        "css_reparse": 0
+      },
+      "ctrl+9": {
+        "press": 1.3143259168136865,
+        "arrival_and_settle": 0.486334583023563,
+        "total": 1.8006604998372495,
+        "screen_at_wait": "SettingsScreen",
+        "css_sources": 41,
+        "css_parse": 0.022339916555210948,
+        "css_reparse": 0
+      },
+      "f2": {
+        "press": 0.5769843750167638,
+        "arrival_and_settle": 0.5063650000374764,
+        "total": 1.0833493750542402,
+        "screen_at_wait": "LLMScreen",
+        "css_sources": 42,
+        "css_parse": 0.003575457027181983,
+        "css_reparse": 0
+      },
+      "f4": {
+        "press": 1.110074957832694,
+        "arrival_and_settle": 0.4869671252090484,
+        "total": 1.5970420830417424,
+        "screen_at_wait": "SettingsScreen",
+        "css_sources": 42,
+        "css_parse": 0,
+        "css_reparse": 0
+      }
+    }
+  },
+  "baseline": {
+    "package": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-cizd3tw9/baseline/tldw_chatbook/__init__.py",
+    "test": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-cizd3tw9/baseline/Tests/Performance/test_ui_latency_guardrails.py",
+    "destinations": {
+      "ctrl+1": {
+        "press": 2.0284350840374827,
+        "arrival_and_settle": 3.559478292008862,
+        "total": 5.587913376046345,
+        "screen_at_wait": "HomeScreen",
+        "css_sources": 25,
+        "css_parse": 0,
+        "css_reparse": 0
+      },
+      "ctrl+2": {
+        "press": 2.022586958948523,
+        "arrival_and_settle": 6.6084623341448605,
+        "total": 8.631049293093383,
+        "screen_at_wait": "ChatScreen",
+        "css_sources": 25,
+        "css_parse": 0,
+        "css_reparse": 0
+      },
+      "ctrl+3": {
+        "press": 1.2507617499213666,
+        "arrival_and_settle": 5.3603029998485,
+        "total": 6.6110647497698665,
+        "screen_at_wait": "LibraryScreen",
+        "css_sources": 26,
+        "css_parse": 0.06151445908471942,
+        "css_reparse": 0
+      },
+      "ctrl+4": {
+        "press": 2.0829860840458423,
+        "arrival_and_settle": 6.321387417148799,
+        "total": 8.404373501194641,
+        "screen_at_wait": "PersonasScreen",
+        "css_sources": 33,
+        "css_parse": 0.012418334372341633,
+        "css_reparse": 0
+      },
+      "ctrl+7": {
+        "press": 2.0719138339627534,
+        "arrival_and_settle": 5.054438249906525,
+        "total": 7.126352083869278,
+        "screen_at_wait": "SchedulesWorkbench",
+        "css_sources": 37,
+        "css_parse": 0.006318917963653803,
+        "css_reparse": 0
+      },
+      "ctrl+9": {
+        "press": 2.1845333750825375,
+        "arrival_and_settle": 6.4364282079041,
+        "total": 8.620961582986638,
+        "screen_at_wait": "SettingsScreen",
+        "css_sources": 41,
+        "css_parse": 0.02026016707532108,
+        "css_reparse": 0
+      },
+      "f2": {
+        "press": 1.1680206670425832,
+        "arrival_and_settle": 3.925153125077486,
+        "total": 5.093173792120069,
+        "screen_at_wait": "LLMScreen",
+        "css_sources": 42,
+        "css_parse": 0.004415583796799183,
+        "css_reparse": 0
+      },
+      "f4": {
+        "press": 2.0355885419994593,
+        "arrival_and_settle": 5.35983308381401,
+        "total": 7.395421625813469,
+        "screen_at_wait": "SettingsScreen",
+        "css_sources": 42,
+        "css_parse": 0,
+        "css_reparse": 0
+      }
+    }
+  }
+}

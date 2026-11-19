@@ -112,10 +112,12 @@ def test_load_uses_explicit_local_cpu_paths_and_precision(
     fake_model = _FakeModel()
     fake_vad = _FakeVad(())
     api = SimpleNamespace(
-        load_model=lambda *args, **kwargs: calls.append(("model", args, kwargs))
-        or fake_model,
-        load_vad=lambda *args, **kwargs: calls.append(("vad", args, kwargs))
-        or fake_vad,
+        load_model=lambda *args, **kwargs: (
+            calls.append(("model", args, kwargs)) or fake_model
+        ),
+        load_vad=lambda *args, **kwargs: (
+            calls.append(("vad", args, kwargs)) or fake_vad
+        ),
     )
     monkeypatch.setattr(
         parakeet_onnx,
@@ -184,9 +186,9 @@ def test_short_v2_result_is_normalized_with_exact_artifact_provenance(
     )
 
     assert result.text == "short text"
-    assert [(item.start_seconds, item.end_seconds, item.text) for item in result.segments] == [
-        (0.0, 10.0, "short text")
-    ]
+    assert [
+        (item.start_seconds, item.end_seconds, item.text) for item in result.segments
+    ] == [(0.0, 10.0, "short text")]
     assert model.short_calls == [(tmp_path / "short.wav", {})]
     assert result.provenance.artifact_root == root
     assert result.provenance.artifact_dependencies == (dependency,)
@@ -295,7 +297,9 @@ def test_long_form_uses_one_vad_segment_per_asr_batch(
     )
 
     assert result.text == "one two"
-    assert [(item.start_seconds, item.end_seconds, item.text) for item in result.segments] == [
+    assert [
+        (item.start_seconds, item.end_seconds, item.text) for item in result.segments
+    ] == [
         (0.0, 1.0, "one"),
         (2.0, 4.0, "two"),
     ]
@@ -581,7 +585,9 @@ def test_v3_long_buffer_without_managed_vad_fails_before_native_inference() -> N
     assert model.short_calls == []
 
 
-def test_buffer_cancellation_before_second_logical_segment_prevents_native_call() -> None:
+def test_buffer_cancellation_before_second_logical_segment_prevents_native_call() -> (
+    None
+):
     from tldw_chatbook.STT.parakeet_onnx import ParakeetOnnxCancelled
 
     runtime, model, _vad, _root, _dependency = _runtime()

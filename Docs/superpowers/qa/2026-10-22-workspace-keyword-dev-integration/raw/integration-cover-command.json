@@ -1,0 +1,35 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_workspace_guidance.py",
+    "Tests/Chat/test_console_library_runtime_policy.py::test_project_turn_preserves_all_library_policy_combinations",
+    "Tests/UI/test_workspace_project_index_settings.py::test_actual_settings_card_enable_build_clear_preserves_library",
+    "Tests/UI/test_workspace_project_index_settings.py::test_saved_policy_and_stale_actions",
+    "Tests/UI/test_console_project_index_status.py::test_console_status_binding_fence_and_safe_settings_route",
+    "Tests/Workspaces/test_project_index_service.py::test_real_app_shutdown_without_console_drains_index_writer",
+    "Tests/Chat/test_console_chat_controller.py::test_controller_retry_retains_reservation_after_repreparation_failure",
+    "Tests/Chat/test_console_chat_controller.py::test_dispatch_recovery_preflight_preserves_prior_generation_token",
+    "Tests/UI/test_settings_configuration_hub.py::test_settings_ownership_records_cover_categories_and_runtime_boundaries",
+    "Tests/UI/test_settings_configuration_hub.py::test_settings_overview_ownership_rows_are_sourced_from_record",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--no-showlocals"
+  ],
+  "commit": "e16100e2b3aea1e1da3d6d73ecbcbefebb135a80",
+  "source_sha256": {
+    "tldw_chatbook/Workspaces/project_index/service.py": "d0943ea7236310fd7ab6d585118d43f769f578198dcdd9e777941fb92ed7ed82",
+    "Tests/Workspaces/test_project_index_service.py": "4089b955152ddf45b718e0df302d4e919b4890712c0f6faabc280b0f5f488e6c",
+    "tldw_chatbook/DB/Workspace_Project_Index_DB.py": "2f5516cc05746296d563e92afb6fa9d6eb324e991f9b742455c0c6081292ea1a",
+    "Tests/DB/test_workspace_project_index_db.py": "1bcdc71b2bc92839a8ff711d7e9aae873c168ad1e8e5d87c0cd941c1b7921260",
+    "tldw_chatbook/DB/Workspace_DB.py": "ee1ffab98e0026f7137dbb2a7cc2b51562bf15c998c725b55a9d257ee2480485"
+  },
+  "started_unix": 1792648117.7343435,
+  "cwd": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui",
+  "expected_cases": 22,
+  "scope": "single authorized broader covering invocation",
+  "exit_code": 1,
+  "elapsed_seconds": 625.2794768810272
+}

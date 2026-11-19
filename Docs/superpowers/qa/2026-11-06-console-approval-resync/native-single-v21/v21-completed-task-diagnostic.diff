@@ -1,0 +1,107 @@
+--- V21/approval_fixture_workload_v7.py
++++ V22-innermost/approval_fixture_workload_v7.py
+@@ -28,6 +28,90 @@
+     "tldw_chatbook.Chat.approval_presentation",
+     "tldw_chatbook.Agents.approval_observation",
+ )
++
++
++def _completed_task_diagnostic(exception):
++    """Read bounded failure metadata without importing product or formatting errors."""
++    bootstrap = sys.modules.get("tldw_chatbook.Backup_Recovery.bootstrap")
++    canonical = (
++        vars(bootstrap).get("RecoveryRequired") if bootstrap is not None else None
++    )
++    result = {
++        "reason_code": None,
++        "reason_status": "canonical_class_unavailable",
++        "traceback": [],
++        "traceback_order": "innermost_observed_outer_to_inner",
++        "traceback_walk_limited": False,
++        "traceback_frames_walked": 0,
++        "raise_site_included": False,
++        "traceback_truncated": False,
++    }
++    if isinstance(canonical, type):
++        result["reason_status"] = "noncanonical_exception"
++        if type(exception) is canonical:
++            result["reason_status"] = "unsafe_or_missing"
++            arguments = BaseException.args.__get__(exception, type(exception))
++            first = arguments[0] if arguments else None
++            if (
++                type(first) is str  # noqa: E721 - reject str subclasses at this boundary
++                and 1 <= len(first) <= 96
++                and "a" <= first[0] <= "z"
++                and all("a" <= c <= "z" or "0" <= c <= "9" or c == "_" for c in first)
++            ):
++                result.update(
++                    reason_code=first, reason_status="canonical_safe_identifier"
++                )
++    guard = sys.modules.get("qa_process_guard")
++    root = vars(guard).get("REPO") if guard is not None else None
++    root = root.resolve() if isinstance(root, Path) else None
++    traceback = BaseException.__traceback__.__get__(exception, type(exception))
++    retained = []
++    walked = 0
++    while traceback is not None and walked < 64:
++        retained.append(traceback)
++        if len(retained) > 12:
++            retained.pop(0)
++        traceback = traceback.tb_next
++        walked += 1
++    result.update(
++        traceback_walk_limited=traceback is not None,
++        traceback_frames_walked=walked,
++        traceback_truncated=walked > 12 or traceback is not None,
++        raise_site_included=traceback is None and bool(retained),
++    )
++    for observed in retained:
++        code = observed.tb_frame.f_code
++        frame = {
++            "file": None,
++            "function": None,
++            "line": observed.tb_lineno,
++            "source": "source_root_unavailable",
++        }
++        if root is not None:
++            filename = Path(code.co_filename)
++            frame["source"] = "unknown_filename"
++            if filename.is_absolute():
++                try:
++                    relative = filename.resolve().relative_to(root).as_posix()
++                except ValueError:
++                    frame["source"] = "outside_selected_source"
++                except OSError:
++                    frame["source"] = "unknown_filename"
++                else:
++                    name = code.co_name
++                    frame["source"] = "source_metadata_unavailable"
++                    if (
++                        len(relative) <= 256
++                        and relative.isprintable()
++                        and len(name) <= 160
++                        and name.isascii()
++                        and name.isprintable()
++                    ):
++                        frame.update(
++                            file=relative, function=name, source="selected_source"
++                        )
++        result["traceback"].append(frame)
++    return result
+ 
+ 
+ class ScriptPreconditionRefused(ValueError):
+@@ -1079,6 +1163,13 @@
+                     task_state["exception_type"] = (
+                         type(exception).__module__ + "." + type(exception).__qualname__
+                     )
++                    try:
++                        task_state["completed_diagnostic"] = _completed_task_diagnostic(
++                            exception
++                        )
++                    except Exception as error:
++                        task_state["completed_diagnostic"] = {"status": "unavailable"}
++                        self._observation_failed("completed_task_diagnostic", error)
+                 else:
+                     submitted = task.result()
+                     status = getattr(submitted, "terminal_status", None)

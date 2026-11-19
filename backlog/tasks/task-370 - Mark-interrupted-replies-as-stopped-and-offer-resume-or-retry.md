@@ -1,7 +1,7 @@
 ---
 id: TASK-370
 title: Mark interrupted replies as stopped and offer resume or retry
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-20 14:21'
 labels: [console, ux]
@@ -23,5 +23,12 @@ After stopping, the partial assistant message renders exactly like a completed o
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An interrupted message should carry a persistent visible marker ('stopped by user - partial') and offer an in-place Continue/Regenerate affordance right on the fragment
+- [x] #1 An interrupted message should carry a persistent visible marker ('stopped by user - partial') and offer an in-place Continue/Regenerate affordance right on the fragment
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Stopped partials are now distinct and recoverable: the message status vocabulary includes 'stopped' rendered as 'Partial response' in boundary labels (Console_Modules/session.py:2571-2572), messages carry retry actions (console-message-action-retry, message.py:2878), and interrupted provider runs get the resume/discard affordances of Console_Modules/provider_continuation_recovery.py.

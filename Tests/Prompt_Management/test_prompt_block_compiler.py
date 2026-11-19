@@ -10,9 +10,7 @@ from tldw_chatbook.Prompt_Management.prompt_block_compiler import (
 )
 
 
-FIXTURES = (
-    Path(__file__).parents[2] / "Docs" / "fixtures" / "console-block-prompts"
-)
+FIXTURES = Path(__file__).parents[2] / "Docs" / "fixtures" / "console-block-prompts"
 
 
 def _render_fixture_definition():
@@ -32,8 +30,12 @@ def test_compiler_renders_exact_canonical_text_from_shared_fixture() -> None:
     assert compile_block_artifact(definition) == (expected["system"], expected["user"])
 
 
-@pytest.mark.parametrize("case", json.loads((FIXTURES / "error-cases.json").read_text())["xml"])
-def test_invalid_xml_wrapper_preserves_the_original_issue_input(case: dict[str, str]) -> None:
+@pytest.mark.parametrize(
+    "case", json.loads((FIXTURES / "error-cases.json").read_text())["xml"]
+)
+def test_invalid_xml_wrapper_preserves_the_original_issue_input(
+    case: dict[str, str],
+) -> None:
     with pytest.raises(ValueError) as raised:
         validate_xml_wrapper(case["xml_tag"], case["content"])
 

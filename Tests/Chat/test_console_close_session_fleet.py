@@ -132,7 +132,8 @@ async def test_close_cancel_targets_the_persisted_conversation_id_when_set():
         expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
     )
 
-    assert bridge.cancel_all_calls == ["conv-durable"]
+    assert bridge.cancel_all_calls == [session.id, "conv-durable"]
+    assert bridge.sessions_present_at_call == [True, True]
 
 
 @pytest.mark.asyncio

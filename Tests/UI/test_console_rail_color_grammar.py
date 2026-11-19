@@ -427,6 +427,21 @@ async def test_focused_selected_row_still_paints_the_focus_contract() -> None:
             await pilot.pause(0.01)
         assert selected is not None, "no selected conversation row rendered"
 
+        # TASK-34000.26: the row found above can be one a re-sync is already
+        # replacing (``_pruning``); a focus write onto it is now refused, so
+        # settle first and focus the LIVE selected row.
+        await pilot.pause()
+        await pilot.pause()
+        live_rows = [
+            b
+            for b in console.query(Button)
+            if b.has_class("console-workspace-conversation-row-selected")
+            and b.is_attached
+            and not getattr(b, "_pruning", False)
+        ]
+        assert live_rows, "no live selected conversation row after settling"
+        selected = live_rows[0]
+
         theme = host.get_css_variables()
         resting_bg = selected.styles.background
         selected.focus()

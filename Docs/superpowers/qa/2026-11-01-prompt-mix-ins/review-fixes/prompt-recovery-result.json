@@ -1,0 +1,1 @@
+{"argv": ["/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python", "-m", "pytest", "Tests/Backup_Recovery/test_sqlite_validation.py", "-k", "prompt", "-q", "--tb=short", "--show-capture=no", "-p", "no:cacheprovider", "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/prompt-recovery-tmp"], "returncode": 0}

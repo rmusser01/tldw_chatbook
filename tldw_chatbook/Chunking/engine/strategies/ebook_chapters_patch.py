@@ -4,22 +4,22 @@
 # to catch more ReDoS patterns including nested quantifiers
 
 DANGEROUS_PATTERNS = [
-    r'\(\*',                          # Possessive quantifiers
-    r'\(\?R\)',                       # Recursive patterns
-    r'\(\?\(DEFINE\)',                # DEFINE patterns
-    r'{\d{4,}}',                      # Large repetition ranges
-    r'[*+]{2,}',                      # Consecutive quantifiers
-    r'\([^)]*[*+].*[*+].*\)',        # Multiple quantifiers in group
-
+    r"\(\*",  # Possessive quantifiers
+    r"\(\?R\)",  # Recursive patterns
+    r"\(\?\(DEFINE\)",  # DEFINE patterns
+    r"{\d{4,}}",  # Large repetition ranges
+    r"[*+]{2,}",  # Consecutive quantifiers
+    r"\([^)]*[*+].*[*+].*\)",  # Multiple quantifiers in group
     # Additional patterns to catch nested quantifiers like (a+)+
-    r'\([^)]*[+*]\)[+*]',            # Group with quantifier followed by quantifier
-    r'\([^)]*[+*]\)\+',              # (something+)+ pattern
-    r'\([^)]*[+*]\)\*',              # (something*)* pattern
-    r'\([^)]*[+*]\){',               # (something+){n,m} pattern
-    r'\(\([^)]*[+*]\)[^)]*\)[+*]',   # Nested groups with quantifiers
-    r'(\w\+)+\+',                     # Explicit (x+)+ pattern
-    r'(\w\*)+\*',                     # Explicit (x*)* pattern
+    r"\([^)]*[+*]\)[+*]",  # Group with quantifier followed by quantifier
+    r"\([^)]*[+*]\)\+",  # (something+)+ pattern
+    r"\([^)]*[+*]\)\*",  # (something*)* pattern
+    r"\([^)]*[+*]\){",  # (something+){n,m} pattern
+    r"\(\([^)]*[+*]\)[^)]*\)[+*]",  # Nested groups with quantifiers
+    r"(\w\+)+\+",  # Explicit (x+)+ pattern
+    r"(\w\*)+\*",  # Explicit (x*)* pattern
 ]
+
 
 # Additional function to detect nested quantifier patterns more thoroughly
 def has_nested_quantifiers(pattern: str) -> bool:
@@ -37,15 +37,13 @@ def has_nested_quantifiers(pattern: str) -> bool:
     # Check for patterns like (a+)+, (a*)*, ((a+)+)+, etc.
     nested_patterns = [
         # Direct nested quantifiers
-        r'\([^)]*[+*?]\)[+*?]',          # (x+)+ or (x*)* or (x?)?
-        r'\([^)]*\{[^}]+\}\)[+*?]',      # (x{n,m})+
-        r'\([^)]*[+*?]\)\{[^}]+\}',      # (x+){n,m}
-
+        r"\([^)]*[+*?]\)[+*?]",  # (x+)+ or (x*)* or (x?)?
+        r"\([^)]*\{[^}]+\}\)[+*?]",  # (x{n,m})+
+        r"\([^)]*[+*?]\)\{[^}]+\}",  # (x+){n,m}
         # Nested groups with quantifiers
-        r'\(\([^)]+\)[+*?]\)[+*?]',      # ((x)+)+
-
+        r"\(\([^)]+\)[+*?]\)[+*?]",  # ((x)+)+
         # Alternative nested patterns
-        r'\([^)|]*\|[^)]*[+*?]\)[+*?]',  # (a|b+)+
+        r"\([^)|]*\|[^)]*[+*?]\)[+*?]",  # (a|b+)+
     ]
 
     for nested in nested_patterns:
@@ -55,10 +53,13 @@ def has_nested_quantifiers(pattern: str) -> bool:
     # Check for sequential groups with quantifiers that could interact badly
     # e.g., (a+)(b+) where backtracking could occur
     # Check if there's potential for backtracking between groups
-    return bool(re.search(r'\([^)]*[+*]\)[^(]*\([^)]*[+*]\)', pattern))
+    return bool(re.search(r"\([^)]*[+*]\)[^(]*\([^)]*[+*]\)", pattern))
+
 
 # Enhanced validation function
-def validate_regex_pattern_enhanced(pattern: str, max_length: int = 500, timeout: float = 1.0) -> bool:
+def validate_regex_pattern_enhanced(
+    pattern: str, max_length: int = 500, timeout: float = 1.0
+) -> bool:
     """
     Enhanced validation of regex patterns for ReDoS vulnerabilities.
 
@@ -106,10 +107,10 @@ def validate_regex_pattern_enhanced(pattern: str, max_length: int = 500, timeout
 
     # Test for exponential complexity with multiple test inputs
     test_inputs = [
-        "a" * 20,      # Repetitive characters
-        "a" * 30,      # Longer repetitive
-        "ab" * 15,     # Alternating pattern
-        "abc" * 10,    # More complex pattern
+        "a" * 20,  # Repetitive characters
+        "a" * 30,  # Longer repetitive
+        "ab" * 15,  # Alternating pattern
+        "abc" * 10,  # More complex pattern
     ]
 
     for test_input in test_inputs:
@@ -133,6 +134,7 @@ def validate_regex_pattern_enhanced(pattern: str, max_length: int = 500, timeout
             raise
 
     return True
+
 
 # Example of how to use in the EbookChapterChunkingStrategy class:
 """

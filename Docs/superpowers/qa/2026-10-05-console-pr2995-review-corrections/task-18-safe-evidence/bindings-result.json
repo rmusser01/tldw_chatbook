@@ -1,0 +1,64 @@
+{
+  "exit_code": 0,
+  "timed_out": false,
+  "elapsed_seconds": 3.660143833956681,
+  "pid": 6540,
+  "closed": true,
+  "source_hashes_stable": true,
+  "log_sha256": "95de4aeffc806e96180f18111f3604e06460d92a73b4267ae49cc15cf350b517",
+  "xml_present": true,
+  "suites": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "8",
+      "time": "1.044",
+      "timestamp": "2026-10-04T18:54:23.540559-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    }
+  ],
+  "cases": [
+    {
+      "classname": "Tests.Chat.test_console_owner_live_bindings",
+      "name": "test_interrupt_remount_reads_replaced_sink_and_controller_state[approval]",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Chat.test_console_owner_live_bindings",
+      "name": "test_interrupt_remount_reads_replaced_sink_and_controller_state[skill_install]",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Chat.test_console_owner_live_bindings",
+      "name": "test_interrupt_remount_reads_replaced_sink_and_controller_state[skill_script]",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Chat.test_console_owner_live_bindings",
+      "name": "test_interrupt_remount_reads_replaced_sink_and_controller_state[worktree_merge]",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Chat.test_console_owner_live_bindings",
+      "name": "test_interrupt_remount_reads_replaced_sink_and_controller_state[question]",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Chat.test_console_interrupt_host_wiring",
+      "name": "test_legacy_registry_payload_and_lock_names_alias_the_host",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Chat.test_console_interrupt_host_wiring",
+      "name": "test_approvals_register_the_permission_summary_as_the_after_remount_hook",
+      "status": "passed"
+    },
+    {
+      "classname": "Tests.Chat.test_console_ask_user_round",
+      "name": "test_timeout_reads_console_config_when_no_seam",
+      "status": "passed"
+    }
+  ]
+}

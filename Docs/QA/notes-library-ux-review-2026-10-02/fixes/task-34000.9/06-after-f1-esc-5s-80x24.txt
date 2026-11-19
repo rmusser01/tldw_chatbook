@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N   Saved 01:40 · Next: Keep editing; changes save automatically.
+  a    o
+  v    t    ‹ Back to list    Gardening log                   Library notes
+       e   In the Library database only — no file on disk
+       s   Saved
+              Edit     Preview     Info
+--->          Save     Use in Console
+           Title     Gardening log
+     --->  Keywords  garden
+           Body
+          ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+--->      ┃ # Garden                                                           ┃
+          ┃                                                                    ┃
+          ┃ Tomatoes in.                                                       ┃
+          ┃  typed-before-f1-80x24                                             ┃
+          ┃                                                                    ┃
+          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                                                                 5 words · 4:23
+  esc notes | ctrl+end end | F1 · F6 · Ctrl+P · Ctrl+Q

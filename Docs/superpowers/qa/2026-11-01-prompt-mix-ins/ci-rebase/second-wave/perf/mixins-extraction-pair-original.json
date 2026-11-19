@@ -1,0 +1,200 @@
+[
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "sync"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "<lambda>"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "<lambda>"
+    ]
+  },
+  {
+    "state": "error",
+    "message": "Microphone unavailable \u2014 check permissions and retry",
+    "callers": [
+      "test_chip_going_idle_restores_the_reason_strip_budget",
+      "_run",
+      "_run_once",
+      "run_forever",
+      "run_until_complete"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "sync"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "set_dictation_availability",
+      "_sync_console_dictation_availability",
+      "_sync_console_dictation_availability",
+      "_invoke"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "sync"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "<lambda>"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "sync"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "sync"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "set_dictation_availability",
+      "_sync_console_dictation_availability",
+      "_sync_console_dictation_availability",
+      "_invoke"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "sync"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "<lambda>"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "<lambda>"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "<lambda>"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "set_dictation_availability",
+      "_sync_console_dictation_availability",
+      "_sync_console_dictation_availability",
+      "_invoke"
+    ]
+  },
+  {
+    "state": "preparing",
+    "message": "Local transcription busy \u2014 dictation will run next.",
+    "callers": [
+      "test_preparing_renders_whole_in_the_intermediate_band",
+      "_run",
+      "_run_once",
+      "run_forever",
+      "run_until_complete"
+    ]
+  },
+  {
+    "state": "idle",
+    "message": "",
+    "callers": [
+      "sync_dictation_state",
+      "sync_dictation_presentation",
+      "_sync_console_composer_action_state",
+      "_sync_console_control_bar_under_config",
+      "<lambda>"
+    ]
+  }
+]

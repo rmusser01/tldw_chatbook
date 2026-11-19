@@ -1,0 +1,197 @@
+{
+  "base": "be3bd821b2936d15ea9c44f1b806289fa2a90326",
+  "interpreter": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "static": {
+    "console_chat_controller-baseline": {
+      "ruff_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--no-cache",
+        "--output-format=json",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_chat_controller.py",
+        "-"
+      ],
+      "ruff_exit": 1,
+      "diagnostics": 191,
+      "format_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_chat_controller.py",
+        "-"
+      ],
+      "format_exit": 1,
+      "source_sha256": "128f9efc12e430ea085b08cc82475e85226da6e7a6eb491fd282f28f0c218b13"
+    },
+    "console_chat_controller-current": {
+      "ruff_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--no-cache",
+        "--output-format=json",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_chat_controller.py",
+        "-"
+      ],
+      "ruff_exit": 1,
+      "diagnostics": 191,
+      "format_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_chat_controller.py",
+        "-"
+      ],
+      "format_exit": 1,
+      "source_sha256": "c3782fa37547ac8b8a78d2826a7a736e00e6bfac8847ed50cf63a9f10888a8a7"
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "same_ruff_signatures": true
+    },
+    "agent_runtime-baseline": {
+      "ruff_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--no-cache",
+        "--output-format=json",
+        "--stdin-filename",
+        "tldw_chatbook/Agents/agent_runtime.py",
+        "-"
+      ],
+      "ruff_exit": 1,
+      "diagnostics": 20,
+      "format_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "--stdin-filename",
+        "tldw_chatbook/Agents/agent_runtime.py",
+        "-"
+      ],
+      "format_exit": 1,
+      "source_sha256": "275bff5bdfd449469c6ab7d0ec46e0315a23e79e83a273e0bf75eeb48e63dbd3"
+    },
+    "agent_runtime-current": {
+      "ruff_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--no-cache",
+        "--output-format=json",
+        "--stdin-filename",
+        "tldw_chatbook/Agents/agent_runtime.py",
+        "-"
+      ],
+      "ruff_exit": 1,
+      "diagnostics": 20,
+      "format_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "--stdin-filename",
+        "tldw_chatbook/Agents/agent_runtime.py",
+        "-"
+      ],
+      "format_exit": 1,
+      "source_sha256": "e3226987d1157f718ae1b3291eb3b852f359227bd8e62e585a6dedd1a495ea92"
+    },
+    "tldw_chatbook/Agents/agent_runtime.py": {
+      "same_ruff_signatures": true
+    },
+    "test_console_archive_recovery_followup-baseline": {
+      "ruff_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--no-cache",
+        "--output-format=json",
+        "--stdin-filename",
+        "Tests/Chat/test_console_archive_recovery_followup.py",
+        "-"
+      ],
+      "ruff_exit": 0,
+      "diagnostics": 0,
+      "format_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "--stdin-filename",
+        "Tests/Chat/test_console_archive_recovery_followup.py",
+        "-"
+      ],
+      "format_exit": 0,
+      "source_sha256": "37e869ae7f9283099e299063f115d0fcaddb76906abce18ddcea4d674d690808"
+    },
+    "test_console_archive_recovery_followup-current": {
+      "ruff_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--no-cache",
+        "--output-format=json",
+        "--stdin-filename",
+        "Tests/Chat/test_console_archive_recovery_followup.py",
+        "-"
+      ],
+      "ruff_exit": 0,
+      "diagnostics": 0,
+      "format_argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "--stdin-filename",
+        "Tests/Chat/test_console_archive_recovery_followup.py",
+        "-"
+      ],
+      "format_exit": 0,
+      "source_sha256": "9925a4460c32718e6819d5e225eab5282dfc79c67cfbd953a9a5c91c7be2622a"
+    },
+    "Tests/Chat/test_console_archive_recovery_followup.py": {
+      "same_ruff_signatures": true
+    }
+  },
+  "unchanged": {
+    "tldw_chatbook/Chat/console_provider_gateway.py": "f0069af99f83bdc03fcb75ac0bbb31490a509b756761a3d54af8e35dfa71ef96",
+    "tldw_chatbook/Chat/console_agent_bridge.py": "6496825e63066a05541d900a01e1dd4f790bcd04dfee5af17e630a1ce71bb912",
+    "tldw_chatbook/Agents/native_tools.py": "0d9149a2fbb5d93f9e794434cc7b48566a8127187453711e2f4143501494b2c2",
+    "tldw_chatbook/Chat/console_runtime.py": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+    "tldw_chatbook/Chat/console_trace_runtime.py": "117ab373bd490cdea7de58b619767d64b0dac5d8f02cd7297e0b5817204a21d4",
+    "tldw_chatbook/Chat/console_trace_service.py": "c768bdf29d1fb003ca5806b0423864b132eccd78c60693903dbe504f9e6afc2f",
+    "tldw_chatbook/Chat/console_semantic_revision.py": "5cfe202a5f14262148a7be71ec9b1b3b674d005a0e1815dcc8f99912eebd179f",
+    "tldw_chatbook/Chat/archive_recovery/runtime.py": "8055edbff2ca1ce9f0b43bec77084c0e72d02ce047d3f0d88791c90b0c9dfb13"
+  },
+  "changed_predicate_formatted": true,
+  "runtime_only_dispatch_argument_changed": true,
+  "changed_dispatch_formatted": true,
+  "strict_service_guards": {
+    "_validate_completed_tool_turn": "c26f8d7ca7884454a904f7b70ae89c320ec1668445d7d0e254825fa6488cc073",
+    "_completed_tool_turn_parent": "59fdb84e7907d9de7eaa10bc9b3360a84138122e3f39b60386ed078a6b7899ea",
+    "prepare_current_surface_delta": "bb990d76b306ea3765d273d8902799df721c94a86894f7230137994752726151",
+    "persist_request": "737d19b8cd4043825626db8566de03c57fb5a4c92ec2cec0dbbf12e525a7cce5",
+    "_validate_replacement_projection": "672d8f523cdb3b297e3ff02a3a58bb3c2fe59e6c1b348a95879509ec5b8c5807"
+  }
+}

@@ -79,6 +79,16 @@ class AdaptiveReaderLayoutProfile:
             ``False`` (the pre-task-32065 behaviour); only Media opts in
             today, where 60x24 painted "Select a media item to read it here."
             with no list to select from.
+        list_stage_over_starved_work: When ``True``, an explicit list request
+            (``priority="items"``) with an item open that would leave the
+            work pane under ``work_min_width`` gives the list the whole stage
+            instead, while it fits under ``list_max_width``; the work pane's
+            width is 0 and the shell hides it, the item stays open behind the
+            list, and closing the list hands the stage back (TASK-38981: a
+            ``width - 42`` sliver, 1 cell at 40 columns, whose controls Tab
+            reached off screen). Default ``False``: File Notes resolves its
+            narrow navigator with this priority and keeps its own rule
+            (TASK-38757).
         grip_width: Width of EACH of the two pane grips -- both what a grip
             paints and what the resolver holds back for it, so the two can
             never disagree (the resolved layout carries this width to the
@@ -94,6 +104,7 @@ class AdaptiveReaderLayoutProfile:
     work_comfort_width: int = 44
     list_grows: bool = False
     list_first_when_empty: bool = False
+    list_stage_over_starved_work: bool = False
     grip_width: int = PANE_GRIP_WIDTH
 
 
@@ -106,6 +117,27 @@ class AdaptiveReaderLayoutPreferences:
     custom_widths_enabled: bool = False
     library_width: int = LIBRARY_TARGET_WIDTH
     items_width: int = ITEMS_TARGET_WIDTH
+
+    @property
+    def nav_open(self) -> bool:
+        """Neutral read-only name for ``library_open`` (Roleplay frame B0).
+
+        A property, never a field: fields drive equality, ``astuple`` and
+        ``replace``, which the golden grid pins.
+
+        Returns:
+            The ``library_open`` value, under a destination-neutral name.
+        """
+        return self.library_open
+
+    @property
+    def nav_width(self) -> int:
+        """Neutral read-only name for ``library_width`` (Roleplay frame B0).
+
+        Returns:
+            The ``library_width`` value, under a destination-neutral name.
+        """
+        return self.library_width
 
 
 @dataclass(frozen=True)
@@ -149,6 +181,24 @@ class AdaptiveReaderEffectiveLayout:
     reader_width: int
     priority_pane: PaneName | None
     grip_width: int = PANE_GRIP_WIDTH
+
+    @property
+    def nav_open(self) -> bool:
+        """Neutral read-only name for ``library_open`` (Roleplay frame B0).
+
+        Returns:
+            The ``library_open`` value, under a destination-neutral name.
+        """
+        return self.library_open
+
+    @property
+    def nav_width(self) -> int:
+        """Neutral read-only name for ``library_width`` (Roleplay frame B0).
+
+        Returns:
+            The ``library_width`` value, under a destination-neutral name.
+        """
+        return self.library_width
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -381,6 +431,14 @@ def resolve_adaptive_reader_layout(
                     ),
                     max(width - grip_width - work_min_width, items_width),
                 )
+                if (
+                    profile.list_stage_over_starved_work
+                    and reader_has_item
+                    and width - grip_width - items_width < work_min_width
+                    and width - grip_width <= profile.list_max_width
+                ):
+                    # TASK-38981: see ``list_stage_over_starved_work``.
+                    items_width = max(width - grip_width, 0)
             return AdaptiveReaderEffectiveLayout(
                 library_open=library_open,
                 items_open=items_open,
@@ -535,3 +593,30 @@ def resolve_adaptive_reader_layout(
         priority_pane=priority,
         grip_width=profile.grip_width,
     )
+
+
+def list_holds_the_stage(layout: AdaptiveReaderEffectiveLayout) -> bool:
+    """Whether an explicit list priority holds the whole stage (TASK-38981).
+
+    A destination that opens another item from that list drops the priority
+    before re-resolving, so the item it opened takes the stage back.
+    """
+    return (
+        layout.items_open
+        and layout.reader_width == 0
+        and layout.priority_pane == "items"
+    )
+
+
+# Neutral names for destinations that are not the Library (Roleplay frame B0;
+# the shared adaptive-pane-shell ADR). The SAME objects, not subclasses, so behaviour is byte-identical
+# by construction; the golden grid in
+# Tests/Library/test_library_adaptive_reader_state.py pins it against a digest
+# captured before these lines existed. No new import: this module stays a
+# config-safe stdlib leaf (TASK-22223). The pane ids stay "library"/"items"
+# (PaneName) for every destination; Roleplay's navigation rail is the
+# "library" pane.
+AdaptivePaneProfile = AdaptiveReaderLayoutProfile
+AdaptivePanePreferences = AdaptiveReaderLayoutPreferences
+AdaptivePaneLayout = AdaptiveReaderEffectiveLayout
+resolve_adaptive_pane_layout = resolve_adaptive_reader_layout

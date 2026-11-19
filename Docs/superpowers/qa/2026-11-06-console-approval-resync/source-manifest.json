@@ -1,0 +1,318 @@
+{
+  "base": "5ca7ec6a03d92a9d8113468d37aac99cdb4d511c",
+  "scope": "Final changed Python sources, parsed successfully. This snapshot does not imply a test or timing result.",
+  "sources": [
+    {
+      "path": "Docs/superpowers/qa/2026-10-05-console-approval-ux/private_control.py",
+      "sha256": "2c282e53d5adbe0b231140c4087a354a60351bac42e45f722ed12dba6e4c7618"
+    },
+    {
+      "path": "Tests/Agents/test_approval_observation.py",
+      "sha256": "173211472d0744286e8af11498deeaf2a95b513d604c4e5177c7be42deae733e"
+    },
+    {
+      "path": "Tests/Agents/test_builtin_tool_gate.py",
+      "sha256": "1e1262b4d6e64af078e4eff9eeecf7264739562878e5202f5955b1e9091bfb93"
+    },
+    {
+      "path": "Tests/Agents/test_local_tool_provider.py",
+      "sha256": "15a1b54a26ce3769ae07a62e41ffc032b57658238e6710b5f48046f172ad679f"
+    },
+    {
+      "path": "Tests/Agents/test_mcp_tool_provider.py",
+      "sha256": "4b161e80f1657cb3db42a456708dd43098ed2e7ee460e29526d391296b98d55e"
+    },
+    {
+      "path": "Tests/Agents/test_raw_shell_tool_provider.py",
+      "sha256": "6069d338206d86447068b3813f7cda1f5cdd5e759a34f3b6aea61600e458f001"
+    },
+    {
+      "path": "Tests/Benchmarks/console_approval_latency.py",
+      "sha256": "966814260971bf81419c5a41c05fefe0317c9ae5f33d7ccb10396d892459cc15"
+    },
+    {
+      "path": "Tests/Benchmarks/test_console_approval_latency_measurement.py",
+      "sha256": "62a6abc14ca73aea5220736356feae84cdd448022333ffdbd472f60229249dd8"
+    },
+    {
+      "path": "Tests/Benchmarks/test_console_approval_private_control.py",
+      "sha256": "6944c12d48929c00e37bd336b7c27fc9fd423fcc0393d6c64a33df523ba5f3c4"
+    },
+    {
+      "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+      "sha256": "3478c3767f51f3396f094c858eee2b3bf6ffc646c7afbfa911de3eb41cdcc1c6"
+    },
+    {
+      "path": "Tests/CI/test_console_approval_critical_gate.py",
+      "sha256": "caa6d4425e6cb69b756c539fdf37c55495b6283abc1be914e730ac17fc5ed411"
+    },
+    {
+      "path": "Tests/CI/test_ui_pr_gate_census_checker.py",
+      "sha256": "7dd67845c9659540664d98c92fe33bbdcaa5f94fdeafb78ee40bacf8401458f9"
+    },
+    {
+      "path": "Tests/Chat/console_interrupt_test_bindings.py",
+      "sha256": "868ea40e752bfd59a5a1e33c1b5f2ad714695c7a77228605b6f1782ab1787e49"
+    },
+    {
+      "path": "Tests/Chat/test_approval_display_controls.py",
+      "sha256": "0c4413b504d695a7789d8c30bfeb2394d835822999f5509f0f7ad2355fa86451"
+    },
+    {
+      "path": "Tests/Chat/test_approval_payload_summary.py",
+      "sha256": "7a6ff8d24eaa81a0a41ce83967fe941016aa8d8da38ebf4c91ead5279987afbe"
+    },
+    {
+      "path": "Tests/Chat/test_approval_presentation.py",
+      "sha256": "1aa59095a76d28a1359b437decc297c3c4d9531d93bb920ec6b98881e13a7bdd"
+    },
+    {
+      "path": "Tests/Chat/test_console_approval_feedback.py",
+      "sha256": "a22528e7de82264b396f853b677b533ddf1b8a328e84357a90c81c02b7daf56e"
+    },
+    {
+      "path": "Tests/Chat/test_console_approval_scope_journeys.py",
+      "sha256": "ac61ede771261b5ac613ed9a859eaa3bdc63562a76b58589f2ff413565c7308f"
+    },
+    {
+      "path": "Tests/Chat/test_console_interrupt_rounds.py",
+      "sha256": "b41331061e9fb52655fce10b15aaca1f74487c25be398f5838591168dc0eced4"
+    },
+    {
+      "path": "Tests/Chat/test_console_raw_shell_revocation.py",
+      "sha256": "b4091a84aa56924b3214debd022741d88718b4444edf3f92bfc8d5386890963b"
+    },
+    {
+      "path": "Tests/Chat/test_console_relay_approval_integration.py",
+      "sha256": "6c099660bba0e13c501f5be5ab163fa3da0738aace477380f70feb7d70b6656c"
+    },
+    {
+      "path": "Tests/Chat/test_console_virtual_cli_approval.py",
+      "sha256": "cb43e505e1f96397fb370bd07b498a8f8128735f58806fcae97d3b66fa4dc97f"
+    },
+    {
+      "path": "Tests/MCP/test_redaction.py",
+      "sha256": "ab046fb3aa65d65a3fe59d04ca2b152d1c6de8ad64c7dd8bffc03ab00e326ed0"
+    },
+    {
+      "path": "Tests/Scripts/test_regen_approval_card_svg.py",
+      "sha256": "619325e0381f8aebff83dc685b69e8628d8e8f06b4d8f0058c1bac2b9a544989"
+    },
+    {
+      "path": "Tests/UI/test_approval_action_ownership.py",
+      "sha256": "4f2369b7dcd0e25bfeaae6b8db0106ed7ba894558938b66262b715f3dd136b1d"
+    },
+    {
+      "path": "Tests/UI/test_approval_argument_budget.py",
+      "sha256": "f2ec5dfb7069f13864f1b59dd32acdf2926bfe9a00cca11b386ae2e88ec57a97"
+    },
+    {
+      "path": "Tests/UI/test_approval_batch_geometry.py",
+      "sha256": "60f9b32907a02632b865aae138eda2d51a77e6e8f5e254bbbe690d1314190a20"
+    },
+    {
+      "path": "Tests/UI/test_approval_details.py",
+      "sha256": "d11b8ed73b4b71f07bb65ea698229c27358ceacf306c614cd4b9a5fccc84c72a"
+    },
+    {
+      "path": "Tests/UI/test_approval_details_privacy.py",
+      "sha256": "5830735baac44c16588af676fa7eed1bcca3279b508ef60b5de709c384262677"
+    },
+    {
+      "path": "Tests/UI/test_approval_feedback.py",
+      "sha256": "ace8176f2b25a52536ec82d48874934ffcb0ed0d5109d3d3a71921dd5ccb8237"
+    },
+    {
+      "path": "Tests/UI/test_approval_interaction.py",
+      "sha256": "538ab7abcbb4d9247e5ae85a7fddeb8c5f76eb1236261290b0f4945e0f34965b"
+    },
+    {
+      "path": "Tests/UI/test_approval_review_repairs.py",
+      "sha256": "66ea0793142b7e990400dec8024d6b4edbfb339cb1ac4c3023d7df01e250bde4"
+    },
+    {
+      "path": "Tests/UI/test_approval_row_information_budget.py",
+      "sha256": "27819a645520fc83d9b7e59f872bed45b00cf0b5777965ce52e26744031d1c05"
+    },
+    {
+      "path": "Tests/UI/test_chat_approval_card.py",
+      "sha256": "44dfb73e517d9aebf505b9c9832b7d89202f3d60ccbbfd5cd5de5891175555e5"
+    },
+    {
+      "path": "Tests/UI/test_console_approval_compact_layout.py",
+      "sha256": "17707c5ef7e2ad55f9e337b5210a207f011ba34a586a26f28c43edda5f213800"
+    },
+    {
+      "path": "Tests/UI/test_console_approval_first_open_render.py",
+      "sha256": "a3f9732f65dbba65ac116a2f884f525ca78174de4edef5ecbc29570c7d533ed7"
+    },
+    {
+      "path": "Tests/UI/test_console_approval_ux_journeys.py",
+      "sha256": "ef691b5d1059a24de826897c7a2c070a8d9f9ccef958c4a4ea56dba08d927cf2"
+    },
+    {
+      "path": "Tests/UI/test_console_response_rules.py",
+      "sha256": "752205cd9f35c4160a93242b093a8f2ec43a319fc2350d62c3e7c087d4146c24"
+    },
+    {
+      "path": "Tests/UI/test_console_runtime_ownership.py",
+      "sha256": "58b78d76a150576663ffe1a80603fbde9962cdd513c4b1264848093e96f870d3"
+    },
+    {
+      "path": "Tests/Web_Server/test_served_relay_publisher.py",
+      "sha256": "54ed40b149656682e7aabd419adf5db571688da4409ee501bbb03e30abfff756"
+    },
+    {
+      "path": "Tests/Web_Server/test_web_auth_integration.py",
+      "sha256": "fa211efbfbbd1553434ffbcddd7defa7f7437e43fb032901a8a5a63eb819d897"
+    },
+    {
+      "path": "Tests/Web_Server/test_webauthn_service.py",
+      "sha256": "48e867fd9c95fe0b9faab01b39d7e6e689b4981a0a7f96d4cff74f1771e1ec5c"
+    },
+    {
+      "path": "scripts/check_ui_pr_gate_census.py",
+      "sha256": "5235d108f8567b6504806dd3a8beeb4a94fe07f3b1119c5782f161b5e576c7af"
+    },
+    {
+      "path": "scripts/regen_approval_card_svg.py",
+      "sha256": "fdda9cf936ebaf7dc5db5c9d4f37175a9c23f571382d146baa29a5f65573ac96"
+    },
+    {
+      "path": "tldw_chatbook/Agents/approval_observation.py",
+      "sha256": "f8a314651f9df4c172a9ebfa0c6c156869d951eaf14d363b7c801f4df1cb2fca"
+    },
+    {
+      "path": "tldw_chatbook/Agents/approval_provenance.py",
+      "sha256": "19bd2fe3906eec47b64a4b8703c3e96c0ff1a9646f886fab54dba148e12f7f7f"
+    },
+    {
+      "path": "tldw_chatbook/Agents/builtin_tool_gate.py",
+      "sha256": "d02d1144be1f22a1991c164f10e9a99bbda7f806c681f33ec65b7e2b37e0e897"
+    },
+    {
+      "path": "tldw_chatbook/Agents/local_tool_provider.py",
+      "sha256": "2183fb3a21975675ea26e2c54d9ddcd0e63159583d0ab7d92f593d1a1ea2cfd0"
+    },
+    {
+      "path": "tldw_chatbook/Agents/mcp_tool_provider.py",
+      "sha256": "9de6c6ca767feac8b39d330ac69abaf0c83c446c6b8869983c0237e256d4ee86"
+    },
+    {
+      "path": "tldw_chatbook/Agents/raw_shell_tool_provider.py",
+      "sha256": "faf689d062ede037074e218670a70b0f422781b3d96c04ed0b72becd9f488762"
+    },
+    {
+      "path": "tldw_chatbook/Agents/virtual_cli_provider.py",
+      "sha256": "22553b0abdbba18e5458fa1f6b3e0541dff91610d148ad0659f4b1f3e3c4e168"
+    },
+    {
+      "path": "tldw_chatbook/Canvas/web_auth.py",
+      "sha256": "ad4aae1789fc7d50f884e3df8681d4ae0465fd921abc3da03cbade3dce838410"
+    },
+    {
+      "path": "tldw_chatbook/Chat/approval_formatting.py",
+      "sha256": "36774b48b77cc6e025c7456db590d63817a3cc9d4843c351220be5eeeeb3f1ef"
+    },
+    {
+      "path": "tldw_chatbook/Chat/approval_presentation.py",
+      "sha256": "c7b8dd386ca0b5a9e80d79f2a4c4eb2cc9c470f80503d79b756e7e91b0156513"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+      "sha256": "848ed20c85ce4ef058c5c0b03f849bddadf7ff8a7098adda47f04de4f6b1a5ef"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_approval_feedback.py",
+      "sha256": "c2a1eacd70453b3d6efd1deb46523e4d1d719aa9dc14ef3a9feced1d40198c5f"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "sha256": "34a4efbaebcc5f046ab0382bd0dc3ba1fee5b0e48c22b87f06c295f484831314"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_models.py",
+      "sha256": "00906bf4b180ca9eed8beacde9ddd53ca6e878fb8b6dc3ceb8bd29b51c4e4503"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+      "sha256": "f0dff947f79a79c7671494af5ebc3fe11a2991a4fc99625c4d51bdcefa114395"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_raw_cli.py",
+      "sha256": "6f4d8b8437b5071007821d0d4c0e3b1b8d45066d0565863586c1f489f4da8306"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "sha256": "c6f95a8134156ec6b00d284bc1bd4dfc6d6495ddd911dab8adc6df77a073c655"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_tool_activity.py",
+      "sha256": "479d424b4130b315be4aad2e963123d5633e5cf58cc300d34a1e44f0e06328d1"
+    },
+    {
+      "path": "tldw_chatbook/MCP/redaction.py",
+      "sha256": "619d5e1875bd48e9632740585031115a0e5c0e6851e2ffa178a04ede708d82cd"
+    },
+    {
+      "path": "tldw_chatbook/MCP/unified_control_plane_service.py",
+      "sha256": "6ee32ce734a2e6472d58a7d8892c5ea73ce8cffe6968673cd63062fd710977f7"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/approval_controls.py",
+      "sha256": "11cbe3af760796f29d7f466d918c568c2ac4ba756cf86d4792a03e4bea6ba525"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/approval_details.py",
+      "sha256": "eb8b9fa6393f87c9b94c20879e71b6b5b0982d8acf590a4b1d1e13414defd985"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/approval_feedback.py",
+      "sha256": "308832b19d7bfe5bf25a4040bd7d7689c0eb558218d021d26894ec36a31921be"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+      "sha256": "7b60b2add6c780a1a6eb8aefff716b29fd807301f7de8fc8ff5efa683e8e6da6"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "sha256": "449d1616a04ee44468eabd4921ab0db1a60eff30199b9b0d221e69aab5847555"
+    },
+    {
+      "path": "tldw_chatbook/Web_Server/serve.py",
+      "sha256": "6a1500a79a8355588f69297dc1b6c18341e364747b282810fcc0a85ccdbf9224"
+    },
+    {
+      "path": "tldw_chatbook/Web_Server/served_relay_publisher.py",
+      "sha256": "9eaeb6256adfa1ff945f9580726aa12d47480c36a5293eb30bd62e9a0a4a8312"
+    },
+    {
+      "path": "tldw_chatbook/Web_Server/webauthn_service.py",
+      "sha256": "548178bd4ad4c6b11de8894e59daa15f79ad258f17ed6985517c5b21504ec788"
+    },
+    {
+      "path": "tldw_chatbook/Web_Server/webauthn_store.py",
+      "sha256": "c1b34060a8f6bc764c21a4de40b1d48400273ecdf4f64e99d958611e7f1a5f04"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+      "sha256": "7d36be80cfff4dfa1dcc23e1c1b0f0c4e59d6a421de56d52a62f95f29d8cf421"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Chat_Widgets/chat_task_cards.py",
+      "sha256": "8ec70fa223295739ad7a08d8a5aab167ea7c6e0fb8f1e2c46695eb19be8c8a03"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_assistant_turn.py",
+      "sha256": "8d913edb1f4d8da6307578e23adce4c7daf8b52604679fb3376cd41f9b2ec2fa"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "sha256": "09cca161f987721267c2ae485988375888be66e73fc4fb371f55920a3c05e717"
+    },
+    {
+      "path": "tldw_chatbook/css/build_css.py",
+      "sha256": "20c577bbd73d0072014e6da52f83f9c79be519c928de9f59b1a5eb6dfda8ef96"
+    }
+  ]
+}

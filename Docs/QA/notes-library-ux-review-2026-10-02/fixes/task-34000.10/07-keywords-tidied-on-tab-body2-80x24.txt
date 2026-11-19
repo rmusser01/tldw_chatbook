@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N    N   Saved 03:24 · Next: Keep editing; changes save automatically.
+  a    o
+  v    t    ‹ Back to list    Untitled                        Library notes
+       e   In the Library database only — no file on disk
+       s   Saved
+              Edit     Preview     Info
+--->          Save     Use in Console
+           Title     Untitled
+     --->  Keywords  ok, x
+           Body
+          ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+--->      ┃ body2                                                              ┃
+          ┃                                                                    ┃
+          ┃                                                                    ┃
+          ┃                                                                    ┃
+          ┃                                                                    ┃
+          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+                                                                   1 word · 1:6
+  esc notes | ctrl+end end | F1 · F6 · Ctrl+P · Ctrl+Q

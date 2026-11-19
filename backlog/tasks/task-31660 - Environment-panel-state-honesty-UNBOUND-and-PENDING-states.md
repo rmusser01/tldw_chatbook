@@ -107,4 +107,7 @@ unbound`, `_has_landed`, both entry points, `_land`'s UNBOUND branch),
 right_rail.py` (docstrings/comments only), `Docs/User_Guide/console/
 context-and-rag.md` (the empty-state table gained the two situations it was
 silently folding into one), and the three test suites.
+
+**User Guide verification record (moved here by TASK-41101, which removed the pages' "Verified against" stamps):**
+- `Docs/User_Guide/console/context-and-rag.md`: Code-level pass; not re-driven live.
 <!-- SECTION:NOTES:END -->

@@ -50,7 +50,7 @@ from tldw_chatbook.Tools.workspace_wire_decode import (
     decode_response,
     encode_response,
 )
-from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from Tests.workspace_worker_test_support import run_in_process_workspace_worker
 from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryIdentity,
     capture_directory_chain,
@@ -117,6 +117,7 @@ _ARGUMENTS_BY_OPERATION: dict[str, dict[str, Any]] = {
         "new_string": "after",
         "sensitive_exclusions": [],
     },
+    "fs_mkdir": {"path": "new/dir", "sensitive_exclusions": []},
     "fs_patch": {
         "diff": "--- a/file\n+++ b/file\n",
         "sensitive_exclusions": [],
@@ -900,7 +901,7 @@ def test_encode_response_bytes_match_parent_to_bytes(values: dict[str, Any]) -> 
 def _worker_frames(raw_request: bytes) -> tuple[int, list[bytes]]:
     """Run the pinned worker once and collect its exit code and frame lines."""
     stdin, stdout = io.BytesIO(raw_request), io.BytesIO()
-    exit_code = run_workspace_worker(stdin, stdout, io.BytesIO())
+    exit_code = run_in_process_workspace_worker(stdin, stdout, io.BytesIO())
     return exit_code, stdout.getvalue().splitlines()
 
 

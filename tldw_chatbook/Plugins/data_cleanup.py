@@ -25,7 +25,12 @@ from .authority import DataRoot, PhysicalIdentity, RootBinding
 from .package_files import canonical_json
 from .review import OperationReceipt
 
-DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+def _directory_flags() -> int:
+    """Resolve native flags only when qualified storage is actually used."""
+    if sys.platform != "darwin" or ctypes.sizeof(ctypes.c_void_p) != 8:
+        raise PermissionError("root_platform_unqualified")
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 def digest(value) -> str:
@@ -182,33 +187,39 @@ class DataOperation:
 
 
 @contextmanager
-def open_root(owner, row, *, absent=False, rebind=False):
-    """Pin owner/data/leaf without following links; refuse missing ancestry."""
+def open_root(owner, row, *, absent=False, rebind=False, reidentify=False):
+    """Pin owner/data/leaf without following links; refuse missing ancestry.
+
+    ``reidentify`` (a reviewed folder rebind, TASK-40308) observes the folder
+    as it is now instead of comparing it with its recorded binding.
+    """
     owner.require_owner(owner.root)
     path = Path(row["path"])
     if path != owner.root / "data" / row["root_id"]:
         raise PermissionError("root_path_unowned")
     binding = (row.get("custody") or {}).get("binding")
+    if reidentify:
+        binding, rebind = None, True
     completed_absence = (row.get("custody") or {}).get("state") == "cleaned_absent"
     boot = boot_identity()
     if binding is not None and binding["boot_id"] != boot and not rebind:
         raise PermissionError("root_boot_identity_changed")
     descriptors = []
     try:
-        descriptors.append(os.open(owner.root, DIR_FLAGS))
+        descriptors.append(os.open(owner.root, _directory_flags()))
         owner.require_owner(owner.root)
         if (
             os.fstat(descriptors[0]).st_dev,
             os.fstat(descriptors[0]).st_ino,
         ) != owner._root_identity:
             raise PermissionError("root_anchor_changed")
-        descriptors.append(os.open("data", DIR_FLAGS, dir_fd=descriptors[-1]))
+        descriptors.append(os.open("data", _directory_flags(), dir_fd=descriptors[-1]))
         anchors = [physical_identity(fd) for fd in descriptors]
         if binding is not None and anchors != binding["anchors"]:
             raise PermissionError("root_anchor_changed")
         try:
             descriptors.append(
-                os.open(row["root_id"], DIR_FLAGS, dir_fd=descriptors[-1])
+                os.open(row["root_id"], _directory_flags(), dir_fd=descriptors[-1])
             )
         except FileNotFoundError:
             if not (absent or completed_absence) or binding is None:
@@ -565,7 +576,7 @@ class RootUsage:
         if raw is not None and len(raw.encode()) > 256 * 1024:
             raise PermissionError("root_owner_coverage_incomplete")
         expected = json.loads(raw) if raw is not None else None
-        if expected is not None and (type(expected) is not list or len(expected) > 256):
+        if expected is not None and (type(expected) is not list or len(expected) > 256):  # noqa: E721 -- exact JSON container contract.
             raise PermissionError("root_owner_coverage_incomplete")
         actual = [
             dict(row)
@@ -583,7 +594,7 @@ class RootUsage:
         return actual
 
     def release(self, token: str, confirmed: bool) -> None:
-        if type(confirmed) is not bool:
+        if type(confirmed) is not bool:  # noqa: E721 -- truthy values cannot prove termination.
             raise ValueError("confirmation must be boolean")
         with self.coordinator.registry.transaction() as cursor:
             row = cursor.execute(
@@ -618,6 +629,10 @@ class RootUsage:
                 )
 
     def blockers(self, roots, *, limit=50, offset=0):
+        return self.blocker_status(roots, limit=limit, offset=offset)["blockers"]
+
+    def blocker_status(self, roots, *, limit=50, offset=0) -> dict:
+        """Return bounded impact, with completeness only for the entire projection."""
         from .registry import validate_page
 
         validate_page(limit, offset)
@@ -667,7 +682,10 @@ class RootUsage:
                             "reason": reason,
                         }
                     )
-        return tuple(result[offset : offset + limit])
+        return {
+            "blockers": tuple(result[offset : offset + limit]),
+            "blockers_complete": offset == 0 and len(result) <= limit,
+        }
 
     def shutdown(self):
         self.coordinator._require_worker()
@@ -864,7 +882,7 @@ async def create_data(coordinator, review, operation_id):
     owner = coordinator.owner
     owner.require_owner(owner.root)
     # A failed creation stays authenticated/fenced; never adopt an existing leaf.
-    fd = os.open(owner.root, DIR_FLAGS)
+    fd = os.open(owner.root, _directory_flags())
     try:
         owner.require_owner(owner.root)
         opened = os.fstat(fd)
@@ -874,7 +892,7 @@ async def create_data(coordinator, review, operation_id):
             os.mkdir("data", mode=0o700, dir_fd=fd)
         except FileExistsError:
             pass
-        data_fd = os.open("data", DIR_FLAGS, dir_fd=fd)
+        data_fd = os.open("data", _directory_flags(), dir_fd=fd)
         try:
             os.mkdir(row["root_id"], mode=0o700, dir_fd=data_fd)
             os.fsync(data_fd)
@@ -897,6 +915,104 @@ async def create_data(coordinator, review, operation_id):
         action="create",
     )
     await commit_root_phase(coordinator, final, final.operation_id)
+    return root_ref(row)
+
+
+def kept_folders(coordinator, *, limit=256):
+    """Saved-data folders under ``data/`` that no registered root names.
+
+    After a post-restore authority reset (TASK-40308) the restored roots' folders
+    stay here, unregistered, until attached to a reinstalled plugin.
+    """
+    registered = {
+        row["root_id"] for row in coordinator.published_snapshot()["data_roots"]
+    }
+    anchor = coordinator.owner.root / "data"
+    if not anchor.is_dir() or anchor.is_symlink():
+        return ()
+    names = sorted(
+        entry.name
+        for entry in os.scandir(anchor)
+        if entry.is_dir(follow_symlinks=False)
+        and re.fullmatch(r"[0-9a-f]{32}", entry.name)
+        and entry.name not in registered
+    )
+    return tuple(names[:limit])
+
+
+def kept_folder_hints(coordinator, names) -> dict:
+    """Former owners of kept folders, as the set-aside registries record them.
+
+    Unproven: a set-aside registry is no longer authenticated, so this only
+    helps the user recognize a folder; the attachment review still decides.
+    """
+    import sqlite3
+
+    from .registry import PluginRegistry
+
+    hints = {}
+    for path in sorted(coordinator.owner.root.glob("reset-*/registry.sqlite3")):
+        try:
+            with PluginRegistry(path, read_only=True) as registry:
+                rows = registry._connection.execute(
+                    "SELECT d.root_id, d.installation_id, i.alias FROM data_roots d "
+                    "LEFT JOIN installations i ON i.installation_id = d.installation_id"
+                ).fetchall()
+        except (OSError, ValueError, PermissionError, sqlite3.Error):
+            continue
+        for root_id, installation_id, alias in rows:
+            if root_id in names:
+                hints.setdefault(root_id, (installation_id, alias))
+    return hints
+
+
+def review_kept_attachment(coordinator, installation_id, workspace_id, root_id):
+    """Review attaching one kept saved-data folder to an installed plugin."""
+    baseline = coordinator.published_snapshot()
+    if not any(
+        row["installation_id"] == installation_id for row in baseline["installations"]
+    ):
+        raise ValueError("installation unavailable")
+    if root_id not in kept_folders(coordinator):
+        raise PermissionError("root_not_kept")
+    row = {
+        "root_id": root_id,
+        "installation_id": installation_id,
+        "workspace_id": workspace_id,
+        "path": str(coordinator.owner.root / "data" / root_id),
+        "generation": 0,
+        "deletion_fenced": False,
+        "custody": {
+            "attached_installation_id": installation_id,
+            "state": "present",
+            "binding": None,
+        },
+    }
+    with open_root(coordinator.owner, row) as (_, binding):
+        row["custody"] = dict(row["custody"], binding=binding)
+    DataRoot.model_validate(row)
+    return issue_root_review(
+        coordinator, [row], "attached", action="attach", attachment=installation_id
+    )
+
+
+async def attach_kept_data(coordinator, review, operation_id):
+    """Register the reviewed kept folder, unchanged since its review."""
+    if (
+        not isinstance(review, RootReview)
+        or review.phase != "attached"
+        or review.action != "attach"
+        or review.operation_id != operation_id
+        or len(review.targets) != 1
+    ):
+        raise ValueError("original kept-folder review required")
+    row = review.targets[0]
+    if row["root_id"] not in kept_folders(coordinator):
+        raise PermissionError("root_not_kept")
+    with open_root(coordinator.owner, row):
+        pass
+    coordinator.root_usage.require_dirty()
+    await commit_root_phase(coordinator, review, operation_id)
     return root_ref(row)
 
 
@@ -1007,7 +1123,7 @@ def remove_root(coordinator, original, row):
             for name in os.listdir(fd):
                 info = os.stat(name, dir_fd=fd, follow_symlinks=False)
                 if stat.S_ISDIR(info.st_mode):
-                    child_fd = os.open(name, DIR_FLAGS, dir_fd=fd)
+                    child_fd = os.open(name, _directory_flags(), dir_fd=fd)
                     try:
                         opened = os.fstat(child_fd)
                         if (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
@@ -1206,7 +1322,197 @@ async def delete_data(coordinator, refs, operation_id):
     return await asyncio.shield(operation.task)
 
 
-def review_reconciliation(coordinator, refs, confirm_quiescence):
+def review_boot_reconciliation(coordinator, refs):
+    """Rebind after reboot only with positive independently protected clean proof."""
+    authority, usage = coordinator.authority, coordinator.root_usage
+    if getattr(authority.marker_store, "reduced_protection", False):
+        raise PermissionError("root_clean_proof_backend_unqualified")
+    checkpoint = authority.load_runtime_checkpoint()
+    marker = authority.load_marker()
+    namespace = authority.namespace_id()
+    if (
+        checkpoint is None
+        or checkpoint.phase != "clean"
+        or checkpoint.namespace_id != namespace
+        or checkpoint.marker != marker
+    ):
+        raise PermissionError("root_clean_checkpoint_required")
+    current_boot = boot_identity()
+    snapshot = coordinator.published_snapshot()
+    original = {row["root_id"]: row for row in snapshot["data_roots"]}
+    ids = {ref.root_id for ref in refs}
+    for ref in refs:
+        row = original.get(ref.root_id)
+        if row is None or root_ref(row) != ref:
+            raise PermissionError("root_review_stale")
+        binding = (row.get("custody") or {}).get("binding")
+        if not binding:
+            raise PermissionError("root_native_binding_required")
+        if row.get("cleanup"):
+            raise PermissionError("root_pending_cleanup_cannot_rebind")
+        if binding["boot_id"] == current_boot:
+            raise PermissionError("root_reboot_proof_unavailable")
+        if usage.recovery.get(ref.root_id) not in {None, "root_boot_identity_changed"}:
+            raise PermissionError(usage.recovery[ref.root_id])
+    owners = {original[key]["installation_id"] for key in ids}
+    owners.update(
+        (original[key].get("custody") or {}).get("attached_installation_id")
+        for key in ids
+    )
+
+    def proof(exact):
+        if (
+            exact != refs
+            or boot_identity() != current_boot
+            or authority.namespace_id() != namespace
+            or authority.load_marker() != marker
+        ):
+            return False
+        observed_checkpoint = authority.load_runtime_checkpoint()
+        if observed_checkpoint != checkpoint and not (
+            usage.dirty
+            and observed_checkpoint is not None
+            and observed_checkpoint.phase == "dirty"
+            and observed_checkpoint.session_nonce == coordinator.owner.session_id
+            and observed_checkpoint.namespace_id == namespace
+            and observed_checkpoint.marker == marker
+        ):
+            return False
+        # Commit temporarily fences the published projection. The protected
+        # current snapshot remains the exact pre-commit authority bound above.
+        rows = {row["root_id"]: row for row in authority.verify_current()["data_roots"]}
+        if any(rows.get(key) != original[key] for key in ids):
+            return False
+        with usage.fences.live_lock:
+            if usage.pending or any(
+                ids.intersection(held) for held in usage.live_grants.values()
+            ):
+                return False
+            if any(
+                ids.intersection(row["root_id"] for row in op.review.targets)
+                and (op.task is not None and not op.task.done() or op.cleanup_tasks)
+                for op in usage.operations.values()
+            ):
+                return False
+        with coordinator.registry.transaction() as cursor:
+            for owner in cursor.execute(
+                "SELECT * FROM processes WHERE state!='settled'"
+            ).fetchall():
+                joins = cursor.execute(
+                    "SELECT root_id FROM root_users WHERE owner_token=?",
+                    (owner["token"],),
+                ).fetchall()
+                if owner["installation_id"] in owners or ids.intersection(
+                    row[0] for row in joins
+                ):
+                    return False
+        for key in ids:
+            with open_root(coordinator.owner, original[key], rebind=True):
+                pass
+        return True
+
+    return review_reconciliation(coordinator, refs, proof)
+
+
+REBINDABLE = frozenset(
+    {"root_anchor_changed", "root_incarnation_changed", "root_boot_identity_changed"}
+)
+
+
+def review_rebind(coordinator, ref):
+    """Rebind one replaced saved-data folder after its own review (TASK-40308).
+
+    The folder kept its path but not its identity: it was restored from a
+    backup, recreated, or replaced. The user reviewed this one folder; the proof
+    still requires that nothing uses it, as boot reconciliation does, without
+    the clean checkpoint a restore cannot bring.
+    """
+    usage = coordinator.root_usage
+    row = next(
+        (
+            row
+            for row in coordinator.published_snapshot()["data_roots"]
+            if row["root_id"] == ref.root_id
+        ),
+        None,
+    )
+    if row is None or root_ref(row) != ref:
+        raise PermissionError("root_review_stale")
+    reason = usage.recovery.get(ref.root_id)
+    if reason not in REBINDABLE:
+        raise PermissionError(reason or "root_rebind_not_needed")
+    if row.get("cleanup") or (row.get("custody") or {}).get("state") != "present":
+        raise PermissionError("root_pending_cleanup_cannot_rebind")
+    # Only a folder that really changed identity is rebound here. A reboot alone
+    # (same folder) keeps boot reconciliation's clean-checkpoint requirement.
+    try:
+        with open_root(coordinator.owner, row, rebind=True):
+            pass
+    except PermissionError as error:
+        if str(error) not in {"root_anchor_changed", "root_incarnation_changed"}:
+            raise
+    else:
+        raise PermissionError("root_rebind_not_needed")
+    owners = {
+        row["installation_id"],
+        (row.get("custody") or {}).get("attached_installation_id"),
+    }
+
+    def proof(exact):
+        if exact != (ref,):
+            return False
+        current = {
+            item["root_id"]: item
+            for item in coordinator.authority.verify_current()["data_roots"]
+        }
+        if current.get(ref.root_id) != row:
+            return False
+        with usage.fences.live_lock:
+            if usage.pending or any(
+                ref.root_id in held for held in usage.live_grants.values()
+            ):
+                return False
+            if any(
+                ref.root_id in {target["root_id"] for target in op.review.targets}
+                and (op.task is not None and not op.task.done() or op.cleanup_tasks)
+                for op in usage.operations.values()
+            ):
+                return False
+        with coordinator.registry.transaction() as cursor:
+            for process in cursor.execute(
+                "SELECT * FROM processes WHERE state!='settled'"
+            ).fetchall():
+                joins = cursor.execute(
+                    "SELECT root_id FROM root_users WHERE owner_token=?",
+                    (process["token"],),
+                ).fetchall()
+                if process["installation_id"] in owners or ref.root_id in {
+                    join[0] for join in joins
+                }:
+                    return False
+        with open_root(coordinator.owner, row, reidentify=True):
+            pass
+        return True
+
+    return review_reconciliation(coordinator, (ref,), proof, reidentify=True)
+
+
+def folder_summary(path, *, limit=100_000):
+    """Count the files and bytes under a folder without following links."""
+    files = size = 0
+    for directory, _, names in os.walk(path, followlinks=False):
+        for name in names:
+            files += 1
+            if files > limit:
+                return files - 1, size, False
+            try:
+                size += os.lstat(os.path.join(directory, name)).st_size
+            except OSError:
+                pass
+    return files, size, True
+
+
+def review_reconciliation(coordinator, refs, confirm_quiescence, *, reidentify=False):
     """Review host-supplied whole-root terminal proof, never a PID/zero-row guess."""
     if not callable(confirm_quiescence) or confirm_quiescence(refs) is not True:
         raise PermissionError("root_quiescence_unproven")
@@ -1224,6 +1530,7 @@ def review_reconciliation(coordinator, refs, confirm_quiescence):
             row,
             absent=bool(cleanup and cleanup["phase"] == "deleting"),
             rebind=True,
+            reidentify=reidentify,
         ) as (_, binding):
             old_binding = (row.get("custody") or {}).get("binding")
             if cleanup and binding is not None and old_binding != binding:
@@ -1253,6 +1560,10 @@ async def reconcile_data(coordinator, review, operation_id):
     ):
         raise ValueError("original root reconciliation review required")
     refs, proof = usage.proofs[review.token]
+    # Check prior evidence before our own dirty publication can replace it.
+    # A foreign dirty checkpoint must never be laundered into this session's proof.
+    if proof(refs) is not True:
+        raise PermissionError("root_quiescence_unproven")
     new_fences = tuple(ref for ref in refs if ref.root_id not in usage.root_fences)
     token = usage.fence(new_fences)
     usage.require_dirty()

@@ -1,4 +1,4 @@
-"""Creation-only workspace Persona resolution (ADR-079 and ADR-139)."""
+"""Creation-only workspace Persona resolution (ADR-325 and ADR-139)."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 ---
 id: TASK-741
 title: '[web_server] config section is ignored by get_cli_setting'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 08:00'
 labels:
@@ -21,7 +21,14 @@ priority: medium
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] `Web_Server/serve.py`'s read of `[web_server]` uses a call shape that actually returns the configured section, not an unconditional default
-- [ ] Setting values under `[web_server]` in `config.toml` is observably honored by the web server
-- [ ] Unit test confirms a configured `[web_server]` value is used, and that the hardcoded default only applies when the section/key is genuinely absent
+- [x] `Web_Server/serve.py`'s read of `[web_server]` uses a call shape that actually returns the configured section, not an unconditional default
+- [x] Setting values under `[web_server]` in `config.toml` is observably honored by the web server
+- [x] Unit test confirms a configured `[web_server]` value is used, and that the hardcoded default only applies when the section/key is genuinely absent
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Web_Server/serve.py now reads specific keys with proper call shapes (get_cli_setting('web_server', 'title', ...) etc., serve.py:1516-1522) and the surface is config-policy-tested in Tests/Canvas/test_canvas_settings.py (build_canvas_config_policy honors configured [web_server] values; no bare-section call remains).

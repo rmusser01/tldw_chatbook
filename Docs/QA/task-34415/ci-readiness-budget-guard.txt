@@ -1,0 +1,29 @@
+"""Reject the installed 30-second Pilot drain in the ten-second settle phase."""
+
+import inspect
+
+import pytest
+from textual.pilot import Pilot
+
+
+@pytest.fixture(autouse=True)
+def no_unbudgeted_projection_poll(request, monkeypatch):
+    from Tests.private_profile import is_private_profile_child
+
+    if not is_private_profile_child(request):
+        return
+
+    original_pause = Pilot.pause
+
+    async def checked_pause(pilot, delay=None):
+        caller = inspect.currentframe().f_back
+        if (
+            caller.f_code.co_name == "_wait_for_production_console_ready"
+            and "projection_drained" in caller.f_locals
+        ):
+            raise AssertionError(
+                "Projection settle entered Pilot.pause's 30-second screen drain"
+            )
+        return await original_pause(pilot, delay)
+
+    monkeypatch.setattr(Pilot, "pause", checked_pause)

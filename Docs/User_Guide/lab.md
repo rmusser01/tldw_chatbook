@@ -10,11 +10,40 @@ lands on a screen titled **"Models"** ("Manage providers, models, and
 endpoints.") — its default sub-area; the other sub-areas (speech,
 evaluation runs) are reached from within that screen.
 
+### Installing a managed model
+
+Install review and progress are shared with the first-run wizard. The review
+leads with the download size, where the model installs and the free space
+there, and each component's licence; source, pinned revision hash,
+provenance and staging figures are under **Details** (a Hugging Face GGUF or
+audio.cpp package install also lists each selected file's SHA-256 there, and
+a model whose licences are stated on its model card links it as "Licence
+terms (model card)"). If an earlier download of the same model was
+interrupted, the review says how far it got ("A previous download stopped at
+X of Y MiB") and its button reads **Resume download**. The progress line
+shows the bytes received, the speed and the time left. Only one model
+downloads at a time: an install started while another is running says which
+model is still downloading, by the name this screen shows for it.
+
 ## Getting there
 
 - Press **F2**, click **F2 Lab** in the nav bar, or press **Ctrl+P** →
   "Tab Navigation: Switch to Lab".
   There is no hotkey digit for Lab.
+
+## Word-bench results keys
+
+Select a word-bench run in the **Catalog** to open its results grid. While
+its table or closed selectors hold focus, **l** cycles the lens, **b** switches
+the row/column baseline, **s** cycles sorting, and **e** exports the results.
+These keys appear in the footer only where they work. They keep their normal
+text or search meaning in an editor or an open selector.
+
+Use **F6** to move between Catalog, detail and Inspector; collapsed panes are
+skipped. **Tab** moves between individual controls. **F1** lists the supported
+grid keys even when the narrow footer cannot fit them, and tells you to focus
+the results grid when you are in another pane. A run with no loadable results
+shows its explanation without advertising grid commands.
 
 ## Skill eval
 

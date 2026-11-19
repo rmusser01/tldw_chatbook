@@ -101,6 +101,34 @@ class NavigatedConsoleHarness(ConsolidatedCSSApp):
         self.run_worker(navigate(), group="screen-navigation")
 
 
+    async def _shutdown(self) -> None:
+        from tldw_chatbook.UI.Console_Modules.view_workers import (
+            capture_console_view_workers,
+            drain_console_view_workers,
+        )
+
+        self._exit = True
+        drain_error = None
+        try:
+            # The actual host owns current and detached nodes in these groups.
+            captured = capture_console_view_workers(self)
+            view = self.screen
+            view._console_chat_tearing_down = True
+            await drain_console_view_workers(captured)
+        except BaseException as error:  # noqa: BLE001 - drain captured work before propagating the original shutdown outcome.
+            drain_error = error
+        try:
+            await super()._shutdown()
+        except BaseException as error:
+            if drain_error is not None:
+                error.add_note(
+                    "Captured Console view drain also failed before host shutdown"
+                )
+            raise
+        if drain_error is not None:
+            raise drain_error
+
+
 def _key(app, key: str, char: str | None = None) -> None:
     """Deliver a key the way the terminal driver does, through the app pump,
     without Pilot's idle wait (which itself never returns while a pump is
@@ -146,6 +174,16 @@ async def _pump_runs(pump, seconds: float = 2.0) -> bool:
 
 def _record_dispatch(console) -> list[str]:
     calls: list[str] = []
+    # These tests exercise the hook controller's captured continuation. Once
+    # arrival setup is ready, stock received-intent admission bypasses dispatch
+    # below. Select the registered custom-review seam while retaining the exact
+    # original runtime review, consent writes and final permission verification.
+    request_review = console._hooks._review
+
+    async def review(snapshot, waiting, cancel):
+        return await request_review(snapshot, waiting, cancel)
+
+    console._hooks._review = review
 
     async def dispatch(draft, **_kwargs):
         calls.append(draft)
@@ -190,6 +228,7 @@ async def _open_review_from(route: str, host, pilot):
         ), f"{route}: the hook review never opened"
         await asyncio.sleep(0.1)
         modal = host.screen
+        assert console._hooks._busy, f"{route}: captured hook Send is not active"
         return console, composer, modal, modal._result_callbacks[-1].requester
     except BaseException:
         # The caller's `finally` has not started yet, so release a review
@@ -213,7 +252,7 @@ async def _assert_pumps_run(host, console, when: str) -> None:
     assert await _pump_runs(console), f"{when}: the Console message pump is blocked"
 
 
-def _answer(host, modal, answer: str) -> None:
+async def _answer(host, modal, answer: str) -> None:
     if answer == "escape":
         _key(host, "escape")
         return
@@ -221,7 +260,13 @@ def _answer(host, modal, answer: str) -> None:
         "allow-all": "console-hooks-allow-all",
         "not-now": "console-hooks-cancel",
     }
-    modal.query_one(f"#{button_id[answer]}", Button).focus()
+    button = modal.query_one(f"#{button_id[answer]}", Button)
+    button.focus()
+    # Widget.focus schedules app.call_later; driver input must wait for focus.
+    assert await _until(
+        lambda: host.screen is modal and host.focused is button and not button.disabled,
+        5,
+    ), f"{answer}: the enabled hook-review button never received focus"
     _key(host, "enter", "\r")
 
 
@@ -232,7 +277,8 @@ async def _release(host, modal, requester) -> None:
     if host._exit:
         return
     if host.screen is modal:
-        modal.dismiss(None)
+        # Cancel the resident request, not only its disposable presentation.
+        await modal.request_safe_cancel(source="test-cleanup")
     await asyncio.sleep(0.2)
     if not await _pump_runs(requester, 0.5):
         await requester._flush_next_callbacks()
@@ -258,7 +304,7 @@ async def test_a_declined_send_review_settles_and_keeps_the_draft(
         )
         try:
             await _assert_pumps_run(host, console, f"{route}, review open")
-            _answer(host, modal, answer)
+            await _answer(host, modal, answer)
             assert await _until(lambda: host.screen is console, 5), (
                 f"{route}: {answer} never reached the hook review"
             )
@@ -354,7 +400,7 @@ async def test_allow_all_resumes_the_captured_send_exactly_once(route, hook_file
         )
         try:
             await _assert_pumps_run(host, console, f"{route}, review open")
-            _answer(host, modal, "allow-all")
+            await _answer(host, modal, "allow-all")
             assert await _until(lambda: calls == [DRAFT], 5), (
                 f"{route}: the approved Send never dispatched: {calls!r}"
             )
@@ -418,7 +464,7 @@ async def _run_navigated_review(host, *, route, answer, notices):
         )
         try:
             await _assert_pumps_run(host, console, f"{route}, review open")
-            _answer(host, modal, answer)
+            await _answer(host, modal, answer)
             if answer == "allow-all":
                 assert await _until(lambda: calls == [DRAFT], 5), (
                     f"{route}: the approved Send never dispatched: {calls!r}"
@@ -461,7 +507,7 @@ async def test_a_handed_off_send_records_its_reviewed_outcome(hook_file, monkeyp
             "send-button", host, pilot
         )
         try:
-            _answer(host, modal, "allow-all")
+            await _answer(host, modal, "allow-all")
             assert await _until(
                 lambda: (
                     ("hook_review_continuation", "sent")
@@ -550,7 +596,7 @@ async def test_spoken_send_acknowledges_the_reviewed_outcome(
         await asyncio.sleep(0.1)
         try:
             assert said == [], "acknowledged before the review was answered"
-            _answer(host, modal, answer)
+            await _answer(host, modal, answer)
             await asyncio.wait_for(worker.wait(), 10)
             assert said == [spoken]
             assert calls == sent

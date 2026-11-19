@@ -258,7 +258,7 @@ def test_continuation_for_unpaired_provider_fails_closed():
     # Providers outside the continuation format's provider pairings
     # (moonshot/zai/deepseek/databricks) must fail closed with display-name
     # copy rather than restore silently. The pairing set is still literal
-    # data in ``Chat/provider_continuation.py`` (registry-derived pairings
+    # data in ``Provider_Contract/provider_continuation.py`` (registry-derived pairings
     # are a later phase), so a groq-keyed synthetic preset stands in for any
     # not-yet-admitted engine provider.
     record = replace(DATABRICKS, key="groq", display_name="Groq")

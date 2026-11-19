@@ -1,0 +1,69 @@
+{
+  "files": [
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/report.md",
+      "bytes": 3313,
+      "sha256": "17821fe0093e6db9297e4a46643a6bcc8e39d27f48b4d938d67724b7df98e300"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/contracts.log",
+      "bytes": 8535,
+      "sha256": "e5994e008cb73ee73324f3120e80782f7de7f01d4d06eb8d4b4885d7aae1cf25"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/contracts.xml",
+      "bytes": 6528,
+      "sha256": "13d1ae01417c350075fbbd340ec15e320bb397db91bb8150e1c243fc4eaf1f96"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/final.log",
+      "bytes": 6373,
+      "sha256": "a922505a78bf2b725ec01494a52a0d660d5e833123da785b8ed6a94de116e914"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/final.xml",
+      "bytes": 5093,
+      "sha256": "3409c10196c35335dc92b1dd013cacf409eb211e93ae466e27bac29eb4dc75a7"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/history-report.json",
+      "bytes": 31511,
+      "sha256": "3a7cc009d7f46445d03bbe11d6f440e726e5dff919c655841d050ee09b5c94f1"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/run_observed.py",
+      "bytes": 940,
+      "sha256": "1fd8c2ec9262e6ed5e6360bfb328de744e47732f81de2d14252709c7f3b06782"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/lint.json",
+      "bytes": 378,
+      "sha256": "6698b3f7c940ae6bab0cf7490791d33b8bb0627ac57d46849905d45c2dbaa0c2"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/patch.diff",
+      "bytes": 5089,
+      "sha256": "992bd6c59f8afd63825ffdcc3e3b0fdb561a2d7bd834be59700cd81b9616690c"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/source-proof.json",
+      "bytes": 606,
+      "sha256": "7f737529aba1dfdf5e3946588cddc80d502dfa5d37255e1561744a27111aa0f9"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/history-assertion-proof.json",
+      "bytes": 282,
+      "sha256": "1041e6f286530b886e41c0a3f5a69b79730f84061ef3c7e8b9c0668bf73cae72"
+    },
+    {
+      "path": "/private/tmp/mixins-f095-perf-contracts/write_report.py",
+      "bytes": 5836,
+      "sha256": "df1fbf3b80b24a64bf0a9aec0b3324e7b1c77ccee5b00b1c4483b302299619ca"
+    },
+    {
+      "path": "/private/tmp/mixins-ci-f095-perf-red.log",
+      "bytes": 108468,
+      "sha256": "04311ed16213bf31590a48551c1f4430037897dc43511d9e6997a02336f93813"
+    }
+  ]
+}

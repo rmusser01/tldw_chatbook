@@ -1,0 +1,27 @@
+{
+  "initial_manifest_sha256": "1b1ce08f3a3b10d356a39b36a22e7ebc56eeb937164d7b1868bc1e320862e41e",
+  "initial_audit_sha256": "f9ea1d1938a13bacb854f1495bb99f9c3ad2855033c870b86a1e36d272561b82",
+  "files": [
+    {
+      "path": "publication-continuation.json",
+      "sha256": "469106de0667b22fcb33f651539612362d8d9f47c964469589ed1940435125cf",
+      "bytes": 3500
+    },
+    {
+      "path": "publication-continuation.md",
+      "sha256": "8899c3ca1608b8f9cd9b538cc23e2a153be7e51535d4979607a3aaf11060b15f",
+      "bytes": 1172
+    },
+    {
+      "path": "complete-ledger-at-latest-dev-publication.md",
+      "sha256": "01d5de2a460c9a14d2397ba91cf2e23d13584634c21fbb3ab35f1d596b4bd7f4",
+      "bytes": 92102
+    },
+    {
+      "path": "rulings-i-made-complete-at-publication.md",
+      "sha256": "1e534dcc1a12da664b4e71298c3134dd61ebc661f0054326523455d40bbd4643",
+      "bytes": 31879
+    }
+  ],
+  "scope": "Additive root docs-only ancestry/ledger continuation; no frozen artifact overwritten or private profile exported."
+}

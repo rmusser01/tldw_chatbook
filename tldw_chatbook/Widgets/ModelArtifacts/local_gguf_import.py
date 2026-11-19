@@ -11,7 +11,7 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from tldw_chatbook.UI.Screens.model_browser_state import format_mib
+from tldw_chatbook.Model_Artifacts.model_browser_state import format_mib
 
 
 class LocalGGUFImportRequested(Message):

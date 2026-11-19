@@ -3,19 +3,32 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional, Protocol
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
-if TYPE_CHECKING:
-    from ..tldw_api import TLDWAPIClient
+
+class ServerQuizClient(Protocol):
+    """Client methods ServerQuizService calls (TASK-36953.1)."""
+
+    async def create_quiz(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def create_quiz_question(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_quiz(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def delete_quiz_question(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_quiz(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def get_quiz_attempt(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_quiz_attempts(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_quiz_questions(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def list_quizzes(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def start_quiz_attempt(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def submit_quiz_attempt(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class ServerQuizService:
     def __init__(
         self,
-        client: Optional[TLDWAPIClient],
+        client: Optional[ServerQuizClient],
         *,
         client_provider: Any | None = None,
         policy_enforcer: Any | None = None,
@@ -50,7 +63,7 @@ class ServerQuizService:
             policy_enforcer=policy_enforcer,
         )
 
-    def _require_client(self) -> TLDWAPIClient:
+    def _require_client(self) -> ServerQuizClient:
         if self.client is not None:
             return self.client
         if self.client_provider is not None:

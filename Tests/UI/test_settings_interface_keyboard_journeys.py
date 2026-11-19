@@ -61,7 +61,20 @@ async def test_interface_controls_are_keyboard_reachable_and_painted(
                             painted,
                         )
                     if isinstance(control, Checkbox):
-                        assert "X" in painted, (control.id, painted)
+                        # Rewritten on purpose (#3057 capture finding 4):
+                        # Settings' checkboxes draw a check or a blank, not
+                        # X; their state glyph is what must paint.
+                        assert control._button.plain[:2] in painted, (
+                            control.id,
+                            painted,
+                        )
+                        # Capture fix 2, finding 1: Dark theme and Splash
+                        # Screen's switches drew X in both states too.
+                        inner = control._button.plain[1]
+                        assert inner != "X" and (inner != " ") is control.value, (
+                            control.id,
+                            inner,
+                        )
                     if control.id == "settings-theme-preset-target":
                         assert "Primary" in painted, painted
                     if control.id == "settings-splash-default-select":
@@ -100,7 +113,7 @@ async def test_appearance_keyboard_preview_revert_and_real_save(request, theme):
 
     from Tests.UI.test_settings_provider_keyboard_journeys import _edit, _revert
     from tldw_chatbook import config
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 
     app = _build_test_app()
     host = _StyledDestinationHarness(app, "settings")

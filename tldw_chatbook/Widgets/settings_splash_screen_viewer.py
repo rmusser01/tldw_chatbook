@@ -9,7 +9,6 @@ from textual import on, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
-from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Checkbox, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
@@ -20,8 +19,9 @@ from ..config import (
     apply_settings_mutation_to_cli_config,
     get_cli_setting,
 )
-from ..Utils.Splash_Screens.card_definitions import get_all_card_definitions
+from ..UI.Splash_Screens.card_definitions import get_all_card_definitions
 from ..Widgets.splash_screen import SplashScreen
+from ..Widgets.state_checkbox import StateCheckbox
 
 
 DEFAULT_SPLASH_CONFIG: dict[str, Any] = {
@@ -53,15 +53,6 @@ def switch_state_label(value: bool) -> str:
 class SettingsSplashScreenViewer(Vertical):
     """Splash screen gallery and defaults editor styled for Settings."""
 
-    class SplashConfigChanged(Message):
-        """Message sent when a splash config value is changed and saved."""
-
-        def __init__(self, section: str, key: str, value: Any) -> None:
-            self.section = section
-            self.key = key
-            self.value = value
-            super().__init__()
-
     selected_card: reactive[str] = reactive("default")
 
     def __init__(self, **kwargs: Any) -> None:
@@ -85,7 +76,9 @@ class SettingsSplashScreenViewer(Vertical):
                 for key, value in DEFAULT_SPLASH_CONFIG.items()
             }
         except Exception as exc:
-            logger.warning("Failed to load splash_screen config: {}. Using defaults.", exc)
+            logger.warning(
+                "Failed to load splash_screen config: {}. Using defaults.", exc
+            )
             config = dict(DEFAULT_SPLASH_CONFIG)
         if not isinstance(config, dict):
             config = dict(DEFAULT_SPLASH_CONFIG)
@@ -133,7 +126,7 @@ class SettingsSplashScreenViewer(Vertical):
             # screen); the Enter clause covers the duration/animation-speed
             # Inputs, which persist on Input.Submitted, not per keystroke.
             yield Static(
-                "applies immediately - no Save needed; text fields apply on Enter",
+                "applies immediately · no Save needed; text fields apply on Enter",
                 id="settings-splash-instant-hint",
                 classes="settings-instant-apply-hint",
             )
@@ -153,7 +146,7 @@ class SettingsSplashScreenViewer(Vertical):
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.add_class("w-20")
                 yield label_static
-                yield Checkbox(
+                yield StateCheckbox(
                     value=bool(self._config.get("enabled", True)),
                     id="settings-splash-enabled",
                 )
@@ -168,7 +161,7 @@ class SettingsSplashScreenViewer(Vertical):
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.add_class("w-20")
                 yield label_static
-                yield Checkbox(
+                yield StateCheckbox(
                     value=bool(self._config.get("show_progress", True)),
                     id="settings-splash-show-progress",
                 )
@@ -178,17 +171,21 @@ class SettingsSplashScreenViewer(Vertical):
                     classes="settings-toggle-state",
                 )
             with Horizontal(classes="settings-input-row"):
-                label_static = Static("Skip on keypress", classes="settings-input-label")
+                label_static = Static(
+                    "Skip on keypress", classes="settings-input-label"
+                )
                 # task-1561: the shared label column truncates longer
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.add_class("w-20")
                 yield label_static
-                yield Checkbox(
+                yield StateCheckbox(
                     value=bool(self._config.get("skip_on_keypress", True)),
                     id="settings-splash-skip-on-keypress",
                 )
                 yield Static(
-                    switch_state_label(bool(self._config.get("skip_on_keypress", True))),
+                    switch_state_label(
+                        bool(self._config.get("skip_on_keypress", True))
+                    ),
                     id="settings-splash-skip-on-keypress-state",
                     classes="settings-toggle-state",
                 )
@@ -212,7 +209,9 @@ class SettingsSplashScreenViewer(Vertical):
                 )
 
             yield Static("Gallery", classes="destination-section")
-            with Horizontal(id="settings-splash-gallery", classes="settings-splash-gallery"):
+            with Horizontal(
+                id="settings-splash-gallery", classes="settings-splash-gallery"
+            ):
                 yield OptionList(*self._card_options(), id="settings-splash-card-list")
                 with VerticalScroll(id="settings-splash-preview-scroll"):
                     yield Static(
@@ -221,7 +220,9 @@ class SettingsSplashScreenViewer(Vertical):
                     )
 
             with Horizontal(classes="settings-action-row"):
-                yield Button("Play selected", id="settings-splash-play", variant="primary")
+                yield Button(
+                    "Play selected", id="settings-splash-play", variant="primary"
+                )
 
             yield Static(
                 "",
@@ -314,9 +315,6 @@ class SettingsSplashScreenViewer(Vertical):
         self._pending_values.pop(key, None)
         if result.file_replaced:
             self._config[key] = value
-            self.post_message(
-                self.SplashConfigChanged(_config_section(key), key, value)
-            )
         if self._closing or not self.is_attached:
             return
         try:
@@ -441,7 +439,9 @@ class SettingsSplashScreenViewer(Vertical):
     def on_unmount(self) -> None:
         self._closing = True
         try:
-            container = self.query_one("#settings-splash-preview-scroll", VerticalScroll)
+            container = self.query_one(
+                "#settings-splash-preview-scroll", VerticalScroll
+            )
         except Exception:
             return
         for child in list(container.children):

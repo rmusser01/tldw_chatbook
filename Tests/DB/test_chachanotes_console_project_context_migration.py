@@ -89,9 +89,7 @@ def test_v41_to_v42_adds_nullable_local_column(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "chachanotes.db"
     conversation_id = _seed_v41_database(db_path, monkeypatch)
 
-    db = open_current_chachanotes_from_legacy(
-        db_path, client_id="migration-test"
-    )
+    db = open_current_chachanotes_from_legacy(db_path, client_id="migration-test")
     connection = db.get_connection()
     columns = _conversation_columns(connection)
 
@@ -126,9 +124,7 @@ def test_v41_to_v42_recovers_column_present_version_still_41(
         assert _version(connection) == 41
         db.close_connection()
 
-    db = open_current_chachanotes_from_legacy(
-        db_path, client_id="migration-test"
-    )
+    db = open_current_chachanotes_from_legacy(db_path, client_id="migration-test")
     connection = db.get_connection()
     assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     assert (

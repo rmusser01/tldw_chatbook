@@ -47,7 +47,7 @@ except ImportError:
     np = None
 import psutil
 
-from tldw_chatbook.config import load_settings
+from tldw_chatbook.config import get_cli_setting
 from tldw_chatbook.Utils.fts5_match_forms import (
     FTS5_STOPWORDS,
     build_and_match_expression,
@@ -65,7 +65,12 @@ from tldw_chatbook.Metrics.metrics_logger import (
     timeit,
 )
 from .embeddings_wrapper import EmbeddingsServiceWrapper
-from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
+from .vector_store import (
+    VectorStoreSearchError,
+    create_vector_store,
+    SearchResult,
+    SearchResultWithCitations,
+)
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
@@ -82,7 +87,7 @@ from ..fusion import (
 )
 from ..chunking_service import ChunkingService
 from .simple_cache import SimpleRAGCache
-from .db_connection_pool import get_connection_pool
+from .db_connection_pool import get_connection_pool, pool_executor
 from .indexing_helpers import (
     chunk_documents_batch,
     generate_embeddings_batch,
@@ -92,42 +97,59 @@ from .health_check import init_health_checker, get_health_status
 from .data_models import IndexingResult
 
 
-# Load constants from config with fallbacks
-_config = load_settings()
-_rag_service_config = _config.get("rag", {}).get("service", {})
+# Settings from ``[rag.service]``, read when used so a config reload takes
+# effect without a restart. Name -> (config key, default). Import-time reads
+# froze these; the names stay importable through ``__getattr__`` below.
+_RAG_SERVICE_CONSTANTS = {
+    "DEFAULT_EMBEDDING_DIM": ("default_embedding_dim", 768),
+    "KEYWORD_SEARCH_SCORE": ("keyword_search_score", 0.8),
+    "MAX_CITATION_MATCHES": ("max_citation_matches", 3),
+    "CITATION_CONTEXT_CHARS": ("citation_context_chars", 50),
+    "CITATION_SPAN_MERGE_GAP_CHARS": ("citation_span_merge_gap_chars", 3),
+    "PARTIAL_CITATION_CONFIDENCE": ("partial_citation_confidence", 0.8),
+    "KEYWORD_BATCH_SIZE": ("keyword_batch_size", 10),
+    "FTS5_CONNECTION_POOL_SIZE": ("fts5_connection_pool_size", 3),
+    "CACHE_TIMEOUT_SECONDS": ("cache_timeout_seconds", 3600.0),
+    "MAX_QUERY_LENGTH": ("max_query_length", 1000),
+    "DEFAULT_FTS5_LIMIT": ("default_fts5_limit", 100),
+    "MAX_FTS5_LIMIT": ("max_fts5_limit", 1000),
+    "SEARCH_RESULT_MULTIPLIER": ("search_result_multiplier", 2),
+    "MIN_SYSTEM_MEMORY_MB": ("min_system_memory_mb", 500),
+    "MEMORY_PRESSURE_REDUCTION": ("memory_pressure_reduction", 0.2),
+    "MAX_DOCUMENT_SIZE_MB": ("max_document_size_mb", 10),
+    "EMBEDDING_IDLE_TIMEOUT": ("embedding_idle_timeout", 900),
+    "CHUNK_PROGRESS_INTERVAL": ("chunk_progress_interval", 10),
+    "EMBEDDING_PROGRESS_INTERVAL": ("embedding_progress_interval", 5),
+    "DEFAULT_BATCH_SIZE": ("batch_size", 32),
+}
 
-# Constants from config
-DEFAULT_EMBEDDING_DIM = _rag_service_config.get("default_embedding_dim", 768)
-KEYWORD_SEARCH_SCORE = _rag_service_config.get("keyword_search_score", 0.8)
-MAX_CITATION_MATCHES = _rag_service_config.get("max_citation_matches", 3)
-CITATION_CONTEXT_CHARS = _rag_service_config.get("citation_context_chars", 50)
-# Two keyword spans this close together, with nothing alphanumeric between
-# them, are one piece of evidence (e.g. the two tokens of a contiguous
-# "spindle runout" match) rather than two separate citations.
-CITATION_SPAN_MERGE_GAP_CHARS = _rag_service_config.get(
-    "citation_span_merge_gap_chars", 3
-)
-# Confidence for a span that evidences only SOME of the query's tokens --
-# a real match, but weaker evidence than a span covering the whole query.
-PARTIAL_CITATION_CONFIDENCE = _rag_service_config.get(
-    "partial_citation_confidence", 0.8
-)
-KEYWORD_BATCH_SIZE = _rag_service_config.get("keyword_batch_size", 10)
-FTS5_CONNECTION_POOL_SIZE = _rag_service_config.get("fts5_connection_pool_size", 3)
-CACHE_TIMEOUT_SECONDS = _rag_service_config.get("cache_timeout_seconds", 3600.0)
-MAX_QUERY_LENGTH = _rag_service_config.get("max_query_length", 1000)
-DEFAULT_FTS5_LIMIT = _rag_service_config.get("default_fts5_limit", 100)
-MAX_FTS5_LIMIT = _rag_service_config.get("max_fts5_limit", 1000)
-SEARCH_RESULT_MULTIPLIER = _rag_service_config.get("search_result_multiplier", 2)
-MIN_SYSTEM_MEMORY_MB = _rag_service_config.get("min_system_memory_mb", 500)
-MEMORY_PRESSURE_REDUCTION = _rag_service_config.get("memory_pressure_reduction", 0.2)
-MAX_DOCUMENT_SIZE_MB = _rag_service_config.get("max_document_size_mb", 10)
-EMBEDDING_IDLE_TIMEOUT = _rag_service_config.get("embedding_idle_timeout", 900)
-CHUNK_PROGRESS_INTERVAL = _rag_service_config.get("chunk_progress_interval", 10)
-EMBEDDING_PROGRESS_INTERVAL = _rag_service_config.get("embedding_progress_interval", 5)
-DEFAULT_BATCH_SIZE = _rag_service_config.get(
-    "batch_size", 32
-)  # This one matches the rag.embedding.batch_size
+
+def _rag_const(name: str):
+    """Current value of a ``[rag.service]`` constant (read when used)."""
+    key, default = _RAG_SERVICE_CONSTANTS[name]
+    # ``load_settings()`` has no top-level "rag" key (the import-time read of
+    # ``.get("rag")`` always fell back to the defaults); ``[rag.service]`` is
+    # read the way ``active_config`` reads it.
+    return (get_cli_setting("rag", "service", {}) or {}).get(key, default)
+
+
+def __getattr__(name: str):
+    if name in _RAG_SERVICE_CONSTANTS:
+        return _rag_const(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Review-B B1: presentation bounds for the conversations keyword sub-leg's
+# content assembly (``_chacha_conversations_fts``). The sub-leg renders every
+# FTS-matching message of every matching conversation as one ``sender:
+# content`` line; a single long conversation could materialize thousands of
+# lines per search only for prompt assembly to truncate them. These caps
+# bound what is FETCHED and ASSEMBLED -- a retrieval-presentation bound, not
+# a recall change: the FTS matching set, the conversations returned, and
+# their oldest-first message order are unchanged. Plain module constants on
+# purpose (no new config keys in this PR).
+_MAX_CONV_MESSAGES_PER_CONVERSATION = 80
+_MAX_CONV_MESSAGES_TOTAL = 400
 
 
 def _metadata_filter_value_matches(actual: Any, expected: Any) -> bool:
@@ -495,18 +517,14 @@ def _keyword_allowlist_ids(
             source_types = {str(value) for value in raw_types}
 
         raw_ids = entry.get(ALLOWLIST_SOURCE_ID_KEY)
-        entry_ids = (
-            None if raw_ids is None else {str(value) for value in raw_ids}
-        )
+        entry_ids = None if raw_ids is None else {str(value) for value in raw_ids}
 
         for source_type in source_types:
             if source_type not in KEYWORD_LEG_SOURCE_TYPES:
                 unservable_types.add(source_type)
                 continue  # No sub-leg serves this type (e.g. a vector-only type).
             if source_type not in ids_by_type:
-                ids_by_type[source_type] = (
-                    None if entry_ids is None else set(entry_ids)
-                )
+                ids_by_type[source_type] = None if entry_ids is None else set(entry_ids)
             elif ids_by_type[source_type] is not None and entry_ids is not None:
                 # Two entries naming one type are a union, not an
                 # intersection: each is an independent AND-group.
@@ -907,7 +925,7 @@ class RAGService:
 
         # Document size limit (configurable)
         max_doc_size = getattr(
-            self.config, "max_document_size", MAX_DOCUMENT_SIZE_MB * 1024 * 1024
+            self.config, "max_document_size", _rag_const("MAX_DOCUMENT_SIZE_MB") * 1024 * 1024
         )
         if len(content) > max_doc_size:
             raise ValueError(
@@ -1067,7 +1085,7 @@ class RAGService:
         total = len(documents)
 
         for i, doc in enumerate(documents):
-            if show_progress and i % CHUNK_PROGRESS_INTERVAL == 0 and i > 0:
+            if show_progress and i % _rag_const("CHUNK_PROGRESS_INTERVAL") == 0 and i > 0:
                 logger.info(f"Indexing progress: {i}/{total} documents")
 
             try:
@@ -1205,6 +1223,7 @@ class RAGService:
         *,
         metadata_allowlist: Optional[MetadataAllowlist] = None,
         keyword_source_types: Optional[Collection[str]] = None,
+        query_embedding: Any = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """
         Search with optional citations.
@@ -1253,18 +1272,42 @@ class RAGService:
                 all four. The mirror image of ``metadata_allowlist``: it
                 scopes the
                 KEYWORD leg only, so passing it with
-                ``search_type="semantic"`` raises ``ValueError`` rather than
-                silently ignoring the scoping request. It is part of the
-                cache key, so two selections of the same query never share
+                ``search_type="semantic"`` raises ``ValueError`` rather
+                than silently ignoring the scoping request. It is part of
+                the cache key, so two selections of the same query never share
                 an entry.
+            query_embedding: Optional precomputed query vector
+                (task-34390). Semantic searches only -- passing it with any
+                other ``search_type`` raises ``ValueError`` rather than
+                silently ignoring it (the same convention as
+                ``metadata_allowlist``/``keyword_source_types`` above).
+                ``None`` -- the default, and every pre-TASK-34390 caller --
+                embeds the query per call exactly as before. When provided,
+                the vector is threaded down to the semantic leg (including
+                every entry of a union ``metadata_allowlist``) and the
+                embedding service is not consulted for the query. It is NOT
+                part of the cache key: the cache is keyed on the query text
+                (embeddings never key it), and the same query text under the
+                same service produces the same embedding, so a caller-supplied
+                vector cannot invalidate -- or be invalidated by -- a cached
+                entry.
 
         Returns:
-            List of search results (with or without citations)
+            List of search results (with or without citations). A failure
+            of the underlying vector store does NOT raise and does NOT
+            return a cached lie: it is caught
+            (``VectorStoreSearchError``, TASK-38591), logged, and degraded
+            to keyword-only results (``search_type="hybrid"``) or an empty
+            list (``semantic``) WITHOUT writing the degraded result to the
+            cache, so the next search re-attempts the store instead of
+            serving the failure for the cache TTL.
 
         Raises:
             ValueError: If ``metadata_allowlist`` is provided with
-                ``search_type="keyword"``, or if ``keyword_source_types`` is
-                provided with ``search_type="semantic"``.
+                ``search_type="keyword"``, if ``keyword_source_types`` is
+                provided with ``search_type="semantic"``, or if
+                ``query_embedding`` is provided with a ``search_type`` other
+                than ``"semantic"``.
         """
         # Freeze the scope BEFORE anything reads it. This method reads it
         # twice (the cache key, then the legs) and hybrid reads it twice
@@ -1284,6 +1327,17 @@ class RAGService:
             raise ValueError(
                 "keyword_source_types is not supported for search_type='semantic' "
                 "(the semantic leg has no keyword sub-legs to scope)"
+            )
+        # TASK-38580: `EnhancedRAGServiceV2.search` forwards this kwarg
+        # unconditionally (including its default None), so it must be
+        # accepted here for EVERY call through the shared service -- the
+        # regression this guards against is exactly the historical
+        # `keyword_source_types` one this subclass's docstring warns about.
+        if query_embedding is not None and search_type != "semantic":
+            raise ValueError(
+                "query_embedding is only supported for search_type='semantic', "
+                f"not '{search_type}' (only the semantic leg embeds the query; "
+                "pass query_embedding=None for keyword/hybrid searches)"
             )
 
         # Use defaults from config if not specified
@@ -1390,6 +1444,7 @@ class RAGService:
                     include_citations,
                     score_threshold,
                     metadata_allowlist=metadata_allowlist,
+                    query_embedding=query_embedding,
                 )
             elif search_type == "hybrid":
                 results = await self._hybrid_search(
@@ -1465,6 +1520,44 @@ class RAGService:
 
             return results
 
+        except VectorStoreSearchError as e:
+            # TASK-38591: an underlying store failure must degrade instead
+            # of crashing the app, but it must NOT enter the cache. The old
+            # contract swallowed the failure to [] inside the store itself,
+            # and the `put_async` above then served that [] for the full
+            # cache TTL (default 3600s) after ONE transient error.
+            # Returning from this handler skips the cache write by design,
+            # so the next search re-attempts the store.
+            log_counter(
+                "rag_search_store_unavailable", labels={"type": search_type}
+            )
+            logger.warning(
+                f"[{correlation_id}] Vector store search failed; degrading to "
+                f"{'keyword-only' if search_type == 'hybrid' else 'empty'} "
+                f"results (not cached): {type(e).__name__}"
+            )
+            if search_type == "hybrid":
+                # ponytail: the hybrid gather already ran this keyword leg
+                # before the semantic leg raised, so a store outage costs one
+                # repeated local FTS query; keep the leg's result on the
+                # error if that query ever gets expensive.
+                try:
+                    return await self._keyword_search(
+                        query,
+                        top_k,
+                        filter_metadata,
+                        include_citations,
+                        keyword_source_types=keyword_source_types,
+                        metadata_allowlist=metadata_allowlist,
+                    )
+                except Exception as keyword_error:
+                    logger.opt(exception=True).error(
+                        f"[{correlation_id}] Keyword fallback after store "
+                        f"error failed too: {keyword_error}"
+                    )
+                    return []
+            return []
+
         except Exception as e:
             log_counter(
                 "rag_search_error",
@@ -1488,6 +1581,7 @@ class RAGService:
         score_threshold: float = 0.0,
         *,
         metadata_allowlist: Optional[MetadataAllowlist] = None,
+        query_embedding: Any = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """The semantic leg under an allowlist of either shape.
 
@@ -1514,6 +1608,12 @@ class RAGService:
             include_citations: Whether to fetch citations from the store.
             score_threshold: Minimum similarity score to keep.
             metadata_allowlist: One AND-group, or a union of them.
+            query_embedding: Optional precomputed query vector
+                (task-34390/TASK-38580). Shared by every entry of a union
+                allowlist -- the point of the passthrough -- and by the
+                single-entry path. ``None`` embeds the query here exactly as
+                before (once for a union, inside ``_semantic_search``
+                otherwise).
 
         Returns:
             Up to ``top_k`` results, most similar first.
@@ -1527,8 +1627,12 @@ class RAGService:
                 include_citations,
                 score_threshold,
                 metadata_allowlist=entries[0] if entries else None,
+                query_embedding=query_embedding,
             )
 
+        if query_embedding is None:
+            query_embedding = await self.embeddings.create_embeddings_async([query])
+            query_embedding = query_embedding[0]
         merged: List[Any] = []
         for entry in entries:
             merged.extend(
@@ -1539,6 +1643,7 @@ class RAGService:
                     include_citations,
                     score_threshold,
                     metadata_allowlist=entry,
+                    query_embedding=query_embedding,
                 )
             )
         # No cross-entry dedup, deliberately: `build_semantic_allowlists`
@@ -1558,6 +1663,7 @@ class RAGService:
         score_threshold: float = 0.0,
         *,
         metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
+        query_embedding: Any = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """Perform semantic similarity search.
 
@@ -1578,14 +1684,17 @@ class RAGService:
                 ``search_with_citations`` so out-of-scope candidates are
                 excluded before the store ranks and truncates to
                 ``top_k * SEARCH_RESULT_MULTIPLIER`` results.
+            query_embedding: Optional precomputed query vector shared by a
+                union allowlist's per-entry store searches.
 
         Returns:
             Up to ``top_k`` search results, most similar first.
         """
         # Create query embedding
-        logger.debug("Creating query embedding")
-        query_embedding = await self.embeddings.create_embeddings_async([query])
-        query_embedding = query_embedding[0]
+        if query_embedding is None:
+            logger.debug("Creating query embedding")
+            query_embedding = await self.embeddings.create_embeddings_async([query])
+            query_embedding = query_embedding[0]
 
         # Search vector store
         # TASK-32804.9: run the synchronous ChromaDB query off the event
@@ -1598,7 +1707,7 @@ class RAGService:
                 self.vector_store.search_with_citations,
                 query_embedding,
                 query,
-                top_k * SEARCH_RESULT_MULTIPLIER,
+                top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),
                 score_threshold,
                 metadata_allowlist=metadata_allowlist,
             )
@@ -1606,7 +1715,7 @@ class RAGService:
             results = await asyncio.to_thread(
                 self.vector_store.search,
                 query_embedding,
-                top_k * SEARCH_RESULT_MULTIPLIER,
+                top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),
                 metadata_allowlist=metadata_allowlist,
             )
             # Apply score threshold for basic results
@@ -1729,9 +1838,9 @@ class RAGService:
                 "Keyword search has no runnable sub-legs (selection={}, "
                 "scoped id count={}); returning no results without a database "
                 "lookup.",
-                "all" if keyword_source_types is None else sorted(
-                    str(value) for value in keyword_source_types
-                ),
+                "all"
+                if keyword_source_types is None
+                else sorted(str(value) for value in keyword_source_types),
                 None if allowlist_ids is None else len(allowlist_ids),
             )
             return []
@@ -1761,7 +1870,8 @@ class RAGService:
                 filter_metadata,
                 include_citations,
                 allowed_ids=(
-                    None if allowlist_ids is None
+                    None
+                    if allowlist_ids is None
                     else allowlist_ids.get(SOURCE_TYPE_MEDIA)
                 ),
             )
@@ -1774,7 +1884,8 @@ class RAGService:
                 include_citations,
                 source_types=chacha_types,
                 allowed_ids=(
-                    None if allowlist_ids is None
+                    None
+                    if allowlist_ids is None
                     else {
                         source_type: allowlist_ids.get(source_type)
                         for source_type in chacha_types
@@ -1789,7 +1900,8 @@ class RAGService:
                 filter_metadata,
                 include_citations,
                 allowed_ids=(
-                    None if allowlist_ids is None
+                    None
+                    if allowlist_ids is None
                     else allowlist_ids.get(SOURCE_TYPE_PROMPT)
                 ),
             )
@@ -1957,23 +2069,23 @@ class RAGService:
             pool_size = getattr(
                 self.config.search,
                 "fts5_connection_pool_size",
-                FTS5_CONNECTION_POOL_SIZE,
+                _rag_const("FTS5_CONNECTION_POOL_SIZE"),
             )
-            pool = get_connection_pool(str(db_path), pool_size=pool_size)
 
-            # Perform FTS5 search directly using connection pool with retry
+            # Search with retry; each attempt re-fetches the pool a close rebuilds (TASK-38714)
             loop = asyncio.get_event_loop()
             retry_count = 0
             max_retries = 2
 
             while retry_count <= max_retries:
+                pool = get_connection_pool(str(db_path), pool_size=pool_size, user=self)
                 try:
                     search_results = await loop.run_in_executor(
-                        None,
+                        pool_executor(pool),
                         self._perform_fts5_search,
                         pool,
                         query,
-                        top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                        top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),  # Get extra for filtering
                         allowed_ids,
                     )
                     break  # Success, exit retry loop
@@ -1988,7 +2100,9 @@ class RAGService:
                         logger.warning(
                             f"FTS5 search attempt {retry_count} failed, retrying: {e}"
                         )
-                        await asyncio.sleep(0.1 * retry_count)  # Linear backoff (delay grows with the retry count)
+                        await asyncio.sleep(
+                            0.1 * retry_count
+                        )  # Linear backoff (delay grows with the retry count)
 
             # Process results in batches for better performance
             if include_citations:
@@ -2051,8 +2165,7 @@ class RAGService:
             affects the media sub-leg.
         """
         selected = (
-            _resolve_keyword_source_types(source_types)
-            & CHACHA_KEYWORD_SOURCE_TYPES
+            _resolve_keyword_source_types(source_types) & CHACHA_KEYWORD_SOURCE_TYPES
         )
         if not selected:
             return []
@@ -2071,7 +2184,7 @@ class RAGService:
                 self._chacha_fts_rows,
                 db_path,
                 query,
-                top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),  # Get extra for filtering
                 selected,
                 allowed_ids,
             )
@@ -2245,8 +2358,7 @@ class RAGService:
         }
 
         selected = (
-            _resolve_keyword_source_types(source_types)
-            & CHACHA_KEYWORD_SOURCE_TYPES
+            _resolve_keyword_source_types(source_types) & CHACHA_KEYWORD_SOURCE_TYPES
         )
         if not selected:
             return rows
@@ -2259,8 +2371,8 @@ class RAGService:
             return rows
 
         if not isinstance(limit, int) or limit < 1:
-            limit = DEFAULT_FTS5_LIMIT
-        limit = min(limit, MAX_FTS5_LIMIT)
+            limit = _rag_const("DEFAULT_FTS5_LIMIT")
+        limit = min(limit, _rag_const("MAX_FTS5_LIMIT"))
 
         try:
             conn = self._connect_chacha_readonly(db_path)
@@ -2413,6 +2525,21 @@ class RAGService:
         joining them in Python makes the order a property of the query,
         not of the planner.
 
+        Review-B B1 bounds what this assembly FETCHES, in two layers. A
+        window function (``ROW_NUMBER() OVER (PARTITION BY conversation_id
+        ORDER BY timestamp ASC, rowid ASC)``) keeps at most
+        ``_MAX_CONV_MESSAGES_PER_CONVERSATION`` oldest messages per
+        conversation inside SQLite itself -- previously every matching
+        message of every matching conversation crossed into Python, so one
+        long conversation dominated the leg's cost -- and a SQL ``LIMIT``
+        keeps at most ``_MAX_CONV_MESSAGES_TOTAL`` rows overall, filling
+        conversations in this sub-leg's existing top-k order before fetching
+        their lines into Python. Both are presentation bounds for
+        prompt assembly, not a recall change: the FTS matching set is
+        unchanged, and within the bound the messages are still the OLDEST
+        matches in the ORM's own ``timestamp ASC`` (rowid tie-break) order,
+        so a conversation document still reads chronologically.
+
         Args:
             conn: Read-only ChaChaNotes connection.
             escaped_query: A per-token-quoted FTS5 MATCH expression.
@@ -2450,9 +2577,7 @@ class RAGService:
         LIMIT ?
         """
         try:
-            with closing(
-                conn.execute(conversations_sql, tuple(params))
-            ) as cursor:
+            with closing(conn.execute(conversations_sql, tuple(params))) as cursor:
                 conversations = [
                     {
                         "id": row["id"],
@@ -2463,22 +2588,37 @@ class RAGService:
             if not conversations:
                 return []
 
-            # Only "?" characters are interpolated; every value is bound.
-            placeholders = ",".join("?" * len(conversations))
-            messages_sql = f"""
+            messages_sql = """
             SELECT
-                m.conversation_id AS conversation_id,
-                COALESCE(m.sender, 'unknown') || ': '
-                    || COALESCE(m.content, '') AS line
-            FROM messages_fts fts
-            JOIN messages m ON fts.rowid = m.rowid
-            WHERE fts.messages_fts MATCH ?
-              AND m.deleted = 0
-              AND m.conversation_id IN ({placeholders})
-            ORDER BY m.timestamp ASC, m.rowid ASC
+                conversation_id,
+                line
+            FROM (
+                SELECT
+                    m.conversation_id AS conversation_id,
+                    selected.key AS conversation_order,
+                    COALESCE(m.sender, 'unknown') || ': '
+                        || COALESCE(m.content, '') AS line,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY m.conversation_id
+                        ORDER BY m.timestamp ASC, m.rowid ASC
+                    ) AS rn
+                FROM messages_fts fts
+                JOIN messages m ON fts.rowid = m.rowid
+                JOIN json_each(?) selected ON m.conversation_id = selected.value
+                WHERE fts.messages_fts MATCH ?
+                  AND m.deleted = 0
+            )
+            WHERE rn <= ?
+            ORDER BY conversation_order, rn
+            LIMIT ?
             """
             lines: Dict[Any, List[str]] = {}
-            params = [escaped_query, *(row["id"] for row in conversations)]
+            params = [
+                json.dumps([row["id"] for row in conversations]),
+                escaped_query,
+                _MAX_CONV_MESSAGES_PER_CONVERSATION,
+                _MAX_CONV_MESSAGES_TOTAL,
+            ]
             with closing(conn.execute(messages_sql, params)) as cursor:
                 for row in cursor:
                     lines.setdefault(row["conversation_id"], []).append(row["line"])
@@ -2551,7 +2691,7 @@ class RAGService:
                 self._prompts_fts_rows,
                 db_path,
                 query,
-                top_k * SEARCH_RESULT_MULTIPLIER,  # Get extra for filtering
+                top_k * _rag_const("SEARCH_RESULT_MULTIPLIER"),  # Get extra for filtering
                 allowed_ids,
             )
             if not items:
@@ -2595,9 +2735,7 @@ class RAGService:
         try:
             from tldw_chatbook.config import get_prompts_db_path
 
-            db_path_raw = (
-                self.config.search.prompts_db_path or get_prompts_db_path()
-            )
+            db_path_raw = self.config.search.prompts_db_path or get_prompts_db_path()
         except Exception as e:
             logger.warning(
                 "Could not resolve the Prompts database path; the prompts "
@@ -2699,8 +2837,8 @@ class RAGService:
             return []
 
         if not isinstance(limit, int) or limit < 1:
-            limit = DEFAULT_FTS5_LIMIT
-        limit = min(limit, MAX_FTS5_LIMIT)
+            limit = _rag_const("DEFAULT_FTS5_LIMIT")
+        limit = min(limit, _rag_const("MAX_FTS5_LIMIT"))
 
         try:
             conn = self._connect_prompts_readonly(db_path)
@@ -2982,14 +3120,18 @@ class RAGService:
             # keeps the vector leg's real similarity for score banding, and
             # carries the chunk metadata (`source_id`, `chunk_id`) that the
             # downstream row mappers read.
-            result = entry.vector_item if entry.vector_item is not None else entry.fts_item
+            result = (
+                entry.vector_item if entry.vector_item is not None else entry.fts_item
+            )
             # `result` aliases one of the two leg items, so both legs'
             # original scores must be read *before* result.score is
             # overwritten below, or the in-place mutation clobbers the very
             # value we're trying to preserve (it is now the vector leg's
             # score that would be lost, previously the FTS leg's).
             fts_score = entry.fts_item.score if entry.fts_item is not None else None
-            vector_score = entry.vector_item.score if entry.vector_item is not None else None
+            vector_score = (
+                entry.vector_item.score if entry.vector_item is not None else None
+            )
             # Combine citations when the same document surfaced in both legs.
             # Read defensively: only the displayed item is guaranteed to be a
             # citation-carrying shape, and the two legs can disagree (a
@@ -3029,15 +3171,15 @@ class RAGService:
             if dim is None:
                 # Default if we can't determine
                 logger.warning(
-                    f"Could not determine embedding dimension, defaulting to {DEFAULT_EMBEDDING_DIM}"
+                    f"Could not determine embedding dimension, defaulting to {_rag_const("DEFAULT_EMBEDDING_DIM")}"
                 )
-                return DEFAULT_EMBEDDING_DIM
+                return _rag_const("DEFAULT_EMBEDDING_DIM")
             return dim
         except Exception as e:
             logger.warning(
-                f"Error getting embedding dimension: {e}, defaulting to {DEFAULT_EMBEDDING_DIM}"
+                f"Error getting embedding dimension: {e}, defaulting to {_rag_const("DEFAULT_EMBEDDING_DIM")}"
             )
-            return DEFAULT_EMBEDDING_DIM
+            return _rag_const("DEFAULT_EMBEDDING_DIM")
 
     @timeit("rag_chunking_operation")
     async def _chunk_document(
@@ -3087,7 +3229,11 @@ class RAGService:
         # to_thread explicitly transfers this accepted operation context.
         # The outer retained coroutine joins native completion before retirement.
         await asyncio.to_thread(
-            native_worker(self, self.vector_store.add), ids, embeddings, documents, metadata
+            native_worker(self, self.vector_store.add),
+            ids,
+            embeddings,
+            documents,
+            metadata,
         )
         from ..recovery import record_stored_chunks
 
@@ -3201,7 +3347,7 @@ class RAGService:
 
             base_result = SearchResult(
                 id=f"{source_type}_{item['id']}",
-                score=KEYWORD_SEARCH_SCORE,  # FTS5 doesn't provide normalized scores
+                score=_rag_const("KEYWORD_SEARCH_SCORE"),  # FTS5 doesn't provide normalized scores
                 document=content,
                 metadata=self._keyword_row_metadata(item, content, source_type),
             )
@@ -3235,7 +3381,7 @@ class RAGService:
         results = []
 
         # Process in batches for efficiency
-        batch_size = KEYWORD_BATCH_SIZE
+        batch_size = _rag_const("KEYWORD_BATCH_SIZE")
 
         for i in range(0, len(search_results), batch_size):
             batch = search_results[i : i + batch_size]
@@ -3318,7 +3464,17 @@ class RAGService:
         # Find citations from the query's own tokens (see the docstring).
         full_content = item.get("content", "")
         tokens = self._fts5_query_tokens(query)
-        spans = self._keyword_citation_spans(full_content, tokens)
+        if source_type == SOURCE_TYPE_CONVERSATION:
+            # Review-B B1: a conversation row's document can assemble
+            # hundreds of messages, but only the first 1000 chars are ever
+            # cited (the ``[:1000]`` preview above). Bound the token regex
+            # scan to exactly that preview -- scanning the rest cost O(full
+            # document) per row and its spans could never be shown.
+            spans = self._keyword_citation_spans(
+                full_content, tokens, text_limit=len(content)
+            )
+        else:
+            spans = self._keyword_citation_spans(full_content, tokens)
 
         # Cap the spans, preferring coverage: a span evidencing a token no
         # earlier span did comes first, so a two-token query whose first
@@ -3327,14 +3483,15 @@ class RAGService:
         # single-token case (and the old whole-query lookup) produced.
         selected: List[Tuple[int, int, frozenset]] = []
         covered_tokens: set = set()
+        max_matches = _rag_const("MAX_CITATION_MATCHES")
         for span in spans:
-            if len(selected) >= MAX_CITATION_MATCHES:
+            if len(selected) >= max_matches:
                 break
             if span[2] - covered_tokens:
                 selected.append(span)
                 covered_tokens |= span[2]
         for span in spans:
-            if len(selected) >= MAX_CITATION_MATCHES:
+            if len(selected) >= max_matches:
                 break
             if span not in selected:
                 selected.append(span)
@@ -3342,9 +3499,11 @@ class RAGService:
 
         citations = []
         all_token_indices = frozenset(range(len(tokens)))
+        context_chars = _rag_const("CITATION_CONTEXT_CHARS")
+        partial_confidence = _rag_const("PARTIAL_CITATION_CONFIDENCE")
         for start, end, span_tokens in selected:
-            start_context = max(0, start - CITATION_CONTEXT_CHARS)
-            end_context = min(len(full_content), end + CITATION_CONTEXT_CHARS)
+            start_context = max(0, start - context_chars)
+            end_context = min(len(full_content), end + context_chars)
             whole_query = span_tokens == all_token_indices
 
             citation = Citation(
@@ -3357,7 +3516,7 @@ class RAGService:
                 # A span covering every query token is the exact match the
                 # pre-implicit-AND builder used to emit; a span covering
                 # only some of them is real but weaker evidence.
-                confidence=1.0 if whole_query else PARTIAL_CITATION_CONFIDENCE,
+                confidence=1.0 if whole_query else partial_confidence,
                 match_type=CitationType.EXACT if whole_query else CitationType.KEYWORD,
                 metadata={
                     "query": query,
@@ -3387,7 +3546,7 @@ class RAGService:
 
         return SearchResultWithCitations(
             id=f"{source_type}_{item['id']}",
-            score=KEYWORD_SEARCH_SCORE,
+            score=_rag_const("KEYWORD_SEARCH_SCORE"),
             document=content,
             metadata=base_metadata,
             citations=citations,
@@ -3433,7 +3592,7 @@ class RAGService:
         # HERE rather than in the shared tokenizer: it is this service's
         # configured limit, and the Library's four-seam path -- the other
         # consumer since TASK-17755 -- validates against its own.
-        return fts5_query_tokens(query[:MAX_QUERY_LENGTH])
+        return fts5_query_tokens(query[:_rag_const("MAX_QUERY_LENGTH")])
 
     def _escape_fts5_query(self, query: str) -> str:
         """
@@ -3657,9 +3816,9 @@ class RAGService:
             query has no FTS5-searchable tokens (empty, whitespace-only,
             or all punctuation).
         """
-        if query and len(query) > MAX_QUERY_LENGTH:
+        if query and len(query) > _rag_const("MAX_QUERY_LENGTH"):
             logger.warning(
-                f"Query truncated from {len(query)} to {MAX_QUERY_LENGTH} characters"
+                f"Query truncated from {len(query)} to {_rag_const("MAX_QUERY_LENGTH")} characters"
             )
 
         # TASK-19558 moved the JOIN, not just the escape, to
@@ -3811,9 +3970,7 @@ class RAGService:
         Returns:
             ``(primary_form, fallback_form)`` for the active construction.
         """
-        return FTS_MATCH_FORMS_BY_CONSTRUCTION[
-            self._resolved_fts_match_construction()
-        ]
+        return FTS_MATCH_FORMS_BY_CONSTRUCTION[self._resolved_fts_match_construction()]
 
     def _fts5_primary_form(self) -> str:
         """The FORM the active construction's PRIMARY expression runs.
@@ -4059,7 +4216,9 @@ class RAGService:
 
     @staticmethod
     def _keyword_citation_spans(
-        content: str, tokens: List[str]
+        content: str,
+        tokens: List[str],
+        text_limit: Optional[int] = None,
     ) -> List[Tuple[int, int, frozenset]]:
         """Locate the citation spans for a keyword hit, from the query's tokens.
 
@@ -4090,17 +4249,29 @@ class RAGService:
         Args:
             content: The document text the offsets must index.
             tokens: ``_fts5_query_tokens(query)`` for the same query.
+            text_limit: Optional scan bound (review-B B1). When set, only
+                ``content[:text_limit]`` is searched, so the per-token regex
+                never walks text the caller will not cite against -- the
+                conversation-content caller passes its ``[:1000]`` preview
+                length, since conversation documents can assemble hundreds
+                of messages while the preview is all that is shown. A token
+                match straddling the bound is not reported. ``None`` (the
+                default) scans the whole text, exactly as before this
+                parameter existed.
 
         Returns:
             Merged, non-overlapping ``(start, end, token_indices)`` spans in
             document order, where ``token_indices`` is the set of ``tokens``
             positions the span evidences. Empty when no token appears in the
-            content -- a real case, since a row can match on an indexed
-            column the caller never sees (``media_fts`` indexes the title
-            too).
+            scanned content -- a real case, since a row can match on an
+            indexed column the caller never sees (``media_fts`` indexes the
+            title too).
         """
         if not content or not tokens:
             return []
+
+        if text_limit is not None:
+            content = content[:text_limit]
 
         raw_spans: List[Tuple[int, int, int]] = []
         for index, token in enumerate(tokens):
@@ -4119,12 +4290,13 @@ class RAGService:
             return []
 
         merged: List[Tuple[int, int, set]] = []
+        merge_gap = _rag_const("CITATION_SPAN_MERGE_GAP_CHARS")
         for start, end, index in sorted(raw_spans):
             if merged:
                 previous_start, previous_end, covered = merged[-1]
                 gap = content[previous_end:start] if start > previous_end else ""
                 if start <= previous_end or (
-                    len(gap) <= CITATION_SPAN_MERGE_GAP_CHARS
+                    len(gap) <= merge_gap
                     and not any(ch.isalnum() for ch in gap)
                 ):
                     # Overlapping, or separated only by a little
@@ -4174,8 +4346,8 @@ class RAGService:
 
         # Validate limit parameter
         if not isinstance(limit, int) or limit < 1:
-            limit = DEFAULT_FTS5_LIMIT  # Safe default
-        limit = min(limit, MAX_FTS5_LIMIT)  # Cap maximum results
+            limit = _rag_const("DEFAULT_FTS5_LIMIT")  # Safe default
+        limit = min(limit, _rag_const("MAX_FTS5_LIMIT"))  # Cap maximum results
 
         # Note: `Media` has no `tags` column and `media_fts` only indexes
         # (title, content) -- see Client_Media_DB_v2's `_FTS_TABLES_SQL` and
@@ -4377,10 +4549,10 @@ class RAGService:
             # Release vector-store clients, including persistent SQLite handles.
             self.vector_store.close()
 
-            # Close all database connection pools
-            from .db_connection_pool import close_all_pools
+            # Release only this service's pools; shared ones stay (TASK-38956).
+            from .db_connection_pool import release_pools
 
-            close_all_pools()
+            release_pools(self)
 
             # Clear cache
             if hasattr(self, "cache"):

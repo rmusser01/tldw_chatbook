@@ -6,7 +6,6 @@ import threading
 from typing import Any
 
 from tldw_chatbook.Media_Generation.adapter_registry import MediaAdapterRegistry
-from tldw_chatbook.Video_Generation.adapters.base import VideoGenerationAdapter
 from tldw_chatbook.Video_Generation.config import get_video_generation_config
 
 

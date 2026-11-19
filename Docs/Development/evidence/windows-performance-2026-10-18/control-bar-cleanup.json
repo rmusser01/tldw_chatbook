@@ -1,0 +1,22 @@
+{
+  "all_roots_absent": true,
+  "exact_roots": [
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-4auqam2m",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-bkeehaea",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-eui0vm99",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-lkdidxad",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-m0cnxbtl",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-p5jwkvze",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-pluf2y_z",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-matching-tests-u1ofl46o",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-3xw6u9yk",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-498iuzr1",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-8q2mbfro",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-psbo4u3q",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-r13lmj8m",
+    "C:\\Users\\GDesktop-1\\.tmp-windows-perf-rdaagswv"
+  ],
+  "root_count": 14,
+  "validated_all_parents_and_reparse_points_before_deletion": true,
+  "live_owned_python_processes": 0
+}

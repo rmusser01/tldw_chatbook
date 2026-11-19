@@ -6,7 +6,7 @@ Stage coverage in this file:
   registry record, the dispatch entry + ``CUSTOM_PROVIDER_PARAM_MAP``
   (legacy-surface parity), the engine closure's extended parameter surface
   with ``payload_flags`` gating, the ``api_settings.custom`` settings
-  fallbacks (section > record defaults; explicit kwargs win), the ADR-066
+  fallbacks (section > record defaults; explicit kwargs win), the ADR-311
   custom-row reasoning composition (``reasoning_effort`` verbatim, budget
   accepted-and-dropped), and the continuation ``_PAIRINGS`` additions.
 - Stage 2 (shared ``CUSTOM_OPENAI_EXECUTION_KEYS``): see
@@ -138,8 +138,8 @@ def test_named_custom_slots_untouched() -> None:
 def test_custom_provider_param_map_equals_legacy_surface() -> None:
     legacy = PROVIDER_PARAM_MAP["custom-openai-api"]
     ours = PROVIDER_PARAM_MAP["custom-hosted"]
-    assert set(ours) == set(legacy)
-    assert ours == legacy
+    assert ours == {**legacy, "provider_continuations": "provider_continuations"}
+    assert "provider_continuations" not in legacy
 
 
 # --- Stage 1: closure signature / kwargs ---
@@ -408,7 +408,7 @@ def test_payload_carries_record_default_max_tokens_when_section_silent() -> None
     assert "temperature" not in payload
 
 
-# --- Stage 1: ADR-066 reasoning composition (custom row) ---
+# --- Stage 1: ADR-311 reasoning composition (custom row) ---
 
 
 def test_reasoning_effort_composed_verbatim() -> None:
@@ -418,7 +418,7 @@ def test_reasoning_effort_composed_verbatim() -> None:
         messages_payload=_messages(),
         reasoning_effort="high",
     )
-    # ADR-066 custom row: top-level OpenAI-style reasoning_effort, verbatim.
+    # ADR-311 custom row: top-level OpenAI-style reasoning_effort, verbatim.
     assert payload["reasoning_effort"] == "high"
 
 
@@ -435,7 +435,7 @@ def test_thinking_budget_tokens_accepted_and_dropped() -> None:
         reasoning_effort="low",
         thinking_budget_tokens=2048,
     )
-    # ADR-066 custom row: budget dropped (strict OpenAI proxies may reject
+    # ADR-311 custom row: budget dropped (strict OpenAI proxies may reject
     # llama.cpp-specific fields); effort stays verbatim.
     assert with_budget["reasoning_effort"] == "low"
     assert "reasoning_budget_tokens" not in with_budget
@@ -653,7 +653,8 @@ def _canned_session(
     )
 
     session = _RecordingSession(_TransportResponse(dict(_SUCCESS_BODY)))
-    monkeypatch.setattr(hosted_chat, "create_default_session", lambda: session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: session, raising=False)
+    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: session, raising=False)
     return session
 
 
@@ -773,7 +774,7 @@ async def test_custom_hosted_send_composes_reasoning_effort(
         topk=40,
     )
     payload = session.posts[0]["json"]
-    # ADR-066 custom row: effort verbatim; budget dropped; samplers flow.
+    # ADR-311 custom row: effort verbatim; budget dropped; samplers flow.
     assert payload["reasoning_effort"] == "high"
     assert "reasoning_budget_tokens" not in payload
     assert "chat_template_kwargs" not in payload
@@ -866,6 +867,7 @@ def test_engine_kwargs_forward_continuation_checkpoints() -> None:
         ],
         continuation_target=ContinuationRestoreTarget(
             provider=provider,
+            selected_provider=resolution.provider,
             model=model,
             protocol="chat_completions",
             api_base_url=base_url,
@@ -1077,7 +1079,8 @@ def test_custom_hosted_checkpoint_restores_through_the_gateway(
     # 4. Gateway restore: the completed checkpoint rides the sidecar under
     #    the pinned target (provider spelled as the bridge records it).
     resolution = ConsoleProviderResolution(
-        provider="custom-hosted",
+        provider="custom-ep:paid",
+        selected_provider="custom-ep:paid",
         base_url=base_url,
         model="test-model",
         ready=True,
@@ -1088,6 +1091,18 @@ def test_custom_hosted_checkpoint_restores_through_the_gateway(
         continuation_protocol="chat_completions",
     )
     gateway = ConsoleProviderGateway(environ={})
+    from tldw_chatbook.Chat.provider_continuation import bind_continuation_to_target
+
+    complete = bind_continuation_to_target(
+        complete,
+        ContinuationRestoreTarget(
+            provider="custom-hosted",
+            protocol="chat_completions",
+            model="test-model",
+            api_base_url=base_url,
+            selected_provider="custom-ep:paid",
+        ),
+    )
     prepared = gateway.prepare_chat_request(
         resolution,
         [
@@ -1097,6 +1112,7 @@ def test_custom_hosted_checkpoint_restores_through_the_gateway(
         ],
         continuation_target=ContinuationRestoreTarget(
             provider="custom-hosted",
+            selected_provider="custom-ep:paid",
             model="test-model",
             protocol="chat_completions",
             api_base_url=base_url,
@@ -1135,7 +1151,7 @@ def _swap_console_resolution():
 
     ``provider`` keeps the raw selection identity (``custom-ep:<slug>``) and
     ``execution_key`` carries the engine preset the swap routed onto -- the
-    exact field split ``_apply_custom_endpoint_engine_swap`` produces.
+    exact field split ``apply_custom_endpoint_engine_swap`` produces.
     """
     from tldw_chatbook.Chat.console_provider_gateway import (
         ConsoleProviderResolution,
@@ -1157,7 +1173,9 @@ def _swap_console_resolution():
 def _complete_custom_hosted_checkpoint():
     return parse_provider_continuation_json(
         {
-            "schema_version": 1,
+            "schema_version": 3,
+            "selected_provider": "custom-ep:paid",
+            "managed_resume": None,
             "checkpoint_revision": 1,
             "provider": "custom-hosted",
             "protocol": "chat_completions",
@@ -1189,7 +1207,7 @@ def test_custom_endpoint_swap_restore_target_pins_the_execution_key() -> None:
     A swapped custom-ep selection resolves with the IDENTITY spelling on
     ``provider`` (``custom-ep:<slug>``) but executes -- and pins
     checkpoints -- under the EXECUTION key (``custom-hosted``, the registry
-    ``record.key``). ``_continuation_restore_target_for_resolution`` built
+    ``record.key``). ``continuation_restore_target_for_resolution`` built
     the target from ``provider_config_key(resolution.provider)``
     (``custom_ep:paid``), a spelling no checkpoint ever pins, so the durable
     resume/crash-recovery pre-gate (byte-exact by design) matched nothing.
@@ -1197,14 +1215,14 @@ def test_custom_endpoint_swap_restore_target_pins_the_execution_key() -> None:
     the bridge records -- falling back to the normalized provider only when
     ``execution_key`` is empty.
     """
-    from tldw_chatbook.Chat.console_chat_controller import (
-        _continuation_restore_target_for_resolution,
+    from tldw_chatbook.Chat.console_continuation_binding import (
+        continuation_restore_target_for_resolution,
     )
     from tldw_chatbook.Chat.provider_continuation import (
         validate_continuation_restore,
     )
 
-    target = _continuation_restore_target_for_resolution(
+    target = continuation_restore_target_for_resolution(
         _swap_console_resolution()
     )
     assert target is not None
@@ -1225,7 +1243,7 @@ def test_custom_endpoint_swap_restore_target_pins_the_execution_key() -> None:
         ConsoleProviderResolution,
     )
 
-    preset = _continuation_restore_target_for_resolution(
+    preset = continuation_restore_target_for_resolution(
         ConsoleProviderResolution(
             provider="Databricks",
             base_url="https://databricks.example/serving-endpoints",
@@ -1243,7 +1261,7 @@ def test_custom_endpoint_swap_restore_target_pins_the_execution_key() -> None:
     # Fallback: a resolution without an execution key (legacy doubles)
     # keeps the normalized provider spelling, so existing consumers of
     # that path are byte-identical.
-    legacy = _continuation_restore_target_for_resolution(
+    legacy = continuation_restore_target_for_resolution(
         ConsoleProviderResolution(
             provider="DeepSeek",
             base_url="https://api.deepseek.com/v1",
@@ -1270,8 +1288,8 @@ def test_custom_endpoint_swap_target_prepares_through_the_gateway() -> None:
     the pre-gate fix activates this flow, so the comparisons downstream
     must compare execution key to execution key.
     """
-    from tldw_chatbook.Chat.console_chat_controller import (
-        _continuation_restore_target_for_resolution,
+    from tldw_chatbook.Chat.console_continuation_binding import (
+        continuation_restore_target_for_resolution,
     )
     from tldw_chatbook.Chat.console_history_budget import (
         ProviderContinuationSidecar,
@@ -1282,7 +1300,7 @@ def test_custom_endpoint_swap_target_prepares_through_the_gateway() -> None:
     )
 
     resolution = _swap_console_resolution()
-    target = _continuation_restore_target_for_resolution(resolution)
+    target = continuation_restore_target_for_resolution(resolution)
     assert target is not None
     checkpoint = _complete_custom_hosted_checkpoint()
     sidecar = (ProviderContinuationSidecar("a1", checkpoint),)
@@ -1318,6 +1336,7 @@ def _custom_hosted_target():
 
     return ContinuationRestoreTarget(
         provider="custom-hosted",
+        selected_provider="custom-ep:paid",
         model="test-model",
         protocol="chat_completions",
         api_base_url="https://custom.example/v1",

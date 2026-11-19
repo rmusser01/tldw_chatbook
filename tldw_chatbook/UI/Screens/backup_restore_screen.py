@@ -1,7 +1,9 @@
 """Thin canonical backup view over the application's recovery service."""
 
+import sqlite3
 from dataclasses import asdict
 from pathlib import Path
+from types import MappingProxyType
 
 from rich.text import Text
 from textual import on, work
@@ -19,9 +21,35 @@ from tldw_chatbook.Third_Party.textual_fspicker import (
 )
 from tldw_chatbook.Widgets.backup_group_selector import BackupDataGroupSelector
 
-from .backup_restore_state import result_label
+from .backup_restore_state import (
+    ARCHIVE_FORMAT_HINT,
+    CREATE_NEEDS_REVIEW,
+    CREATE_STARTED,
+    ENTRY_TITLES,
+    archive_source_problem,
+    create_unavailable_reason,
+    result_label,
+    typed_path,
+)
 
 _RETAINED_CREDENTIAL_REVIEW = "credential_isolated_retention_required"
+# TASK-40139: the only path that re-prepares Sync v2 (settings_screen
+# `_perform_runtime_source_switch` -> `prepare_sync_v2_profile_mode`).
+_PREPARE_SYNC_STEP = (
+    "in Settings > Overview > Advanced / Diagnostics, choose Switch Source / "
+    "Server, then Activate Server with the same server"
+)
+# TASK-40139: what the sync-identity review clears, as shown before confirming.
+_SYNC_IDENTITY_COUNTS = (
+    ("device_ids", "Device ids"),
+    ("datasets", "Dataset bindings and cursors"),
+    ("pull_cursors", "Pull cursors"),
+    ("remote_heads", "Remote heads"),
+    ("personal_context_links", "Personal Context links"),
+    ("pending_outbox", "Unsent changes"),
+    ("prepare_results", "Saved Prepare results"),
+)
+_PERSONAL_CONTEXT_LOCKED = "credential_personal_context_restore_locked:"
 
 
 class BackupRestoreScreen(Screen):
@@ -51,8 +79,17 @@ class BackupRestoreScreen(Screen):
         config_paths=(),
         include_known_profiles=False,
         restart_request=None,
+        initial_mode="home",
     ):
+        """Bind the view to the app's recovery service.
+
+        Args:
+            initial_mode: ``"inspect"`` is setup's "Restore a backup" entry: the
+                view opens on Inspect, titled "Restore from a backup"
+                (TASK-34100.16). Any other value opens the ordinary home.
+        """
         super().__init__()
+        self._initial_mode = initial_mode if initial_mode in ENTRY_TITLES else "home"
         self.service = service
         self.config_paths = tuple(Path(path) for path in config_paths)
         self.include_known_profiles = include_known_profiles
@@ -73,6 +110,7 @@ class BackupRestoreScreen(Screen):
         self._restore_availability = None
         self._extraction_plan = None
         self._delete_copy_id = None
+        self._sync_identity_shown = None
         self._last_terminal = None
         self._list_delivery = 0
         self._review_codes_seen = ()
@@ -81,6 +119,8 @@ class BackupRestoreScreen(Screen):
         self._restore_review_codes_seen = ()
         self._restore_retention_accepted = False
         self._safety_scope_seen = ()
+        # TASK-40309: reviewed fetch-folder members to delete before planning.
+        self._fetch_removal = ()
         self._rollback_copy_id = None
         self._rollback_plan = None
         self._rollback_availability = None
@@ -92,18 +132,22 @@ class BackupRestoreScreen(Screen):
         self._media_offset = 0
 
     def compose(self) -> ComposeResult:
-        yield Static("Backup & Restore", id="backup-title")
+        yield Static(ENTRY_TITLES[self._initial_mode], id="backup-title")
         with Container(id="backup-actions"):
-            yield Button(
-                "Create backup",
-                id="backup-open-create",
-                classes="backup-restore-screen-button",
+            opening = (
+                Button(
+                    "Create backup",
+                    id="backup-open-create",
+                    classes="backup-restore-screen-button",
+                ),
+                Button(
+                    "Inspect / restore",
+                    id="backup-open-inspect",
+                    classes="backup-restore-screen-button",
+                ),
             )
-            yield Button(
-                "Inspect / restore",
-                id="backup-open-inspect",
-                classes="backup-restore-screen-button",
-            )
+            # Setup's Restore entry leads with what the user came to do.
+            yield from opening[:: -1 if self._initial_mode == "inspect" else 1]
             yield Button(
                 "Recovery copies",
                 id="backup-open-copies",
@@ -197,6 +241,7 @@ class BackupRestoreScreen(Screen):
                 yield Vertical(id="backup-credential-review", classes="backup-form")
             with Vertical(id="backup-inspect-form", classes="backup-form"):
                 yield Static("Backup archive", classes="destination-section")
+                yield Static(ARCHIVE_FORMAT_HINT, id="backup-archive-format")
                 yield Input(
                     placeholder="Choose an archive",
                     id="backup-source",
@@ -287,6 +332,14 @@ class BackupRestoreScreen(Screen):
                         id="backup-restore-preview",
                         markup=False,
                     )
+                    remove = Button(
+                        "Remove newer plugin downloads",
+                        id="backup-remove-plugin-downloads",
+                        variant="warning",
+                        classes="backup-restore-screen-button",
+                    )
+                    remove.display = False
+                    yield remove
                     yield Button(
                         "Review restore",
                         id="backup-review-restore",
@@ -488,7 +541,9 @@ class BackupRestoreScreen(Screen):
         )
 
     def on_mount(self):
-        self._show_mode("home")
+        self._show_mode(self._initial_mode)
+        if self._restart_request is None and self._initial_mode == "inspect":
+            self.query_one("#backup-source", Input).focus()
         if self._restart_request is not None and self._restart_request.recovery_copies:
             target = self.query_one("#backup-later-target", Input)
             with target.prevent(Input.Changed):
@@ -564,6 +619,10 @@ class BackupRestoreScreen(Screen):
     def _show_mode(self, mode):
         self._mode = mode
         self._revision += 1
+        # Setup's entry is titled for Inspect only while Inspect is showing.
+        self.query_one("#backup-title", Static).update(
+            ENTRY_TITLES[mode if mode == self._initial_mode else "home"]
+        )
         self._preview = self._reviewed = None
         self._backup_availability = None
         self._restore_availability = None
@@ -591,7 +650,11 @@ class BackupRestoreScreen(Screen):
             self.query_one("#" + identifier).display = visible
         self.query_one("#backup-create", Button).disabled = True
         self.query_one("#backup-dependent").display = mode in ("copies", "profiles")
-        self.query_one("#backup-message", Static).update("")
+        # TASK-34100.16: the line above the buttons says why Create backup is
+        # disabled -- here, until a review succeeds.
+        self.query_one("#backup-message", Static).update(
+            CREATE_NEEDS_REVIEW if mode == "create" else ""
+        )
         self._clear_passwords()
 
     @on(Button.Pressed, "#backup-open-create")
@@ -768,6 +831,18 @@ class BackupRestoreScreen(Screen):
     @work(exclusive=True, thread=True, group="backup-list")
     def _refresh_list(self, app, revision, mode):
         current = self.service.current_requirements() if mode == "profiles" else None
+        if current is not None:
+            # TASK-40139: the counts the sync-identity review shows first, only
+            # while the current generation still waits for the sync state.
+            identity = None
+            if current["requirements_checked"] and "runtime.sync_state" in (
+                current["pending_owners"] or ()
+            ):
+                try:
+                    identity = self.service.sync_identity_review()
+                except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+                    identity = self.service.issue_code(error)
+            current = MappingProxyType({**current, "sync_identity": identity})
         try:
             entries = (
                 self.service.recovery_copies()
@@ -830,6 +905,9 @@ class BackupRestoreScreen(Screen):
         self._delete_copy_id = None
         self.query_one("#backup-delete-copy", Button).disabled = True
         self.query_one("#backup-delete-preview", Static).update("")
+        # TASK-41302: the names every other review uses (TASK-41111).
+        from tldw_chatbook.Backup_Recovery.recovery_service import owner_label
+
         if current is not None:
             if current["status"] == "no_verified_generation":
                 setup = "No verified recovery generation for this current profile. Optional features may still require setup."
@@ -839,7 +917,7 @@ class BackupRestoreScreen(Screen):
                 setup = (
                     "Needs setup\nReview these features in their settings before enabling them:\n"
                     + "\n".join(
-                        "• " + owner.replace(".", " / ").replace("_", " ")
+                        "• " + owner_label(owner)
                         for owner in current["pending_owners"]
                     )
                 )
@@ -859,6 +937,126 @@ class BackupRestoreScreen(Screen):
                     markup=False,
                 )
             )
+            if (
+                current["requirements_checked"]
+                and "config" in current["pending_owners"]
+            ):
+                # TASK-40711: `config` alone; sync identity has its own review.
+                # Approval is per generation, so it covers every profile that
+                # recovery restored (one generation per replace operation).
+                widgets.append(
+                    Static(
+                        "Settings review\nUntil you approve the restored settings, "
+                        "model-catalog auto-refresh and workspace change tracking "
+                        "stay off. Approving covers every profile this recovery "
+                        "restored and turns both back on (catalog refresh from the "
+                        "next start). Local model files and speech start-up also need "
+                        "these settings, besides their own reviews. It does not "
+                        "resume server sync.",
+                        id="backup-config-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Approve settings",
+                        id="backup-approve-config",
+                        name=current["generation"],
+                        classes="backup-restore-screen-button",
+                    )
+                )
+            if (
+                current["requirements_checked"]
+                and "models.artifacts" in current["pending_owners"]
+            ):
+                # TASK-41301 (owner, 2026-11-16): the one approver of model files.
+                widgets.append(
+                    Static(
+                        "Model files review\nUntil you approve the restored model "
+                        "files, local model downloads, installs and activation, "
+                        "speech start-up and a restored local embedding model stay "
+                        "off. Approving covers every profile this recovery restored "
+                        "and approves only the model files. A local embedding model "
+                        "also keeps its own review in Settings > Library/RAG.",
+                        id="backup-models-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Approve model files",
+                        id="backup-approve-models",
+                        name=current["generation"],
+                        classes="backup-restore-screen-button",
+                    )
+                )
+            if current["requirements_checked"] and {
+                "tts.profile_store",
+                "tts.voices",
+            } & set(current["pending_owners"]):
+                # TASK-41119: the speech owners alone, beside the settings review.
+                widgets.append(
+                    Static(
+                        "Speech review\nUntil you approve the restored voices and "
+                        "voice profiles, speech start-up stays off. Approving covers "
+                        "every profile this recovery restored. Speech also needs the "
+                        "restored settings and model files approved (Approve settings, "
+                        "Approve model files), and starts from the next start once all "
+                        "three are approved.",
+                        id="backup-speech-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Approve voices",
+                        id="backup-approve-speech",
+                        name=current["generation"],
+                        classes="backup-restore-screen-button",
+                    )
+                )
+            counts = current.get("sync_identity")
+            self._sync_identity_shown = counts if isinstance(counts, dict) else None
+            if isinstance(counts, str):
+                # Review r14pccB: an unreadable review says so instead of vanishing.
+                widgets.append(
+                    Static(
+                        "Sync identity review unavailable: "
+                        + self.service.issue_message(counts)
+                        + f" ({counts}) Server sync stays off.",
+                        id="backup-sync-identity-review",
+                        markup=False,
+                    )
+                )
+            elif counts is not None:
+                # TASK-40139, owner ruling 2026-11-12 (TASK-40137): one reviewed
+                # step clears the restored identity and approves both owners.
+                widgets.append(
+                    Static(
+                        "Sync identity review\nServer sync (Notes, Chat and Personal "
+                        "Context) stays off after a restore, because the restored "
+                        "sync state would act as the device the backup came from. "
+                        "Approving clears that identity for every server profile and "
+                        "approves server sync. Then prepare sync again: "
+                        + _PREPARE_SYNC_STEP
+                        + ", which registers this device as a new one and downloads "
+                        "again. Changes queued but never sent are dropped from the "
+                        "queue. It clears:\n"
+                        + "\n".join(
+                            f"• {label}: {counts.get(key, 0)}"
+                            for key, label in _SYNC_IDENTITY_COUNTS
+                        ),
+                        id="backup-sync-identity-review",
+                        markup=False,
+                    )
+                )
+                widgets.append(
+                    Button(
+                        "Clear sync identity and approve sync",
+                        id="backup-approve-sync-identity",
+                        classes="backup-restore-screen-button",
+                    )
+                )
             widgets.append(
                 Button(
                     "Recovered media details",
@@ -905,7 +1103,7 @@ class BackupRestoreScreen(Screen):
                     setup = (
                         "Needs setup\nReview these features in their settings before enabling them:\n"
                         + "\n".join(
-                            "• " + owner.replace(".", " / ").replace("_", " ")
+                            "• " + owner_label(owner)
                             for owner in entry["pending_owners"]
                         )
                     )
@@ -950,6 +1148,107 @@ class BackupRestoreScreen(Screen):
                 )
         await listing.mount(*widgets)
 
+    @on(Button.Pressed, "#backup-approve-config")
+    def _approve_config(self, event):
+        event.button.disabled = True
+        self._run_config_approval(self.app, self._revision, event.button.name)
+
+    @work(exclusive=True, thread=True, group="backup-config-review")
+    def _run_config_approval(self, app, revision, generation):
+        try:
+            self.service.approve_config(generation)
+            message = (
+                "Settings approved. Workspace change tracking can run now; "
+                "model-catalog auto-refresh runs from the next start. Server sync stays off."
+            )
+        except (OSError, ValueError, RuntimeError) as error:
+            if str(error) == "config_review_changed":
+                message = "Settings review unavailable: the current profile changed. Review it again."
+            else:
+                code = self.service.issue_code(error)
+                message = f"Settings review unavailable: {self.service.issue_message(code)} ({code})"
+        self._deliver(app, self._config_approval_done, revision, message)
+
+    @on(Button.Pressed, "#backup-approve-speech")
+    def _approve_speech(self, event):
+        event.button.disabled = True
+        self._run_speech_approval(self.app, self._revision, event.button.name)
+
+    @work(exclusive=True, thread=True, group="backup-speech-review")
+    def _run_speech_approval(self, app, revision, generation):
+        self._owner_approval(
+            app,
+            revision,
+            lambda: self.service.approve_speech(generation),
+            "Speech review",
+            "speech_review_changed",
+            "Voices approved. Speech starts from the next start once the "
+            "settings and model files are approved too.",
+        )
+
+    @on(Button.Pressed, "#backup-approve-models")
+    def _approve_models(self, event):
+        event.button.disabled = True
+        self._run_models_approval(self.app, self._revision, event.button.name)
+
+    @work(exclusive=True, thread=True, group="backup-models-review")
+    def _run_models_approval(self, app, revision, generation):
+        self._owner_approval(
+            app,
+            revision,
+            lambda: self.service.approve_models(generation),
+            "Model files review",
+            "models_review_changed",
+            "Model files approved. Speech starts from the next start once its "
+            "other reviews are approved too.",
+        )
+
+    def _owner_approval(self, app, revision, approve, label, changed, done):
+        """Run one Restored profiles owner review on its worker thread."""
+        try:
+            approve()
+            message = done
+        except (OSError, ValueError, RuntimeError) as error:
+            if str(error) == changed:
+                message = f"{label} unavailable: the current profile changed. Review it again."
+            else:
+                code = self.service.issue_code(error)
+                message = f"{label} unavailable: {self.service.issue_message(code)} ({code})"
+        self._deliver(app, self._config_approval_done, revision, message)
+
+    @on(Button.Pressed, "#backup-approve-sync-identity")
+    def _approve_sync_identity(self, event):
+        if self._sync_identity_shown is None:
+            return
+        event.button.disabled = True
+        self._run_sync_identity_approval(
+            self.app, self._revision, dict(self._sync_identity_shown)
+        )
+
+    @work(exclusive=True, thread=True, group="backup-sync-identity-review")
+    def _run_sync_identity_approval(self, app, revision, shown):
+        try:
+            self.service.approve_sync_identity(shown)
+            message = (
+                "Sync identity cleared and server sync approved. Prepare sync again: "
+                + _PREPARE_SYNC_STEP
+                + "; it registers this device as a new one."
+            )
+        except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
+            code = self.service.issue_code(error)
+            message = f"Sync identity review unavailable: {self.service.issue_message(code)} ({code})"
+        self._deliver(app, self._config_approval_done, revision, message)
+
+    def _config_approval_done(self, revision, message):
+        if (
+            not self.is_mounted
+            or self._mode != "profiles"
+            or revision != self._revision
+        ):
+            return
+        self.query_one("#backup-message", Static).update(message)
+        self._refresh_list(self.app, revision, "profiles")
+
     @on(Button.Pressed, ".backup-review-delete")
     def _review_delete(self, event):
         self._delete_copy_id = event.button.name
@@ -980,7 +1279,7 @@ class BackupRestoreScreen(Screen):
             return
         if self._rollback_copy_id is None:
             return
-        target = Path(self._input("backup-later-target")).expanduser()
+        target = typed_path(self._input("backup-later-target"))
         password = self._input("backup-copy-password")
         if not target.is_absolute() or not password:
             self.query_one("#backup-message", Static).update(
@@ -1290,6 +1589,8 @@ class BackupRestoreScreen(Screen):
     def _invalidate(self):
         self._revision += 1
         self._preview = self._reviewed = None
+        self._fetch_removal = ()
+        self.query_one("#backup-remove-plugin-downloads", Button).display = False
         self._backup_availability = None
         self.query_one("#backup-create", Button).disabled = True
         self._restore_plan = None
@@ -1301,6 +1602,11 @@ class BackupRestoreScreen(Screen):
         self._rollback_availability = None
         self.query_one("#backup-later-start", Button).disabled = True
         self.query_one("#backup-later-confirm", Checkbox).value = False
+        if self._mode == "create":
+            # TASK-34100.16: every path that voids the review disables Create
+            # (form edits, both pickers, a credential review), so the reason
+            # is set here once; Review and Create overwrite it afterwards.
+            self.query_one("#backup-message", Static).update(CREATE_NEEDS_REVIEW)
 
     @on(Input.Changed)
     @on(Checkbox.Changed)
@@ -1324,6 +1630,8 @@ class BackupRestoreScreen(Screen):
             self._sync_replacement_host()
             if event.control.id == "backup-source":
                 self._clear_inspection(dismiss_current=True)
+                # TASK-34100.16 review: a pre-check message named the old path.
+                self.query_one("#backup-message", Static).update("")
             if event.control.id == "backup-later-target":
                 self._forget_later_credential_review()
             control = event.control
@@ -1343,6 +1651,8 @@ class BackupRestoreScreen(Screen):
 
     def _forget_safety_scope(self):
         self._safety_scope_seen = ()
+        # TASK-40309: reviewed fetch-folder members to delete before planning.
+        self._fetch_removal = ()
         self.query_one("#backup-safety-scope").display = False
         for box in self.query(".backup-safety-member"):
             box.value = False
@@ -1350,7 +1660,7 @@ class BackupRestoreScreen(Screen):
 
     def _later_selection(self):
         return self._rollback_copy_id, str(
-            Path(self._input("backup-later-target")).expanduser()
+            typed_path(self._input("backup-later-target"))
         )
 
     def _forget_later_credential_review(self):
@@ -1391,7 +1701,7 @@ class BackupRestoreScreen(Screen):
                     "Choose at least one data group, or select Everything."
                 )
             self._validate_password(options)
-            destination = Path(self._input("backup-destination")).expanduser()
+            destination = typed_path(self._input("backup-destination"))
             if not destination.is_absolute() or (
                 not self.config_paths and not self.include_known_profiles
             ):
@@ -1494,19 +1804,42 @@ class BackupRestoreScreen(Screen):
             rows.append(
                 "Supported credential coverage is checked during capture. Any unavailable scopes require a new explicit review."
             )
+        elif any(
+            item.owner == "personal_context.repository" and item.status == "included"
+            for item in preview.items
+        ):
+            rows.append(self.service.issue_message("personal_context_backup_key_excluded"))
         rows.extend(
             f"{item.owner}: {item.status}" + (f" — {item.path}" if item.path else "")
             for item in preview.items
         )
-        rows.extend(preview.issues)
-        self.query_one("#backup-coverage", Static).update("\n".join(rows))
-        self.query_one("#backup-create", Button).disabled = (
-            not (details["complete"] or reviewed[2]["allow_partial"])
-            or not all(row["sufficient"] for row in details["capacity"])
-            or not available
+        rows.extend(
+            # TASK-40132/40134: refused live plugins and a Personal Context first
+            # link in flight say why and what to do.
+            f"{issue}: {self.service.issue_message(issue)}"
+            if issue
+            in {"plugin_writers_active", "personal_context_first_link_in_progress"}
+            else issue
+            for issue in preview.issues
         )
+        self.query_one("#backup-coverage", Static).update("\n".join(rows))
+        blocked = create_unavailable_reason(
+            complete=details["complete"],
+            allow_partial=reviewed[2]["allow_partial"],
+            capacity=details["capacity"],
+            available=available,
+            unavailable_message=(
+                ""
+                if available
+                else self.service.issue_message(reason) + f" ({reason})"
+            ),
+            destination=reviewed[1],
+        )
+        self.query_one("#backup-create", Button).disabled = blocked is not None
+        # TASK-34100.16: a disabled Create says why on the line above it.
         self.query_one("#backup-message", Static).update(
-            "Review the displayed coverage. Backup pauses writers for capture, then resumes them before packaging."
+            blocked
+            or "Review the displayed coverage. Backup pauses writers for capture, then resumes them before packaging."
         )
 
     @on(Button.Pressed, "#backup-create")
@@ -1541,6 +1874,9 @@ class BackupRestoreScreen(Screen):
             return
         approved_scope = self._preview.scope_digest
         self._invalidate()
+        # TASK-34100.16 review: pressing Create voids the review, so say how
+        # Create comes back (true through the run and after it ends).
+        self.query_one("#backup-message", Static).update(CREATE_STARTED)
         self._clear_passwords()
         self._start_backup_operation(
             self.app,
@@ -1591,13 +1927,26 @@ class BackupRestoreScreen(Screen):
                 None,
             )
 
+    @on(Input.Submitted, "#backup-source")
+    def _submit_source(self):
+        """Enter in the archive field inspects it, like the Inspect button."""
+        if self._mode == "inspect":
+            self._inspect()
+
     @on(Button.Pressed, "#backup-inspect")
     def _inspect(self):
-        source = Path(self._input("backup-source")).expanduser()
+        source = typed_path(self._input("backup-source"))
         if not source.is_absolute():
             self.query_one("#backup-message", Static).update(
                 "Choose a full archive path."
             )
+            return
+        problem = archive_source_problem(source)
+        if problem is not None:
+            # A config.toml or a folder: say what it is instead of letting
+            # the archive reader fail as backup_operation_failed.
+            self.query_one("#backup-message", Static).update(problem)
+            self._clear_passwords()
             return
         password = self._input("backup-inspect-password")
         try:
@@ -1700,7 +2049,12 @@ class BackupRestoreScreen(Screen):
                 self._restore_review_codes_seen = codes
                 self.run_worker(
                     self._show_restore_credential_review(
-                        current["operation_id"], codes
+                        current["operation_id"],
+                        codes,
+                        installs_keys=current.get("result", {}).get(
+                            "personal_context_keys_installed"
+                        )
+                        is True,
                     ),
                     exclusive=True,
                     group="restore-credential-review",
@@ -1755,15 +2109,18 @@ class BackupRestoreScreen(Screen):
             )
         )
         for code in codes:
+            label = "Acknowledge omission: " + code
+            if code.startswith("credential_personal_context_link_keys_excluded:"):
+                label += " — " + self.service.issue_message(code.split(":", 1)[0])
             await area.mount(
                 Checkbox(
-                    Text("Acknowledge omission: " + code),
-                    name=code,
-                    classes="backup-acknowledge-credential",
+                    Text(label), name=code, classes="backup-acknowledge-credential"
                 )
             )
 
-    async def _show_restore_credential_review(self, operation, codes):
+    async def _show_restore_credential_review(
+        self, operation, codes, *, installs_keys=False
+    ):
         if (
             operation != self._requested_restore_operation
             or codes != self._restore_review_codes_seen
@@ -1779,9 +2136,21 @@ class BackupRestoreScreen(Screen):
             return
         area.display = True
         retention = codes == (_RETAINED_CREDENTIAL_REVIEW,)
+        # TASK-41124: the only retained credential is a key this restore installs.
+        installs_keys = retention and installs_keys
+        locked = all(code.startswith(_PERSONAL_CONTEXT_LOCKED) for code in codes)
         await area.mount(
             Static(
-                "Some incoming credentials need manual recovery and will remain in the encrypted archive. "
+                # TASK-40136: told before anything is written.
+                "Personal Context will be restored but stay locked. Nothing has been "
+                "written yet. Acknowledge each case, then review restore again."
+                if locked
+                else "This restore installs Personal Context's key itself; a copy also "
+                "stays in the encrypted archive. No replacement was published. "
+                "Accept encrypted retention, enter a new rollback password, "
+                "and review restore again."
+                if installs_keys
+                else "Some incoming credentials need manual recovery and will remain in the encrypted archive. "
                 "No replacement was published. Accept encrypted retention, enter a new rollback password, "
                 "and review restore again."
                 if retention
@@ -1793,7 +2162,14 @@ class BackupRestoreScreen(Screen):
             *(
                 Checkbox(
                     Text(
-                        "Accept encrypted manual retention"
+                        "Acknowledge: "
+                        + self.service.issue_message(
+                            code.removeprefix("credential_").split(":profile:", 1)[0]
+                        )
+                        if locked
+                        else "Accept encrypted retention"
+                        if installs_keys
+                        else "Accept encrypted manual retention"
                         if retention
                         else "Acknowledge safety-copy omission: " + code
                     ),
@@ -2001,7 +2377,7 @@ class BackupRestoreScreen(Screen):
             for index, group in enumerate(self._inspection_summary["dependency_groups"])
             if self.query_one(f"#backup-inert-group-{index}", Checkbox).value
         )
-        destination = Path(self._input("backup-inert-destination")).expanduser()
+        destination = typed_path(self._input("backup-inert-destination"))
         if not groups or not destination.is_absolute():
             self.query_one("#backup-inert-preview", Static).update(
                 "Select at least one group and a new absolute directory."
@@ -2090,7 +2466,7 @@ class BackupRestoreScreen(Screen):
                 continue
             if mode == "replace" and slot["kind"] == "profile_base":
                 continue
-            path = Path(self._input(f"backup-root-{index}")).expanduser()
+            path = typed_path(self._input(f"backup-root-{index}"))
             if not path.is_absolute():
                 self.query_one("#backup-message", Static).update(
                     "Choose an absolute local directory for every destination."
@@ -2113,7 +2489,7 @@ class BackupRestoreScreen(Screen):
         if mode == "replace":
             for index, profile in enumerate(self._inspection_summary["profile_ids"]):
                 identifier = "backup-target-config" + (f"-{index}" if index else "")
-                path = Path(self._input(identifier)).expanduser()
+                path = typed_path(self._input(identifier))
                 if not path.is_absolute():
                     self.query_one("#backup-message", Static).update(
                         "Choose the existing local profile configuration to replace."
@@ -2132,7 +2508,7 @@ class BackupRestoreScreen(Screen):
         }
         setup_parent = None
         if mode == "replace" and self._restore_setup_required():
-            setup_parent = Path(self._input("backup-setup-parent")).expanduser()
+            setup_parent = typed_path(self._input("backup-setup-parent"))
             if not setup_parent.is_absolute():
                 self.query_one("#backup-message", Static).update(
                     self.service.issue_message("restore_setup_parent_required")
@@ -2142,7 +2518,7 @@ class BackupRestoreScreen(Screen):
         acknowledged = tuple(
             box.name
             for box in self.query(".backup-acknowledge-restore-credential")
-            if mode == "replace"
+            if (mode == "replace" or box.name.startswith(_PERSONAL_CONTEXT_LOCKED))
             and box.value
             and box.name in self._restore_review_codes_seen
         )
@@ -2188,6 +2564,8 @@ class BackupRestoreScreen(Screen):
         data_groups=None,
         displayed_groups=None,
     ):
+        from tldw_chatbook.Plugins.backup import FetchRemovalRequired
+
         try:
             inventory = (
                 None
@@ -2225,12 +2603,67 @@ class BackupRestoreScreen(Screen):
                 if plan.mode == "replace"
                 else None
             )
+        except FetchRemovalRequired as error:
+            self._deliver(app, self._fetch_removal_ready, revision, error.members)
         except (OSError, ValueError, RuntimeError) as error:
             self._deliver(
                 app, self._restore_ready, revision, None, self.service.issue_code(error)
             )
         else:
             self._deliver(app, self._restore_ready, revision, plan, None, availability)
+
+    def _fetch_removal_ready(self, revision, members):
+        """List newer plugin download folders and what removing them deletes."""
+        from tldw_chatbook.Plugins.backup import fetch_removal_review
+
+        if not self.is_mounted or revision != self._revision:
+            return
+        self._restore_plan = None
+        self._fetch_removal = tuple(members)
+        self.query_one("#backup-restore-preview", Static).update(
+            fetch_removal_review(self._fetch_removal, "Remove newer plugin downloads")
+        )
+        self.query_one("#backup-start-restore", Button).disabled = True
+        button = self.query_one("#backup-remove-plugin-downloads", Button)
+        button.display = True
+        button.disabled = False
+        # Focus stays where it was: a second Enter must not delete before the
+        # copy above is read (TASK-40309 review r14plg-rev1).
+
+    @on(Button.Pressed, "#backup-remove-plugin-downloads")
+    def _remove_plugin_downloads(self):
+        if not self._fetch_removal:
+            return
+        self.query_one("#backup-remove-plugin-downloads", Button).disabled = True
+        self._run_fetch_removal(self.app, self._revision, self._fetch_removal)
+
+    @work(exclusive=True, thread=True, group="backup-plugin-download-removal")
+    def _run_fetch_removal(self, app, revision, members):
+        from tldw_chatbook.Plugins.backup import remove_fetch_members
+
+        try:
+            remove_fetch_members(members)
+        except (OSError, ValueError) as error:
+            self._deliver(
+                app, self._fetch_removal_done, revision, self.service.issue_code(error)
+            )
+        else:
+            self._deliver(app, self._fetch_removal_done, revision, None)
+
+    def _fetch_removal_done(self, revision, issue):
+        if not self.is_mounted or revision != self._revision:
+            return
+        button = self.query_one("#backup-remove-plugin-downloads", Button)
+        if issue is not None:
+            button.disabled = False
+            self.query_one("#backup-restore-preview", Static).update(
+                "Removal refused: " + self.service.issue_message(issue) + f" ({issue})"
+            )
+            return
+        self.query_one("#backup-message", Static).update(
+            "Newer plugin downloads removed. Reviewing restore again."
+        )
+        self._review_restore()
 
     def _restore_requirements_ready(self, revision, requirements):
         """Show target-linked groups in the existing form before a new review."""
@@ -2344,7 +2777,15 @@ class BackupRestoreScreen(Screen):
             ("Preserve", plan.preserve),
         ):
             rows.extend(f"{label}: {key} → {path}" for key, path in entries)
-        rows.extend(f"Issue: {issue}" for issue in plan.issues)
+        rows.extend(
+            f"Issue: {issue}"
+            + (
+                f" — {self.service.issue_message(issue.split(':profile:', 1)[0])}"
+                if issue.startswith("personal_context_")
+                else ""
+            )
+            for issue in plan.issues
+        )
         rows.extend(
             f"Additional safety-copy source: {key}" for key in plan.safety_scope
         )
@@ -2579,14 +3020,14 @@ class BackupRestoreScreen(Screen):
         target = self._input("backup-target-config").strip()
         if not target and self.config_paths:
             target = str(self.config_paths[0])
-        target = Path(target).expanduser()
+        target = typed_path(target)
         if not target.is_absolute():
             self.query_one("#backup-message", Static).update(
                 "Choose the existing local configuration before continuing."
             )
             return
         source = self._input("backup-source").strip()
-        archive = Path(source).expanduser() if source else None
+        archive = typed_path(source) if source else None
         self._clear_passwords()
         self.app.request_recovery_restart(archive, target)
 
@@ -2594,7 +3035,7 @@ class BackupRestoreScreen(Screen):
     def _restart_for_rollback(self):
         if not self._requires_recovery_restart():
             return
-        target = Path(self._input("backup-later-target").strip()).expanduser()
+        target = typed_path(self._input("backup-later-target").strip())
         if not target.is_absolute():
             self.query_one("#backup-message", Static).update(
                 "Choose the existing local configuration before continuing."

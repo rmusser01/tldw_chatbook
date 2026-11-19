@@ -54,7 +54,7 @@ class SkillEvalDetail(Widget):
     per dimension, layer statistics, findings with remediation, warnings,
     artifact count."""
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     SkillEvalDetail { padding: 1; }
     """
 

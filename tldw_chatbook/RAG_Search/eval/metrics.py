@@ -259,8 +259,7 @@ def evaluate_retrieval_batch(
         }
 
     metrics_list = [
-        evaluate_retrieval(retrieved, relevant, k)
-        for retrieved, relevant in results
+        evaluate_retrieval(retrieved, relevant, k) for retrieved, relevant in results
     ]
 
     n = len(metrics_list)

@@ -14,6 +14,7 @@ the duration of a harness test. `Tests/conftest.py` repoints `HOME` and
 into a directory that is empty by construction. Left alone, every harness
 run would re-download the model into a temp dir and delete it afterwards.
 """
+
 from __future__ import annotations
 
 import os

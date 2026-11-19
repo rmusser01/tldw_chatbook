@@ -344,7 +344,11 @@ def guarded(name,*args,**kwargs):
 builtins.__import__=guarded
 def no_database(*args,**kwargs):raise AssertionError('database opened')
 sqlite3.connect=no_database
-from tldw_chatbook.Backup_Recovery import bootstrap
+# Import admission (via service_storage) before bootstrap._registry is replaced
+# below: since 3e618d7119 it snapshots bootstrap's readers and their modules'
+# __file__ at import, and a reader defined in this -c script's __main__ has none
+# (TASK-41125). Extraction imports it anyway; no forbidden module is involved.
+from tldw_chatbook.Backup_Recovery import bootstrap, service_storage
 from tldw_chatbook.Backup_Recovery.inert_extraction import preview_inert_extraction,extract_inert
 from tldw_chatbook.Backup_Recovery.archive_reader import acquire
 from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
@@ -452,3 +456,101 @@ def test_overlapping_groups_copy_each_member_once_and_report_both(tmp_path):
     report = json.loads(result.report_path.read_text())
     assert len(report["files"]) == 2 and len(report["groups"]) == 2
     assert len(list((result.destination / "payload").iterdir())) == 2
+
+
+def _credential_archive(tmp_path):
+    """One unencrypted archive whose dependency groups put credential material
+    alone, with the repository, and the repository alone."""
+    key = b'{"records": [{"kind": "personal_context", "value": "profile-key-v1:AAAA"}]}'
+    payloads = {"credentials": key, "repository": b"ciphertext rows"}
+    doc = manifest()
+    doc["owners"] = [
+        {"owner_id": "personal_context.repository", "schema_version": 9, "capabilities": []},
+        {"owner_id": "recovery.credentials", "schema_version": 1, "capabilities": []},
+    ]
+    doc["files"] = [
+        {
+            "logical_id": name,
+            "root_id": "root",
+            "parent_id": "root",
+            "relative_path": name,
+            "owner_id": "recovery.credentials"
+            if name == "credentials"
+            else "personal_context.repository",
+            "payload": "payload/" + name,
+            "size": len(value),
+            "sha256": hashlib.sha256(value).hexdigest(),
+        }
+        for name, value in payloads.items()
+    ]
+    doc["dependency_groups"] = [
+        {"group_id": "credentials", "members": ["credentials"], "complete": True},
+        {
+            "group_id": "credentials_and_repository",
+            "members": ["credentials", "repository"],
+            "complete": True,
+        },
+        {"group_id": "repository", "members": ["repository"], "complete": True},
+    ]
+    source = tmp_path / "archive.zip"
+    with zipfile.ZipFile(source, "w") as output:
+        output.writestr("manifest.json", json.dumps(doc))
+        for name, value in payloads.items():
+            output.writestr("payload/" + name, value)
+    return source, key
+
+
+@pytest.mark.parametrize(
+    "groups", [("credentials",), ("credentials_and_repository",), ("repository",)]
+)
+def test_manual_extraction_never_writes_credential_material(tmp_path, groups):
+    """TASK-40134 AC#6: credential material (where the Personal Context profile
+    key travels) is never offered for, nor written by, manual extraction."""
+    from tldw_chatbook.Backup_Recovery.inert_extraction import (
+        extract_inert,
+        preview_inert_extraction,
+    )
+
+    source, key = _credential_archive(tmp_path)
+    archive = archive_reader.acquire(
+        source, tmp_path / "acquisition", ArchiveLimits(), None, Event()
+    )
+    destination = tmp_path / "manual"
+    if groups != ("repository",):
+        with pytest.raises(ValueError, match="extraction_group_unknown"):
+            preview_inert_extraction(
+                archive,
+                group_ids=groups,
+                destination=destination,
+                limits=ArchiveLimits(),
+                cancel=Event(),
+            )
+        assert not destination.exists()
+        return
+    plan = preview_inert_extraction(
+        archive,
+        group_ids=groups,
+        destination=destination,
+        limits=ArchiveLimits(),
+        cancel=Event(),
+    )
+    assert [row.logical_id for row in plan.files] == ["repository"]
+    result = extract_inert(archive, plan, cancel=Event())
+    written = [path for path in result.destination.rglob("*") if path.is_file()]
+    assert all(key not in path.read_bytes() for path in written)
+
+
+def test_inspection_summary_never_offers_credential_groups(tmp_path):
+    """Review r14pca-rev1: the manual-extraction picker (the summary's dependency
+    groups) lists no group holding credential material."""
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    source, _key = _credential_archive(tmp_path)
+    service = RecoveryService(tmp_path / "control")
+    try:
+        inspection = service.start_inspection(source, password=None)
+        assert service.wait(inspection)["state"] == "succeeded"
+        groups = [row["group_id"] for row in service.summary(inspection)["dependency_groups"]]
+    finally:
+        service.close()
+    assert groups == ["repository"]

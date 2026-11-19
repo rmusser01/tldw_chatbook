@@ -1,0 +1,161 @@
+{
+  "audited_commit": "1ffc1ef0d63a1a1d594c7c8dcae7f216f59493d5",
+  "reviewed_pr_head": "5a5c59e991199e007443ba2fe7998058626dc260",
+  "merged_tree_identical_to_reviewed_head": true,
+  "book": {
+    "title": "Creating TUI Applications with Textual and Python",
+    "author": "Michael Driscoll",
+    "edition": "2025-07-25",
+    "pdf_pages": 455,
+    "sha256": "798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6"
+  },
+  "textual_version": "8.2.8",
+  "automation_save": {
+    "physical_create_calls": 2,
+    "row_count": 2,
+    "ids": [
+      "cc018099-a9e2-46fa-a50b-5b52813455f1",
+      "c28e3198-8624-46b0-a452-3f3d73c5f49f"
+    ],
+    "names": [
+      "Daily standup digest",
+      "Daily standup digest"
+    ],
+    "result": "saved"
+  },
+  "results_overlap": {
+    "states": [
+      "unread",
+      "unread",
+      "dismissed"
+    ],
+    "get_calls": 2
+  },
+  "settings_refresh": {
+    "before": {
+      "paste_collapse_threshold": 120
+    },
+    "after_first_refresh": {
+      "paste_collapse_threshold": 120,
+      "agent_max_total_tokens": 1001,
+      "agent_max_wall_seconds": 201.0,
+      "agent_max_tool_call_seconds": 201.0,
+      "agent_max_model_turns": 1001,
+      "agent_max_steps": 1001,
+      "tool_result_display_chars": 200,
+      "sidechat_model": "model-b",
+      "sidechat_prompt_template": "Explain {selection}"
+    },
+    "dirty_keys": [
+      "paste_collapse_threshold"
+    ],
+    "expected_latest_backing": {
+      "agent_max_total_tokens": 1002,
+      "agent_max_wall_seconds": 202.0,
+      "agent_max_tool_call_seconds": 202.0,
+      "agent_max_model_turns": 1002,
+      "agent_max_steps": 1002,
+      "tool_result_display_chars": 300,
+      "sidechat_model": "model-c",
+      "sidechat_prompt_template": "Translate {selection}"
+    },
+    "displayed_after_second_refresh": {
+      "agent_max_total_tokens": "1001",
+      "agent_max_wall_seconds": "201.0",
+      "agent_max_tool_call_seconds": "201.0",
+      "agent_max_model_turns": "1001",
+      "agent_max_steps": "1001",
+      "tool_result_display_chars": "200",
+      "sidechat_model": "model-b",
+      "sidechat_prompt_template": "Explain {selection}"
+    }
+  },
+  "rules_refresh": {
+    "harness": "mounted real RulesPane; Input.value assigned before changed rules snapshot",
+    "before_name": "Unsaved audit rule",
+    "after_name": "",
+    "same_input": false,
+    "old_attached": false,
+    "settled_pre_refresh_focus_asserted": false,
+    "full_screen_section_return": "static trace only"
+  },
+  "evals_scope": {
+    "harness": "actual extracted hint method and ResultsGrid bindings on profile-free Textual widgets",
+    "advertised": [
+      "l",
+      "b",
+      "s",
+      "e"
+    ],
+    "lens_calls_grid_focus": 1,
+    "lens_calls_after_rail_focus": 1,
+    "rail_binding_chain_contains_grid": false,
+    "full_evals_journey_run": false
+  },
+  "lab_hints": {
+    "harness": "actual extracted on_descendant_focus method",
+    "idle_hints": [
+      "f6",
+      "f1",
+      "r",
+      "p",
+      "s"
+    ],
+    "busy_guarded_hints": [
+      "f6",
+      "f1",
+      "r",
+      "p",
+      "s"
+    ],
+    "full_preview_journey_run": false
+  },
+  "excluded_setup_attempts": [
+    "Settings scratch-path collection did not load Tests/conftest, imported default config and failed on unknown bootstrap_profile marker; not product evidence. Qualifying retry used Tests/UI and the existing private-profile helper.",
+    "First Save probe attempted a second click during normal Button active debounce; not duplicate-write evidence. The corrected probe observed active-class removal before clicking."
+  ],
+  "tasks": [
+    {
+      "id": 35865,
+      "title": "Prevent repeated automation Save from creating duplicate definitions",
+      "priority": "high",
+      "path": "backlog/tasks/task-35865 - Prevent-repeated-automation-Save-from-creating-duplicate-definitions.md",
+      "acceptance_criteria": 5
+    },
+    {
+      "id": 35866,
+      "title": "Keep later Results actions from cancelling an admitted review batch",
+      "priority": "medium",
+      "path": "backlog/tasks/task-35866 - Keep-later-Results-actions-from-cancelling-an-admitted-review-batch.md",
+      "acceptance_criteria": 5
+    },
+    {
+      "id": 35867,
+      "title": "Keep remaining Console input refreshes out of user drafts",
+      "priority": "medium",
+      "path": "backlog/tasks/task-35867 - Keep-remaining-Console-input-refreshes-out-of-user-drafts.md",
+      "acceptance_criteria": 5
+    },
+    {
+      "id": 35868,
+      "title": "Preserve unsaved Watchlists rule fields across refresh and section return",
+      "priority": "medium",
+      "path": "backlog/tasks/task-35868 - Preserve-unsaved-Watchlists-rule-fields-across-refresh-and-section-return.md",
+      "acceptance_criteria": 5
+    },
+    {
+      "id": 35869,
+      "title": "Make Evals grid footer and F1 help follow active keyboard scope",
+      "priority": "medium",
+      "path": "backlog/tasks/task-35869 - Make-Evals-grid-footer-and-F1-help-follow-active-keyboard-scope.md",
+      "acceptance_criteria": 5
+    },
+    {
+      "id": 35870,
+      "title": "Keep Chunking Lab shortcut hints honest during busy and editing states",
+      "priority": "low",
+      "path": "backlog/tasks/task-35870 - Keep-Chunking-Lab-shortcut-hints-honest-during-busy-and-editing-states.md",
+      "acceptance_criteria": 4
+    }
+  ]
+}

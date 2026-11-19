@@ -1,0 +1,160 @@
+{
+  "audited_dev": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+  "files": {
+    "Tests/Research/test_local_research_engine.py": {
+      "blob": "8203534255a64c9dd2643a3d478545e777746a6d",
+      "git_blob_sha256": "e788a8ba836f76c66998ab007080f7f7cddd92a16aa481ea67f07c26a1e7938a",
+      "working_sha256": "2698fa7699d5e2ce62b7fcf839369f7350378d548cea78d09bd0dbee844261ad"
+    },
+    "Tests/UI/app_factory.py": {
+      "blob": "2745d982480e35a4c4cccd38019b112941e8d099",
+      "git_blob_sha256": "93be69467a5e59abfe4a5f3c55d03273479924dc9a1331ba44da363120e70a51",
+      "working_sha256": "32153eb1d71fdf430ff22dcb17ff23ff3f52ed0dc4c30fb8e2177dd94ddbd3e0"
+    },
+    "Tests/UI/roleplay_frame_harness.py": {
+      "blob": "d8bdf0cfd7a6c737ace4c473ff6d8623e396d9e0",
+      "git_blob_sha256": "635c436aab41f3e0bbe8a1ece0a27967b4b0a7fde7e6a8a69181d06f2a519b7e",
+      "working_sha256": "baff981ef4d1f1078a5cdbb4b1fa97d93e695f2d3f9c11f090e58a30ebd25fdf"
+    },
+    "Tests/UI/test_destination_shells.py": {
+      "blob": "0b9282f845aa4475ab1f1c7e70d935d5f39e55d2",
+      "git_blob_sha256": "112dfa894dfabc32f20c720cf6a2946f4bb7b4ffdc50945b372c7724efc08adc",
+      "working_sha256": "9432cca4dfb81c4e0623e3d5b3f2f240c3ea589b8dd1ef0546e3faca15afb5f5"
+    },
+    "Tests/UI/test_study_quiz_start_responsiveness.py": {
+      "blob": "04df017b3a65c721a191530903666d8684af3d48",
+      "git_blob_sha256": "f862884c9aed4101b88093bb14ba97fecc2e00e320d09ce0444c274322630616",
+      "working_sha256": "71f980ed05bda3ff9bba7182f8c05a2f2cab063717451de722c3ac91657d98e9"
+    },
+    "Tests/private_profile.py": {
+      "blob": "1a2c2cc3cf0f33a96080e1c9fd6ccd80ae9f7401",
+      "git_blob_sha256": "a9df402fd0d91f7f9585e2ff278b419d22385fd7e3ce48e98a0f739a039341a6",
+      "working_sha256": "d96b69562e65becc18dd5c2ef76b521dcb624f151a870f3eaa12a240aeb96f44"
+    },
+    "tldw_chatbook/Character_Chat/world_book_manager.py": {
+      "blob": "7c6ef8ca121921f4d45a244e8d1c6a90e427b9d9",
+      "git_blob_sha256": "ff4f4d06b74bf802fc0df0df5cdbcbeb1b4198ea05df0d4f76f4835868f9a17e",
+      "working_sha256": "4f83cbe2f34871a4fe6596e3357c1d7aa118dcdc8132a0a6a4354c29963cb22a"
+    },
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+      "blob": "a84189d26d91f3ff17d6e2f35ce5f44625239f36",
+      "git_blob_sha256": "8564e9ff217015cb9ab9ea941160ba34a5939f911cf2fbedb9ef362c9e0b7f7c",
+      "working_sha256": "c162bea37cfcf55503b9412a52479fb026c12ccdd434ac6e61379abc111f8a71"
+    },
+    "tldw_chatbook/Notifications/client_notifications_db.py": {
+      "blob": "7136dbef74efebb0e9131846b03c0473e4fd09e9",
+      "git_blob_sha256": "9b88a47c1adbab01f82008a11dc46d839384f7eacc543d4268cddeda2291e021",
+      "working_sha256": "6def2421d75e5d7d447d4d7a7126e24b6f4270546c7c6191eae334039458c164"
+    },
+    "tldw_chatbook/Research_Interop/local_research_engine.py": {
+      "blob": "8f51887ee56fab39b86ad9955845b68a44e3b5dd",
+      "git_blob_sha256": "ed67e71656001ec99ab3b1bebdd9ad5ad151a34ff64e80f40afd89caf739fb4b",
+      "working_sha256": "ae49b8c84aabf59b511bca9c69ac82f4e416a5014726e196d9bc2f7046f78dc9"
+    },
+    "tldw_chatbook/Research_Interop/local_research_service.py": {
+      "blob": "d6cdbabf5fcd0655714efe29177f59732618c60c",
+      "git_blob_sha256": "09944f554d073845d075fb023239af1e884e067376ef98778a2137e55c8710d3",
+      "working_sha256": "381c4eb27aeb1b82291bfc9e665f8b892fa3ea4c091dd042c765e4d58bf709a0"
+    },
+    "tldw_chatbook/Research_Interop/research_scope_service.py": {
+      "blob": "7fc37bbf79438bc6e8daef475fb66754138f2dcc",
+      "git_blob_sha256": "ac714801884118f4cf175ca997c9aecc73591b915677c61d77f3732e5c3a293a",
+      "working_sha256": "4975029167aade5e8bbbf376d6545d8bc4aae770372432e8a291ddbf35deaddb"
+    },
+    "tldw_chatbook/Study_Interop/local_quiz_service.py": {
+      "blob": "3038f7e7d30dd0553c910f2b464653912f6606bf",
+      "git_blob_sha256": "a5302d4b257a91028b39da4932b0c3b9ae49b00960b5652d2b0cc2f217c11546",
+      "working_sha256": "4dbd00816ff342831e09058ae4a7ee966ab61afb31557be5b47edcdb0ea2df64"
+    },
+    "tldw_chatbook/Study_Interop/quiz_scope_service.py": {
+      "blob": "cbb969cba0f9bf6d99a46742919205a2b807b687",
+      "git_blob_sha256": "78910df671ae8ccd23598ca48c7170fbd7f691c4425f8525c2fd5188e83103dc",
+      "working_sha256": "3332a64046415a1a1a7e3a4321ff1c82c19e643faa5b04fa83a9622a289c98c5"
+    },
+    "tldw_chatbook/Study_Interop/server_quiz_service.py": {
+      "blob": "c2f8a73721c46e4a6f184ced734a3a08c2d59378",
+      "git_blob_sha256": "d2e6f3b8f1ef0109e2ec85252c3bcb9d60a886bd3c28804a21784ff8ebf3a5d4",
+      "working_sha256": "7369a0159d610c626a72de411ea039884123ab8d1944e11801c91583a38ec7b2"
+    },
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": {
+      "blob": "66aca95c058e0d75456f10c5d7855e539b494bdf",
+      "git_blob_sha256": "34d9c5c1d0774ddb34a42b56ae4fcd2f9a4f9718925ec56aa9f4900639b4e785",
+      "working_sha256": "20bb48237ae5aa1b63807bed60cba59ffa642d4d622d5cbf7b7eea6845b3233e"
+    },
+    "tldw_chatbook/UI/Research_Window.py": {
+      "blob": "6b369965fe46e5d7479e725cd23a9ffdb988be91",
+      "git_blob_sha256": "7ace314a589149a6681d0a2e6e5f2beed53ff39a3d660c7dd07a23d978b57d75",
+      "working_sha256": "026a6af5fa30f11e659cacec8d8cca95a6ee5720e2d76ef0281d0074fe75c359"
+    },
+    "tldw_chatbook/UI/Screens/personas_screen.py": {
+      "blob": "83206073dd5b4a5458fdc333452f5aa62579da06",
+      "git_blob_sha256": "006854aaabd21795e5d5f5edaa7a65aa8c5af4f1a43a2ea6b952d0ee42ba4589",
+      "working_sha256": "f4d2eaa6942bc4ec571537aa990be52bf9bf1de85eac05639bcb92c55822810c"
+    },
+    "tldw_chatbook/UI/Screens/settings_screen.py": {
+      "blob": "d9acb03c17ab5872a180821636fcd1fd72f9c299",
+      "git_blob_sha256": "a372ca5568f9ec9bd30e420e0079be6ab3bb20566231eb5c2dbd0ad0183afaf4",
+      "working_sha256": "35108aedd4e7e906f3877d9597a419cd308299212fd6eda5805bb05135b13d76"
+    },
+    "tldw_chatbook/UI/Screens/study_screen.py": {
+      "blob": "a6427ae4d4b2860662d6be5070cd9fed6a377504",
+      "git_blob_sha256": "325028e63a018b763691dedceb627b89a2ac76d01290c8221cc8b4709059341c",
+      "working_sha256": "f86984a25ef972e3fba63d9578b14c7c4abcf71ecda141f1440f5ee0b520aaf7"
+    },
+    "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": {
+      "blob": "b7d0b2c9d54bcb595e5b7ff50bfab3d9692e10ff",
+      "git_blob_sha256": "4b09683110b4527a19cac18ad8cd3f64638af282b99b2b0c6c40437540aa7a87",
+      "working_sha256": "2f54d83f84d545db1434859b2611915013530f17b6e1e698ae6e07518c801bb4"
+    },
+    "tldw_chatbook/UI/Study_Modules/quizzes_handler.py": {
+      "blob": "abfb6d15e8caa61bc48c1253665ba2a6e88c6ea1",
+      "git_blob_sha256": "d4f2c273f29569e016d3007ccf7ac12f4add61cf55a256ef54c4354bd207e765",
+      "working_sha256": "84b5175f0140f4f03271189b611ebd22d1e57c138111fe801adfcb38fdf0460f"
+    },
+    "tldw_chatbook/UI/Study_Window.py": {
+      "blob": "a2b217ffcafee9d8839a6906a5c40911df266744",
+      "git_blob_sha256": "fd5ca1c23007b3a85f7a0add2576bbc50fe1f14826dd2d1f7635cedf45ea0977",
+      "working_sha256": "2e3ae3a7628f7e7a3eb93fb8f3ce01a38483069b271c17a7831fc81c13457b97"
+    },
+    "tldw_chatbook/UI/Subscription_Modules/notifications_inbox_controller.py": {
+      "blob": "02289e929889ec877bf8bbc734fda9d2a020ee66",
+      "git_blob_sha256": "29b85aa81ffb211eb7c779e42393908d8c9e4c347460e06ee7f3297d4350c79c",
+      "working_sha256": "6ea525191fa062842676886b019ba1ce6e232a65db8901e835418ab844d5828e"
+    },
+    "tldw_chatbook/UI/Watchlists_Modules/artifacts_pane.py": {
+      "blob": "e4c52a6039426829ef1b1df26a48d64bd0c377c8",
+      "git_blob_sha256": "d8533a7cca637c061ea951499209e712bfca52e4399e289317803de403b0ecec",
+      "working_sha256": "2328902a63d72e5a263c4618046e82bb191b7724e0c0f40c1e05501a5e4ceded"
+    },
+    "tldw_chatbook/UI/Watchlists_Modules/notifications_pane.py": {
+      "blob": "a49b54dab4c863f4c19aa7576361149a82edd262",
+      "git_blob_sha256": "99484f836db424b40714f57b07c6a19449ae736b85b5f40cf4068aac0b63dc93",
+      "working_sha256": "01e123c6c889653b11954ba0dd985189f120d4f780d6ef270c3703624bdb8087"
+    },
+    "tldw_chatbook/UI/Watchlists_Modules/runs_pane.py": {
+      "blob": "135e01e1fa9767246c2967f55e9430ee2d02eb87",
+      "git_blob_sha256": "08bd276c7dd7e68d8f915cf8270da2eaecd3bcc18cbec2f04c4f1efb92b66571",
+      "working_sha256": "beb1e92a1f07ce6032e9511de4aed51e038ee4ec07ac30682b0dbbc5726605c5"
+    },
+    "tldw_chatbook/UI/Watchlists_Modules/sources_pane.py": {
+      "blob": "7a034222b10bd928cb89b9b33e9395a31c15f547",
+      "git_blob_sha256": "622c125ae9cf6e8fe94ff8ba0e6f1f88a85cf8013d6f9c5c1e89f612b3ebd02b",
+      "working_sha256": "f11310ba93fce2628029b3c4a38e4a0fcac56cb1b7590266e095a84e693908a3"
+    },
+    "tldw_chatbook/Widgets/Persona_Widgets/personas_lore_detail.py": {
+      "blob": "bdfe1599a0745657c4dbd1ad03a134b0d60444a1",
+      "git_blob_sha256": "edd27f1e4cca6346919304801880fcb425bd8f546104ab7648defdadea47fc2f",
+      "working_sha256": "0394986834e470947ff0e2e5ab29339f855777ffea5cc335ada6b3ed49ebb8f1"
+    },
+    "tldw_chatbook/Widgets/recompose_capture_guard.py": {
+      "blob": "cc190abffc07b407af6f6ddde8f120d57d424366",
+      "git_blob_sha256": "19903ad55f48cbc4284f582207886ceafd0722cb2e773d4f0125ccdde518cac0",
+      "working_sha256": "a551a78f6e838ed4c0ca8e5b82faaefe61084fc66264a4376a9e8077a61e87d4"
+    },
+    "tldw_chatbook/css/tldw_cli_modular.tcss": {
+      "blob": "c041b2ca890d1a0df11ff94195718be20c0a3bbe",
+      "git_blob_sha256": "b110796c2a9041cc729b6c057daf10ca4347e744be252abfb037224dc272ac02",
+      "working_sha256": "a943e0e45f12eab98527ffc043e4aabd90e86c2ea96c2a47902c429bfc607b28"
+    }
+  }
+}

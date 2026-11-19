@@ -1,0 +1,209 @@
+[
+  {
+    "old_owner": "tldw_chatbook/Chat/console_chat_store.py",
+    "old_label": "Failed to persist Console roleplay message projection",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Chat/console_chat_store.py",
+      "Failed to persist planned Console roleplay message projection",
+      [
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "old_label": "fleet drain consumer raised",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Chat/console_agent_bridge.py",
+      "fleet settlement consumer raised",
+      [
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Chat/console_fleet_wake.py",
+    "old_label": "fleet wake drain intake failed",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Chat/console_fleet_wake.py",
+      "wake delivery failed",
+      [
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Chat/console_fleet_wake.py",
+    "old_label": "wake send gate raised; deferring",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Chat/console_fleet_wake.py",
+      "wake delivery failed",
+      [
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Chat/console_fleet_wake.py",
+    "old_label": "wake user-priority probe raised; deferring",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Chat/console_fleet_wake.py",
+      "wake delivery failed",
+      [
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Chat/console_fleet_wake.py",
+    "old_label": "wake delivery ledger stamp failed (exception_type=",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Chat/console_fleet_wake.py",
+      "wake pause could not be saved",
+      [
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Chat/console_fleet_wake.py",
+    "old_label": "wake delivery ledger stamp failed after dispose",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Chat/console_fleet_wake.py",
+      "wake recovery failed",
+      [
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Chat/console_fleet_wake.py",
+    "old_label": "wake mark listing failed",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Chat/console_fleet_wake.py",
+      "wake recovery failed",
+      [
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Chat/console_fleet_wake.py",
+    "old_label": "wake ledger read failed",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Chat/console_fleet_wake.py",
+      "wake recovery failed",
+      [
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "old_label": "Pending sidebar-state write failed",
+    "absent_on_frozen_dev": true,
+    "current": "_persist_sidebar_state_off_loop"
+  },
+  {
+    "old_owner": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "old_label": "MCP Tools-mode local master save failed",
+    "absent_on_frozen_dev": true,
+    "current": "_observe_local_master_save"
+  },
+  {
+    "old_owner": "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py",
+    "old_label": "MCP Tools-mode workspace root save failed",
+    "absent_on_frozen_dev": true,
+    "current": "_observe_workspace_root_save"
+  },
+  {
+    "old_owner": "tldw_chatbook/UI/Screens/settings_screen.py",
+    "old_label": "Failed to persist render_remote_images",
+    "absent_on_frozen_dev": true,
+    "current": "_persist_console_toggle"
+  },
+  {
+    "old_owner": "tldw_chatbook/Video_Generation/adapter_registry.py",
+    "old_label": "Failed to initialize video adapter",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Media_Generation/adapter_registry.py",
+      "Failed to initialize {} adapter for '{}' (error_type={})",
+      [
+        "self.modality",
+        "name",
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Video_Generation/adapter_registry.py",
+    "old_label": "Failed to resolve video adapter class",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Media_Generation/adapter_registry.py",
+      "Failed to resolve {} adapter class for '{}' (error_type={})",
+      [
+        "self.modality",
+        "name",
+        "type(exc).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Video_Generation/config.py",
+    "old_label": "unknown-key scan failed",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Media_Generation/config_machinery.py",
+      "{} unknown-key scan failed",
+      [
+        "tables.section_name",
+        "type(e).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/Video_Generation/config.py",
+    "old_label": "keyring lookup failed",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/Media_Generation/config_machinery.py",
+      "keyring lookup failed for {}/{}",
+      [
+        "tables.keyring_label",
+        "backend",
+        "type(e).__name__"
+      ]
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/app.py",
+    "old_label": "Generated CSS is stale during module entry; rebuilding",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/app_entry.py",
+      "Generated CSS is stale during module entry; rebuilding",
+      []
+    ]
+  },
+  {
+    "old_owner": "tldw_chatbook/app.py",
+    "old_label": "Generated CSS is stale during CLI entry; rebuilding",
+    "absent_on_frozen_dev": true,
+    "current": [
+      "tldw_chatbook/app_entry.py",
+      "Generated CSS is stale during CLI entry; rebuilding",
+      []
+    ]
+  }
+]

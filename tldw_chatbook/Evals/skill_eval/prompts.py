@@ -128,7 +128,7 @@ def selection_messages(prompt: str, subject: SkillSubject,
         'use. Reply ONLY: {"skill": "<name or null>", "reason": "<short>"}'
     )
     user = (
-        f"Available skills:\n<<<CATALOG_START>>>\n" + "\n".join(lines) +
+        "Available skills:\n<<<CATALOG_START>>>\n" + "\n".join(lines) +
         f"\n<<<CATALOG_END>>>\n\nUser request: {prompt}\n\nWhich skill, if any?"
     )
     return [{"role": "system", "content": system},

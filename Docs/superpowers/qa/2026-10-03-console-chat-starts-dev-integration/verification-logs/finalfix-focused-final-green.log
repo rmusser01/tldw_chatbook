@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+18.55s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+11.79s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]
+10.42s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+1.32s setup    Tests/Chat/test_console_chat_create_integration.py::test_primary_remembered_bridge_still_confirms_each_child_request
+
+(8 durations < 1s hidden.)
+4 passed in 46.79s

@@ -2,7 +2,7 @@
 
 ## What this screen is for
 
-The Prompts canvas stores Prompts and Recipes with a name, description,
+The Prompts canvas stores Prompts, Recipes, and literal Mix-ins with a name, description,
 keywords, author, and reusable System/User blocks. A Prompt can go directly to
 Console; a Recipe first becomes an unsaved Prompt copy for review. You can also
 apply saved Prompts from Console with `/prompt` and `/system`. For the rail,
@@ -15,6 +15,28 @@ Press **Ctrl+3** to open Library, then click **Prompts** in the rail's
 "Browse" section (the row shows a live count). **Ctrl+P** →
 "Tab Navigation: Switch to Library" works too. To jump straight into writing one, click
 **New prompt** under the rail's "Create" section.
+
+## Literal Mix-ins
+
+Choose **New mix-in** in the existing Prompts list. Enter a Name and one
+literal Instructions body, then choose **Before** or **After** and save.
+Braces, section headings and whitespace stay literal; there is no variable form.
+Author and Keywords remain available regardless of the view you last used for
+a Prompt or Recipe.
+The type selector filters **All types**, **Prompts**, **Recipes**, or **Mix-ins**
+and keeps the filtered count and pagination together with search and collection.
+
+For a saved, clean mix-in, **Enable in current chat** adds it to the current
+Console chat's choices. An existing choice is enabled in place. This changes
+future sends; it leaves the composer and System untouched. If no exact Console
+target is available, open Console once and retry. Changed chats, preferences or
+sources refuse the handoff. Sources without revision-qualified mix-in reads
+cannot enable mix-ins; the current server source does not support those reads.
+
+Editing a mix-in uses the same explicit save, version-conflict, Reload,
+Save as new, Discard changes and dirty Escape guards as other Library items.
+Library edits affect future sends; running and queued sends keep their captured
+instructions. Markdown/Chatbook export retains the literal definition.
 
 ## Layout tour
 
@@ -189,6 +211,28 @@ A prompt whose name already exists is always **skipped** — imports never
 overwrite or rename. A bad path shows "Could not find that file or
 folder."
 
+### Portable mix-in definitions
+
+Mix-ins retain their distinct type when exported or imported. Chatbook archives
+use Prompt record version 2 for mix-ins; existing Prompt and Recipe records stay
+at version 1. The definition preserves its exact stored JSON, literal body and
+Before/After placement. Imports create library content without enabling it in a
+chat or restoring chat selections.
+
+Mix-in Markdown uses a separate `# Chatbook mix-in` envelope containing one
+fenced JSON record. Keep this framing intact: unlike the classic Prompt sections,
+it preserves leading/trailing whitespace, braces and literal section headings.
+Malformed or unsupported records are refused before writing; they never become
+ordinary Prompts through a compatibility fallback. Older section-based readers
+cannot import this envelope as a Prompt.
+
+Server support is explicit. The source must advertise both the mix-in artifact
+type and schema 3 `text_mixin` kind for supported writes. This client's server
+API cannot yet provide coherent UUID/revision-qualified capture, so server
+mix-in capture remains unavailable even when CRUD is advertised. It never reads
+a similarly named local record. Required conditional updates are refused when
+the server mutation API cannot honor their version precondition.
+
 ### Bulk export with Chatbooks
 
 From the normal Prompts list, press **Export…** to open the existing **Export
@@ -288,7 +332,10 @@ until the write settles. A link that opens a prompt from somewhere else (a
 Search / RAG result's **Open**, or a deep link the screen reconciles on entry)
 is refused by the same unsaved edit, and names the one it did not open: "Can't
 open Prompt 7 — Save or Discard the open Prompt first." Nothing is queued: save
-or discard, then follow the link again. The save-status line reports the outcome:
+or discard, then follow the link again. Quitting with **Ctrl+Q** asks first,
+'Quit and discard unsaved changes to "<name>"?', with **Keep editing**
+selected; only **Discard and quit** exits without the edit. The save-status
+line reports the outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —
@@ -304,16 +351,18 @@ blocks in a new item.
 
 ### Retained history
 
-Saved local Prompts and Recipes include a collapsed **Retained history (…)**
-disclosure. Selecting an item loads only its exact retained count; opening the
-disclosure lazily loads the newest bounded page. Use **Load older versions** to
+Saved local Prompts, Recipes, and Mix-ins include a collapsed
+**Retained history (…)** disclosure. Selecting an item loads only its exact
+retained count; opening the disclosure lazily loads the newest bounded page.
+Use **Load older versions** to
 request another page. A failed count or page load offers **Retry** without
 changing the editor.
 
-From a clean saved Prompt, choose **More actions → History**. This closes the
-menu and reveals **Info** when you were in Basic; Advanced and Info keep their
-current view. Focus lands on the History title. Press **Tab** to reach version
-rows and **Enter** to select one. Selecting a row keeps keyboard focus there;
+From a clean saved Prompt, Recipe, or Mix-in, choose **More actions → History**.
+This closes the menu. Prompts and Recipes reveal **Info** when you were in Basic;
+Advanced and Info keep their current view. Mix-ins keep their literal editor
+and metadata visible. Focus lands on the History title. Press **Tab** to reach
+version rows and **Enter** to select one. Selecting a row keeps keyboard focus there;
 loading older versions moves it to the first newly loaded row. The live editor
 fields stay mounted while you inspect snapshots.
 
@@ -334,8 +383,8 @@ editor is compatible.
 
 Restore always asks for confirmation and creates a new current version; it
 does not rewrite the retained row. The confirmation also calls out a
-Prompt↔Recipe type change. If the Prompt changed after history was loaded, use
-the editor's **Reload** conflict action before retrying. Restoring content that
+change between Prompt, Recipe, and Mix-in types. If the item changed after history
+was loaded, use the editor's **Reload** conflict action before retrying. Restoring content that
 already matches the current version reports `no_change` and creates no extra
 version. **Cancel** returns focus to Restore. A completed restore returns to
 the History title with its updated retained count; a retryable failure keeps
@@ -358,6 +407,12 @@ The fixed action area shows only actions valid for the current lifecycle:
 | Saved and changed | **Save changes**, **Discard changes** |
 | Version conflict | **Save as new**, **Reload** |
 | Mutation in progress | The relevant actions remain in place but are disabled with a readable reason |
+
+Below 64 columns, with no prompt open, the list takes the whole stage, as in
+Notes and Media; opening a prompt hands the width to the editor. With a
+prompt open on a narrow terminal (up to 82 columns), reopening the list
+with its grip gives the list the stage instead of squeezing the editor beside
+it, and the same grip returns to the prompt with focus in it.
 
 Opening **New prompt** also loads the Items pane. After the first save, Items
 and the rail count refresh while your text fields stay open. Basic, Advanced
@@ -387,6 +442,12 @@ close it and return focus to More actions.
   replace the session System prompt with confirmation.
 - **Export…** saves a representable Prompt or Recipe as Markdown. The filename
   field starts focused; press **Tab**, then **Enter** on Save to write it.
+  The picker opens in the folder you last exported to this session. If the
+  chosen file already exists, a "Replace existing file?" prompt names the file
+  and its folder, with **Cancel** focused — Escape or Cancel leaves that file
+  untouched and only **Replace** overwrites it (atomically, so a failed write
+  never leaves a half-written file). The status then names the folder and the
+  file: "Prompt exported successfully to ~/exp/Weekly review coach.md".
   Cancel or completion returns focus to Export.
 - **Copy Markdown** copies the exact live working copy. Copy and Export results
   appear in the editor's status area, which scrolls into view without moving
@@ -533,90 +594,6 @@ prompt to the Library. See
   writes a multi-item Chatbook `.zip`; the editor action writes one Prompt or
   Recipe as Markdown.
 
-—
-*TASK-198, TASK-202, and TASK-196 behavior in this guide was reverified against
-the real Textual compositor and focused automated suites on 2026-08-09.
-Verification is tied to branch history rather than a self-referential
-documentation SHA.*
-*Verified against feat/library-queue-batch @ a899cbf6a — 2026-08-11
-(task-14901 / ADR-055: the delete confirmation copy now states the
-deletion cannot be undone from Library, on every variant — clean, dirty,
-and multi-item.)*
+### Saved instructions and chat history
 
-*Verified against feat/library-queue-batch @ 0662e09f5 — 2026-08-11
-(task-14902: the sort control converged on the Library chooser-strip
-pattern — press opens Newest / Name with ✓ on the active one, a pick
-requests that exact scope at page 1, Escape cancels; the collection
-control's label dropped the cycle glyph — it opens the collection
-manager, a direct-pick surface, and never cycled.)*
-
-*Verified against fix/library-crit8-docs — 2026-09-08 (task-32073,
-docs-vs-live pass from critique #8): the editor's **Info** mode — a third
-button beside Basic and Advanced, carrying the persisted-source/
-definition-state line, the draft-vs-saved reminder, and the Collections
-membership block — shipped undocumented and is now described. Basic and
-Advanced are unchanged.)*
-
-*Verified against fix/library-crit8-polish-media — 2026-09-08 (task-32074: the
-Prompt-variables checkbox paints ☐/☑ instead of an empty frame whose state was
-carried by colour alone, and **Use in Console** moved from the bottom of the
-editor into the header, on its own row directly under Basic/Advanced/Info.
-task-32067: a one-page prompt list drops its "Page 1 of 1" counter, boundary
-reasons and Previous/Next. Fix round 2: that header row now hides itself along
-with the button, instead of leaving an empty raised strip; and re-entering
-Media at an ordinary width no longer drops a pane priority the user just set
-with a grip.)*
-
-*Verified against fix/library-crit8-riders-a — 2026-09-10 (task-32104: the
-guide now states where "Use in Console" lives and that the editor header
-scrolls, rather than implying it is always on screen. The one-page pager rule
-behind this page's Previous/Next behaviour is now one shared helper across
-Media, Conversations and Prompts, with no change to what any of them
-renders.)*
-
-*Verified against fix/library-crit9-shell — 2026-09-10 (task-32217: with no
-prompt open the list takes the columns the "Select a prompt to edit it here."
-pane was holding — measured at 235 columns, list 50 → 134 cells).*
-
-*Verified against fix/library-crit10-media-rows — 2026-09-11 (task-32364: a
-row on a canvas titled Prompts no longer opens with "Prompt · " — a plain
-Prompt reads `Local · has system and user text`, while Recipe and the other
-artifact types still name themselves — and the lane summary says what the
-prompt has instead of the schema's "System + User".)*
-
-*Verified against fix/library-crit10-docs — 2026-09-11, fix round 1 (task-32366:
-the dirty-edit block now names Escape alongside Back, and says the block is
-silent today — `_exit_library_prompt_editor_guarded` returns False without
-notifying, filed as task-32393. `library.md`'s Escape section states the same
-veto in the same words.)*
-
-*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-11
-(task-32393: Escape on a dirty prompt editor states why it will not leave,
-on the same line as the next step, and the footer chip names the same
-blocker instead of advertising "esc back to list" — live at 235x52 on a
-seeded profile, with the editor showing "• Unsaved changes".)*
-
-*Verified against fix/library-decisions-32302-32393-32306 — 2026-09-12
-(task-32393, PR #2655 review: the Escape chip follows the in-flight write as
-well as the unsaved edit — a clean deletion no longer leaves "esc back to list"
-on screen while the key can only report that the write is busy.)*
-
-*Verified against fix/library-riders-32461-32464 — 2026-09-14 (task-32461:
-the sibling dirty vetoes that still refused in silence now speak. The
-prompt-row switch and **Select** borrow Back/Escape's own sentence; a deep link
-into a prompt names the one it did not open and drops it rather than queueing
-it. Both new refusals were driven live at 235x52 on a scratch profile with the
-editor showing "• Unsaved changes"; the deep link is pinned on the mounted
-screen, since no hand route reaches it while the editor is dirty. Leaving for
-another screen, and routing back into Library, already explained themselves
-before this change and still do — fix round 1 added the same sentence to the
-Library admission barrier behind them as defence in depth, after a caller sweep
-of all eight sites, with no user-visible change.)*
-
-
-*History journey review: 2026-09-15, TASK-32630. Production-CSS/SQLite tests
-cover wide/compact dark/light keyboard journeys and recovery. The private native
-app passed 170×48 dark and 80×24 light through paging, preview, Cancel and
-restore, with normal exit 0 and read-only persistence checks. See the
-[verification record](../../superpowers/qa/2026-09-15-prompt-history/README.md).
-No full repository sweep was run.*
+Removing a chat selection leaves the Library record intact. Deleting or editing a Library mix-in does not erase a conversation's original operational Retry snapshot. Those exact bodies are conversation content, retained independently of diagnostic exchange capture and included in conversation backups. They are removed when the last owning conversation is permanently purged. **Original mix-ins** inspection explains this retention; purging diagnostic traces does not delete the Retry content. Copies/forks can inspect inherited receipts but start without active selections. No cross-device selection or Retry-record sync protocol is provided.

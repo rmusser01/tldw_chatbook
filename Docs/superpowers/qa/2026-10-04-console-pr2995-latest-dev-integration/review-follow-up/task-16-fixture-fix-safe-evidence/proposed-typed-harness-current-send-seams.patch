@@ -1,0 +1,18 @@
+--- a/Tests/UI/test_console_ask_user_typed_answers.py
++++ b/Tests/UI/test_console_ask_user_typed_answers.py
+@@ -283,6 +283,15 @@
+                 return True
+ 
+             screen = SimpleNamespace(
++                _console_pending_send=None,
++                _console_visible_draft_session_id=session.id,
++                _console_visible_send_session_id=lambda: session.id,
++                _ui_responsiveness_monitor=lambda: None,
++                _send_console_message_from_visible_action_observed=lambda **kwargs: (
++                    ChatScreen._send_console_message_from_visible_action_observed(
++                        screen, **kwargs
++                    )
++                ),
+                 _console_pending_send_stash=None,
+                 _raw_cli=SimpleNamespace(start_user_command=Mock()),
+                 _console_composer_or_none=lambda: composer,

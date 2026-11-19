@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N    N   Add files to Library notes.                                                                                     │
+│ │ Navigation       Collapse      │  a    o   Review the mutation-free check before applying changes.                                                         │
+│ │     Import…                    │  v    t   10 safe · 1 need attention · 0 skipped · 1 folder moves                                                      ┐  │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e   Syncs .md, .markdown and .txt only; other files are left alone.                                              │  │
+│ │ ▊ Search Library…        ▎▊x▎  │       s   No change (9)                                                                                                │  │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │            ▶ top level · 9 files · No change · Verifier MD                                                             │  │
+│ │                                │           Create a Library note (1)                                                                                    │  │
+│ │ ─────────────────────────────  │           fresh file.md · Create a Library note · Verifier MD                                                          │  │
+│ │ Browse                    ▾    │           One side was deleted (1)                                                                                     │  │
+│ │    Media (23) — your files     │           ideas.md · One side was deleted · Verifier MD                                                                │  │
+│ │    Conversations (12)          │           Resolution unavailable for this item. No changes can be staged.                                              │  │
+│ │  ▸ Notes (132)                 │                                                      ○ Restore missing side                                            │  │
+│ │    Prompts (10) — reuse        │                                                   ○ Delete/archive counterpart                                         │  │
+│ │    Skills (4) — AI add-ons     │<---                                                    ○ Disconnect item                                               │  │
+│ │    Collections (6)             │           │                                                                                                            │  │
+│ │    Search / RAG — find all     │           Preview explicit filesystem move (1)                                                                         │  │
+│ │ ─────────────────────────────  │           quotes renamed.md · Preview explicit filesystem move · Verifier MD                                           │  │
+│ │ Artifacts                 ▾    │           Resolution unavailable for this item. No changes can be staged.                                              │  │
+│ │    All artifacts               │     --->                                                  ○ Apply once                                                 │  │
+│ │    Chatbooks                   │                                                        ○ Leave unchanged                                               │  │
+│ │    Reports                     │           │                                                                                                            │  │
+│ │ ─────────────────────────────  │           │                                                                                                            │  │
+│ │ Create                    ▾    │           │                                                                                                            │  │
+│ │    New note                    │<---       │                                                                                                            │  │
+│ │    New prompt                  │           │                                                                                                            │  │
+│ │    New skill                   │           │                                                                                                            │  │
+│ │ ─────────────────────────────  │           │                                                                                                            │  │
+│ │ Study                     ▾    │           │                                                                                                            │  │
+│ │    Study decks (0)             │           │                                                                                                            │  │
+│ │    Flashcards due: 0           │           │                                                                                                            │  │
+│ │    Quizzes (0)                 │           │                                                                                                            │  │
+│ │ ─────────────────────────────  │           │                                                                                                            │  │
+│ │ Import / Export           ▾    │           │                                                                                                            │  │
+│ │    Import…                ╭─────────────────────────────────────────────────╮                                                                           │  │
+│ │    Export                 │ Deletion review is unavailable in this release. │                                                                           │  │
+│ │  ▾ scroll for more        ╰─────────────────────────────────────────────────╯───────────────────────────────────────────────────────────────────────────┘  │
+│ └────────────────────────────────┘              Apply reviewed     Resolution history       ‹ Notes                                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter run action | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

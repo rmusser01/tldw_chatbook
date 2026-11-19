@@ -14,8 +14,8 @@ from Tests.UI.test_settings_category_sweep import (
     _settle_settings,
 )
 from tldw_chatbook import config
-from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Settings_Modules.settings_advanced_config import AdvancedConfigSettings
+from tldw_chatbook.state.settings_config_models import SettingsCategoryId
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
@@ -435,7 +435,7 @@ async def test_raw_controls_fit_and_keyboard_save_revert_work(raw_profile, size)
 
 @pytest.mark.asyncio
 async def test_initial_config_read_does_not_block_ui_thread(raw_profile, monkeypatch):
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Settings_Modules.settings_config_adapter import SettingsConfigAdapter
 
     main_thread = threading.get_ident()
     original = SettingsConfigAdapter.read_snapshot

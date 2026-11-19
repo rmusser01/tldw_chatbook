@@ -1,0 +1,26 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_preview_entry_points_accept_distinct_chat_surface_flags _________
+
+    def test_preview_entry_points_accept_distinct_chat_surface_flags():
+        import inspect
+        from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+        for method in (ConsoleAgentBridge.build_project_instruction_preview_request,
+                       ConsoleAgentBridge.build_personal_context_preview_snapshot):
+            parameters = inspect.signature(method).parameters
+>           assert parameters["fork_chat_enabled"].default is False
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'fork_chat_enabled'
+
+Tests/Agents/test_agent_chat_create_tools.py:174: KeyError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 09:48:36.415 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 09:48:36.491 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 09:48:36.541 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 09:48:36.542 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+============================= slowest 25 durations =============================
+
+(3 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Agents/test_agent_chat_create_tools.py::test_preview_entry_points_accept_distinct_chat_surface_flags
+1 failed in 0.67s
