@@ -83,7 +83,11 @@ MAX_RECORDS = 4096
 
 
 class RecoveryRequired(RuntimeError):
-    """A bounded reason code, never a local locator or original exception."""
+    """A bounded reason code, never a local locator or original exception.
+
+    A subclass may carry a local path as an attribute (``RegisteredStorageMissing
+    .path``); that path is never rendered through ``str()``, which stays the code.
+    """
 
 
 #: PERF-07/08 (ADR-126 amendment, 2026-09-29). Advanced by in-process writers

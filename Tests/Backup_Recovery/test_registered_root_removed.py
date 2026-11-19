@@ -170,3 +170,132 @@ def test_next_start_names_the_removed_folder_and_starts_once_it_is_back(
 
     tokenizers.mkdir(mode=0o700)  # the remedy the message gives
     storage.admit_startup()
+
+
+# TASK-34100.16.1 pre-merge review (2026-11-13), Important 2: ``_capture_names``
+# also runs inside Replace restore (``recovery_service`` before staging), later
+# rollback and ``replacement._ensure_first_bindings``. A removed registered
+# folder must read true there too, with the location shown above the message,
+# not only from Create backup.
+
+
+def test_registered_storage_missing_copy_reads_true_for_every_operation():
+    """The copy names no single operation: restores refuse the same way.
+
+    Review M3 too: isolated restore registers its destination's parent, the
+    folder the User Guide tells users to create, so "a backup registers what it
+    copies" was not the whole story.
+    """
+    message = issue_message("registered_storage_missing")
+
+    assert "no longer exists" in message and "create it again" in message
+    assert "backups and restores register the folders they use" in message
+    for create_only in ("create the backup again", "a backup registers what it copies"):
+        assert create_only not in message, create_only
+
+
+_REMOVED_FOLDER_SERVICE = r'''
+import hashlib
+
+def register_then_remove(name):
+    """Register a disjoint folder the way a backup registers a source, then remove it."""
+    folder = Path.home() / name
+    folder.mkdir(mode=0o700)
+    root = folder.resolve(strict=True)
+    admission_authority(bootstrap.default_bootstrap_root()).register(
+        'backup.source.' + hashlib.sha256(str(root).encode()).hexdigest(), (root,))
+    os.rmdir(folder)
+    return root
+
+def refused_naming(operation, root, kind):
+    state = service.wait(operation)
+    assert (state['kind'], state['state'], state['issues']) == (
+        kind, 'failed', ('registered_storage_missing',)), dict(state)
+    assert state['result'].get('path') == str(root), dict(state)
+    root.mkdir(mode=0o700)  # the remedy the message gives
+
+def restore_plan():
+    inspection = service.start_inspection(destination, password=None)
+    succeeded(service, inspection)
+    profile = service.summary(inspection)['profile_ids'][0]
+    plan = service.preview_restore(inspection, mode='replace', profile_bases={},
+        target_configs={profile: source}, external_destinations={}, profile_names={},
+        target=service.preview_backup((source,), options={}), data_groups=('writing',))
+    # Settings stay local, so start_restore resolves the registry for them.
+    assert plan.retained_configs and 'settings' not in plan.effective_groups
+    return inspection, plan
+
+# As dev's empty-group restore test: writing data created after the backup
+# gives the Replace restore something to retire and the rollback to bring back.
+writer = """
+import os, tomllib
+from pathlib import Path
+from tldw_chatbook.Backup_Recovery.profile_paths import database_path
+from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
+path = database_path(tomllib.loads(Path(os.environ['TLDW_CONFIG_PATH']).read_text()), 'writing_db_path')
+store = LocalWritingService(path)
+try:
+    store.create_project(title='Writing created after backup')
+finally:
+    store.close()
+"""
+
+prompt_process('prepare', 'prepare', 'Unselected saved prompt')
+service = RecoveryService(Path.home() / 'recovery-control')
+options = {'data_groups': ('settings', 'writing')}
+destination = Path.home() / 'registered.tldw-backup.zip'
+try:
+    preview = service.preview_backup((source,), options=options)
+    succeeded(service, service.start_backup((source,), preview.scope_digest,
+                                          destination, options=options, password=None))
+    created = subprocess.run([sys.executable, '-c', writer], capture_output=True,
+                             text=True, timeout=30)
+    assert created.returncode == 0, created.stderr[-4000:]
+    inspection, plan = restore_plan()
+    removed = register_then_remove('registered-before-restore')
+    refused_naming(service.start_restore(inspection, plan, rollback_password=b'g161-safety'),
+                   removed, 'restore')
+    inspection, plan = restore_plan()
+    result = succeeded(service, service.start_restore(inspection, plan,
+        rollback_password=b'g161-safety'))
+    operation = result['result']['journal_operation_id']
+    rollback = service.preview_rollback(operation, old_password=b'g161-safety',
+        target=service.preview_backup((source,), options={}))
+    assert rollback.effective_groups  # later rollback resolves the registry for them
+    removed = register_then_remove('registered-before-rollback')
+    refused_naming(service.start_rollback(operation, rollback, old_password=b'g161-safety',
+        new_password=b'g161-undo'), removed, 'later_rollback')
+    rollback = service.preview_rollback(operation, old_password=b'g161-safety',
+        target=service.preview_backup((source,), options={}))
+    succeeded(service, service.start_rollback(operation, rollback,
+        old_password=b'g161-safety', new_password=b'g161-undo'))
+finally:
+    service.close()
+print('retired and reopened')
+'''
+
+
+def test_replace_restore_and_later_rollback_name_a_removed_registered_folder(
+    tmp_path,
+):
+    """Replace restore and later rollback each name the folder and recover.
+
+    Both reach ``_capture_names`` (restore: retained Settings; rollback: its
+    data groups). Before the fix the code reached the view, but no location
+    did, and the copy asked to "review and create the backup again". The
+    installed-style subprocess harness is the one dev's empty-group restore
+    test uses; each refusal is followed by the remedy and a successful retry.
+    """
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+    from Tests.Backup_Recovery.test_selective_restore_service import _SELECTED_SERVICE
+
+    prefix = _SELECTED_SERVICE.split("saved_text =", 1)[0].replace(
+        "SCENARIO", repr("settings")
+    )
+    _run(
+        tmp_path,
+        "registered-removed",
+        "success",
+        script=prefix + _REMOVED_FOLDER_SERVICE,
+        timeout=240,
+    )
