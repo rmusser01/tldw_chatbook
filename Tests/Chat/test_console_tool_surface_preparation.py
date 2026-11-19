@@ -661,3 +661,156 @@ async def test_changed_switch_callback_body_stays_on_original_loop(
     assert {row["function"]["name"] for row in case.prepared.pop()[1]} == LIGHT - {
         "ask_user"
     }
+
+
+# -- TASK-33620.15.52: a preview answers from a stamp-proven switch read -------
+
+
+@pytest.fixture
+def run_start_tools(monkeypatch):
+    """The proof's module, emptied; store files count as settled at once.
+
+    The fixture writes the switch moments before each test, and a read is kept
+    only when the permission file was last changed ``SETTLE_NS`` before it
+    (the rule TASK-33620.15.38's anchor follows). The tests that are not about
+    that rule set it to 0, as the catalog reuse tests do.
+    """
+    from tldw_chatbook.Chat import console_run_start_tools as tools
+
+    tools.forget()
+    monkeypatch.setattr(tools, "SETTLE_NS", 0)
+    yield tools
+    tools.forget()
+
+
+async def _counted_preflight(case, *, fail=False, phase="capacity"):
+    """One preflight: its probe of the original permission body, and its tools."""
+    probe = _OriginalPermissionRead(case.permissions, fail=fail)
+    probe.release.set()
+    with probe.installed(), pytest.raises(_Captured):
+        await _preflight(case, phase)
+    if probe.calls and not fail:
+        probe.assert_retired()
+    return probe, {row["function"]["name"] for row in case.prepared.pop()[1]}
+
+
+@pytest.mark.parametrize("phase", ["capacity", "history"])
+@pytest.mark.parametrize("engaged", [False, True])
+async def test_a_preview_whose_switch_read_is_proven_current_reads_no_store(
+    preview_case, run_start_tools, phase, engaged
+):
+    """The next preview answers from the last read, on the loop, with no hop.
+
+    TASK-33620.15.52 (owner, 2026-11-06: a stamp-proven read, not a worker
+    hop). The first preview reads the switch through the preparation worker.
+    Nothing it read changes before the second: the permission file keeps its
+    stamp, the same store stays selected, no admission state is written. The
+    second preview answers the same surface without entering the store's
+    permission body at all, so without a hop either (origin/dev read it again
+    through the hop for every preview).
+    """
+    case = preview_case
+    case.permissions.set_kill_switch(engaged)
+    expected = LIGHT - {"ask_user"} if engaged else LIGHT
+    first, surface = await _counted_preflight(case, phase=phase)
+    assert first.calls == 1 and first.thread is not threading.current_thread()
+    assert surface == expected
+    second, surface = await _counted_preflight(case, phase=phase)
+    assert second.calls == 0, (
+        "the preview read the store again though nothing its last read saw had changed"
+    )
+    assert surface == expected
+
+
+def _turn_switch_on(case):
+    case.permissions.set_kill_switch(True)
+
+
+def _put_bytes_back(case):
+    path = case.permissions.path
+    path.write_bytes(path.read_bytes())
+
+
+def _write_admission_state(case):
+    from tldw_chatbook.Backup_Recovery import bootstrap
+
+    bootstrap.advance_admission_epoch()
+
+
+def _select_another_store(case):
+    selected = case.service._permission_store
+    again = MCPPermissionStore(selected.path)
+    assert again is not selected and again.path == selected.path
+    case.service._permission_store = again
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        (_turn_switch_on, LIGHT - {"ask_user"}),
+        (_put_bytes_back, LIGHT),
+        (_write_admission_state, LIGHT),
+        (_select_another_store, LIGHT),
+    ],
+    ids=["switch-on", "bytes-put-back", "admission-write", "another-store"],
+)
+async def test_a_change_the_proof_covers_sends_the_next_preview_to_a_real_read(
+    preview_case, run_start_tools, change, expected
+):
+    """Each change a kept switch read cannot vouch for is read for real.
+
+    A write to the permission file changes its stamp, the bytes put back
+    included (``st_ctime_ns`` moves); an admission or activation write moves
+    the admission epoch; another store over the same file is another source.
+    The next preview reads through the hop again and answers what the store
+    now says. (Negative controls in the task notes: dropping the stamp, epoch
+    or source comparison from the proof turns its case red.)
+    """
+    case = preview_case
+    selected = case.service._permission_store
+    try:
+        first, surface = await _counted_preflight(case)
+        assert first.calls == 1 and surface == LIGHT
+        change(case)
+        probe = _OriginalPermissionRead(case.service._permission_store)
+        probe.release.set()
+        with probe.installed(), pytest.raises(_Captured):
+            await _preflight(case)
+        assert probe.calls == 1, "a kept switch read answered after its input changed"
+        assert probe.thread is not threading.current_thread()
+        assert {row["function"]["name"] for row in case.prepared.pop()[1]} == expected
+    finally:
+        case.service._permission_store = selected
+
+
+async def test_a_switch_read_of_a_just_written_store_is_not_kept(
+    preview_case, run_start_tools, monkeypatch
+):
+    """A file changed less than ``SETTLE_NS`` before the read proves nothing.
+
+    Its stamp could still miss a write inside the clock's granularity, so the
+    read is not kept and the next preview reads again (the anchor's rule).
+    """
+    monkeypatch.setattr(run_start_tools, "SETTLE_NS", 3_600_000_000_000)
+    case = preview_case
+    first, surface = await _counted_preflight(case)
+    assert first.calls == 1 and surface == LIGHT
+    second, surface = await _counted_preflight(case)
+    assert second.calls == 1, "a read of a just-written store was kept"
+    assert surface == LIGHT
+
+
+async def test_a_switch_read_that_raises_answers_closed_and_proves_nothing(
+    preview_case, run_start_tools
+):
+    """A read that raises still counts as engaged, and nothing is kept from it.
+
+    The preview offers no local tool for it, as before; the next preview
+    reads the store again instead of answering from that failure.
+    """
+    case = preview_case
+    first, surface = await _counted_preflight(case, fail=True)
+    assert first.calls == 1 and surface == LIGHT - {"ask_user"}
+    second, surface = await _counted_preflight(case)
+    assert second.calls == 1, "a failed switch read was kept"
+    assert surface == LIGHT
