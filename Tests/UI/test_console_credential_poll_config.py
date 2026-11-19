@@ -118,36 +118,59 @@ async def test_credential_poll_defers_native_config_contention(lock_name):
         assert screen._console_credential_snapshot is not None
 
 
-async def test_credential_poll_builds_current_workspace_once(monkeypatch):
-    """Bypassing the existing fingerprint scope repeats the real state build."""
+async def test_credential_poll_builds_no_workspace_context(monkeypatch):
+    """A completed credential poll re-derives the send controls with no context build.
+
+    Formerly ``test_credential_poll_builds_current_workspace_once`` (dev
+    95ca4bf47b): the poll's settings-summary and control-bar syncs each built
+    the workspace context, and the poll's live build scope made them share
+    ONE build instead of two. TASK-36571.1: neither sync builds it any more
+    (the Agent section reads its open flag; the rail and the Inspector read
+    the workspace label), so the poll builds none, and its scope still
+    closes behind it.
+    """
     from tldw_chatbook.UI.Console_Modules import workspace
 
     app = _ready_app()
     async with app.run_test(size=(120, 50)) as pilot:
         screen = await _wait_for_production_console_ready(app, pilot)
         screen._stop_console_credential_poll_timer()
-        built = []
+        built = {"workspace state": 0, "context": 0}
         observing = False
-        original = workspace.build_console_workspace_state
+        original_state = workspace.build_console_workspace_state
+        controller = screen._workspace
+        # Every context build runs the browser pipeline once, memo hit or not.
+        original_context = controller._with_console_conversation_browser_state
 
-        def build(*args, **kwargs):
-            result = original(*args, **kwargs)
+        def build_state(*args, **kwargs):
             if observing:
-                built.append(result)
-            return result
+                built["workspace state"] += 1
+            return original_state(*args, **kwargs)
 
-        monkeypatch.setattr(workspace, "build_console_workspace_state", build)
+        def build_context(*args, **kwargs):
+            if observing:
+                built["context"] += 1
+            return original_context(*args, **kwargs)
+
+        monkeypatch.setattr(workspace, "build_console_workspace_state", build_state)
+        monkeypatch.setattr(
+            controller, "_with_console_conversation_browser_state", build_context
+        )
+        screen._console_credential_snapshot = None
         async with asyncio.timeout(10):
-            while not built:
-                screen._console_credential_snapshot = None
+            # A changed snapshot runs both syncs. Retry until a pass completes
+            # them: lock contention, a cold read or a deferred control bar
+            # leaves the snapshot unset. Every attempt is counted.
+            while screen._console_credential_snapshot is None:
                 screen._console_credential_pre_gate = None
                 observing = True
                 try:
                     screen._poll_console_credential_readiness()
                 finally:
                     observing = False
-                if not built:
+                if screen._console_credential_snapshot is None:
                     await asyncio.sleep(0.01)
-        assert built and all(state == built[0] for state in built)
-        assert len(built) == 1, "Credential poll rebuilt equivalent workspace state"
+        assert built == {"workspace state": 0, "context": 0}, (
+            f"a credential poll built {built}"
+        )
         assert screen._workspace._console_tick_builds is None
