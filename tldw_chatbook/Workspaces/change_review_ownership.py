@@ -9,7 +9,11 @@ from pathlib import Path
 from threading import Event, Lock
 
 from tldw_chatbook.Agents.activation import execution
-from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
+from tldw_chatbook.Agents.execution_capacity import (
+    CapacityRefused,
+    CleanupUnprovenRefused,
+    WorkOrigin,
+)
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 from tldw_chatbook.Workspaces.change_tracking import (
@@ -355,8 +359,15 @@ class _InitializationSource:
             if self.ordinary_tree is not None:
                 owner = self.ordinary_tree.borrow(self.issuer.runtime)
                 return _SnapshotTicket(self, owner, owner.reserve_tool(), None)
-            with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as claim:
+            footprint = WorktreeFootprint(opaque=True)
+            with activity.prelaunch(footprint=footprint) as claim:
                 if claim is None:
+                    for retention in capacity.retained():
+                        if activity.holds_conflicting_claim(
+                            retention.operation.owner, footprint
+                        ):
+                            # Its claim stays held until restart (TASK-41635).
+                            raise CleanupUnprovenRefused(retention.label, retention)
                     raise CapacityRefused("initialization_activity_busy")
                 owner = capacity.begin_execution(
                     origin=self.work.origin, conversation_id=""

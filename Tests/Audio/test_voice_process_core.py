@@ -54,6 +54,69 @@ def extracted(name):
 async def test_production_child_prepares_typed_local_stt_without_opening_audio(
     monkeypatch, options
 ):
+    from tldw_chatbook.Audio.voice_process_types import AttemptCleanupOutcome
+
+    session, transport, captured = _production_session(monkeypatch, options)
+    assert await session.prepare() is False
+    assert captured[0]["provider"] == "faster-whisper"
+    actual = captured[0]["options"]
+    assert (actual.device, actual.compute_type, actual.precision) == tuple(
+        options.values()
+    )
+    assert transport.started == 0
+    native, resources = session.begin_close()
+    assert await native
+    assert await resources is AttemptCleanupOutcome.CLEAN
+
+
+@pytest.mark.asyncio
+async def test_production_child_close_lets_an_idle_loop_sleep_until_cleanup_starts(
+    monkeypatch,
+):
+    """The resources wait sleeps until the core starts its resource cleanup.
+
+    A wait that re-queued itself with ``sleep(0)`` never let the loop block in
+    its selector; on Linux that keeps the loop thread on-CPU and starves worker
+    threads waiting for the GIL (TASK-41640, the shape TASK-40334 found).
+    """
+    from tldw_chatbook.Audio.voice_process_types import AttemptCleanupOutcome
+
+    session, _transport, _captured = _production_session(
+        monkeypatch,
+        {"stt_device": None, "stt_compute_type": None, "stt_precision": None},
+    )
+    await session.prepare()
+    # Holding the close lock keeps the core from starting resource cleanup.
+    await session.core._close_lock.acquire()
+    native, resources = session.begin_close()
+    resources = asyncio.ensure_future(resources)
+    loop = asyncio.get_running_loop()
+    previous_override = vars(loop).get("_run_once")
+    original_run_once = loop._run_once
+    turns = 0
+
+    def counting_run_once() -> None:
+        nonlocal turns
+        turns += 1
+        original_run_once()
+
+    loop._run_once = counting_run_once
+    try:
+        await asyncio.sleep(0.2)
+    finally:
+        if previous_override is None:
+            del loop._run_once
+        else:
+            loop._run_once = previous_override
+        session.core._close_lock.release()
+    # A sleeping loop turns a handful of times in 0.2 s; a spin, hundreds.
+    assert turns <= 20, f"the resources wait turned an idle loop {turns} times"
+    assert not resources.done()
+    assert await asyncio.wait_for(native, 5)
+    assert await asyncio.wait_for(resources, 5) is AttemptCleanupOutcome.CLEAN
+
+
+def _production_session(monkeypatch, options):
     from Tests.Chat.test_console_voice_process import bootstrap, console
     from tldw_chatbook.Audio import (
         duplex_transport,
@@ -92,16 +155,7 @@ async def test_production_child_prepares_typed_local_stt_without_opening_audio(
     session.bind_pipe(
         SimpleNamespace(generation=7, request_id="a" * 32), lambda _: None
     )
-    assert await session.prepare() is False
-    assert captured[0]["provider"] == "faster-whisper"
-    actual = captured[0]["options"]
-    assert (actual.device, actual.compute_type, actual.precision) == tuple(
-        options.values()
-    )
-    assert transport.started == 0
-    native, resources = session.begin_close()
-    assert await native
-    assert await resources is AttemptCleanupOutcome.CLEAN
+    return session, transport, captured
 
 
 def frame(sequence):

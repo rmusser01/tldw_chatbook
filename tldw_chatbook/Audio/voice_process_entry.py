@@ -182,8 +182,9 @@ class _ProductionSession:
 
         async def resources():
             if self.core is not None:
-                while self.core._resource_cleanup_task is None:
-                    await asyncio.sleep(0)
+                # Sleep until cleanup starts; a sleep(0) poll kept the loop
+                # thread on-CPU, starving worker threads on Linux (TASK-41640).
+                await self.core._resource_cleanup_started.wait()
                 await asyncio.shield(self.core._resource_cleanup_task)
             return (
                 self.stt.cleanup_outcome

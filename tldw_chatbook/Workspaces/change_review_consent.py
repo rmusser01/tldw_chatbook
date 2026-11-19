@@ -55,6 +55,8 @@ class RootReadinessState(str, Enum):
     PREPARING = "preparing"
     READY = "ready"
     FAILED = "failed"
+    # An unproven cleanup holds what preparation needs until restart; no retry.
+    RESTART_REQUIRED = "restart_required"
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +191,10 @@ class ChangeReviewConsentService:
         "Change history preparation failed; this turn continues without it."
     )
     _QUEUE_FULL_REASON = "Change history preparation is busy; retry from Settings."
+    _RESTART_REASON = (
+        "Change history waits for an app restart: an earlier cleanup could not "
+        "be proven, so its workspace stays held. This turn continues without it."
+    )
 
     def __init__(
         self,
@@ -489,9 +495,7 @@ class ChangeReviewConsentService:
                 queued = True
             return True
         except Exception as error:  # noqa: BLE001 -- scheduling failure becomes failed readiness
-            from tldw_chatbook.Agents.execution_capacity import CapacityRefused
-
-            self._fail(work, busy=isinstance(error, (Full, CapacityRefused)))
+            self._fail(work, error)
             return False
         finally:
             if ticket is not None and not queued:
@@ -525,15 +529,25 @@ class ChangeReviewConsentService:
                 work = self._queue.get(timeout=0.05)
             except Empty:
                 continue
-            ticket = None
             try:
                 if work.source is not None:
+                    from tldw_chatbook.Agents.execution_capacity import (
+                        run_on_custody_thread,
+                    )
+
                     ticket = work.ticket or work.source.admit()
-                    with ticket.activate():
-                        try:
-                            self._run_work(work)
-                        finally:
-                            ticket.returned(worker=True, handoff=True)
+
+                    def custody(ticket=ticket, work=work):
+                        with ticket.activate():
+                            try:
+                                self._run_work(work)
+                            finally:
+                                ticket.returned(worker=True, handoff=True)
+
+                    # An unproven Git cleanup holds this daemon worker until
+                    # restart, never a pool thread, so it cannot stall other
+                    # roots' preparation (TASK-41635).
+                    run_on_custody_thread(custody, lambda: ticket.operation)
                 elif self._native_expected:
                     raise ValueError("native initialization source unavailable")
                 else:
@@ -542,9 +556,7 @@ class ChangeReviewConsentService:
                     ):
                         self._run_work(work)
             except Exception as error:  # noqa: BLE001 -- one failed job must not kill the bounded worker
-                from tldw_chatbook.Agents.execution_capacity import CapacityRefused
-
-                self._fail(work, busy=isinstance(error, CapacityRefused))
+                self._fail(work, error)
             finally:
                 self._queue.task_done()
 
@@ -589,15 +601,25 @@ class ChangeReviewConsentService:
                 "" if error is None else self._FAILED_REASON,
             )
 
-    def _fail(self, work, *, busy=False):
+    def _fail(self, work, error=None):
+        from tldw_chatbook.Agents.execution_capacity import (
+            CapacityRefused,
+            CleanupUnprovenRefused,
+        )
+
+        state = RootReadinessState.FAILED
+        if isinstance(error, CleanupUnprovenRefused):
+            # Held until restart (TASK-40716); a retry cannot clear it.
+            state, reason = RootReadinessState.RESTART_REQUIRED, self._RESTART_REASON
+        elif isinstance(error, (Full, CapacityRefused)):
+            reason = self._QUEUE_FULL_REASON
+        else:
+            reason = self._FAILED_REASON
         with self._lock:
             if self._pending(work):
                 self._admission_revision += 1
                 self._readiness[(work.workspace_id, work.root)] = _ReadinessEntry(
-                    work.alias,
-                    work.revision,
-                    RootReadinessState.FAILED,
-                    self._QUEUE_FULL_REASON if busy else self._FAILED_REASON,
+                    work.alias, work.revision, state, reason
                 )
 
     def _discard_workspace_readiness_locked(self, workspace_id: str) -> None:

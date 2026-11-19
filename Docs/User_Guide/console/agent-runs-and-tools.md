@@ -290,7 +290,12 @@ own: Undo, Change Review work outside an agent turn, an `@git` reference read
 outside an agent turn, and sub-agents. The segment shows only while a slot is held; select it to open the
 list, which names what held each slot and offers **Release tool slot** for it.
 Releasing frees only the tool slot for other work; the workspace, storage and
-reservation stay held until you restart the app. When you quit, the app does not
+reservation stay held until you restart the app. A Change Review folder whose
+preparation that held reservation refuses says so in **Settings → Workspaces**
+and in the turn's *change review skipped* note: it waits for an app restart, and
+no retry is offered. Releasing the slot does not lift that for a folder outside
+the turn; a turn that is still running can start preparing other folders again
+after the release. When you quit, the app does not
 wait for such a tool, and everything else still shuts down normally.
 
 While a model call is generating or thinking, this line may also show its

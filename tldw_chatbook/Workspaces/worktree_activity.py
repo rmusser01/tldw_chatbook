@@ -460,6 +460,18 @@ class WorktreeActivity:
             self._members[claim_id] = member
         owner.on_drained(lambda proven: self.record_drain(claim_id, proven=proven))
 
+    def holds_conflicting_claim(
+        self, owner: ExecutionOwner, footprint: WorktreeFootprint
+    ) -> bool:
+        """Whether ``owner`` is a member of a held claim that conflicts with ``footprint``."""
+        with self._lock:
+            return any(
+                member.owner is owner
+                for state in self._claims.values()
+                if footprint._conflicts(state.footprint)
+                for member in state.members.values()
+            )
+
     def validate_claim(
         self,
         claim: WorktreeActivityClaim,

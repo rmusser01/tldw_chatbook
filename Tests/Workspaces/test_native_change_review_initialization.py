@@ -758,3 +758,156 @@ def test_source_replacement_while_readiness_waits_for_publication_lock(
         assert h.service.admit_turn("init-workspace").ready_roots == ()
     finally:
         proceed.set()
+
+
+_RESTART_COPY = (
+    "Change history waits for an app restart: an earlier cleanup could not "
+    "be proven, so its workspace stays held. This turn continues without it."
+)
+
+
+def test_retained_cleanups_hold_later_roots_until_restart_and_say_so(
+    native_initializer, monkeypatch, tmp_path
+):
+    """Two unproven cleanups on an opaque turn's owner stop later roots (TASK-41635).
+
+    The turn's owner and its opaque claim stay held until restart (TASK-40716),
+    so a later root is refused inside the turn (its tool reservation) and
+    outside it (the opaque claim). Every such root says it waits for a restart
+    and is not offered a retry. The cleanups hold daemon custody workers, not
+    the pool's threads, so the retained roots do not read "preparing" forever.
+    """
+    from tldw_chatbook.Agents.execution_capacity import (
+        bind_ordinary_tree,
+        holds_unproven_custody,
+    )
+    from tldw_chatbook.Workspaces import change_turn_tracker
+    from tldw_chatbook.Workspaces.change_review_ownership import (
+        native_snapshot_ticket,
+    )
+
+    h = native_initializer
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    owner = capacity.begin_execution(origin=WorkOrigin.AUTOMATIC, conversation_id="t")
+    footprint = WorktreeFootprint(opaque=True)
+    claim = activity.try_acquire(owner=owner, footprint=footprint)
+    assert claim is not None
+
+    class OpaqueTurn:
+        """The borrow of an opaque ordinary turn (Agents/ordinary_tree.py)."""
+
+        controller = None
+
+        def __init__(self):
+            self.owner = owner
+
+        def borrow(self, runtime, *, opaque=True):
+            assert runtime is h.runtime and opaque
+            activity.validate_claim(claim, owner=owner, footprint=footprint)
+            return owner
+
+    turn = OpaqueTurn()
+    initialize = change_turn_tracker.initialize_shadow_root
+    held_roots: set[str] = set()
+    both_reserved = threading.Barrier(2, timeout=10)
+
+    def unproven(root, **kwargs):
+        if root not in held_roots:
+            return initialize(root, **kwargs)
+        both_reserved.wait()
+        # As run_native_git does when no cleanup proof remains.
+        native_snapshot_ticket().operation.retain_unproven("native Git").hold()
+        raise OSError("native Git cleanup proof unavailable")
+
+    def bind(name):
+        path = tmp_path / name
+        path.mkdir()
+        return h.registry.add_folder_binding("init-workspace", path)
+
+    def readiness():
+        return {
+            root.alias: (root.state.value, root.reason)
+            for root in h.service.status("init-workspace").roots
+        }
+
+    monkeypatch.setattr(change_turn_tracker, "initialize_shadow_root", unproven)
+    second = bind("second")
+    held_roots.update({h.binding.locator, second.locator})
+    h.registry.set_change_review_enabled("init-workspace", True)
+    try:
+        with bind_ordinary_tree(turn):
+            h.service.admit_turn("init-workspace")
+        wait_until(lambda: len(capacity.retained()) == 2, timeout=15)
+        # Binding a folder admits it at once (binding_added).
+        outside = bind("outside")  # its own owner: the turn's claim refuses it
+        with bind_ordinary_tree(turn):
+            inside = bind("inside")  # the turn's owner: its reservation refuses
+
+        expected = {
+            binding.binding_id: ("restart_required", _RESTART_COPY)
+            for binding in (h.binding, second, outside, inside)
+        }
+        wait_until(
+            lambda: len(readiness()) == 4
+            and all(state != "preparing" for state, _ in readiness().values()),
+            timeout=15,
+        )
+        assert readiness() == expected
+        assert h.service.retry_failed_roots("init-workspace") == 0
+        assert readiness() == expected
+        custody = [t for t in threading.enumerate() if holds_unproven_custody(t)]
+        assert len(custody) == 2
+        assert not set(custody) & set(h.service._workers)
+        assert h.service._queue.unfinished_tasks == 0
+    finally:
+        for retention in capacity.retained():
+            retention.prove()
+        wait_until(
+            lambda: not any(holds_unproven_custody(t) for t in threading.enumerate()),
+            timeout=15,
+        )
+        owner.finish_root()
+        claim.settle(durable=True)
+
+
+def test_a_claim_held_without_a_retained_cleanup_stays_retryable(native_initializer):
+    """Only a retained cleanup's own claim means "restart" (TASK-41635 control).
+
+    A retained cleanup whose owner holds no claim sits beside an opaque claim
+    held by a live owner that retained nothing. The refused root reads "busy"
+    with a retry, and once that claim is released the retry reaches READY.
+    """
+    h = native_initializer
+    capacity, activity = h.runtime.execution_capacity, h.runtime.worktree_activity
+    bystander = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="")
+    retained = bystander.reserve_tool()
+    retention = retained.retain_unproven("Raw CLI")
+    holder = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="t")
+    claim = activity.try_acquire(owner=holder, footprint=WorktreeFootprint(opaque=True))
+    assert claim is not None
+    try:
+        h.registry.set_change_review_enabled("init-workspace", True)
+        h.service.admit_turn("init-workspace")
+        wait_until(
+            lambda: h.service.status("init-workspace").roots[0].state
+            is not RootReadinessState.PREPARING
+        )
+        root = h.service.status("init-workspace").roots[0]
+        assert (root.state, root.reason) == (
+            RootReadinessState.FAILED,
+            "Change history preparation is busy; retry from Settings.",
+        )
+
+        claim.settle(durable=True)
+        holder.finish_root()
+        assert h.service.retry_failed_roots("init-workspace") == 1
+        wait_until(
+            lambda: h.service.status("init-workspace").roots[0].state
+            is RootReadinessState.READY
+        )
+    finally:
+        retention.prove()
+        retained.finish()
+        bystander.finish_root()
+        claim.settle(durable=True)
+        holder.finish_root()
