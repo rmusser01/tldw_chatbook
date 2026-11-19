@@ -109,6 +109,21 @@ def test_detail_view_stops_a_running_phase_under_an_unproven_read(tmp_path):
     _run(tmp_path, "detail_stop_under_unproven_read", "native", script=_SCRIPT, timeout=240)
 
 
+def test_a_failing_close_in_the_failure_handler_keeps_the_original_failure(tmp_path):
+    """The driver's failure handler closes never-launched preparations; a close
+    that raises must not replace the original failure and push the phase down
+    the "did not retire normally" path (a held chat). The live-resource check
+    still decides custody (TASK-41645 review)."""
+    _run(tmp_path, "close_raises_in_failure_handler", "native", script=_SCRIPT, timeout=180)
+
+
+def test_detail_view_under_the_marker_refuses_a_closing_or_stale_read(tmp_path):
+    """`view` under the unproven-read marker skipped `get`'s closing check and
+    its monotonic floor; a screen left open while the coordinator closed could
+    render saved state with live Stop buttons (TASK-41645 review)."""
+    _run(tmp_path, "view_refuses_closing_and_stale", "native", script=_SCRIPT, timeout=180)
+
+
 def test_unproven_final_metadata_read_is_released_only_by_restart(tmp_path):
     """A phase's final status read whose storage handles did not provably
     return keeps the chat until restart. Reconcile refuses it with
@@ -477,7 +492,7 @@ async def ownership_error(tmp_path):
         await rig.close()
 
 
-async def _failed_before_launch(rig, error):
+async def _failed_before_launch(rig, error, *, on_prepared=None):
     """The wave call raises `error` after task-1 is prepared, before any wave
     binds it; returns once the phase driver has finished."""
     import asyncio
@@ -488,6 +503,8 @@ async def _failed_before_launch(rig, error):
 
     async def refused_before_launch(phase, selected, **kwargs):
         prepared.extend(selected)
+        if on_prepared is not None:
+            on_prepared(selected)
         raise error
 
     decision = await _started(rig)
@@ -1235,3 +1252,75 @@ async def finalize_during_record(tmp_path):
         rig.provider_release()
         await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 60)
         await rig.close()
+
+
+async def close_raises_in_failure_handler(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    session_id = "workflow-test-chat"
+    closes = []
+
+    def break_first_close(selected):
+        for item in selected:
+            real = item.close
+
+            async def close(real=real):
+                closes.append(1)
+                await real()
+                if len(closes) == 1:
+                    # Closed, then refused its own bookkeeping: benign.
+                    raise PermissionError("launch in flight")
+
+            item.close = close
+
+    try:
+        run, item = await _failed_before_launch(
+            rig, RuntimeError("wave refused before launch"), on_prepared=break_first_close
+        )
+        assert closes and run.status != "recovery_required"
+        assert (await rig.coordinator.get(rig.workflow.id)).status == "paused"
+        sent = await rig.controller.submit_draft(
+            "A new turn after the failed phase", session_id=session_id
+        )
+        assert sent.accepted, sent
+        stream = rig.controller._active_stream_tasks.get(session_id)
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
+    finally:
+        await rig.close()
+
+
+async def view_refuses_closing_and_stale(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    gate = asyncio.Event()
+    coordinator = rig.coordinator
+    try:
+        await _held_at_wave(rig, gate)
+        await _unproven_other_read(rig)
+        assert coordinator.reads_unproven
+        shown = await coordinator.view(rig.workflow.id)
+        # A snapshot older than what this coordinator already published.
+        coordinator._metadata_floor[rig.workflow.id] = (
+            shown.control_revision + 5,
+            shown.progress_cursor + 5,
+        )
+        with pytest.raises(ValueError, match="workflow_snapshot_superseded"):
+            await coordinator.view(rig.workflow.id)
+        coordinator._metadata_floor.pop(rig.workflow.id)
+        assert (await coordinator.view(rig.workflow.id)).id == shown.id
+        coordinator._closing = True
+        try:
+            with pytest.raises(RuntimeError, match="workflow coordinator closed"):
+                await coordinator.view(rig.workflow.id)
+        finally:
+            coordinator._closing = False
+    finally:
+        gate.set()
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")

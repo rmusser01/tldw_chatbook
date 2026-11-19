@@ -1154,9 +1154,27 @@ class ConsoleWorkflowCoordinator:
         use, with the same runtime status, so the controls that need no proven
         read stay reachable.
         """
+        if self._closing:
+            raise RuntimeError("workflow coordinator closed")
         if not self._metadata_unproven():
             return await self.get(workflow_id)
         _metadata_source(self)
+        controller, runtime, service = self.controller, self.runtime, self.service
+        bridge = controller._agent_bridge
+
+        def sources_unchanged():
+            # The identity checks `_metadata` makes that hold without a read cell.
+            if (
+                type(self) is not _COORDINATOR_CLASS
+                or controller.app.console_runtime is not runtime
+                or runtime.agent_bridge is not bridge
+                or controller.store is not bridge._store
+                or service.db is not bridge.runs_db
+                or self._closing
+            ):
+                raise PermissionError("workflow original metadata source changed")
+
+        sources_unchanged()
         full = await self.service.call(self.service.get, workflow_id)
         view = await self.service.call(self.service.runtime_snapshot, workflow_id)
         if (view.control_revision, view.progress_cursor) != (
@@ -1164,6 +1182,10 @@ class ConsoleWorkflowCoordinator:
             full.progress_cursor,
         ):
             raise ValueError("workflow_snapshot_superseded")
+        floor = self._metadata_floor.get(workflow_id, (0, 0))
+        if view.control_revision < floor[0] or view.progress_cursor < floor[1]:
+            raise ValueError("workflow_snapshot_superseded")
+        sources_unchanged()  # A close or source swap during the reads refuses the result.
         run = self._runs.get(workflow_id)
         status = run.status if run is not None and run.status is not None else view.status
         return full.model_copy(update={"status": status})
@@ -2172,7 +2194,13 @@ class ConsoleWorkflowCoordinator:
                 # TASK-41646: a never-launched preparation is not live work;
                 # close it here, as reconcile would (TASK-41320).
                 for item in self._unlaunched(run):
-                    await item.close()
+                    try:
+                        await item.close()
+                    except Exception:  # noqa: BLE001 - a benign close failure must not replace the original failure; the live check below decides custody.
+                        logger.exception(
+                            "Never-launched workflow preparation did not close: {}",
+                            item,
+                        )
                 if self.service._has_live_workflow_resources(run.workflow_id):
                     raise
                 logger.exception("Native workflow phase failed")
@@ -2398,6 +2426,10 @@ class ConsoleWorkflowCoordinator:
             ):
                 raise RuntimeError("workflow control reader return unproven")
             if refusal is not None:
+                # decision_recorded reads service.db; the phase's ledger must be
+                # the same database or "no decision stored" proves nothing.
+                if phase._ledger._db is not service.db:
+                    raise RuntimeError("workflow control refusal unproven")
                 if await service.call(service.decision_recorded, decision.id):
                     raise RuntimeError("workflow control refusal unproven")
                 current()
