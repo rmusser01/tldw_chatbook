@@ -4,7 +4,7 @@ title: "Pet settings are per-profile and are backed up and restored"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 15:58
-updated_date: 2026-11-19 17:59
+updated_date: 2026-11-19 18:13
 labels:
 - backup
 - settings
@@ -225,7 +225,7 @@ Coordinator's call on the upgrade path (engineering, stated to the owner): a pro
 - **Minor 6: D5 narrowed (coordinator's call).**
   - `_PER_PROFILE_ALIAS_OWNERS` now exempts pet aliases only from `shared_target_split`, so every alias selected may restore into differing folders.
   - A partial selection refuses `shared_scope_expansion_required` again, as for every owner. A Replace of one profile therefore cannot overwrite a pet file that a co-foldered profile reads.
-  - Aliases sent into one shared folder refuse as `ui.state`'s do (`destination_collision` in the crafted manifest).
+  - Aliases sent into one shared folder are accepted and deduplicated to one file, as `ui.state`'s are. That is safe: every co-foldered profile is selected and the alias bytes are identical. (Corrected in fix round 2: an earlier version of the test used concrete roots, and its `destination_collision` came from the generic concrete-root rule, not from anything alias-specific.)
   - Consequence: an older multi-profile backup restores its pets when all its profiles are restored together. `Docs/Backup-and-Recovery.md` says so.
   - Test: `test_restore_plan.py::test_only_pet_aliases_restore_into_each_profiles_own_folder[differ|shared|one-selected × tamagotchi.config|ui.state]`. Red at 124c2d9bc7: `[one-selected-tamagotchi.config]` with `assert None == 'shared_scope_expansion_required'`.
 - **Minor 7: User Guide.** `settings.md` now says the marker is written on the first run whether or not anything was copied.
@@ -235,3 +235,9 @@ Coordinator's call on the upgrade path (engineering, stated to the owner): a pro
   - `Tests/CI`: 1811 passed, 2 skipped.
   - `Tests/Architecture/test_backup_owner_inventory.py` (serial): 75 passed.
   - Preflight passed.
+
+### Review r17pt-rev2, fix round 2
+
+- The alias planner test's fixture now gives each alias its own synthetic root, as capture writes single files (`_alias_archive(..., synthetic=True)`). Its `[shared]` case asserts the real outcome for both owners: accepted, with both aliases on one deduplicated destination. Sending pet aliases into one folder therefore does not refuse. The partial selection does (`shared_scope_expansion_required`), and that is what stops a restore overwriting another profile's pet file. The docstring and the fix round 1 note now say so. `test_shared_alias_cannot_be_split_by_forged_independent_groups` keeps its concrete roots.
+- `test_an_absent_registered_root_grants_nothing_beneath_it` uses `@pytest.mark.usefixtures("local_root")` and reads the root from `bootstrap.default_bootstrap_root()`, so the file's ruff count is back to base (10).
+- Runs: `test_restore_plan.py` and `test_config_participant_lifetimes.py` (`-n 4`), 148 passed; preflight passed.

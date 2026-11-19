@@ -598,22 +598,22 @@ def test_reentrant_publication_from_derived_scope_refuses_all_effects(
 # next start's data-directory check.
 
 
-def test_an_absent_registered_root_grants_nothing_beneath_it(
-    tmp_path, monkeypatch, local_root
-):
+@pytest.mark.usefixtures("local_root")
+def test_an_absent_registered_root_grants_nothing_beneath_it(tmp_path, monkeypatch):
     from tldw_chatbook.Backup_Recovery.control_records import (
         admission_authority,
         bind_profile,
     )
 
+    root = bootstrap.default_bootstrap_root()
     owned = tmp_path / "owned"
     owned.mkdir(mode=0o700)
     selector = tmp_path / "selected.toml"
     selector.write_text('[general]\nusers_name="fixture"\n')
-    authority = admission_authority(local_root)
+    authority = admission_authority(root)
     authority.register("core", (owned, selector))
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
-    bind_profile(local_root, selector, ("core",), local_root / "admission")
+    bind_profile(root, selector, ("core",), root / "admission")
     owned.rmdir()
     try:
         contained = storage._contains_capture_path((owned,), owned / "x")

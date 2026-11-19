@@ -658,13 +658,18 @@ def test_config_remaps_explicit_local_selector_and_freezes_fresh_profile(tmp_pat
     assert config_data["general"]["users_name"] != "original"
 
 
-def _alias_archive(tmp_path, owner):
-    """One file captured for two profiles: alias rows sharing one group."""
+def _alias_archive(tmp_path, owner, *, synthetic=False):
+    """One file captured for two profiles: alias rows sharing one group.
+
+    ``synthetic`` gives each alias its own synthetic root, as capture writes a
+    single file's root.
+    """
 
     def aliases(doc):
         producer(doc)
         for row in (*doc["producer_inventory"], *doc["owners"], *doc["files"]):
             row["owner_id"] = owner
+        doc["directories"][0]["synthetic"] = synthetic
         doc["directories"].append(
             {
                 **doc["directories"][0],
@@ -734,13 +739,15 @@ def test_only_pet_aliases_restore_into_each_profiles_own_folder(
     tmp_path, owner, folders
 ):
     """TASK-42000: a backup of several profiles holds their once-shared pet
-    files as aliases. With every alias selected, each restores into its own
-    profile's folder. Aliases sent into one shared folder, or a selection of
-    only some of them, refuse exactly as any other owner's aliases do, so a
+    files as aliases, each in its own synthetic root as capture writes them.
+    With every alias selected, each restores into its own profile's folder;
+    sent into one shared folder, they are accepted as one deduplicated file,
+    as any owner's aliases are (every co-foldered profile is selected and the
+    bytes are identical). Selecting only some of them still refuses, so a
     restore never overwrites a pet file another profile in that folder reads."""
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 
-    archive = _alias_archive(tmp_path, owner)
+    archive = _alias_archive(tmp_path, owner, synthetic=True)
     destinations = {"root": tmp_path / "alpha"}
     if folders != "one-selected":
         destinations["other-root"] = tmp_path / (
@@ -757,10 +764,6 @@ def test_only_pet_aliases_restore_into_each_profiles_own_folder(
     if folders == "one-selected":
         assert refusal == "shared_scope_expansion_required"
         return
-    if folders == "shared":
-        # Restored into one folder, the aliases collide like any other owner's.
-        assert refusal == "destination_collision"
-        return
     if owner == "ui.state" and folders == "differ":
         assert refusal == "shared_target_split"
         return
@@ -768,6 +771,9 @@ def test_only_pet_aliases_restore_into_each_profiles_own_folder(
     restore = dict(plans[0].restore)
     assert restore["file"] == tmp_path / "alpha" / "note.txt"
     assert restore["alias"] == destinations["other-root"] / "note.txt"
+    if folders == "shared":
+        # Both aliases share the one deduplicated destination.
+        assert restore["alias"] == restore["file"]
 
 
 def test_empty_root_stages_supported_directory_metadata(tmp_path):
