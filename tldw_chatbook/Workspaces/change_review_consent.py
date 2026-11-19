@@ -547,7 +547,9 @@ class ChangeReviewConsentService:
                     # An unproven Git cleanup holds this daemon worker until
                     # restart, never a pool thread, so it cannot stall other
                     # roots' preparation (TASK-41635).
-                    run_on_custody_thread(custody, lambda: ticket.operation)
+                    run_on_custody_thread(
+                        custody, lambda ticket=ticket: ticket.operation
+                    )
                 elif self._native_expected:
                     raise ValueError("native initialization source unavailable")
                 else:
