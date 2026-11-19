@@ -1774,6 +1774,11 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         await pilot.press("enter")
         await pilot.pause()
         overlay = mode.query_one(SelectOverlay)
+        await _settle_pilot_until(
+            pilot,
+            lambda: overlay in app.screen._compositor.visible_widgets,
+            message=f"{provider} source mode overlay did not paint",
+        )
         assert mode.expanded and overlay.has_focus
         _assert_overlay_painted_on_screen(app, overlay)
         overlay_svg = app.export_screenshot(simplify=True)
@@ -1816,6 +1821,11 @@ async def test_supported_width_keyboard_reaches_each_provider_source_and_actions
         await pilot.press("enter")
         await pilot.pause()
         managed_overlay = managed.query_one(SelectOverlay)
+        await _settle_pilot_until(
+            pilot,
+            lambda: managed_overlay in app.screen._compositor.visible_widgets,
+            message=f"{provider} managed selector overlay did not paint",
+        )
         assert managed.expanded and managed_overlay.has_focus
         _assert_overlay_painted_on_screen(app, managed_overlay)
         assert "LongInvent" in app.export_screenshot(simplify=True)
