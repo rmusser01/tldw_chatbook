@@ -1053,6 +1053,7 @@ _BUDGETS: dict[str, int] = {
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
     # PR3299, 2026-10-31: user size waiver; exact integrated measurement.
+
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
