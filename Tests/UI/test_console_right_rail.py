@@ -69,6 +69,10 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 
+# TASK-41633: every mounted Console here reads the collection-time config;
+# the per-test sandbox refused it (RecoveryRequired: raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @asynccontextmanager
 async def make_console_pilot(*, size=(160, 45), css: str | None = None):
@@ -935,12 +939,11 @@ async def test_clicking_open_then_collapse_toggles_visibility_and_persists():
         assert pilot.app.screen.query_one("#console-run-inspector-state")
         assert pilot.app.screen.query_one("#console-settings-summary")
         controller = pilot.app.screen._ensure_console_chat_controller()
-        assert controller._confirm_project_instruction_dispatch.__self__ is (
-            pilot.app.screen._session
-        )
-        assert controller._select_project_instruction_binding.__self__ is (
-            pilot.app.screen._session
-        )
+        # b7dd8e53f2: the Console runtime owns both project-instruction
+        # callbacks and overwrites any caller copy (TASK-34667).
+        runtime = pilot.app.screen._console_runtime()
+        assert controller._confirm_project_instruction_dispatch.__self__ is runtime
+        assert controller._select_project_instruction_binding.__self__ is runtime
 
         await pilot.click("#console-project-instruction-status-button")
         await pilot.pause()
@@ -1018,7 +1021,6 @@ async def test_inspector_root_pins_project_and_authority_above_outer_body(
 
 
 @pytest.mark.asyncio
-@pytest.mark.bootstrap_profile
 async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
     monkeypatch,
 ) -> None:

@@ -77,7 +77,9 @@ class _CountingReadyResolutionGateway(_ReadyResolutionGateway):
         return await super().resolve_for_send(selection)
 
 
-class _UnavailableResolutionGateway:
+class _UnavailableResolutionGateway(_ReadyResolutionGateway):
+    # 3e618d7119: the mounted Console reads the gateway's cached context
+    # window while composing; only the send resolution is unavailable here.
     async def resolve_for_send(self, _selection):
         raise RuntimeError("provider unavailable")
 
@@ -411,7 +413,9 @@ async def test_console_control_bar_renders_visible_state_chips():
         # instead of showing the "not loaded" lazy-loading placeholder.
         assert not strip.segment_visible("tools")
 
-        line_text = line.renderable.plain
+        # ConsoleStatusText.update() takes a markup string (c5ceca1247), so
+        # read the rendered line.
+        line_text = str(line.render())
         assert line_text.count("Provider:") == 1
         assert line_text.count("Model:") == 1
         assert line_text.count("Assistant:") == 1
@@ -639,7 +643,9 @@ async def test_composer_menu_opens_current_draft_directly_in_recommended_review(
         assert len(direct) == 1
         assert str(direct[0].label) == "Improve current draft…"
         assert len(browse) == 1
-        assert str(browse[0].label) == "Browse Prompt Library…"
+        # 7970fbcada: the Prompts row also manages this chat's mix-ins and
+        # names their count.
+        assert str(browse[0].label) == "Prompts · 0 mix-ins…"
 
         direct[0].press()
         await pilot.pause()
@@ -1195,33 +1201,30 @@ async def test_console_transcript_empty_state_renders_ready_activation_copy():
 # ``Tests/Chat/test_console_onboarding_state.py``.
 
 
+# 939dee8dc2 (#2365): the label no longer parses the blocker sentence. A
+# provider-specific label arrives as ``provider_action_label`` from readiness
+# (see the next tests); the sentence alone only chooses between these two.
 @pytest.mark.parametrize(
     ("blocker_copy", "expected_label", "expected_tooltip"),
     (
+        *(
+            (
+                blocker,
+                "Review settings",
+                "Review Console provider settings before sending",
+            )
+            for blocker in (
+                "Provider setup needed: choose a model",
+                "Provider setup needed: choose a provider",
+                "Provider setup needed: API key missing for OpenAI",
+                "Provider setup needed: save the endpoint in settings",
+                "Provider setup needed: verify local runtime",
+            )
+        ),
         (
-            "Provider setup needed: choose a model",
+            "",
             "Choose model",
-            "Choose a model for this Console session",
-        ),
-        (
-            "Provider setup needed: choose a provider",
-            "Choose provider",
-            "Choose a provider for this Console session",
-        ),
-        (
-            "Provider setup needed: API key missing for OpenAI",
-            CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL,
-            "Configure API and API key before sending",
-        ),
-        (
-            "Provider setup needed: save the endpoint in settings",
-            "Configure endpoint",
-            "Configure the provider endpoint before sending",
-        ),
-        (
-            "Provider setup needed: verify local runtime",
-            "Review settings",
-            "Review Console provider settings before sending",
+            "Choose the provider and model for this Console session.",
         ),
     ),
 )

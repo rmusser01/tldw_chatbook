@@ -57,6 +57,10 @@ from tldw_chatbook.Widgets.Console.console_scope_picker_modal import (
 )
 from tldw_chatbook.Workspaces.registry_service import WorkspaceNotFound
 
+# TASK-41633: the mounted Console tests here read the collection-time config;
+# the per-test sandbox refused it (RecoveryRequired: raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
+
 # TASK-35160: the scope chip is the status line's "scope" segment; the
 # strip's public seam (segment state + pure render) replaces chip queries.
 
@@ -138,17 +142,17 @@ class _AlwaysExistsRows:
         return [(i,) for i in self._ids]
 
 
-async def _open_console_inspector(console, pilot) -> None:
+async def _open_console_inspector(console, pilot, *, timeout: float = 15.0) -> None:
     """Open the persistent Inspector rail and wait for measurable layout.
 
     Mirrors ``test_console_internals_decomposition.py``'s helper of the
-    same name.
+    same name, including its load-tolerant deadline (TASK-41632).
     """
     right_rail = console.query_one("#console-right-rail")
     if getattr(right_rail, "display", False) and right_rail.region.width > 0:
         return
     await pilot.click("#console-inspector-rail-open")
-    deadline = time.monotonic() + 2.0
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         right_rail = console.query_one("#console-right-rail")
         if getattr(right_rail, "display", False) and right_rail.region.width > 0:

@@ -5,6 +5,7 @@ import gc
 import hashlib
 import logging
 import threading
+import time
 import weakref
 from copy import deepcopy
 from dataclasses import fields, replace
@@ -138,6 +139,10 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
+
+# TASK-41633: the mounted Console tests here read the collection-time config;
+# the per-test sandbox refused it (RecoveryRequired: raw_source_selection_changed).
+pytestmark = pytest.mark.bootstrap_profile
 
 #: TASK-35578: what a listing that found models adds after its count.
 _LISTED_NOTE = listed_pick_note(settings_key=" (F4)")
@@ -10728,7 +10733,6 @@ async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
 
 # The real ChatScreen/store goes through config-participant admission, which the
 # per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_modal_save_disabled_during_active_run() -> None:
     app = _build_test_app()
@@ -13978,12 +13982,24 @@ async def test_console_discovery_identity_is_canonical_and_each_request_is_monot
         assert second.draft_generation == first.draft_generation + 1
 
         endpoint = modal.query_one("#console-settings-base-url", Input)
+
+        async def _until_endpoint_handled(value: str) -> None:
+            # TASK-41633: one pause() did not always deliver Input.Changed at
+            # load ~90. Wait until the handler bound the draft, so both
+            # assertions below read its result, not a not-yet-run handler.
+            deadline = time.monotonic() + 10.0
+            while modal._endpoint_draft.value != value:
+                assert time.monotonic() < deadline, (
+                    f"endpoint change to {value!r} never reached the modal"
+                )
+                await pilot.pause(0.01)
+
         endpoint.value = "http://localhost/"
-        await pilot.pause()
+        await _until_endpoint_handled("http://localhost/")
         assert modal._model_discovery_generation == second.draft_generation
 
         endpoint.value = "http://localhost:81"
-        await pilot.pause()
+        await _until_endpoint_handled("http://localhost:81")
         assert modal._model_discovery_generation == second.draft_generation + 1
 
 
@@ -14519,7 +14535,6 @@ def _unsaved_endpoint_modal(app: "ModalHarness", **kwargs) -> ConsoleSettingsMod
     )
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_context_view_says_where_to_save_an_unsaved_endpoint() -> None:
     """TASK-33006.22: with an unsaved endpoint the Context view hid Apply and
@@ -14552,7 +14567,6 @@ async def test_console_settings_context_view_says_where_to_save_an_unsaved_endpo
         assert reason.display is False
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("focus_context", [False, True], ids=["model", "context"])
 @pytest.mark.asyncio
 async def test_console_settings_default_recovery_adds_no_unsaved_endpoint_reason(
@@ -14618,7 +14632,6 @@ async def test_console_settings_modal_active_run_reason_precedes_endpoint_recove
         ) == "Available when the current run finishes."
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("opened", ["model", "context", "suspended"])
 @pytest.mark.asyncio
 async def test_console_settings_mount_builds_default_readiness_once(
@@ -14677,7 +14690,6 @@ async def test_console_settings_mount_builds_default_readiness_once(
             assert modal.query_one("#console-settings-save-default", Button).display
 
 
-@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_subscription_change_builds_default_readiness_once() -> None:
     """TASK-33006.21: a changed subscription snapshot builds default readiness once.

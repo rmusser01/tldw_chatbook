@@ -931,6 +931,9 @@ def _sync_harness(*, refresh_raises: bool = False):
         _sync_console_citation_count_discovery=lambda _messages: None,
         _sync_console_rate_chip=lambda _messages: None,
         _console_chat_store=store,
+        # a699492c7b (TASK-33620.15.3): the sync's re-freeze bookkeeping reads
+        # the shown conversation through this screen seam.
+        _current_console_conversation_id=lambda: "conv-a",
         _console_chat_controller=None,
         _console_original_attempt_previews={},
         _pending_console_swipe_selection=None,
@@ -938,6 +941,8 @@ def _sync_harness(*, refresh_raises: bool = False):
         _agent=SimpleNamespace(
             console_turn_activity=lambda: "",
             console_turn_activity_abandon_action=lambda: "",
+            # ab92bbb9d0 (TASK-40716): the sync pushes unproven-cleanup rows.
+            sync_unproven_cleanup=lambda _transcript, _messages=(): 0,
         ),
         _console_citation_counts={},
         _sync_console_annotation_discovery=lambda _store: None,
