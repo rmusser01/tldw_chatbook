@@ -665,3 +665,8 @@ Send file in the Console P0 gate's admission-sensitive step.
 
 One more job: 56 eligible test jobs per PR, 35 concurrent test runners, 36
 counting perf-guard.
+
+2026-11-19 (owner decision 2026-11-19): `recovered-suites` keeps its single
+serial job, and its cap rises from 20 to 30 min. Over 24 PR runs on
+2026-11-18/19, 19 took 16 min or more and 5 hit the old 20-min cap, 4 of them
+with no test failing. No runner is added.

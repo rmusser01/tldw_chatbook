@@ -1614,7 +1614,10 @@ jobs:
     name: PR lane (recovered suites)
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 20
+    # Owner decision (2026-11-19): 30 min, still one serial job. Over 24 PR
+    # runs (2026-11-18/19), 19 took 16 min or more and 5 hit the old 20-min
+    # cap, 4 of them with no test failing.
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
