@@ -208,6 +208,9 @@ def _connect(stack, profile, address, *, missing_ok):
 
 
 def _exchange(profile, intent, argument, *, missing_ok=False, pin=False, target=None):
+    from .profile_writer_grant import require_unparked_writer
+
+    require_unparked_writer(profile)
     address, facts = target if target is not None else _selection(profile)
     token = uuid4().hex
     body = _encode({"v": _VERSION, "id": token, "profile": facts, "intent": intent, "data": argument})
@@ -267,6 +270,10 @@ def call_profile_writer(profile: Path, operation: str, arguments: dict):
     """
     if operation == "agent_runs.open":
         return open_profile_agent_runs(profile, arguments)[0]
+    if operation == "chacha.initialize":
+        from .profile_writer_chacha import open_profile_chacha
+
+        return open_profile_chacha(profile, arguments)[0]
     return call_bound_profile_writer(None, profile, operation, arguments)
 
 
@@ -363,21 +370,27 @@ class _WriterEnrollment:
     """A serial command and the idle maintenance observer share one startup lease."""
 
     def __init__(self):
-        from .profile_writer_repository import AgentRunsWriterDatabase
+        from .profile_writer_repository import AgentRunsWriterDatabase, ChaChaWriterDatabase
 
         self.startup = None
         self.agent_runs = AgentRunsWriterDatabase()
+        self.chacha = ChaChaWriterDatabase()
         self.created = {}
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="profile-writer-storage")
         self.stop = threading.Event()
         self.watcher = threading.Thread(target=self._monitor, name="profile-writer-maintenance", daemon=True)
         self.watcher.start()
 
+    def _require_command_retired(self):
+        if self.chacha.database is not None or self.chacha.failed:
+            raise ProfileWriterOutcomeUnknown("ChaChaNotes command connection did not retire")
+        _require_retired(self.startup, self.agent_runs.idle_lease())
+
     def _release(self):
         global _enrollment_generation
         from tldw_chatbook.Backup_Recovery import storage_admission as storage
 
-        _require_retired(self.startup, self.agent_runs.idle_lease())
+        self._require_command_retired()
         self.agent_runs.retire()
         _require_retired(self.startup)
         if self.startup is not None:
@@ -419,7 +432,7 @@ class _WriterEnrollment:
                 self.startup = storage.admit_profile_writer_startup()
             yield
         finally:
-            _require_retired(self.startup, self.agent_runs.idle_lease())
+            self._require_command_retired()
 
     def drain(self):
         self.executor.submit(self._release).result()
@@ -463,10 +476,6 @@ def _command(profile, facts, payload, previous_stamp, enrollment):
                 elif (type(expected) is not list or len(expected) != 2
                       or any(type(item) is not int for item in expected) or tuple(expected) != current):
                     raise RecoveryRequired("profile_writer_database_changed")
-                if owner == "db.agent_runs":
-                    from .profile_writer_grant import reserve_agent_file
-
-                    order.enter_context(reserve_agent_file(current))
             else:
                 if _selection(profile)[1] != facts:
                     raise RecoveryRequired("profile_writer_selection_changed")
@@ -475,9 +484,24 @@ def _command(profile, facts, payload, previous_stamp, enrollment):
                 if previous_stamp != facts[-1] and not config._load_cli_config_bootstrap(force_reload=True).succeeded:
                     raise RecoveryRequired("profile_writer_configuration_unavailable")
                 _require_selected(profile)
+                if operation == "chatbook.import":
+                    # Imports always include the selected ChaChaNotes store, and
+                    # can additionally visit Media and Prompts under their own scopes.
+                    from tldw_chatbook.Backup_Recovery.profile_paths import database_leaf
+
+                    path, owner = profile / database_leaf("chachanotes_db_path"), "db.chachanotes.primary"
+                    require_writer_repository(profile, owner, facts=facts)
+                    current = writer_file_identity(path)
+            if owner is not None:
+                from .profile_writer_grant import reserve_writer_file
+
+                order.enter_context(reserve_writer_file(current))
+                if writer_file_identity(path) != current:
+                    raise RecoveryRequired("profile_writer_database_changed")
             _execution.active = True
             _execution.repository = (profile, owner)
             _execution.agent_runs = enrollment.agent_runs
+            _execution.chacha = enrollment.chacha
             _execution.selection = (*facts[:-1], tuple(facts[-1]), _enrollment_generation)
             try:
                 result = execute_profile_writer_command(profile, payload["operation"], payload["arguments"])
@@ -489,12 +513,17 @@ def _command(profile, facts, payload, previous_stamp, enrollment):
             finally:
                 del _execution.repository
                 del _execution.agent_runs
+                del _execution.chacha
                 del _execution.selection
                 del _execution.active
             if _selection(profile)[1] != facts:
                 raise ProfileWriterOutcomeUnknown("profile changed during mutation")
             if owner is not None:
                 after = writer_file_identity(path)
+                if operation == "chacha.initialize" and status == "ok" and (
+                    after is None or result["database"] != list(after)
+                ):
+                    raise ProfileWriterOutcomeUnknown("ChaChaNotes opening identity changed")
                 if current is None and after is not None:
                     enrollment.created[owner] = after
                 elif current != after:

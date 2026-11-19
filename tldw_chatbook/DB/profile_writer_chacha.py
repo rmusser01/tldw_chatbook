@@ -143,6 +143,24 @@ def _database_request(db, parameters, records=None):
     }
 
 
+def open_profile_chacha(profile: Path, arguments: dict) -> tuple[int, tuple[int, int]]:
+    """Bind a logical opener to the physical file initialized by the writer."""
+    from ..Backup_Recovery.bootstrap import RecoveryRequired
+    from ..Backup_Recovery.profile_paths import database_leaf
+    from .profile_writer import ProfileWriterOutcomeUnknown, call_bound_profile_writer
+    from .profile_writer_selection import writer_file_identity
+
+    receipt = call_bound_profile_writer(None, profile, "chacha.initialize", arguments)
+    if (type(receipt) is not dict or set(receipt) != {"version", "database"}
+        or type(receipt["version"]) is not int or type(receipt["database"]) is not list
+        or len(receipt["database"]) != 2 or any(type(n) is not int for n in receipt["database"])):
+        raise ProfileWriterOutcomeUnknown("invalid ChaChaNotes opening receipt")
+    identity = tuple(receipt["database"])
+    if identity != writer_file_identity(Path(profile) / database_leaf("chachanotes_db_path")):
+        raise RecoveryRequired("profile_writer_database_changed")
+    return receipt["version"], identity
+
+
 def initialize_profile_schema(db) -> bool:
     """Run stock schema initialization/repair once on the elected writer."""
     from .ChaChaNotes_DB import CharactersRAGDB
@@ -156,13 +174,12 @@ def initialize_profile_schema(db) -> bool:
     if profile is None:
         return False
     from ..Backup_Recovery.participants import core_access
-    from .profile_writer import call_profile_writer
 
     core_access(db)
     db._profile_writer_path = db.db_path
     db._profile_writer_opener = uuid4().hex
-    db._schema_initial_version = call_profile_writer(
-        profile, "chacha.initialize", _database_request(db, {}),
+    db._schema_initial_version, db._profile_writer_file = open_profile_chacha(
+        profile, _database_request(db, {}),
     )
     return True
 
@@ -350,8 +367,7 @@ def _recovery_generation():
         return None
 
 
-def _schema_generation(db):
-    connection = db.get_connection()
+def _schema_generation(db, connection):
     with closing(connection.execute("PRAGMA main.schema_version")) as cursor:
         cookie = cursor.fetchone()[0]
     return cookie, db._get_db_version(connection)
@@ -362,36 +378,38 @@ def _repository(path, opener, client_id, seed, *, initialize):
     from ..app_services import open_chachanotes_db
     from ..Backup_Recovery.bootstrap import RecoveryRequired
     from ..Chat.console_library_policy import ConsoleLibraryMigrationSeed
-    from .profile_writer import current_profile_writer_selection
+    from .profile_writer import _execution, current_profile_writer_selection
 
     key = (path, opener, client_id, seed)
     previous = _OPENED.pop(key, None)
     selection = (current_profile_writer_selection(), _recovery_generation())
     before = _file_identity(path)
-    db = None
+    if initialize or before is None or previous is None or previous.generation != (selection, before):
+        previous = None
+        db = open_chachanotes_db(
+            path, client_id=client_id, migration_seed=None if seed is None else ConsoleLibraryMigrationSeed(seed),
+        )
+    else:
+        db = previous.db
+    holder = _execution.chacha
     receipt = None
     try:
-        if not initialize and before and previous and previous.generation == (selection, before):
-            db = previous.db
-            if _schema_generation(db) == previous.schema:
-                receipt = previous
-            else:
-                db.close_connection()
-                db = None
-        if db is None:
-            db = open_chachanotes_db(
-                path, client_id=client_id, migration_seed=None if seed is None else ConsoleLibraryMigrationSeed(seed),
-            )
+        with holder.command(db) as connection:
             identity = _file_identity(path)
+            if before is not None and before != identity:
+                raise RecoveryRequired("profile_writer_database_changed")
+            schema = _schema_generation(db, connection)
+            if previous is not None and previous.schema != schema:
+                # External DDL invalidates the manager's column memo. Run the
+                # original schema repair on the connection which observed it.
+                db._messages_columns_cache = None
+                db._initialize_schema()
+                schema = _schema_generation(db, connection)
             if identity is not None:
-                receipt = _OpenedRepository(db, (selection, identity), _schema_generation(db))
-        if before is not None and before != _file_identity(path):
-            raise RecoveryRequired("profile_writer_database_changed")
-        yield db
+                receipt = _OpenedRepository(db, (selection, identity), schema)
+            yield db
     finally:
-        if db is not None:
-            db.close_connection()
-        if receipt is not None:
+        if receipt is not None and holder.database is None and not holder.failed:
             _OPENED[key] = receipt
             if len(_OPENED) > _MAX_OPENED:
                 _OPENED.popitem(last=False)
@@ -466,7 +484,16 @@ def execute_profile_writer_command(profile: Path, operation: str, arguments: dic
     path = profile / database_leaf("chachanotes_db_path")
     with _repository(path, opener, client_id, seed, initialize=command is None) as db:
         if command is None:
-            return db._schema_initial_version
+            from .profile_writer_selection import writer_file_identity
+
+            # Capture the creating file while SQLite still pins its name. On
+            # a cold open the transport had no prior identity to compare.
+            identity = writer_file_identity(path)
+            if identity is None:
+                from .profile_writer import ProfileWriterOutcomeUnknown
+
+                raise ProfileWriterOutcomeUnknown("ChaChaNotes opening identity unavailable")
+            return {"version": db._schema_initial_version, "database": list(identity)}
         if console:
             return _pack(execute_console_operation(kind, function, db, profile, parameters), records)
         if local_notes:

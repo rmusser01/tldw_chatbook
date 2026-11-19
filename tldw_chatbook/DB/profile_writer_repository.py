@@ -1,4 +1,4 @@
-"""The elected writer's idle, revocable stock AgentRuns connection."""
+"""SQLite handles owned and retired by the elected writer's storage thread."""
 
 from __future__ import annotations
 
@@ -54,8 +54,10 @@ def _schema(connection: sqlite3.Connection) -> tuple:
         raise
 
 
-class AgentRunsWriterDatabase:
+class WriterSQLiteConnection:
     """One process-owned native resource, independent of any command transaction."""
+
+    private_policy = "db.base"
 
     def __init__(self):
         self.database = None
@@ -63,26 +65,45 @@ class AgentRunsWriterDatabase:
         self.selection = self.artifacts = self.schema = None
         self.failed = False
 
+    def current_connection(self):
+        return getattr(self.database._thread_local, "conn", None)
+
+    def close_connection(self):
+        if self.artifacts != _artifacts(self.database.db_path):
+            raise ProfileWriterOutcomeUnknown("writer database artifacts changed before retirement")
+        with closing(self.connection.execute("PRAGMA main.wal_checkpoint(FULL)")) as cursor:
+            busy, log, checkpointed = cursor.fetchone()
+        if busy or log != checkpointed:
+            raise ProfileWriterOutcomeUnknown("writer database checkpoint incomplete")
+        self.database.close()
+
+    def bind(self, database, connection):
+        from .private_sqlite import _ordinary_connections
+
+        self.database, self.connection = database, connection
+        self.lease = _ordinary_connections.get(connection)
+        self.idle_lease()
+
     def idle_lease(self):
         """Positively identify this one native borrower and its creating thread."""
         from .private_sqlite import _ordinary_connections, _validated_owner_policy
 
         if self.failed:
-            raise ProfileWriterOutcomeUnknown("AgentRuns retirement is uncertain")
+            raise ProfileWriterOutcomeUnknown("writer connection retirement is uncertain")
         if self.database is None:
             return None
         participant = participants.repository_participant(self.database)
         if (self.connection is None or self.lease is None
-            or self.database._thread_local.conn is not self.connection
+            or self.current_connection() is not self.connection
             or _ordinary_connections.get(self.connection) is not self.lease
             or participant.connections.get(self.connection) is not self.lease
-            or self.lease.resource_policy is not _validated_owner_policy("db.base")
+            or self.lease.resource_policy is not _validated_owner_policy(self.private_policy)
             or self.lease.resource_path != self.database.db_path
             or self.lease.resource_participant is not participant
             or self.lease.resource_thread is not threading.current_thread()
             or self.lease.resource_close_failed
             or sqlite3.Connection.in_transaction.__get__(self.connection)):
-            raise ProfileWriterOutcomeUnknown("AgentRuns connection did not settle")
+            raise ProfileWriterOutcomeUnknown("writer connection did not settle")
         return self.lease
 
     def retire(self) -> None:
@@ -91,37 +112,30 @@ class AgentRunsWriterDatabase:
             return
         self.failed = True  # A failed native close is never retried.
         try:
-            if self.artifacts != _artifacts(self.database.db_path):
-                raise ProfileWriterOutcomeUnknown("AgentRuns artifacts changed before retirement")
-            with closing(self.connection.execute("PRAGMA main.wal_checkpoint(FULL)")) as cursor:
-                busy, log, checkpointed = cursor.fetchone()
-            if busy or log != checkpointed:
-                raise ProfileWriterOutcomeUnknown("AgentRuns checkpoint incomplete")
-            self.database.close()
-            if self.database._thread_local.conn is not None:
-                raise ProfileWriterOutcomeUnknown("AgentRuns close incomplete")
+            self.close_connection()
+            if self.current_connection() is not None:
+                raise ProfileWriterOutcomeUnknown("writer database close incomplete")
             try:
                 sqlite3.Connection.in_transaction.__get__(self.connection)
             except sqlite3.ProgrammingError:
                 pass  # The original native handle itself is closed.
             else:
-                raise ProfileWriterOutcomeUnknown("AgentRuns connection still live")
+                raise ProfileWriterOutcomeUnknown("writer database connection still live")
             self.database = self.connection = self.lease = None
             self.failed = False
         except Exception as error:
-            raise ProfileWriterOutcomeUnknown("AgentRuns connection did not retire") from error
+            raise ProfileWriterOutcomeUnknown("writer database connection did not retire") from error
 
+
+class AgentRunsWriterDatabase(WriterSQLiteConnection):
     def _open(self, path, selection):
         from .AgentRuns_DB import AgentRunsDB
-        from .private_sqlite import _ordinary_connections
 
-        self.database = database = AgentRunsDB(path, reconcile_on_init=False)
-        self.connection = database._thread_local.conn
-        self.lease = _ordinary_connections.get(self.connection)
-        self.idle_lease()
+        database = AgentRunsDB(path, reconcile_on_init=False)
+        self.bind(database, database._thread_local.conn)
         self.artifacts = _artifacts(path)
         if self.artifacts[0] is None:
-            raise ProfileWriterOutcomeUnknown("AgentRuns database disappeared after open")
+            raise ProfileWriterOutcomeUnknown("writer database disappeared after open")
         self.selection = selection
         self.schema = None
 
@@ -153,3 +167,28 @@ class AgentRunsWriterDatabase:
                 schema = _schema(self.connection)
             self.schema = schema
             yield self.database
+
+
+class ChaChaWriterDatabase(WriterSQLiteConnection):
+    """Own one connection through schema checking, the domain command and close."""
+
+    private_policy = "db.chachanotes.primary"
+
+    def current_connection(self):
+        return getattr(self.database._local, "conn", None)
+
+    def close_connection(self):
+        # The stock close runs its own TRUNCATE checkpoint before releasing SQLite.
+        self.database.close_connection()
+
+    @contextmanager
+    def command(self, database):
+        if self.database is not None or self.failed:
+            raise ProfileWriterOutcomeUnknown("ChaChaNotes writer connection did not retire")
+        self.bind(database, database.get_connection())
+        try:
+            yield self.connection
+        finally:
+            # Windows permits file replacement between ordinary ChaChaNotes calls.
+            # The physical handle must retire before the client gets its receipt.
+            self.retire()

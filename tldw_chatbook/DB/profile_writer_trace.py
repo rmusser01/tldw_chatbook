@@ -32,7 +32,8 @@ def stock_source(owner, database):
 def settlement_request(coordinator, prepared):
     """Detach only a response whose original equality proof authenticates its sanitized bytes."""
     if (
-        type(prepared) is not _PreparedSettlement or prepared.response_omission is not None
+        type(prepared) is not _PreparedSettlement or prepared._control_owner is not None
+        or prepared.response_omission is not None
         or prepared.usage_omission is not None
         or prepared.integrity_omission != _integrity_omission(prepared.prior_omission_reason_code, None, None)
         or not is_stock_writer_sanitizer(coordinator._sanitizer)

@@ -1,9 +1,9 @@
-"""Exclusive writer grants for the caller-bound goal and workflow FULL transactions."""
+"""Exclusive physical-file grants for installed, caller-bound transactions."""
 
 from __future__ import annotations
 
-import hashlib
 import ctypes
+import hashlib
 import os
 import sqlite3
 import sys
@@ -16,6 +16,7 @@ from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
 from . import profile_writer as writer
 from .profile_writer_agent_sources import AGENT_LOCAL_GRANT_KINDS
+from .profile_writer_chacha_sources import CHACHA_LOCAL_GRANT_KINDS
 
 
 _KINDS = AGENT_LOCAL_GRANT_KINDS | {"goal.checkpoint", "workflow.phase_control", "workflow.child_commit"}
@@ -25,6 +26,14 @@ _LIMIT = 1024
 _uncertain = {}
 _pending = {}  # Service-side native process and positive-retirement event.
 _pending_lock = threading.Lock()
+_local = threading.local()
+
+
+def require_unparked_writer(profile):
+    """A callback cannot issue another command to its own parked writer."""
+    grant = getattr(_local, "grant", None)
+    if grant is not None and grant.profile == profile:
+        raise RecoveryRequired("profile_writer_local_transaction_active")
 
 
 def _guard_name(identity):
@@ -128,7 +137,7 @@ def _observe_guard(handle, stop):
 
 
 @contextmanager
-def reserve_agent_file(identity, *, observable=False):
+def reserve_writer_file(identity, *, observable=False):
     """Reserve the actual NTFS file until the physical mutation has finished."""
     if identity is None:
         # Until the elected opener creates this file there can be no local
@@ -172,16 +181,29 @@ def _expect(handle, token, expected, *, waiting=False):
         raise ValueError("unexpected profile writer transaction receipt")
 
 
-def _prepare(profile, facts, identity, enrollment):
+def _grant_target(kind):
+    from tldw_chatbook.Backup_Recovery.profile_paths import database_leaf
+
+    if type(kind) is str and kind in _KINDS:
+        return "db.agent_runs", "agent_runs.db"
+    if type(kind) is str and kind in CHACHA_LOCAL_GRANT_KINDS:
+        return "db.chachanotes.primary", database_leaf("chachanotes_db_path")
+    raise RecoveryRequired("profile_writer_invalid_transaction")
+
+
+def _prepare(profile, facts, identity, kind, enrollment):
     from .profile_writer_repository import _artifacts
     from .profile_writer_selection import require_writer_repository, writer_file_identity
 
-    with enrollment.command(profile), reserve_agent_file(identity):
-        require_writer_repository(profile, "db.agent_runs", facts=facts)
-        if writer_file_identity(profile / "agent_runs.db") != identity:
+    owner, leaf = _grant_target(kind)
+    path = profile / leaf
+    with enrollment.command(profile), reserve_writer_file(identity):
+        require_writer_repository(profile, owner, facts=facts)
+        if writer_file_identity(path) != identity:
             raise RecoveryRequired("profile_writer_database_changed")
-        enrollment.agent_runs.retire()
-        observed = _artifacts(profile / "agent_runs.db")[0]
+        holder = enrollment.agent_runs if owner == "db.agent_runs" else enrollment.chacha
+        holder.retire()
+        observed = _artifacts(path)[0]
         if observed is None or observed[:2] != identity:
             raise RecoveryRequired("profile_writer_database_changed")
 
@@ -192,11 +214,11 @@ def serve_grant(profile, facts, payload, token, handle, enrollment):
 
     try:
         if (type(payload) is not dict or set(payload) != {"kind", "database"}
-            or type(payload["kind"]) is not str or payload["kind"] not in _KINDS or type(payload["database"]) is not list
+            or type(payload["database"]) is not list
             or len(payload["database"]) != 2 or any(type(n) is not int for n in payload["database"])):
             raise RecoveryRequired("profile_writer_invalid_transaction")
         identity = tuple(payload["database"])
-        enrollment.executor.submit(_prepare, profile, facts, identity, enrollment).result()
+        enrollment.executor.submit(_prepare, profile, facts, identity, payload["kind"], enrollment).result()
     except (RecoveryRequired, SystemExit) as error:
         reason = str(error)
         if isinstance(error, SystemExit):
@@ -229,7 +251,7 @@ def serve_grant(profile, facts, payload, token, handle, enrollment):
         # A JSON retirement claim alone cannot hand custody back. Require a
         # signalled native outcome (or process death) and the exclusive file.
         try:
-            with reserve_agent_file(identity):
+            with reserve_writer_file(identity):
                 _send(handle, token, "complete")
         except RecoveryRequired:
             _send(handle, token, "refused:profile_writer_local_transaction_active")
@@ -251,13 +273,38 @@ class _LocalOnly:
 
 
 class _Grant:
+    owner_id = "db.agent_runs"
+    private_policy = "db.base"
+
+    @staticmethod
+    def profile(database):
+        return database._writer_profile
+
+    @staticmethod
+    def connection(database):
+        return getattr(database._thread_local, "conn", None)
+
+    @staticmethod
+    def source_identity(database, expected):
+        return database._writer_file == expected
+
+    @staticmethod
+    def schema(database, connection):
+        from .profile_writer_repository import _schema
+
+        return _schema(connection)
+
+    @staticmethod
+    def close(database):
+        database.close()
+
     def __init__(self, database, identity, facts, admission):
         from tldw_chatbook.Backup_Recovery import bootstrap
         from tldw_chatbook.Backup_Recovery import participants, storage_admission as storage
         from .private_sqlite import _ordinary_connections
 
         self.database = database
-        self.profile, self.path = database._writer_profile, database.db_path
+        self.profile, self.path = type(self).profile(database), database.db_path
         self.identity = identity
         self.facts = facts
         self.admission = admission
@@ -267,13 +314,14 @@ class _Grant:
         self.epoch = bootstrap._admission_epoch
         self.thread = threading.current_thread()
         self.participant = participants.repository_participant(database)
-        self.prior = getattr(database._thread_local, "conn", None)
+        self.prior = self.connection(database)
         self.prior_lease = _ordinary_connections.get(self.prior) if self.prior is not None else None
         self.conn = self.resource = self.synchronous = None
         self.artifacts = self.schema = None
         self.ambiguous = self.retired = False
         with storage._lock:
             self.original_scopes = self._scopes(storage)
+            self.original_connections = self._connections(storage)
             if self.participant.read_only or self.participant.closed:
                 raise RecoveryRequired("profile_writer_grant_source_changed")
         if self.prior is not None:
@@ -291,15 +339,20 @@ class _Grant:
         return {operation for operation in storage._operations
                 if operation.thread is self.thread and operation.participant is self.participant}
 
+    def _connections(self, storage):
+        """Include a failed native acquisition even if no cache entry was published."""
+        return {lease for lease in storage._live_leases
+                if lease.resource_thread is self.thread and lease.resource_path == self.path}
+
     def _connection(self, conn):
         from tldw_chatbook.Backup_Recovery import storage_admission as storage
         from .private_sqlite import _ordinary_connections, _validated_owner_policy
 
         lease = _ordinary_connections.get(conn)
-        if (self.thread is not threading.current_thread() or self.database._thread_local.conn is not conn
+        if (self.thread is not threading.current_thread() or self.connection(self.database) is not conn
             or lease is None or self.participant.connections.get(conn) is not lease
             or lease not in storage._live_leases or lease._key != self.admission._key
-            or lease.resource_policy is not _validated_owner_policy("db.base") or lease.resource_path != self.path
+            or lease.resource_policy is not _validated_owner_policy(self.private_policy) or lease.resource_path != self.path
             or lease.resource_participant is not self.participant or self.participant.repository() is not self.database
             or lease.resource_thread is not self.thread or lease.resource_close_failed
             or self.prior is not None and (self.prior is not conn or self.prior_lease is not lease)
@@ -312,9 +365,9 @@ class _Grant:
         from .profile_writer_repository import _artifacts
         from .profile_writer_selection import require_writer_repository
 
-        require_writer_repository(self.profile, "db.agent_runs", facts=self.facts)
-        if (self.database._writer_profile != self.profile or self.database.db_path != self.path
-            or self.database.db_path_str != str(self.path) or self.database._writer_file != self.identity
+        require_writer_repository(self.profile, self.owner_id, facts=self.facts)
+        if (type(self).profile(self.database) != self.profile or self.database.db_path != self.path
+            or self.database.db_path_str != str(self.path) or not self.source_identity(self.database, self.identity)
             or self.admission.execution_context(self.path) != self.scope or bootstrap._admission_epoch != self.epoch):
             raise RecoveryRequired("profile_writer_grant_source_changed")
         observed = _artifacts(self.path)
@@ -327,13 +380,11 @@ class _Grant:
 
     def bind(self, connection):
         """Witness the exact original handle and synchronous policy before BEGIN."""
-        from .profile_writer_repository import _schema
-
         if self.conn is not None:
             raise RecoveryRequired("profile_writer_grant_already_bound")
         self.artifacts = self._current()
         self.resource = self._connection(connection)
-        self.schema = _schema(connection)
+        self.schema = type(self).schema(self.database, connection)
         with closing(connection.execute("PRAGMA main.synchronous")) as cursor:
             self.synchronous = cursor.fetchone()[0]
         self.conn = connection
@@ -345,7 +396,6 @@ class _Grant:
     def retire(self, connection):
         """Verify the original transaction and all introduced resources retired."""
         from tldw_chatbook.Backup_Recovery import storage_admission as storage
-        from .profile_writer_repository import _schema
         if (self.ambiguous or self.retired or self.conn is None or self.conn is not connection
             or self.thread is not threading.current_thread()):
             raise writer.ProfileWriterOutcomeUnknown("unconfirmed local transaction")
@@ -359,13 +409,13 @@ class _Grant:
             if self.prior is not None:
                 raise writer.ProfileWriterOutcomeUnknown("borrowed connection was closed") from None
         else:
-            if active or self._connection(connection) is not self.resource or _schema(connection) != self.schema:
+            if active or self._connection(connection) is not self.resource or type(self).schema(self.database, connection) != self.schema:
                 raise writer.ProfileWriterOutcomeUnknown("local transaction did not retire")
             with closing(connection.execute("PRAGMA main.synchronous")) as cursor:
                 if cursor.fetchone()[0] != self.synchronous:
                     raise writer.ProfileWriterOutcomeUnknown("SQLite policy did not retire")
             if self.prior is None:
-                self.database.close()
+                self.close(self.database)
         if self.prior is None:
             try:
                 sqlite3.Connection.in_transaction.__get__(connection)
@@ -376,6 +426,9 @@ class _Grant:
             with storage._lock:
                 if self.resource in storage._live_leases or connection in self.participant.connections:
                     raise writer.ProfileWriterOutcomeUnknown("local grant lease still live")
+        with storage._lock:
+            if self._connections(storage) != self.original_connections:
+                raise writer.ProfileWriterOutcomeUnknown("local grant connection leases did not retire")
         self.retired = True
 
 
@@ -408,16 +461,33 @@ def local_agent_transaction(database, kind):
     return _local_agent_transaction(database, kind)
 
 
-@contextmanager
 def _local_agent_transaction(database, kind):
+    from .AgentRuns_DB import AgentRunsDB
+
+    if type(database) is not AgentRunsDB or type(kind) is not str or kind not in _KINDS:
+        raise RecoveryRequired("profile_writer_grant_source_changed")
+    return _local_transaction(database, kind, _Grant)
+
+
+def _local_chacha_transaction(database, kind):
+    from .ChaChaNotes_DB import CharactersRAGDB
+    from .profile_writer_chacha_grant import ChaChaTransactionGrant
+
+    if type(database) is not CharactersRAGDB or type(kind) is not str or kind not in CHACHA_LOCAL_GRANT_KINDS:
+        raise RecoveryRequired("profile_writer_grant_source_changed")
+    return _local_transaction(database, kind, ChaChaTransactionGrant)
+
+
+@contextmanager
+def _local_transaction(database, kind, grant_type):
     import _winapi
     from tldw_chatbook.Backup_Recovery import participants, storage_admission as storage
-    from .AgentRuns_DB import AgentRunsDB
     from .profile_writer_selection import require_writer_repository, writer_file_identity
 
-    path, profile = database.db_path, database._writer_profile
-    if (type(database) is not AgentRunsDB or type(kind) is not str or kind not in _KINDS or path != profile / "agent_runs.db"
-        or database.db_path_str != str(path)):
+    owner, leaf = _grant_target(kind)
+    path, profile = database.db_path, grant_type.profile(database)
+    if (getattr(_local, "grant", None) is not None or profile is None or path != profile / leaf
+        or database.db_path_str != str(path) or owner != grant_type.owner_id):
         raise RecoveryRequired("profile_writer_grant_source_changed")
     participants.core_access(database)
     token = uuid4().hex
@@ -426,11 +496,11 @@ def _local_agent_transaction(database, kind):
         # Hold this process's actual external recovery group from before the
         # offer through positive original transaction/handle retirement.
         admission = resources.enter_context(storage.acquire_storage(path))
-        facts = require_writer_repository(profile, "db.agent_runs")
+        facts = require_writer_repository(profile, owner)
         identity = writer_file_identity(path)
-        if identity is None or database._writer_file != identity:
+        if identity is None or not grant_type.source_identity(database, identity):
             raise RecoveryRequired("profile_writer_database_changed")
-        grant = _Grant(database, identity, facts, admission)
+        grant = grant_type(database, identity, facts, admission)
         body = writer._encode({"v": writer._VERSION, "id": token, "intent": "grant", "profile": facts,
                                "data": {"kind": kind, "database": list(identity)}})
         with ExitStack() as connection:
@@ -443,7 +513,7 @@ def _local_agent_transaction(database, kind):
                 raise
             guard = ExitStack()
             resources.callback(guard.close)
-            guard.enter_context(reserve_agent_file(identity, observable=True))
+            guard.enter_context(reserve_writer_file(identity, observable=True))
             completed = _completion(identity, create=True)
             resources.callback(_winapi.CloseHandle, completed)
             _send(handle, token, "claimed")
@@ -453,15 +523,20 @@ def _local_agent_transaction(database, kind):
                 _signal(completed)  # The application never began its transaction.
                 raise
             try:
-                yield grant
+                _local.grant = grant
+                try:
+                    yield grant
+                finally:
+                    del _local.grant
             finally:
                 if grant.ambiguous or not grant.retired:
                     # A pre-BEGIN refusal may release only a never-bound grant
                     # with no new native resource and its original scopes intact.
                     with storage._lock:
                         safe = (grant.conn is None and not grant.ambiguous
-                                and grant.prior is getattr(database._thread_local, "conn", None)
-                                and grant.original_scopes == grant._scopes(storage))
+                                and grant.prior is grant.connection(database)
+                                and grant.original_scopes == grant._scopes(storage)
+                                and grant.original_connections == grant._connections(storage))
                     if not safe:
                         _uncertain[token] = resources.pop_all(), grant
                         raise writer.ProfileWriterOutcomeUnknown("local transaction retirement uncertain")

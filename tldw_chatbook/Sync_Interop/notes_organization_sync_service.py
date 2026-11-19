@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from tldw_chatbook.DB.profile_writer_chacha_sources import register_chacha_grant_sources
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.agent_lessons import (
     AgentLessonsSeedResult,
@@ -28,6 +29,7 @@ from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mo
 _RESOURCE_SYNC_ID_TABLES = ("keywords", "keyword_collections")
 
 
+@register_chacha_grant_sources
 class NotesOrganizationSyncService:
     """Copy immutable ChaChaNotes organization intents into the general outbox."""
 

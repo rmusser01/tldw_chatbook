@@ -117,6 +117,7 @@ from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.profile_writer_chacha import console_mutation
+from tldw_chatbook.DB.profile_writer_chacha_sources import register_chacha_grant_sources
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     ConflictError,
@@ -318,6 +319,7 @@ class GoalConversationConflict(ValueError):
     """The preallocated conversation cannot be proven to belong to this launch."""
 
 
+@register_chacha_grant_sources
 class ChatPersistenceService:
     def __init__(
         self,

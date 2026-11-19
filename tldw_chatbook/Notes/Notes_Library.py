@@ -40,6 +40,7 @@ from tldw_chatbook.Notes.note_folder_models import (
 )
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.DB.profile_writer_chacha import notes_mutation
+from tldw_chatbook.DB.profile_writer_chacha_sources import register_chacha_grant_sources
 from tldw_chatbook.Utils.private_paths import (
     lexical_path,
     verify_trusted_directory,
@@ -72,6 +73,7 @@ def _is_internal_research_keyword(row: Any) -> bool:
     )
 
 
+@register_chacha_grant_sources
 class NotesInteropService:
     def __init__(
         self,

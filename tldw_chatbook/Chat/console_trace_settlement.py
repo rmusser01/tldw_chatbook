@@ -14,6 +14,7 @@ import threading
 from typing import Protocol
 
 from tldw_chatbook.DB.profile_writer_chacha import trace_mutation
+from tldw_chatbook.DB.profile_writer_chacha_sources import register_chacha_grant_sources
 from tldw_chatbook.DB.store_errors import StoreMutationOutcomeUnknown
 
 from tldw_chatbook.Chat.console_semantic_revision import (
@@ -164,6 +165,7 @@ class ConsoleTraceSettlementHandoff:
         )
 
 
+@register_chacha_grant_sources
 class ConsoleTraceSettlementCoordinator:
     """Seal provider results independently and recover durable open calls."""
 
@@ -219,12 +221,12 @@ class ConsoleTraceSettlementCoordinator:
                 self,
                 database,
                 call_id,
-                lambda: self._mark_response_started(database, call_id, occurred_at),
+                lambda: self._mark_response_started(database, call_id, occurred_at, _control_owner=_control_owner),
             )
         return self._mark_response_started(database, call_id, occurred_at)
 
     @trace_mutation
-    def _mark_response_started(self, database, call_id, occurred_at):
+    def _mark_response_started(self, database, call_id, occurred_at, *, _control_owner=None):
         from tldw_chatbook.Chat.console_trace_service import (
             trace_critical_write_checkpoint_policy,
         )

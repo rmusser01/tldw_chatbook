@@ -55,6 +55,7 @@ from tldw_chatbook.Provider_Contract.provider_continuation import (
     validate_continuation_restore,
 )
 from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.DB.profile_writer_chacha_sources import register_chacha_grant_sources
 
 REVISION_OWNER_LOOKUP_BATCH_SIZE = 256
 
@@ -104,6 +105,7 @@ def _current_text_revision_ids(descriptor: TraceProvenance) -> Iterator[str]:
                 yield from _current_text_revision_ids(nested)
 
 
+@register_chacha_grant_sources
 class ConsoleTraceBoundaryFactory:
     """Create normalized call boundaries from provider-prepared requests.
 

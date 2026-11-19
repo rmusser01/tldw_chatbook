@@ -3908,7 +3908,7 @@ DELETE FROM keywords
         """
         return getattr(self._local, "transaction_depth", 0)
 
-    def transaction(self, *, immediate: bool = False) -> "TransactionContextManager":
+    def transaction(self, *, immediate: bool = False) -> "contextlib.AbstractContextManager[sqlite3.Cursor]":
         """
         Returns a context manager for database transactions.
 
@@ -3934,9 +3934,14 @@ DELETE FROM keywords
                 writers. Ignored for nested/borrowed transactions.
 
         Returns:
-            TransactionContextManager: An object to be used in a `with` statement.
+            A context manager yielding the original connection's SQLite cursor.
         """
-        return TransactionContextManager(self, immediate=immediate)
+        transaction = TransactionContextManager(self, immediate=immediate)
+        if getattr(self, "_profile_writer_profile", None) is not None and not self.managed_transaction_depth():
+            from .profile_writer_chacha_sources import local_chacha_transaction
+
+            return local_chacha_transaction(transaction)
+        return transaction
 
     # --- Schema Initialization and Migration ---
     def _get_db_version(self, conn: sqlite3.Connection) -> int:
@@ -23074,6 +23079,7 @@ class TransactionContextManager:
         immediate: bool = False,
     ):
         self.db = db_instance
+        self.writer_grant = None
         self.conn: Optional[sqlite3.Connection] = None
         self.is_outermost_transaction = False
         self.borrows_native_transaction = False
@@ -23126,6 +23132,8 @@ class TransactionContextManager:
         else:
             # This is the outermost transaction
             self.conn = self.db.get_connection()
+            if self.writer_grant is not None:
+                self.writer_grant.bind(self.conn)
             # task-22224: with the held connection in autocommit, this borrow
             # branch is reachable only when a caller explicitly issued BEGIN
             # on the connection itself -- the legacy implicit-DEFERRED leak
@@ -23145,7 +23153,12 @@ class TransactionContextManager:
             try:
                 self.transaction_observer_token = begin_managed_transaction(self.conn)
             except Exception:
-                self.conn.rollback()
+                try:
+                    self.conn.rollback()
+                except BaseException:
+                    if self.writer_grant is not None:
+                        self.writer_grant.uncertain()
+                    raise
                 raise
             self.is_outermost_transaction = True
             self.db._local.transaction_depth = 1
@@ -23156,9 +23169,16 @@ class TransactionContextManager:
             return self.cursor
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Finish SQLite work before releasing the maintenance reservation."""
         try:
-            """Finish SQLite work before releasing the maintenance reservation."""
+            return self._finish_transaction(exc_type, exc_val, exc_tb)
+        except BaseException:
+            if self.writer_grant is not None:
+                self.writer_grant.uncertain()
+            raise
 
+    def _finish_transaction(self, exc_type, exc_val, exc_tb):
+        try:
             try:
                 return self._exit_transaction(exc_type, exc_val, exc_tb)
             finally:
@@ -23297,6 +23317,9 @@ class TransactionContextManager:
 #
 # End of ChaChaNotes_DB.py
 #######################################################################################################################
+
+
+_PROFILE_TRANSACTION_ENTRY = CharactersRAGDB.transaction, CharactersRAGDB.transaction.__code__
 
 
 # Defining callbacks consumed by the optional finite Character display only.

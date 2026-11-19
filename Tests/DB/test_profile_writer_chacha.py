@@ -2,8 +2,10 @@
 
 import json
 import os
+import sqlite3
 import sys
 import zipfile
+from contextlib import closing
 
 import pytest
 
@@ -86,9 +88,6 @@ async def test_console_acceptance_dispatch_and_terminal_receipt_share_writer(req
 
 def _count_owner_schema_initializations(monkeypatch, count_file):
     """Instrument the real method only in the independently elected interpreter."""
-    from tldw_chatbook.DB import profile_writer
-
-    original_popen = profile_writer.subprocess.Popen
     instrumentation = f"""
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 original_initialize = CharactersRAGDB._initialize_schema
@@ -98,6 +97,13 @@ def counted_initialize(db):
     return original_initialize(db)
 CharactersRAGDB._initialize_schema = counted_initialize
 """
+    _instrument_writer(monkeypatch, instrumentation)
+
+
+def _instrument_writer(monkeypatch, instrumentation):
+    from tldw_chatbook.DB import profile_writer
+
+    original_popen = profile_writer.subprocess.Popen
 
     def launch(argv, **kwargs):
         argv = list(argv)
@@ -106,6 +112,129 @@ CharactersRAGDB._initialize_schema = counted_initialize
         return original_popen(argv, **kwargs)
 
     monkeypatch.setattr(profile_writer.subprocess, "Popen", launch)
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_schema_repair_and_write_share_one_connection_then_allow_maintenance(request, tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission
+    from tldw_chatbook.Backup_Recovery.control_records import UNBOUND_NAMESPACE, admission_authority
+    from tldw_chatbook.config import get_chachanotes_db_path, get_user_data_dir
+    from tldw_chatbook.DB import profile_writer
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Utils.platform_files import os as files
+
+    events = tmp_path / "connections.txt"
+    _instrument_writer(monkeypatch, f"""
+from tldw_chatbook.DB import ChaChaNotes_DB as notes
+from tldw_chatbook.DB.profile_writer import in_profile_writer
+original_connect = notes.connect_private_sqlite
+def counted_connect(*args, **kwargs):
+    connection = original_connect(*args, **kwargs)
+    if in_profile_writer():
+        with open({str(events)!r}, 'a', encoding='utf-8') as stream:
+            print('open', file=stream)
+    return connection
+notes.connect_private_sqlite = counted_connect
+""")
+    path = get_chachanotes_db_path()
+    host = profile_writer.start_profile_writer(get_user_data_dir())
+    try:
+        first = CharactersRAGDB(path, "first-client")
+        second = CharactersRAGDB(path, "second-client")
+        first.add_note("First", "Body", "first")
+        with closing(sqlite3.connect(path)) as observer:
+            observer.execute("DROP INDEX idx_notes_organization_heads_note_subject")
+        before = events.read_text().splitlines()
+        second.add_note("Second", "Body", "second")
+        assert events.read_text().splitlines() == [*before, "open"]
+        with closing(sqlite3.connect(path)) as observer:
+            assert observer.execute(
+                "SELECT id, client_id FROM notes WHERE id IN ('first','second') ORDER BY id"
+            ).fetchall() == [("first", "first-client"), ("second", "second-client")]
+            assert observer.execute(
+                "SELECT name FROM sqlite_schema WHERE name='idx_notes_organization_heads_note_subject'"
+            ).fetchone()
+        replacement = CharactersRAGDB(path.with_name("incoming.sqlite"), "restored-client")
+        replacement.add_note("Restored", "Body", "restored")
+        replacement.close_connection()
+        files.chmod(replacement.db_path, 0o600)
+        storage_admission._shutdown()
+        authority = admission_authority(bootstrap.default_bootstrap_root())
+        with authority.maintenance((UNBOUND_NAMESPACE,), 5):
+            os.replace(replacement.db_path, path)
+        first.add_note("After restore", "Body", "after-restore")
+        with closing(sqlite3.connect(path)) as observer:
+            assert observer.execute("SELECT id FROM notes ORDER BY id").fetchall() == [
+                ("after-restore",), ("restored",),
+            ]
+    finally:
+        host.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_committed_note_with_unconfirmed_native_close_receives_unknown(request, tmp_path, monkeypatch):
+    from tldw_chatbook.config import get_chachanotes_db_path, get_user_data_dir
+    from tldw_chatbook.DB import profile_writer
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    fault = tmp_path / "decline-close"
+    _instrument_writer(monkeypatch, f"""
+from pathlib import Path
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+original_close = CharactersRAGDB.close_connection
+def decline(db):
+    if not Path({str(fault)!r}).exists():
+        return original_close(db)
+CharactersRAGDB.close_connection = decline
+""")
+    path = get_chachanotes_db_path()
+    host = profile_writer.start_profile_writer(get_user_data_dir())
+    try:
+        db = CharactersRAGDB(path, "close-owner")
+        fault.touch()
+        with pytest.raises(profile_writer.ProfileWriterOutcomeUnknown):
+            db.add_note("Committed", "Body", "committed")
+        fault.unlink()
+        with closing(sqlite3.connect(path)) as observer:
+            assert observer.execute("SELECT id FROM notes WHERE id='committed'").fetchall() == [("committed",)]
+        assert db.add_note("Successor", "Body", "successor") == "successor"
+    finally:
+        host.close()
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_cold_open_refuses_file_replaced_before_service_acknowledgment(request, monkeypatch):
+    from tldw_chatbook.config import get_chachanotes_db_path, get_user_data_dir
+    from tldw_chatbook.DB import profile_writer
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    path = get_chachanotes_db_path()
+    incoming = path.with_name("incoming.sqlite")
+    replacement = CharactersRAGDB(incoming, "incoming")
+    replacement.add_note("Incoming", "Body", "incoming")
+    replacement.close_connection()
+    assert not path.exists()
+    _instrument_writer(monkeypatch, f"""
+import os
+from tldw_chatbook.DB.profile_writer_repository import ChaChaWriterDatabase
+close = ChaChaWriterDatabase.close_connection
+def replace_after_close(holder):
+    close(holder)
+    if os.path.exists({str(incoming)!r}):
+        os.replace({str(incoming)!r}, holder.database.db_path)
+ChaChaWriterDatabase.close_connection = replace_after_close
+""")
+    host = profile_writer.start_profile_writer(get_user_data_dir())
+    try:
+        with pytest.raises(profile_writer.ProfileWriterOutcomeUnknown):
+            CharactersRAGDB(path, "cold-opener")
+        with closing(sqlite3.connect(path)) as observer:
+            assert observer.execute("SELECT id FROM notes").fetchall() == [("incoming",)]
+    finally:
+        host.close()
 
 
 @private_profile_test
