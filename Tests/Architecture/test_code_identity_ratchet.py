@@ -51,6 +51,8 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # read in version/shape guards of installed Textual code (tldw_chatbook/__init__.py
 # adapters, the switcher backdrop) plus one __func__ signature check next to
 # character_context.py's existing one; none decides authority (ADR-356 rule 4).
+# TASK-41644 (2026-11-18, Console configuration preparation) removed six:
+# __func__ 4, __code__ 1, __globals__ 1.
 # Lower a row when you remove sites.
 PINS = {
     # caller frames, coroutine/generator implementation
@@ -70,13 +72,13 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 145,
-    "__code__": 389,
+    "__func__": 141,
+    "__code__": 388,
     "__defaults__": 202,
     "__kwdefaults__": 305,
     "__closure__": 238,
     "cell_contents": 126,
-    "__globals__": 209,
+    "__globals__": 208,
     "__wrapped__": 206,
 }
 

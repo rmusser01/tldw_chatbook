@@ -18,7 +18,8 @@ PREPARATION = CHAT / "console_configuration_preparation.py"
 # (base 66155632ed -> head; console_configuration_preparation.py is the only file that moved).
 # TASK-41319: 55/26/42 on its base -> 49/24/39 (Send skill trust and the first
 # library receipt decided from registration and current slots).
-PINS = {"__code__": 49, "__defaults__": 24, "__kwdefaults__": 39}
+# TASK-41644 (2026-11-18): __code__ 49 -> 48 (the MCP composition checker read).
+PINS = {"__code__": 48, "__defaults__": 24, "__kwdefaults__": 39}
 
 
 def _identity_attr(node: ast.AST) -> str | None:

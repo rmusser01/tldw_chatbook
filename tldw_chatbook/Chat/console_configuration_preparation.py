@@ -1534,13 +1534,12 @@ def _composition_mcp_capture_current(creator, service):
     from tldw_chatbook.MCP import console_tool_preparation as preparation_source
     from tldw_chatbook.MCP.console_snapshot import standard_console_catalog_sources
 
-    checker, code, namespace = controller_source._CONSOLE_TOOL_COMPOSITION_CHECKER
+    # The module's registered checker and its current-state verdict decide;
+    # its code and globals do not (ADR-356 rule 4, TASK-41644).
+    checker = controller_source._CONSOLE_TOOL_COMPOSITION_CHECKER[0]
     return (
         type(creator) is controller_source.ConsoleChatController
         and controller_source._stock_console_tool_composition_current is checker
-        and checker.__code__ is code
-        and checker.__globals__ is namespace
-        and namespace is vars(controller_source)
         and checker(creator)
         and provider_source.controller_factory_current(
             controller_source.MCPToolProvider
@@ -2302,6 +2301,20 @@ def original_skill_capture_preparation():
     return None
 
 
+def stamp_queue_user_origin(configuration, origin):
+    """Copy ``configuration`` with the queue's user origin; the capture adopts it.
+
+    When ``configuration`` is the current capture witness's original, the
+    copy takes its place there. That registered copy is the token the seal
+    accepts (TASK-41649, ADR-356 rule 4); an equal copy made elsewhere is not.
+    """
+    copy = replace(configuration, recovery_user_origin=origin)
+    state = _mcp_capture_witness.get()
+    if type(state) is tuple and state[-4] is configuration:
+        _mcp_capture_witness.set((*state[:-4], copy, *state[-3:]))
+    return copy
+
+
 @contextmanager
 def seal_pending_queue_capture(controller, session, configuration):
     """Seal an original live received result before the queue's own lock."""
@@ -2333,18 +2346,11 @@ def seal_pending_queue_capture(controller, session, configuration):
         or dict(prepared.maximum) != dict(configuration.skill_context_maximum)
     ):
         raise RuntimeError("Original queued skill capture changed; send again.")
-    # The queue dispatcher stamps ``recovery_user_origin`` onto a copy of the
-    # captured snapshot, so identity alone would refuse every cold-skill queue.
+    # Only the witness's own original passes: the captured snapshot, or the copy
+    # `stamp_queue_user_origin` put in its place for the queue. An equal copy
+    # made anywhere else is refused (TASK-41649).
     if deferred is not None and (
-        not configuration.skill_capture_pending
-        or witness[-4] is None
-        or (
-            witness[-4] is not configuration
-            and replace(
-                witness[-4], recovery_user_origin=configuration.recovery_user_origin
-            )
-            != configuration
-        )
+        not configuration.skill_capture_pending or witness[-4] is not configuration
     ):
         raise RuntimeError("Original queued skill preparation changed; send again.")
     unused_trust = (
@@ -2368,12 +2374,7 @@ def seal_pending_queue_capture(controller, session, configuration):
             vars(source.local).get("_trust_service") if source is not None else None
         )
     sealed = _QueuedCaptureTransfer(
-        (
-            *witness[:-4],
-            configuration if deferred is not None else witness[-4],
-            None,
-            *witness[-2:],
-        ),
+        (*witness[:-3], None, *witness[-2:]),
         configuration,
         preparation,
         app_trust,
@@ -2467,12 +2468,49 @@ async def capture_runtime_configuration_owned(
     return result
 
 
+def _class_slot(holder, name):
+    """The class attribute ``holder.<name>`` resolves through, read without binding."""
+    return inspect.getattr_static(type(holder), name, None)
+
+
+def _same_bound_attribute(holder, name, original, slot) -> bool:
+    """Whether ``holder.<name>`` still resolves to ``original`` (TASK-41644).
+
+    A stored attribute must be the same object. A method rebinds on every read,
+    so bound-method ``==`` (same receiver, equal functions) decides, but only
+    while no per-instance attribute shadows it and the class slot is ``slot``,
+    the one recorded with ``original``: ``==`` lets the function answer for
+    itself, which an always-equal impostor would. ADR-356 rule 4: the class
+    registration and current state decide, not ``__func__`` identity.
+    """
+    current = getattr(holder, name, None)
+    if current is original:
+        return True
+    if not hasattr(holder, "__dict__"):
+        # No instance dict to prove "no override" against: fail closed.
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    return (
+        type(current) is MethodType
+        and type(original) is MethodType
+        and name not in vars(holder)
+        and _class_slot(holder, name) is slot
+        and current == original
+    )
+
+
 async def capture_mounted_configuration_owned(
     controller, session_id, owner, provider, *, require_current, _with_current=False
 ):
     """Prepare a qualified mounted selection; custom producers retain fallback."""
     from tldw_chatbook.UI.Console_Modules import turn_admission
 
+    # Record the owner's class slots before any producer runs.
+    builder_slot, selector_slot = (
+        _class_slot(owner, "_build_console_turn_execution_context"),
+        _class_slot(owner, "_build_console_turn_capture_selection"),
+    )
     app, store = controller.app, controller.store
     cold_preparation = None
     if not standard_console_configuration_sources(app, store, controller, session_id=session_id):
@@ -2489,34 +2527,35 @@ async def capture_mounted_configuration_owned(
     if stock is None:
         return None
     selector, stock_still_current = stock
+    adapter = owner._scratch_snapshot_provider
+    screen = adapter.args[0]
+    runtime_accessor = screen._console_runtime
+    runtime_slot = _class_slot(screen, "_console_runtime")
     selection = selector(session_id, scratch_owner=controller._scratch_spaces)
     if selection is None:
         return None
     worker_reads_rag_depth = (
         selection.rag_defaults is not None and "top_k" not in selection.rag_defaults
     )
-    adapter = owner._scratch_snapshot_provider
-    screen = adapter.args[0]
-    runtime_accessor = screen._console_runtime
-
-    def same(left, right):
-        return left is right or (
-            type(left) is MethodType and type(right) is MethodType
-            and left.__self__ is right.__self__ and left.__func__ is right.__func__
-        )
 
     def current():
         require_current()
         if (
-            not same(owner._build_console_turn_execution_context, provider)
-            or not same(owner._build_console_turn_capture_selection, selector)
+            not _same_bound_attribute(
+                owner, "_build_console_turn_execution_context", provider, builder_slot
+            )
+            or not _same_bound_attribute(
+                owner, "_build_console_turn_capture_selection", selector, selector_slot
+            )
             or owner._scratch_snapshot_provider is not adapter
             or not stock_still_current(adapter)
             or adapter.args != (screen,)
             or adapter.keywords
             or getattr(screen, "_session", None) is not owner
             or screen.app_instance is not app
-            or not same(screen._console_runtime, runtime_accessor)
+            or not _same_bound_attribute(
+                screen, "_console_runtime", runtime_accessor, runtime_slot
+            )
             or not turn_admission.policy_producers_current()
             or (
                 worker_reads_rag_depth
@@ -2681,7 +2720,7 @@ async def _controller_capture_turn_configuration_snapshot(
         raise RecoveryRequired("console_snapshot_owner_changed")
     screen_callbacks = (
         tuple(
-            getattr(screen_owner, name, None)
+            (name, getattr(screen_owner, name, None), _class_slot(screen_owner, name))
             for name in (
                 "_current_chat_store_accessor",
                 "_chat_store_accessor",
@@ -2695,13 +2734,6 @@ async def _controller_capture_turn_configuration_snapshot(
         if standard_screen
         else ()
     )
-    def same_callback(current: Any, original: Any) -> bool:
-        return current is original or (
-            type(current) is MethodType
-            and type(original) is MethodType
-            and current.__func__ is original.__func__
-            and current.__self__ is original.__self__
-        )
     def require_resident_current() -> None:
         _require_mcp_attachment_source(app, self, attachment)
         current_session = next(
@@ -2732,19 +2764,8 @@ async def _controller_capture_turn_configuration_snapshot(
         if standard_screen and (
             screen_owner.app_instance is not app
             or not all(
-                same_callback(getattr(screen_owner, name, None), original)
-                for name, original in zip(
-                    (
-                        "_current_chat_store_accessor",
-                        "_chat_store_accessor",
-                        "_provider_readiness_app_config_fn",
-                        "_build_provider_selection_fn",
-                        "_scratch_snapshot_provider",
-                        "_rag_source_types_accessor",
-                        "_rag_top_k_accessor",
-                    ),
-                    screen_callbacks,
-                )
+                _same_bound_attribute(screen_owner, *callback)
+                for callback in screen_callbacks
             )
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")

@@ -983,8 +983,6 @@ class ConsolePromptQueueUIController:
         )
 
     def _with_user_origin(self, session_id: str, configuration: Any) -> Any:
-        from dataclasses import replace
-
         controller = self._chat_controller_accessor()
         runtime = getattr(controller, "_archive_recovery_runtime", None)
         if runtime is None:
@@ -993,8 +991,14 @@ class ConsolePromptQueueUIController:
                 runtime = owner.ensure_archive_recovery()
         if runtime is None or configuration is None:
             return configuration
-        return replace(
-            configuration, recovery_user_origin=runtime.issue_user_proof(session_id)
+        from tldw_chatbook.Chat.console_configuration_preparation import (
+            stamp_queue_user_origin,
+        )
+
+        # The stamp registers this exact copy in the capture's witness; the
+        # queued seal accepts only it.
+        return stamp_queue_user_origin(
+            configuration, runtime.issue_user_proof(session_id)
         )
 
     def edit_waiting(
