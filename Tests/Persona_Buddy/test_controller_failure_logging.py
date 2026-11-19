@@ -410,6 +410,7 @@ EXCEPTION_TYPE_TOKEN_ROWS: dict[tuple[str, str, str], tuple[int, str]] = {
     ("tldw_chatbook/Chat/console_speculative_voice_session.py", "SpeculativeVoiceAttemptEffects._prepare", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
     ("tldw_chatbook/Chat/console_speculative_voice_session.py", "create_console_speculative_voice_session.preserve_original_draft", "keyword"): (1, "persistent-diagnostics event/metadata keyword, not loguru extra"),
     ("tldw_chatbook/Chat/console_voice_process.py", "ConsoleVoiceProcess._deliver_recovery", "keyword"): (1, "draft-preservation argument, not loguru extra"),
+    ("tldw_chatbook/Library/library_local_rag_search_service.py", "LibraryLocalRagSearchService._runtime_free_route", "keyword"): (1, "loguru message keyword (also lands in extra), held to type(exc).__name__; warned once per RAG generation"),
     ("tldw_chatbook/Local_Ingestion/ingest_parse_worker.py", "run_parse_job", "string"): (1, "ingest error detail field, not loguru extra"),
     ("tldw_chatbook/Logging_Config.py", "_with_bound_exception_type", "string"): (1, "the forwarder's own reader of the bound key"),
     ("tldw_chatbook/MCP/execution_log.py", "MCPExecutionLog._metadata_only_payload", "string"): (3, "structured metadata dict field, not loguru extra"),
