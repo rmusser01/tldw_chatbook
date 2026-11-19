@@ -141,6 +141,14 @@ the safety copy retains the removed data. If source and target locations cannot
 be matched safely, replacement refuses. Restore into a separate profile to recover
 that selection without guessing which existing files to remove.
 
+Pet settings are left as they are. They live in one folder outside every profile
+(`~/.config/tldw_chatbook`, or `%APPDATA%\tldw_chatbook` on Windows), shared by
+all profiles on the device, so a Replace restore neither restores nor removes
+pet files, even with **Settings** selected. When the backup holds pet files, the
+review names this (`pet_settings_left_in_place`) and the rest of the restore goes
+ahead. Manual
+extraction of the Settings group recovers the backup's pet files.
+
 When **Files needing setup** is shown, choose an existing private folder outside
 profile and recovery storage. Chatbook places those inactive recovered files there
 without mixing them into the running profile's configuration.

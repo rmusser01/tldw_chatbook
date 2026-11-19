@@ -22,6 +22,21 @@ _SCHEMA = (
         ),
     ),
 )
+# TASK-41718: RAGIndexingDB has created embedding_cache and its index on every
+# open since TASK-34420, so an index the app made has this catalog; one made
+# before it and never reopened keeps the catalog above. Appended, never
+# inserted, as an exact alternative at the same (unversioned) schema 0.
+_SCHEMA += (
+    (
+        0,
+        (
+            "CREATE INDEX idx_embedding_cache_created\n        ON embedding_cache(created_at)",
+            *_SCHEMA[0][1][:4],
+            "CREATE TABLE embedding_cache (\n            model_id TEXT NOT NULL,\n            content_hash TEXT NOT NULL,\n            vector BLOB NOT NULL,\n            created_at TEXT NOT NULL,\n            PRIMARY KEY (model_id, content_hash)\n        )",
+            _SCHEMA[0][1][4],
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)

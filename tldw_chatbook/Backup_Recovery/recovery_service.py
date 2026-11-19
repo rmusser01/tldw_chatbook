@@ -182,6 +182,8 @@ _ISSUE_MESSAGES = {
     "selected_absence_locator_changed": "Local Settings point this data group to a different location. Check its current storage path and review restore again.",
     "selected_absence_publication_conflict": "Selected profiles have conflicting saved states for the same group location. Choose separate restore destinations and review again.",
     "dependency_group_incomplete": "This selection would split linked saved data. Include the required data groups and review again.",
+    # TASK-41719: told in the review; the rest of the restore goes ahead.
+    "pet_settings_left_in_place": "Pet settings are not restored: this device keeps them in one folder shared by every profile, so restoring into an existing profile leaves that folder as it is. Manual extraction can recover them from this backup.",
     "retained_config_changed": "Local Settings changed after review. Review the selected data groups again before restoring.",
     "retained_config_relation_required": "Choose an existing local profile for the selected data groups so its Settings can be preserved.",
     "invalid_backup_suffix": (

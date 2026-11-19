@@ -830,3 +830,116 @@ def test_replace_restore_makes_personal_context_readable_and_rolls_back(
         "MODE_VALUE", repr(mode)
     )
     _run(tmp_path, "personal-context", "success", script=script, timeout=300)
+
+
+# TASK-41719: pet settings live in ~/.config/tldw_chatbook, one folder outside
+# every profile and shared by all of them. A replace restore of the Settings
+# group leaves that folder as it is and names why, and the rest goes ahead.
+# Two children with their own HOME, as on two devices: the source backs up a
+# profile holding pet files, the target restores it over its own profile.
+_PET_SETTINGS_RESTORE = r"""
+import json,os,subprocess,sys
+from pathlib import Path
+from Tests import network_guard
+network_guard.install()
+os.environ['PYTHON_KEYRING_BACKEND']='keyring.backends.null.Keyring'
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import bootstrap,credentials
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+from tldw_chatbook.Backup_Recovery.restore_plan import required_rollback_dependencies
+from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
+credential_store=KeyringServerCredentialStore(keyring_backend=Keyring())
+credentials._credential_store=lambda:credential_store
+case,role=sys.argv[1:3]
+groups=('conversations','settings','workspaces')
+source=Path(os.environ['TLDW_CONFIG_PATH'])
+data=Path(os.environ['XDG_DATA_HOME'])/'fixture';data.mkdir(mode=0o700)
+source.write_text('[general]\nusers_name="default_user"\n[paths]\ndata_dir='+json.dumps(str(data))+'\n')
+source.chmod(0o600)
+admission_authority(bootstrap.default_bootstrap_root())
+producer='''
+import os,sys
+from pathlib import Path
+from Tests import network_guard
+network_guard.install()
+for module in ('sounddevice','pyaudio'):sys.modules[module]=None
+from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
+from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
+_populate_required_dependencies(preview_capture((Path(os.environ['TLDW_CONFIG_PATH']),),options={'allow_partial':True}))
+'''
+subprocess.run([sys.executable,'-c',producer],check=True,timeout=240)
+pets=Path.home()/'.config'/'tldw_chatbook'
+MAIN,DATED='tamagotchi_pets.json','tamagotchi_pets.backup_20260101_000000.json'
+def write(files):
+    pets.mkdir(parents=True,mode=0o700)
+    for name,text in files.items():
+        (pets/name).write_text(text);(pets/name).chmod(0o600)
+def state():
+    return {path.name:path.read_text() for path in pets.iterdir()} if pets.exists() else None
+service=RecoveryService(Path.home()/'recovery-control')
+try:
+    if role=='source':
+        # dated-source: the backup holds only a dated copy, so it records the
+        # main file as absent; the target's main file must not be retired.
+        write({DATED:'{"source": "dated"}'} if case=='dated-source' else {MAIN:'{"source": "main"}'})
+        preview=service.preview_backup((source,),options={'data_groups':groups})
+        assert preview.complete,[(row.owner,row.status) for row in preview.items if row.status in {'missing_required','unsupported','unavailable'}]
+        assert any(row.owner=='tamagotchi.config' and row.status=='included' for row in preview.items)
+        result=service.wait(service.start_backup((source,),preview.scope_digest,Path.home()/'pets.tldw-backup.zip',options={'data_groups':groups},password=None))
+        assert result['state']=='succeeded',dict(result)
+    else:
+        if case=='present':
+            write({MAIN:'{"target": "main"}',DATED:'{"target": "dated"}'})
+        elif case=='dated-source':
+            write({MAIN:'{"target": "main"}'})
+        before=state()
+        shared=Path.home().parent.parent/'source'/'home'
+        inspection=service.start_inspection(shared/'pets.tldw-backup.zip',password=None)
+        assert service.wait(inspection)['state']=='succeeded'
+        profile=service.summary(inspection)['profile_ids'][0]
+        def plan(issues=()):
+            choices=dict(mode='replace',profile_bases={},target_configs={profile:source},external_destinations={},
+                profile_names={},target=service.preview_backup((source,),options={}),data_groups=groups,
+                acknowledged_credential_issues=issues)
+            first=service.preview_restore(inspection,**choices)
+            required=required_rollback_dependencies(first)
+            return service.preview_restore(inspection,**choices,safety_scope=required) if required else first
+        reviewed=plan()
+        result=service.wait(service.start_restore(inspection,reviewed,rollback_password=b'rollback-test-password'))
+        if result['state']=='recovery_required' and result['review_issues']:
+            issues=tuple(result['review_issues'])
+            assert all(code.startswith('credential_') for code in issues),issues
+            service.wait(service.start_recovery(result['result']['journal_operation_id'],action='abort'))
+            reviewed=plan(issues)
+            result=service.wait(service.start_restore(inspection,reviewed,rollback_password=b'rollback-test-password'))
+        # The rest of the Settings group went ahead without the pet files.
+        assert result['state']=='succeeded',dict(result)
+        assert 'pet_settings_left_in_place' in reviewed.issues,reviewed.issues
+        assert any(key=='profile:'+profile+':config' for key,_ in reviewed.restore)
+        assert not [key for key,_ in (*reviewed.restore,*reviewed.retire) if 'tamagotchi' in key]
+        assert state()==before,(before,state())
+finally:
+    service.close()
+assert not network_guard.blocked_attempts()
+print('retired and reopened')
+"""
+
+
+@pytest.mark.timeout(1500)
+@pytest.mark.parametrize("case", ["missing", "present", "dated-source"])
+def test_replace_restore_leaves_pet_settings_in_place_and_says_why(tmp_path, case):
+    """TASK-41719: with ``~/.config/tldw_chatbook`` missing (``missing``) or
+    holding the main file and a dated copy (``present``), and when the backup
+    holds only a dated copy (``dated-source``), a replace restore of Settings
+    succeeds, leaves the pet folder exactly as it was, and its plan names
+    ``pet_settings_left_in_place``. Before the fix every case refused the whole
+    restore."""
+    from Tests.Backup_Recovery.test_home_citation_retirement import _run
+
+    for name in ("source", "target"):
+        (tmp_path / name).mkdir(mode=0o700)
+    _run(tmp_path / "source", case, "source", script=_PET_SETTINGS_RESTORE, timeout=300)
+    _run(tmp_path / "target", case, "target", script=_PET_SETTINGS_RESTORE, timeout=600)
