@@ -67,6 +67,9 @@ PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 # registered turn-context provider must wrap a plain function before the bound
 # method comparison runs a foreign ``__eq__``); it refuses, it does not grant.
 # Lower a row when you remove sites.
+# Integration of the TASK-41630..41655 burn-down (2026-11-19): TASK-41644's
+# removals (__func__ 4, __code__ 1, __globals__ 1) and TASK-41642/41643's,
+# re-measured together on the combined tree.
 PINS = {
     # caller frames, coroutine/generator implementation
     "_getframe": 14,
@@ -85,13 +88,13 @@ PINS = {
     "ag_code": 0,
     "ag_frame": 0,
     # function, code, default and closure identity
-    "__func__": 132,
-    "__code__": 362,
+    "__func__": 128,
+    "__code__": 361,
     "__defaults__": 190,
     "__kwdefaults__": 283,
     "__closure__": 217,
     "cell_contents": 117,
-    "__globals__": 192,
+    "__globals__": 191,
     "__wrapped__": 197,
 }
 

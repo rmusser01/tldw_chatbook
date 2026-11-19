@@ -20,7 +20,8 @@ PREPARATION = CHAT / "console_configuration_preparation.py"
 # library receipt decided from registration and current slots).
 # TASK-41643 review: __code__ 49 -> 47 (the received queue admission decided
 # by own_methods; _CONSOLE_RECEIVED_QUEUE_METHOD deleted).
-PINS = {"__code__": 47, "__defaults__": 24, "__kwdefaults__": 39}
+# Re-measured on the combined TASK-41630..41655 burn-down tree (2026-11-19).
+PINS = {"__code__": 46, "__defaults__": 24, "__kwdefaults__": 39}
 
 
 def _identity_attr(node: ast.AST) -> str | None:
