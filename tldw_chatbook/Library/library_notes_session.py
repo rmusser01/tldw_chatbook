@@ -549,6 +549,12 @@ class DatabaseNoteSessionCoordinator:
             self._save_task = task
         return await asyncio.shield(task)
 
+    async def wait_for_pending_save(self) -> None:
+        """Await the admitted save chain without starting a write."""
+        task = self._save_task
+        if task is not None:
+            await asyncio.shield(task)
+
     async def _drive_saves(self) -> NoteSaveOutcome:
         """Persist successive latest revisions with one active port call."""
         while True:

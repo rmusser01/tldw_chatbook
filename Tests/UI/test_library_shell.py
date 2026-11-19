@@ -8,6 +8,7 @@ import re
 import statistics
 import threading
 import time
+from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -21040,12 +21041,35 @@ async def test_library_shell_note_save_then_back_refreshes_list_title_and_age():
             screen.query_one("#library-note-body", TextArea).text = "bravo, edited"
             await pilot.pause()
             screen.query_one("#library-note-save").press()
+
+            def saved_editor_back_is_ready() -> bool:
+                if screen._notes_state.autosave_state != "saved":
+                    return False
+                pane = screen.query_one("#library-note-work-pane", LibraryNotesCanvas)
+                if (
+                    pane.mode != "editor"
+                    or not pane._children_ready
+                    or pane._recompose_required
+                    or pane.recompose_in_flight
+                    or pane.has_pending_recompose_callback
+                ):
+                    return False
+                try:
+                    back = screen.query_one("#library-note-back", Button)
+                    if not back.display:
+                        back = screen.query_one("#library-notes-task-return", Button)
+                except NoMatches:
+                    return False
+                return back.is_attached and back.display and not back.disabled
+
             for _ in range(150):
-                if screen._notes_state.autosave_state == "saved":
+                if saved_editor_back_is_ready():
                     break
                 await pilot.pause(0.02)
             else:
-                raise AssertionError("Save never completed.")
+                raise AssertionError(
+                    "Saved Notes editor never settled with an actionable Back."
+                )
 
             list_calls_before = len(app.notes_scope_service.calls)
             _press_note_back(screen)
@@ -24306,8 +24330,11 @@ async def test_library_shell_pre_existing_note_emptied_out_still_saves_in_real_d
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "save_order", ["normal", "held-reply", "external-edit", "held-past-bound"]
+)
 async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, save_order
 ):
     """Documents and locks in the autosave-interaction decision: if
     autosave already persisted real content for a session-blank note
@@ -24324,7 +24351,12 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
     app.notes_scope_service = real_service
     host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+    async with AsyncExitStack() as cleanup:
+        local_notes = real_service.local_notes_service
+        cleanup.callback(local_notes.unified_db_template.close_connection)
+        cleanup.callback(local_notes.close_all_user_connections)
+        cleanup.push_async_callback(app._shutdown_notes_sync_runtime)
+        pilot = await cleanup.enter_async_context(host.run_test(size=LIBRARY_TEST_SIZE))
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
 
@@ -24335,6 +24367,7 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
         await pilot.pause()
         await pilot.pause()
         note_id = screen._notes_state.selected_note_id
+        session = screen._library_note_session
 
         screen.query_one("#library-note-body", TextArea).text = "will be autosaved"
         await pilot.pause()
@@ -24345,7 +24378,12 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
             detail = await real_service.get_note_detail(
                 scope="local_note", note_id=note_id, user_id="default_user"
             )
-            if detail is not None and detail.get("content") == "will be autosaved":
+            if (
+                detail is not None
+                and detail.get("content") == "will be autosaved"
+                and session.snapshot.version == detail["version"]
+                and screen._notes_state.autosave_state == "saved"
+            ):
                 break
             await pilot.pause(0.02)
         else:
@@ -24356,25 +24394,114 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
         # ``handle_library_note_save``).
         assert screen._notes_state.session_blank_id == note_id
 
-        # Now empty it back out and exit without an explicit Save.
-        screen.query_one("#library-note-body", TextArea).text = ""
-        await pilot.pause()
+        save_note = session._port.save_note
+        flush = screen._flush_library_note_save
+        committed = asyncio.Event()
+        acknowledge = asyncio.Event()
+        back_started = asyncio.Event()
+        back_finished = asyncio.Event()
 
-        _press_note_back(screen)
-        for _ in range(150):
-            if (
-                await real_service.count_notes(
-                    scope="local_note", user_id="default_user"
+        async def hold_save_reply(note_id, expected_version, payload):
+            reply = await save_note(note_id, expected_version, payload)
+            if not payload.body:
+                committed.set()
+                await acknowledge.wait()
+            return reply
+
+        async def observe_back(**kwargs):
+            back_started.set()
+            outcome = await flush(**kwargs)
+            back_finished.set()
+            return outcome
+
+        if save_order != "normal":
+            monkeypatch.setattr(session._port, "save_note", hold_save_reply)
+            monkeypatch.setattr(screen, "_flush_library_note_save", observe_back)
+        if save_order == "held-past-bound":
+            monkeypatch.setattr(
+                host, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", 0.05, raising=False
+            )
+
+        # Now empty it back out and exit without an explicit Save.
+        save = None
+        try:
+            if save_order == "normal":
+                body = await _wait_for_widget_state(
+                    screen,
+                    pilot,
+                    "#library-note-body",
+                    lambda widget: widget.is_attached
+                    and widget.text == "will be autosaved",
+                    what="The Notes editor never settled after the first autosave",
                 )
-                == 0
-            ):
+                body.clear()
+                await _wait_for_condition(
+                    pilot,
+                    lambda: session.snapshot.body == "",
+                    timeout=3,
+                    message="The empty body never reached the Notes draft.",
+                )
+            else:
+                # Put the coordinator's real autosave on the controlled reply barrier.
+                assert session.mutate(body="")
+                save = asyncio.create_task(session.request_save(explicit=False))
+                await asyncio.wait_for(committed.wait(), timeout=3)
+                detail = await real_service.get_note_detail(
+                    scope="local_note", note_id=note_id, user_id="default_user"
+                )
+                assert detail["content"] == ""
+                assert detail["version"] == session.snapshot.version + 1
+                assert session.snapshot.saving
+                if save_order == "external-edit":
+                    await real_service.save_note(
+                        scope="local_note",
+                        user_id="default_user",
+                        note_id=note_id,
+                        version=detail["version"],
+                        title=detail["title"],
+                        content="written by another editor",
+                    )
+            _press_note_back(screen)
+            if save_order != "normal":
+                await asyncio.wait_for(back_started.wait(), timeout=3)
+                assert screen._notes_state.session_blank_id == note_id
+            if save_order == "held-past-bound":
+                await asyncio.wait_for(back_finished.wait(), timeout=3)
+                assert screen._notes_state.view == "editor"
+                assert screen._notes_state.session_blank_id == note_id
+                assert session.snapshot.saving
+                assert await real_service.get_note_detail(
+                    scope="local_note", note_id=note_id, user_id="default_user"
+                ) == detail
+        finally:
+            acknowledge.set()
+            if save is not None:
+                await save
+        if save_order == "held-past-bound":
+            await _wait_for_condition(
+                pilot,
+                lambda: not session.snapshot.saving,
+                timeout=3,
+                message="The autosave did not finish after releasing its reply.",
+            )
+            _press_note_back(screen)
+        for _ in range(150):
+            if screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
         else:
-            raise AssertionError(
-                "A session-blank note that was autosaved with content mid-"
-                "session, then emptied out again, was not GC'd on exit."
+            raise AssertionError("Back never returned to the Notes list.")
+        if save_order == "external-edit":
+            retained = await real_service.get_note_detail(
+                scope="local_note", note_id=note_id, user_id="default_user"
             )
+            assert retained["content"] == "written by another editor"
+            assert retained["version"] == detail["version"] + 1
+        else:
+            assert (
+                await real_service.count_notes(scope="local_note", user_id="default_user")
+                == 0
+            ), "A session-blank note emptied after autosave was not GC'd on exit."
 
 
 @pytest.mark.asyncio

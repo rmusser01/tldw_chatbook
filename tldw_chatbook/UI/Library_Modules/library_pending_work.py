@@ -36,12 +36,11 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from ...Library.library_notes_session import NoteFlushOutcomeKind
+from ...Library.library_notes_session import NoteFlushOutcome, NoteFlushOutcomeKind
 from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
 from .screen_constants import LIBRARY_NOTE_BLANK_SEED_TITLE
 
 if TYPE_CHECKING:
-    from ...Library.library_notes_session import NoteFlushOutcome
     from ..Screens.library_screen import LibraryScreen
 
 logger = logger.bind(module="LibraryScreen")
@@ -81,21 +80,25 @@ async def gc_untouched_session_blank_note(
     """
     state = screen._notes_state
     session = screen._library_note_session
+    before = session.snapshot
     if not (
-        state.session_blank_id
-        and state.session_blank_id == state.selected_note_id
+        before is not None
+        and state.session_blank_id == state.selected_note_id == before.note_id
+        and not before.in_conflict
         # task-3315: never start a SECOND destructive op from the
         # untouched-blank GC while a discard/delete is already running
         # or admitted -- fall through to the session flush, whose own
         # destructive guard vetoes navigation until it settles.
         and not session.destructive_running
         and session.destructive_admission is None
+        and not session.conflict_resolution_running
     ):
         return False
-    fields = screen._read_library_note_editor_fields()
-    if fields is None:
-        return False
-    raw_title, raw_content, raw_keywords_text = fields
+    raw_title, raw_content, raw_keywords_text = (
+        before.title,
+        before.body,
+        before.keywords_text,
+    )
     # task-3315 (LIB-14 regression, pre-arc dev churn): the
     # session coordinator seeds a Blank note's title with the
     # literal seed and ``_read_library_note_editor_fields`` now
@@ -133,6 +136,25 @@ async def gc_untouched_session_blank_note(
     # in, the row vanished, and nothing said so. Name it.
     if not discard:
         return True
+    # A committed autosave can still own the version the delete needs.
+    timeout = getattr(
+        screen.app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", _DEFAULT_FLUSH_TIMEOUT_SECONDS
+    )
+    async with asyncio.timeout(timeout):
+        await session.wait_for_pending_save()
+    current = session.snapshot
+    if not (
+        current is not None
+        and current.session_generation == before.session_generation
+        and current.draft == before.draft
+        and state.session_blank_id == state.selected_note_id == current.note_id
+        and not (raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE and state.title_user_edited)
+        and not current.in_conflict
+        and not session.destructive_running
+        and session.destructive_admission is None
+        and not session.conflict_resolution_running
+    ):
+        return False
     typed_a_blank_title = bool(raw_title) and not raw_title.strip()
     await screen._notes_controller._gc_pending_blank_note()
     if typed_a_blank_title:
@@ -140,6 +162,20 @@ async def gc_untouched_session_blank_note(
         if callable(notify):
             notify("Empty note discarded", severity="information")
     return True
+
+
+async def flush_blank_note_gc(
+    screen: LibraryScreen, *, discard: bool
+) -> NoteFlushOutcome | None:
+    """Handle blank notes before the normal editor flush can start a write."""
+    try:
+        if await gc_untouched_session_blank_note(screen, discard=discard):
+            return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+    except TimeoutError:
+        return NoteFlushOutcome(
+            NoteFlushOutcomeKind.BLOCKED, "The note is still saving. Try again shortly."
+        )
+    return None
 
 
 # --- Quit ----------------------------------------------------------------------
@@ -183,7 +219,7 @@ async def prepare_library_quit(screen: LibraryScreen) -> None:
     Args:
         screen: The Library screen whose open note is checked.
     """
-    await gc_untouched_session_blank_note(screen)
+    await flush_blank_note_gc(screen, discard=True)
 
 
 async def _settle_lasting_sync(screen: LibraryScreen) -> None:

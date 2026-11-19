@@ -1001,20 +1001,23 @@ def _spawn_os_notification_thread(notify: Callable[[], object]) -> None:
 def _consume_console_roleplay_writer_completion(
     task: asyncio.Task[ConsoleRoleplayProjectionPersistenceResult | None],
     *,
-    session_id: str,
-    generation: int,
+    store: ConsoleChatStore,
+    plan: ConsoleRoleplayProjectionPersistencePlan,
 ) -> None:
     """Consume an app-owned serializer result without retaining its screen."""
     if task.cancelled():
+        store.abandon_roleplay_projection_plan(plan)
         return
     try:
-        task.result()
+        if task.result() is None:
+            store.abandon_roleplay_projection_plan(plan)
     except Exception:
+        store.abandon_roleplay_projection_plan(plan)
         logger.exception(
             "App-owned Console roleplay projection writer failed "
             "(session_id={}, generation={}).",
-            session_id,
-            generation,
+            plan.session_id,
+            plan.generation,
         )
 
 
@@ -4155,17 +4158,22 @@ class ChatScreen(BaseAppScreen):
         owner = ChatScreen._console_settings_durability_owner(self)
         admission = owner.try_acquire()
         if admission is None:
+            store.abandon_roleplay_projection_plan(plan)
             return
-        persistence_task = owner.launch(
-            admission,
-            store.persist_roleplay_projection_plan_serialized(plan),
-            name=(f"console-roleplay-{plan.session_id}-{plan.generation}"),
-        )
+        try:
+            persistence_task = owner.launch(
+                admission,
+                store.persist_roleplay_projection_plan_serialized(plan),
+                name=(f"console-roleplay-{plan.session_id}-{plan.generation}"),
+            )
+        except BaseException:
+            store.abandon_roleplay_projection_plan(plan)
+            raise
         persistence_task.add_done_callback(
             partial(
                 _consume_console_roleplay_writer_completion,
-                session_id=plan.session_id,
-                generation=plan.generation,
+                store=store,
+                plan=plan,
             )
         )
         self._console_roleplay_writer_task = persistence_task
@@ -4176,6 +4184,9 @@ class ChatScreen(BaseAppScreen):
             # drains the durable task. Mounted cancellation continues to wait
             # so the latest coalesced refresh is not lost.
             if self._console_roleplay_tearing_down:
+                persistence_task.add_done_callback(
+                    lambda _task: store.abandon_roleplay_projection_plan(plan)
+                )
                 raise
             while not persistence_task.done():
                 try:
@@ -4229,16 +4240,6 @@ class ChatScreen(BaseAppScreen):
                 await self._refresh_console_roleplay_projections(plan)
                 self._console_roleplay_active_plan = None
                 plan = None
-        except asyncio.CancelledError:
-            if (
-                self._console_roleplay_pending_plan is None
-                and plan is not None
-                and self._ensure_console_chat_store().is_roleplay_projection_plan_current(
-                    plan
-                )
-            ):
-                self._console_roleplay_pending_plan = plan
-            raise
         finally:
             self._console_roleplay_active_plan = None
             self._console_roleplay_drain_scheduled = False
