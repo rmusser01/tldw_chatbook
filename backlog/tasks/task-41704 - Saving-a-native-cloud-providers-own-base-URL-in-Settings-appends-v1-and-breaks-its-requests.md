@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 05:33
-updated_date: 2026-11-19 17:44
+updated_date: 2026-11-19 17:51
 labels:
 - follow-up
 - providers
@@ -47,7 +47,7 @@ Confirmed to predate TASK-41522 and TASK-41700 (review r16cu-rev2, identical at 
 
 ## Implementation Notes
 
-Fixed in the endpoint contract, which Settings' **s**, Console's "Save endpoint & use model", first-run setup and Make default all save through. In `Provider_Contract/provider_endpoint_contract.py`, a first-party cloud key's path with no `v1` segment is no longer an origin the generic rule appends `/v1` to: it goes through the relaxed reading TASK-41700 added for a mid-path `v1` (the path is the API base, a pasted `/chat/completions` or `/models` is dropped, a route is refused). A bare host is the base for the providers whose documented base is a bare host (Cohere on any host, DeepSeek on its own host; see the review r17cu-rev1 round below); any other cloud provider's bare host still reads as `<host>/v1`, as before. `_engine_preset_resolution` gained `bare_host_base`, and `provider_setup_persistence._api_base_from_chat_url` writes a bare host without a trailing `/`. A path whose `v1` is last resolves exactly as before. Gateway bases (owner decision "Allow gateway paths") and every host and shape refusal are unchanged.
+Fixed in the endpoint contract, which Settings' **s**, Console's "Save endpoint & use model", first-run setup and Make default all save through. In `Provider_Contract/provider_endpoint_contract.py`, a first-party cloud key's path with no `v1` segment is no longer an origin the generic rule appends `/v1` to: it goes through the relaxed reading TASK-41700 added for a mid-path `v1` (the path is the API base, a pasted `/chat/completions` or `/models` is dropped, a route is refused). A bare host is the base for the providers whose documented base is a bare host (Cohere on any host, DeepSeek on its own host; see the review r17cu-rev1 round below); any other cloud provider's bare host still reads as `<host>/v1`, as before, on a host other than its own (its own bare host is completed to its documented base; see the r17cu-rev2 round). `_engine_preset_resolution` gained `bare_host_base`, and `provider_setup_persistence._api_base_from_chat_url` writes a bare host without a trailing `/`. A path whose `v1` is last resolves exactly as before. Gateway bases (owner decision "Allow gateway paths") and every host and shape refusal are unchanged.
 
 Of every shipped default (`_BUILTIN_PROVIDER_ENDPOINTS` and the registry's default bases), only three save differently, all as intended: Google `.../v1beta` (was `.../v1beta/v1`), Cohere `https://api.cohere.com` (was `.../v1`) and DeepSeek `https://api.deepseek.com` (was `.../v1`); compared base vs head with a probe through the wrapper.
 
