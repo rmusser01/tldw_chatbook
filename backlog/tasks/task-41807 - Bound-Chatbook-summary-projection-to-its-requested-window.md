@@ -1,5 +1,5 @@
 ---
-id: TASK-41800
+id: TASK-41807
 title: Bound Chatbook summary projection to its requested window
 status: In Progress
 created_date: 2026-11-18 17:56
@@ -53,3 +53,7 @@ The existing request snapshot ranks matching lightweight keys before constructin
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Filed as TASK-41800. The dev CI investigation already used that ID on `dev` when PR #3610 was rebased.

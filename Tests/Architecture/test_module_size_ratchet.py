@@ -88,11 +88,13 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/DB/prompt_export.py": 241,
     # PR3346 pre-merge review: exact existing save and screen-derivation owners.
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
-    "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
+    # 2026-11-18, TASK-40970: 401 -> 443 for saved-graduation onboarding.
+    "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 443,
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
     # 2026-11-19, TASK-41904 (owner rule: raise by the change's own lines):
     # 1567 -> 1571 (+4) -- a Send pressed during the first-send save waits.
-    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1571,
+    # TASK-33621.79: rebased dev measures 1564; accepted-setup Stop adds one.
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1565,
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
@@ -1279,7 +1281,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The
     # exclusion dedupe/remove import the shared fold_path_part.
-    "tldw_chatbook/Workspaces/registry_service.py": 4305,
+    # 2026-11-18, TASK-40969: rebased dev measures 4294; grouped reads add 51.
+    "tldw_chatbook/Workspaces/registry_service.py": 4345,
     # 2026-11-03, TASK-36527 review round 3, under the owner's 2026-10-31 size
     # waiver: each workspace-reachable entry point and call_after_refresh
     # target opens with the two-line `_going_away()` guard: 4207 -> 4253.
