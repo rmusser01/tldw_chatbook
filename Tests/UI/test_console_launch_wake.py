@@ -91,7 +91,9 @@ async def _quiet(pilot, predicate, seconds: float = 2.0) -> bool:
     return not predicate()
 
 
-def _launch_app(tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service=False):
+def _launch_app(
+    tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service=False, tab="library"
+):
     """A SECOND process over the same durable state, Console never opened.
 
     `default_tab="library"` is what keeps Console out of it: the real
@@ -110,7 +112,7 @@ def _launch_app(tmp_path, *, tree=None, gateway_reply=LAUNCH_REPLY, real_service
             double. Used by the headline e2e so its "the payload carried
             real prior history" claim is not a claim about a fixture.
     """
-    app = _build_test_app("library")
+    app = _build_test_app(tab)
     marks = _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
@@ -330,6 +332,154 @@ async def test_a_launch_delivers_a_wake_owed_from_a_previous_process(tmp_path):
             "the launch-built controller has no app handle, so a headless "
             "approval round in a launch wake could surface nothing"
         )
+
+
+def _deny_local_skill_listing(monkeypatch):
+    """Deny ``skills.context.list.local`` alone, as a server runtime source does."""
+    from tldw_chatbook.runtime_policy import enforcement
+    from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+    original = enforcement.ServicePolicyEnforcer.require_allowed
+
+    def require_allowed(self, *, action_id, **kwargs):
+        if action_id == "skills.context.list.local":
+            raise PolicyDeniedError(
+                action_id=action_id,
+                reason_code="wrong_source",
+                user_message="Local skill listing requires local mode.",
+                effective_source="server",
+                authority_owner="local",
+            )
+        return original(self, action_id=action_id, **kwargs)
+
+    monkeypatch.setattr(enforcement.ServicePolicyEnforcer, "require_allowed", require_allowed)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("listing_denied", [False, True])
+async def test_a_launch_into_home_builds_the_skill_trust_its_wake_captures(
+    tmp_path, monkeypatch, listing_denied
+):
+    """TASK-41507: Library builds the skill trust service as it starts, which
+    hid that a launch wake captures its configuration before anything else
+    does. Home builds none, so the capture found the slot empty and refused
+    with ``console_capture_source_not_ready``; nothing reached the provider.
+
+    ``listing_denied``: a server runtime source denies the local skill
+    listing, which the capture never asks. A gate on it before the build
+    refused this wake in a loop (r16co-rev1); it is still delivered.
+    """
+    from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+
+    conversation_id, run_id, _rows = await _seed_a_finished_background_job(tmp_path)
+    if listing_denied:
+        _deny_local_skill_listing(monkeypatch)
+    app, _marks, gateway = _launch_app(tmp_path, real_service=True, tab="home")
+    assert vars(app)["_local_skill_trust_service"] is None, "precondition: cold"
+    if listing_denied:  # the denial is live for this app's own scope
+        with pytest.raises(PolicyDeniedError):
+            app.skills_scope_service._enforce_policy("skills.context.list.local")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        delivered = await _settle(pilot, lambda: bool(gateway.payloads))
+        _assert_console_never_mounted(app)
+        assert delivered, "the cold launch delivered no wake turn"
+        assert CHILD_RESULT in str(gateway.payloads[-1][-1]["content"])
+        runs_db = app.console_runtime.agent_bridge.runs_db
+        assert await _settle(
+            pilot, lambda: (runs_db.get_run(run_id) or {}).get("wake_delivered_at")
+        ), f"the wake for {conversation_id} was never stamped delivered"
+
+
+@pytest.mark.asyncio
+async def test_a_wake_that_fails_before_its_claim_retries_after_the_delay(
+    tmp_path, monkeypatch
+):
+    """Review r16co-rev1: a delivery that raised before choosing a chain was
+    "paused" with no chain, which saved nothing, blocked nothing and cleared
+    its retry deadline, so ``retry_soon`` ran it again at once (5,239
+    deliveries in 22 s). It now waits ``RETRY_DELAY_SECONDS`` each time."""
+    from tldw_chatbook.Chat import console_configuration_preparation as preparation
+    from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
+
+    await _seed_a_finished_background_job(tmp_path)
+    tries = []
+
+    async def fail_before_the_claim(_app):
+        tries.append(time.monotonic())
+        raise RuntimeError("forced before the claim")
+
+    monkeypatch.setattr(preparation, "publish_cold_skill_trust", fail_before_the_claim)
+    app, _marks, gateway = _launch_app(tmp_path, real_service=True, tab="home")
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        assert await _settle(pilot, lambda: bool(tries)), "no delivery was tried"
+        window = 2.5
+        await _quiet(pilot, lambda: False, seconds=window)
+        delay = ConsoleFleetWakeCoordinator.RETRY_DELAY_SECONDS
+        gaps = [later - earlier for earlier, later in zip(tries, tries[1:], strict=False)]
+        assert 2 <= len(tries) <= window / delay + 2, f"{len(tries)} tries in {window} s"
+        assert all(gap >= 0.9 * delay for gap in gaps), gaps
+        assert not gateway.payloads
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("slot", "factory", "deny", "events", "built"),
+    [
+        ("ready", True, False, [], "ready"),
+        (None, False, False, [], None),
+        (None, True, False, ["build"], "built"),
+        (None, True, True, ["build"], "built"),
+    ],
+)
+async def test_the_cold_trust_build_runs_only_where_capture_refuses(
+    slot, factory, deny, events, built
+):
+    """TASK-41507: the shared build mirrors ``_ready_attribute`` (an empty slot
+    with a factory) and any other app is left alone. A denied local skill
+    listing (a server runtime source) still builds: the capture never asks
+    that policy (r16co-rev1)."""
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        publish_cold_skill_trust,
+    )
+
+    seen = []
+
+    class Local:
+        def __init__(self):
+            self._trust_service = slot
+            self._trust_service_factory = object() if factory else None
+
+        @property
+        def trust_service(self):
+            return self._trust_service
+
+        @trust_service.setter
+        def trust_service(self, value):
+            self._trust_service = value
+
+    class Scope:
+        local_service = Local()
+
+        def _enforce_policy(self, action_id):
+            seen.append(action_id)
+            if deny:
+                raise PermissionError(action_id)
+
+    class App:
+        def __init__(self):
+            self._skills_scope_service = Scope()  # the helper reads vars(app)
+
+        async def ensure_local_skill_trust_service(self):
+            seen.append("build")
+            return "built"
+
+    app = App()
+    await publish_cold_skill_trust(app)
+    assert seen == events
+    assert app._skills_scope_service.local_service._trust_service == built
+    await publish_cold_skill_trust(None)  # no app: nothing to build
 
 
 @pytest.mark.asyncio

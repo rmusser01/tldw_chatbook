@@ -72,7 +72,10 @@ def _frame(host) -> str:
 async def _held_console(monkeypatch, tmp_path):
     """Yield (host, console, controller, adapter_calls, held_draft) at a hold."""
 
-    app = _build_test_app()
+    # The profile's own data folder, so the MCP store binds as it does in the
+    # app. A factory-made folder leaves it unbound, and with the agent runtime
+    # on (the default) every Send then stops at mcp_source_not_installed.
+    app = _build_test_app(user_data_dir=config_module.get_user_data_dir())
     database = CharactersRAGDB(tmp_path / "chat.sqlite", "compaction-hold")
     app.chachanotes_db = database
     # The production app wires this in app_service_wiring; sends after the
@@ -88,8 +91,15 @@ async def _held_console(monkeypatch, tmp_path):
     # not depend on exchange capture. Capture's own back-to-back send timing
     # intermittently paused an earlier send as TRACE_CALL under load, which
     # the hold-detection loop then misread; turn it off with the real setting.
+    # First-send onboarding is done too: its config write lands after the
+    # first reply, and a Send in flight then read "Draft or chat changed".
     assert config_module.save_settings_to_cli_config(
-        {"console": {"exchange_capture": False}}
+        {
+            "console": {
+                "exchange_capture": False,
+                "onboarding": {"first_send_completed": True},
+            }
+        }
     )
     app.app_config = config_module.load_settings(force_reload=True)
     host = ConsoleHarness(app)
@@ -149,14 +159,21 @@ async def _ask_console(host, pilot, monkeypatch, adapter):
     controller.store.set_session_context_policy_overrides(session.id, _ASK)
     runtime = console._console_runtime()
     runtime_tasks: list[asyncio.Task] = []
-    accept_turn = runtime.accept_turn
 
-    def capture_turn(request, **kwargs):
-        turn_id = accept_turn(request, **kwargs)
-        runtime_tasks.append(runtime._turn_custody[turn_id].task)
-        return turn_id
+    # A visible Send is admitted through accept_received_intent (wiring.py's
+    # receive_console_visible_intent); queued and wake turns through
+    # accept_turn. Watching only accept_turn let _send return before a
+    # visible turn ran, so the hold loop read "no provider call" as a hold.
+    def capture(accept):
+        def accepted(*args, **kwargs):
+            turn_id = accept(*args, **kwargs)
+            runtime_tasks.append(runtime._turn_custody[turn_id].task)
+            return turn_id
 
-    monkeypatch.setattr(runtime, "accept_turn", capture_turn)
+        return accepted
+
+    for name in ("accept_turn", "accept_received_intent"):
+        monkeypatch.setattr(runtime, name, capture(getattr(runtime, name)))
     return console, controller, session, runtime, runtime_tasks
 
 

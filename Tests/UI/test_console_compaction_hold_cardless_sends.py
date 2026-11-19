@@ -45,6 +45,36 @@ from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
 _FOLLOW_UP = "queued follow-up: and the last step?"
 
 
+async def _cancel_the_hold(console, pilot, controller, session):
+    """Press the hold card's Cancel once it can take the press, then settle.
+
+    The hold is held before its card has its state: until a sync gives the
+    card its recovery state, Cancel is hidden and disabled, and ``press()``
+    does nothing. Pressed then, the card stayed up (TASK-41511 review: once
+    in 10 runs at load ~50).
+    """
+    card = console.query_one(TraceCallRecoveryCallout)
+    cancel = card.query_one("#console-trace-cancel", Button)
+    for _ in range(100):
+        if card.display and cancel.display and not cancel.disabled:
+            break
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+    assert card.display and cancel.display and not cancel.disabled, (
+        "the hold card never took a press"
+    )
+    cancel.press()
+    for _ in range(100):
+        await console._sync_native_console_chat_ui()
+        await pilot.pause(0.1)
+        if (
+            not card.display
+            and controller.store.preparation_for_session(session.id) is None
+        ):
+            break
+    return card
+
+
 def _rows(controller, session_id, role):
     return [
         message
@@ -107,7 +137,13 @@ async def test_a_queued_send_over_the_ask_trigger_returns_to_the_queue_not_faile
                 ),
                 10,
             )
-            queued = controller.prompt_queue_registry.snapshot(session.id)
+            # The receipt queues it from its own task (queue_prompt in
+            # console_received_dispatch), not before Send returns.
+            for _ in range(100):
+                queued = controller.prompt_queue_registry.snapshot(session.id)
+                if queued.total_count:
+                    break
+                await pilot.pause(0.1)
             assert queued.total_count == 1, queued
             release.set()
             await asyncio.wait_for(second, 60)
@@ -183,16 +219,7 @@ async def test_a_sigil_composer_send_without_capture_is_refused_before_commit(
             console, controller, session, runtime, held_draft = await _drive_to_hold(
                 host, pilot, monkeypatch, adapter, adapter_calls
             )
-            card = console.query_one(TraceCallRecoveryCallout)
-            card.query_one("#console-trace-cancel", Button).press()
-            for _ in range(100):
-                await console._sync_native_console_chat_ui()
-                await pilot.pause(0.1)
-                if (
-                    not card.display
-                    and controller.store.preparation_for_session(session.id) is None
-                ):
-                    break
+            card = await _cancel_the_hold(console, pilot, controller, session)
             assert not card.display
             draft = f"{sigil_draft} {held_draft}"
             calls = len(adapter_calls)
@@ -298,16 +325,7 @@ async def test_a_buddy_reply_over_the_ask_trigger_is_refused_before_commit(
             console, controller, session, runtime, held_draft = await _drive_to_hold(
                 host, pilot, monkeypatch, adapter, adapter_calls
             )
-            card = console.query_one(TraceCallRecoveryCallout)
-            card.query_one("#console-trace-cancel", Button).press()
-            for _ in range(100):
-                await console._sync_native_console_chat_ui()
-                await pilot.pause(0.1)
-                if (
-                    not card.display
-                    and controller.store.preparation_for_session(session.id) is None
-                ):
-                    break
+            card = await _cancel_the_hold(console, pilot, controller, session)
             assert not card.display
             composer = console._console_composer_or_none()
             assert composer.draft_text() == held_draft

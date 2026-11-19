@@ -1,7 +1,19 @@
-"""The thinking display preference uses canonical settings persistence."""
+"""Console reasoning-history settings use canonical settings persistence.
+
+TASK-41509 deleted two tests written against APIs that never shipped (not on
+dev, not in the Codex snapshot bf364a4bf7): a ``console.show_thinking``
+setting saved by the category Save, and ``ConsoleThinkingBlock`` with
+``ConsoleChatStore.append_thinking_chunk``. The shipped setting is
+``console.show_model_thinking``, saved at once; see
+``test_settings_context_memory_controls.py`` and
+``test_settings_thinking_visibility_journeys.py``. Live thinking is the
+transcript's activity disclosure; see ``test_console_thinking_disclosures.py``.
+"""
 
 import pytest
 from textual.widgets import Checkbox, Select
+
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -12,41 +24,10 @@ import tldw_chatbook.UI.Screens.settings_screen as settings_module
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("setting", ["show_thinking"])
-async def test_thinking_default_on_saves_off_and_reopens_off(monkeypatch, setting):
-    app = _build_test_app()
-    app.app_config["console"] = {}
-    saved = []
-
-    class Adapter:
-        def save_sections(self, values):
-            saved.append(values)
-            return True
-
-    monkeypatch.setattr(settings_module, "SettingsConfigAdapter", Adapter)
-    host = DestinationHarness(app, "settings")
-    async with host.run_test(size=(190, 55)) as pilot:
-        await _open_settings_category(pilot, "#settings-category-console-behavior")
-        screen = _active_destination_screen(host)
-        toggle = screen.query_one(
-            "#settings-console-" + setting.replace("_", "-"), Checkbox
-        )
-        assert toggle.value is True
-        toggle.focus()
-        await pilot.press("space")
-        await pilot.click("#settings-save-category")
-        await pilot.app.workers.wait_for_complete()
-        await pilot.pause()
-        assert saved == [{"console": {setting: False}}]
-        assert app.app_config["console"][setting] is False
-        screen._sync_console_behavior_widgets()
-        assert toggle.value is False
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["llama_cpp", "local_vllm", "local_ollama"])
+@private_profile_test
 async def test_reasoning_history_defaults_auto_and_remembers_current_model_override(
-    monkeypatch, provider
+    request, monkeypatch, provider
 ):
     from types import SimpleNamespace
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -121,56 +102,3 @@ async def test_reasoning_history_defaults_auto_and_remembers_current_model_overr
         assert app.app_config["console"]["reasoning_native_tool_overrides"] == {
             key: True
         }
-
-
-@pytest.mark.asyncio
-async def test_console_screen_refreshes_thinking_before_answer_text():
-    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-        ConsoleHarness,
-    )
-    from Tests.UI.test_destination_shells import _wait_for_selector
-    from textual.widgets import Static
-    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-    from tldw_chatbook.Widgets.Console.console_transcript import ConsoleThinkingBlock
-
-    app = _build_test_app()
-    host = ConsoleHarness(app)
-    host.app_config = app.app_config
-    async with host.run_test(size=(160, 45)) as pilot:
-        screen = host.screen_stack[-1]
-        await _wait_for_selector(screen, pilot, "#console-native-composer")
-        store = screen._ensure_console_chat_store()
-        session = store.ensure_session()
-        store.append_message(
-            session.id, role=ConsoleMessageRole.USER, content="Question"
-        )
-        message = store.append_message(
-            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
-        )
-        await screen._sync_native_console_transcript()
-        await pilot.pause()
-        store.append_thinking_chunk(message.id, "Visible before any answer")
-        await screen._sync_native_console_transcript()
-        await pilot.pause()
-        row = screen.query_one(f"#console-message-{message.id}")
-        block = row.query_one(ConsoleThinkingBlock)
-        assert block.display and not block.collapsed
-        assert "Visible before any answer" in str(
-            block.query_one(".console-thinking-text", Static).render()
-        )
-        store.append_thinking_chunk(message.id, ", and updates live")
-        await screen._sync_native_console_transcript()
-        await pilot.pause()
-        assert "updates live" in str(
-            block.query_one(".console-thinking-text", Static).render()
-        )
-
-        app.app_config.setdefault("console", {})["show_thinking"] = False
-        await screen._sync_native_console_transcript()
-        await pilot.pause()
-        assert not block.display
-        assert store.get_message(message.id).thinking_text.endswith("updates live")
-        app.app_config["console"]["show_thinking"] = True
-        await screen._sync_native_console_transcript()
-        await pilot.pause()
-        assert block.display

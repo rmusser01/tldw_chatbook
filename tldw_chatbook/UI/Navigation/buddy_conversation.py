@@ -9,27 +9,6 @@ from typing import Any
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 
 
-async def _publish_skill_trust(app: Any) -> None:
-    """Build the skill trust service a send's capture reads (TASK-41138).
-
-    A mounted Console builds it during skill discovery; a cold Home never
-    has, and capture reads the local skills service's slot without building
-    it, so the first Buddy send was refused with
-    ``RecoveryRequired('console_capture_source_not_ready')``. The build does
-    keyring discovery, so it runs through the app's off-loop builder. Only
-    `TldwCli` holds a local skills service; any other app returns at once.
-    """
-    fields = vars(app)
-    scope = fields.get("_skills_scope_service")
-    local = getattr(scope, "local_service", None) or fields.get("_local_skills_service")
-    if local is None or vars(local).get("_trust_service") is not None:
-        return
-    service = await app.ensure_local_skill_trust_service()
-    # Keep one another owner installed meanwhile, as Console preparation does.
-    if vars(local).get("_trust_service") is None:
-        local.trust_service = service
-
-
 @dataclass
 class _VoiceCapture:
     binding: BuddyBinding
@@ -358,8 +337,8 @@ class BuddyConversationCoordinator:
                 raise ValueError(
                     "This conversation is busy. Wait for its current turn or answer its decision."
                 )
-            await _publish_skill_trust(self.app)
-            # The normal send path keeps all admission, capture and tool checks.
+            # The normal send path keeps all admission, capture and tool checks
+            # (and builds the skill trust a cold Home lacks, TASK-41138).
             result = await controller.submit_draft(
                 text,
                 session_id=session.id,

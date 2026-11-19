@@ -293,7 +293,9 @@ _BUDGETS: dict[str, int] = {
     # failure handler names a pre-run unproven cleanup just before each recovery
     # restore (Chat/console_unproven_cleanup.py).
     # 2026-11-18: rebased onto dev 45b1949ca3 (dev's row + this branch's growth, measured): 28761.
-    "tldw_chatbook/Chat/console_chat_controller.py": 28761,
+    # Raised for TASK-41507, 2026-11-18: +3 lines on 28,761, submit_draft builds
+    # the skill trust a cold capture reads (Chat/console_configuration_preparation.py).
+    "tldw_chatbook/Chat/console_chat_controller.py": 28764,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.

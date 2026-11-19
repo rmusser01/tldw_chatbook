@@ -867,8 +867,8 @@ ADMISSION_2_TARGETS = (
     "Tests/LLM_Calls/test_local_chat_streaming.py",
     "Tests/Chat/test_local_reasoning_gateway.py",
     "Tests/Chat/test_streaming_stop_closes_transport.py",
-    "Tests/Chat/test_console_agent_call_thinking.py::test_aggregate_tool_thinking_cannot_become_final_answer_thinking",
-    "Tests/Chat/test_console_agent_call_thinking.py::test_live_native_loop_passes_exact_call_envelope_before_preparation",
+    # TASK-41508: test_console_agent_call_thinking.py's two nodes left for the
+    # whole file in the Console P0 gate's admission-sensitive step.
     # TASK-33005.7 (whole-PR review, round 2): the one pin of the composer's
     # setup-blocker reason strings (the capture phase's F2 copy and round 1's
     # endpoint reason). A pure function test, but its file's module pytestmark

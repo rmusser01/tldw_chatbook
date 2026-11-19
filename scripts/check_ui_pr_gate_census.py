@@ -1180,6 +1180,12 @@ MINIMUM_FILES = 2256
 # TASK-41501 review r16nv-rev1 (2026-11-18): append the removal-window node at
 # the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2424
+MINIMUM_FILES = 2272
+MINIMUM_FILES = 2270
+MINIMUM_FILES = 2262
+# TASK-41507, TASK-41509, TASK-41511 (2026-11-18): append five whole Console
+# and Settings files at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2429
 
 
 def read_census(path: Path) -> list[str]:

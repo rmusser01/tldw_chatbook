@@ -31,6 +31,10 @@ from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 
+# The Console bridge reads the tool gates through config, which keeps the
+# collection-time profile only (TASK-41508; RecoveryRequired otherwise).
+pytestmark = pytest.mark.bootstrap_profile
+
 GUIDANCE = "PROJECT_TRACE_GUIDANCE_31976: run the project tests."
 CREDENTIAL = "sk-" + "a" * 48
 CONTACT = "elise@example.test"
@@ -529,8 +533,12 @@ async def test_transformed_project_sends_preserve_source_and_context(
         response_mode="fallback" if fallback else "complete",
     ) as app:
         assert app.store.persist_session_if_needed(app.session.id)
-        app.controller._chat_dictionary_applier = lambda _conversation, text: (
-            text.replace("alias", "expanded")
+        # The applier takes the turn's frozen inputs as a third argument;
+        # a two-argument double raised and the send kept "alias" (TASK-41508).
+        app.controller._chat_dictionary_applier = (
+            lambda _conversation, text, _frozen_inputs=None: text.replace(
+                "alias", "expanded"
+            )
         )
         reader = ConsoleTraceNativeReader(app.db)
         originals = []
