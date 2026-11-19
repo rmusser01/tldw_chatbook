@@ -24,15 +24,19 @@ priority: medium
 
 **What that commit changed.** In `PersonaBuddyWidget` it replaced the direct `collapse.styles.width` / `close.styles.width` assignments with utility classes (`w-3`, `w-6`, `w-7`), and the frame and widget sizing with `add_class("w-full")` and `set_styles(...)`. The close button is now a 3-cell `×` button carrying `w-3`.
 
-**Product or test.** Judged by a probe on dev, not by the diff alone: calling `press()` on `#persona-buddy-close` closes the Buddy (preferences `open` becomes `False`, one preference write), and `pilot.click("#persona-buddy-close", offset=(1, 0))` closes it too. The test's default `pilot.click("#persona-buddy-close")` (the button's left-edge cell, 96,19 in the 100x30 run) does not, although `get_widget_at` reports the button at that cell. So the close action works and the test's click target is the problem, most likely, but I did not find out why the edge cell ignores the click. A real mouse click on the centre of the button was not run against the live app. If the left-edge cell is a dead zone, that is a small product defect (the button is 3 cells wide).
+**Attribution.** The `ae9093a714` attribution rests on the bisect alone. The diff changes the button sizing (w-3/w-6/w-7 classes, `w-full`, `set_styles`) and nothing about click handling, and the cause is not found.
 
-**CI.** No PR-gate lane runs this test: `scripts/ui_pr_gate_census.txt` lists only `TestPersonaHumanIdentityRemoval` from this file, and nothing under `.github/` names the file. The whole-tree `nightly-deep.yml` run nominally covers it but is killed by its job ceiling, so dev stayed red for about two months unnoticed.
+**Probe on dev.** `press()` on `#persona-buddy-close` closes the Buddy (preferences `open` becomes `False`, one preference write), and `pilot.click("#persona-buddy-close", offset=(1, 0))` closes it too. The test's default click (the button's left-edge cell, 96,19 in the 100x30 run) does not, although `get_widget_at` reports the button at that cell. A real mouse click on the button's centre was not run against the live app.
+
+**CI.** No PR-gate lane runs this test: `scripts/ui_pr_gate_census.txt` lists only `TestPersonaHumanIdentityRemoval` from this file, and nothing under `.github/` names the file. `nightly-deep.yml` has a cron, but `.github/workflows/test.yml` says it "remains disabled (ADR-366)". I did not check any nightly run. By the bisect the test has been red on dev since `ae9093a714` (2026-09-14).
+
+**Related notes.** TASK-41800 (line ~53) already notes that this test and the resize-sync test "fail on dev too and are on no lane". This is the dedicated task for what that note mentions.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The test passes on dev: the click target is corrected (or the edge-cell behaviour is fixed in the product), with the reason recorded in the task notes
 - [ ] #2 The behaviour the test pins holds: closing the floating Buddy persists `open=False`, removes the widget, and refreshes the active Personas inspector (Show enabled, Close disabled)
-- [ ] #3 It is settled whether a mouse click on any cell of the 3-cell close button closes the Buddy, with evidence from the real mounted app
+- [ ] #3 A pilot test clicks each of the close button's three cells and the Buddy closes on each
 - [ ] #4 If the test is kept, it runs somewhere a regression turns a check red (a PR-gate census entry, or a recorded reason it stays out)
 <!-- AC:END -->
