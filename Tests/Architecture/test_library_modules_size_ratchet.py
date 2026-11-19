@@ -609,7 +609,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-12, rebased onto dev 4b90eb860b: 5315 -> 5307 (dev measures
     # 5267; polish-1b's own +40; same owner decision: expand limits,
     # don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11085,
+    # 2026-11-19, rebased onto dev a6df4d8d48: 11085 -> 11145 (polish-1b's
+    # own +40, plus its +20 Task 9 lines in the Media bodies dev's
+    # TASK-36952.3 moved here from library_screen.py; same owner decision:
+    # expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 11145,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only
@@ -914,7 +918,9 @@ _BUDGETS: dict[str, int] = {
     # 9093 -> 9115 (measured).
     # 2026-11-12, rebased onto dev 4b90eb860b: 7425 -> 9117 (polish-1b's
     # own +1692; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 7492,
+    # 2026-11-19, rebased onto dev a6df4d8d48: 7492 -> 9183 (polish-1b's
+    # own +1691; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9183,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
