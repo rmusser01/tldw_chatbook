@@ -24,14 +24,18 @@ priority: medium
 
 **What that commit changed.** In `PersonasScreen._sync_responsive_workbench` it removed the opening `if self._workbench_compact == compact and self._workbench_narrow == narrow: return`. The conversation-actions block (`query_one("#personas-conversation-actions")`, the navigation row, every action button, the transcript `set_compact`) now runs on every call, and the unchanged-state early return was moved below that block, so it only skips the pane and handle restyle. The commit did not touch this test, whose guard raises on any `query_one("#personas-...")` call.
 
-**Product or test.** Judged from the diff: the removal looks deliberate, since the commit's purpose was to re-evaluate the action rows and transcript on every sync so navigation controls restore after a row change. So the test pins a property the product no longer has, and is stale as written. What is not settled: `on_resize` still calls this method for every resize event, so the "unchanged state does no work" property is now only half true (pane work skipped, action-row work repeated). Whether the repeated work matters is a product call. I did not measure it. This was judged by reading the diff, not by running a profile.
+**What the test asserts.** After `app.run_test(size=(80, 40))` mounts the compact workbench, it patches `screen.query_one` to raise on any `#personas-...` selector, then calls `_sync_responsive_workbench()` and expects no pane query.
 
-**CI.** No PR-gate lane runs this test: `scripts/ui_pr_gate_census.txt` lists only `TestPersonaHumanIdentityRemoval` from this file, and nothing under `.github/` names the file. The whole-tree `nightly-deep.yml` run nominally covers it but is killed by its job ceiling with partial results, so dev stayed red for about two and a half months unnoticed.
+**CI.** No PR-gate lane runs this test: `scripts/ui_pr_gate_census.txt` lists only `TestPersonaHumanIdentityRemoval` from this file, and nothing under `.github/` names the file. `nightly-deep.yml` has a cron, but `.github/workflows/test.yml` says it "remains disabled (ADR-366)". I did not check any nightly run. By the bisect the test has been red on dev since `07f5138ee5` (2026-09-05).
+
+**Related notes.** TASK-41800 (line ~53) already notes that this test and the buddy-close test "fail on dev too and are on no lane", and TASK-32500 notes this test as pre-existing red. This is the dedicated task for what those notes mention.
+
+**B7.** TASK-33910.12 (B7, To Do) deletes `_sync_responsive_workbench` and `#personas-workbench`; if it lands first, this test pins deleted code and can be retired. This is a note, not a dependency.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The test passes on dev: either the product again skips the action-row work when the compact and narrow state is unchanged, or the test is corrected to the behaviour dev now intends, with the reason recorded in the task notes
+- [ ] #1 The test passes on dev, or is corrected to the behaviour dev now intends, or is retired with a recorded reason (including that TASK-33910.12 deleted the code it pins)
 - [ ] #2 The behaviour the test pins is stated and still holds: after a resize that leaves the compact and narrow state unchanged, the workbench panes are not restyled
 - [ ] #3 The action-row and transcript compact state still updates when navigation controls change (the behaviour `07f5138ee5` added) and a test shows it
 - [ ] #4 If the test is kept, it runs somewhere a regression turns a check red (a PR-gate census entry, or a recorded reason it stays out)
