@@ -2198,8 +2198,7 @@ class ConsoleWorkflowCoordinator:
                         await item.close()
                     except Exception:  # noqa: BLE001 - a benign close failure must not replace the original failure; the live check below decides custody.
                         logger.exception(
-                            "Never-launched workflow preparation did not close: {}",
-                            item,
+                            "Never-launched workflow preparation did not close"
                         )
                 if self.service._has_live_workflow_resources(run.workflow_id):
                     raise
