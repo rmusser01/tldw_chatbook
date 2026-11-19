@@ -1595,6 +1595,23 @@ async def _show_production_approval_batch(
     raise AssertionError("Production approval batch did not finish rendering")
 
 
+async def _await_condition(predicate, message, seconds: float = 10.0) -> None:
+    """Poll ``predicate`` with ``asyncio.sleep`` until true; raise ``message``."""
+    deadline = time.monotonic() + seconds
+    while not predicate():
+        if time.monotonic() >= deadline:
+            raise AssertionError(message() if callable(message) else message)
+        await asyncio.sleep(0.02)
+
+
+def _timer_target(timer):
+    """The function a `set_timer` timer calls (its `partial(call_next, fn)`)."""
+    callback = getattr(timer, "_callback", None)
+    scheduled = getattr(callback, "args", ())
+    target = scheduled[0] if scheduled else callback
+    return getattr(target, "__func__", target)
+
+
 async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     """Wait through startup projections until the Console is the active screen."""
     deadline = time.monotonic() + 10.0
@@ -1609,6 +1626,13 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
         await pilot.pause(0.05)
     else:
         raise AssertionError("Production Console did not mount")
+    # Both timer checks below rest on `_timer_target`; a Textual change to how
+    # `set_timer` wraps its callback must fail here, by name, not match nothing.
+    probe = screen.set_timer(3600, screen.refresh)
+    probe.stop()
+    assert _timer_target(probe) is type(screen).refresh, (
+        f"set_timer no longer wraps {probe._callback!r} as partial(call_next, fn)"
+    )
 
     # on_mount queues the production attach reconciliation before this callback.
     # Waiting behind it observes completion even when its DB projection is slow.
@@ -1616,56 +1640,111 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     screen.call_after_refresh(reconciliation_drained.set)
     await asyncio.wait_for(reconciliation_drained.wait(), timeout=10.0)
 
-    projection_task = None
-    for timer in screen._timers:
-        callback = getattr(timer, "_callback", None)
-        scheduled = getattr(callback, "args", ())
-        target = scheduled[0] if scheduled else None
-        if (
-            getattr(target, "__self__", None) is screen
-            and getattr(target, "__func__", None) is ChatScreen.sync_task_resume_state
-        ):
-            projection_task = timer._task
-            break
+    projection_task = next(
+        (
+            timer._task
+            for timer in list(screen._timers)
+            if _timer_target(timer) is ChatScreen.sync_task_resume_state
+        ),
+        None,
+    )
     # Textual keeps timers weakly: a completed one-shot may already be gone.
     # Await any pending timer, then drain its call_next projection in either case.
     if projection_task is not None:
         await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
-    deadline = time.monotonic() + 10.0
     projection_drained = asyncio.Event()
     screen.call_next(projection_drained.set)
     await asyncio.wait_for(projection_drained.wait(), timeout=10.0)
+
+    def unsettled() -> list[str]:
+        return [
+            name
+            for name, pending in (
+                ("attach not reconciled", not screen._console_attach_reconciled),
+                ("sync in progress", screen._console_sync_in_progress),
+                ("sync requested", screen._console_sync_requested),
+                (
+                    "control-bar replay",
+                    getattr(screen, "_console_control_bar_replay_whole_sync", False),
+                ),
+                (
+                    "control-bar sync scheduled",
+                    getattr(screen, "_console_control_bar_sync_scheduled", False),
+                ),
+                (
+                    "console-sync worker running",
+                    any(
+                        worker.node is screen
+                        and worker.group == "console-sync"
+                        and not worker.is_finished
+                        for worker in screen.workers
+                    ),
+                ),
+                # TASK-41530 fix round 1: mount (and the attach's resume)
+                # schedule `_restore_console_workbench_focus`, once through
+                # `set_timer(0.2, ...)`. A restore that runs after the test
+                # focuses something outside the Console panes (an approval
+                # card) takes focus back to the composer for good.
+                (
+                    "focus restore timer pending",
+                    any(
+                        _timer_target(timer)
+                        is ChatScreen._restore_console_workbench_focus
+                        and timer._task is not None
+                        and not timer._task.done()
+                        for timer in list(screen._timers)
+                    ),
+                ),
+                (
+                    f"initial focus not on a Console pane ({app.focused!r})",
+                    screen._console_workbench_focus_id_for_widget(app.focused) is None,
+                ),
+            )
+            if pending
+        ]
+
     # A drained callback does not complete a refresh deferred to its timer.
-    while time.monotonic() < deadline and (
-        not screen._console_attach_reconciled
-        or screen._console_sync_in_progress
-        or screen._console_sync_requested
-        or getattr(screen, "_console_control_bar_replay_whole_sync", False)
-        or getattr(screen, "_console_control_bar_sync_scheduled", False)
-        or any(
-            worker.node is screen
-            and worker.group == "console-sync"
-            and not worker.is_finished
-            for worker in screen.workers
+    # TASK-41530: the attach chain (first sync, its coalesced re-run, the
+    # reconciliation worker, the runtime's view reconciliation) can outlast
+    # what the waits above leave of one shared 10 s (it failed so at load
+    # ~90), so this wait has its own deadline and names what is pending.
+    started = time.monotonic()
+    deadline = started + 30.0
+
+    def still_unsettled() -> str:
+        return (
+            f"Console still unsettled {time.monotonic() - started:.1f}s into its "
+            f"wait: {unsettled()} (reconcile running="
+            f"{screen._console_attach_reconcile_running}, retries="
+            f"{screen._console_attach_reconcile_retry_count}, exhausted="
+            f"{screen._console_attach_reconcile_retry_exhausted})"
         )
-    ):
-        await asyncio.sleep(min(0.05, deadline - time.monotonic()))
+
+    while True:
+        while unsettled() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        assert not unsettled(), still_unsettled()
+        # A restore queued with `call_after_refresh` (the attach's resume) is
+        # in no timer: run the queue past it. What it does (a focus move can
+        # schedule a control-bar sync) is waited for on the next pass; settled
+        # means a drain that leaves nothing pending.
+        after_refresh = asyncio.Event()
+        screen.call_after_refresh(after_refresh.set)
+        try:
+            await asyncio.wait_for(
+                after_refresh.wait(), timeout=max(5.0, deadline - time.monotonic())
+            )
+        except TimeoutError:
+            raise AssertionError(
+                f"no refresh ran the call_after_refresh drain; {still_unsettled()}"
+            ) from None
+        if not unsettled():
+            break
 
     assert app.screen is screen
-    assert screen._console_attach_reconciled
     assert screen._console_visible_draft_session_id is not None
     assert screen._console_chat_controller is not None
     assert not screen._console_setup_modal_blocking()
-    assert not screen._console_sync_in_progress
-    assert not screen._console_sync_requested
-    assert not getattr(screen, "_console_control_bar_replay_whole_sync", False)
-    assert not getattr(screen, "_console_control_bar_sync_scheduled", False)
-    assert not any(
-        worker.node is screen
-        and worker.group == "console-sync"
-        and not worker.is_finished
-        for worker in screen.workers
-    )
     return screen
 
 
@@ -2180,18 +2259,27 @@ async def test_finishing_card_is_not_counted_and_keyboard_focuses_the_card():
                 }
             )
         )
-        await pilot.pause()
         card = screen.query_one(ChatApprovalCard)
+        # TASK-41530: `set_batch` mounts the row's Select after it returns,
+        # and `_defer_decisions` holds every control disabled until the
+        # round's facts have laid out. Read before `_information_ready` and
+        # the check sees no Select, or one disabled by the deferral alone.
+        await _await_condition(
+            lambda: card._information_ready,
+            "the finishing card's decisions never left their deferral",
+        )
 
         assert card.display is True
         assert screen._console_pending_approval_count() == 0
-        assert all(select.disabled for select in card.query(Select))
+        selects = list(card.query(Select))
+        assert selects and all(select.disabled for select in selects)
 
         card.focus_first_decision()
-        await pilot.pause()
-
+        await _await_condition(
+            lambda: app.focused is card,
+            lambda: f"focus_first_decision left focus on {app.focused!r}",
+        )
         assert card.can_focus is True
-        assert app.focused is card
 
 
 # ---------------------------------------------------------------------------

@@ -907,6 +907,41 @@ async def _wait_until(predicate: Callable[[], Any], seconds: float = 10.0) -> No
         await asyncio.sleep(_POLL_INTERVAL)
 
 
+async def _wait_for_dispatches(
+    executor, count: int = 1, *, pool=None, pool_count: int = 0, seconds: float = 10.0
+) -> None:
+    """Wait until ``count`` local STT dispatches have finished (TASK-41505).
+
+    A submit builds and sends its dispatch on its own
+    ``library-local-stt-dispatch-*`` thread, which then blocks in
+    ``call_from_thread`` until the job's submitted callback has bound it on
+    the app loop. One ``pilot.pause()`` after the submit can end first, so
+    wait for the executor's calls and for every such thread to have ended.
+    ``pool``/``pool_count`` also wait for that many parse submits.
+    """
+
+    def dispatching() -> list[str]:
+        return [
+            thread.name
+            for thread in threading.enumerate()
+            if thread.name.startswith("library-local-stt-dispatch-")
+        ]
+
+    def reached() -> bool:
+        return (
+            len(executor.calls) >= count
+            and not dispatching()
+            and (pool is None or len(pool.calls) >= pool_count)
+        )
+
+    await _wait_until(reached, seconds)
+    assert reached(), (
+        f"{len(executor.calls)} of {count} local STT dispatches, "
+        f"{len(pool.calls) if pool is not None else 0} of {pool_count} parse "
+        f"submits, still dispatching {dispatching()} after {seconds}s"
+    )
+
+
 def _persist_restore_history(path: Path, jobs: list[LibraryIngestJob]) -> None:
     """Write the prior session's history where the startup restore reads it."""
 
@@ -2131,7 +2166,7 @@ async def test_local_stt_does_not_consume_the_ebook_pool_slot(tmp_path: Path) ->
             path = tmp_path / name
             path.write_text("fixture", encoding="utf-8")
             ebooks.append(app.submit_library_ingest_job(source_path=str(path)))
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
 
         assert (
             app.library_ingest_jobs.get_job(audio.job_id).state
@@ -2371,12 +2406,12 @@ async def test_eligible_local_stt_uses_executor_not_general_pool(
     source = tmp_path / "speech.wav"
     source.write_bytes(b"fixture")
 
-    async with app.run_test() as pilot:
+    async with app.run_test():
         job = app.submit_library_ingest_job(
             source_path=str(source),
             ingest_options={"audio_video": {"transcription_provider": provider}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
 
         assert len(executor.calls) == 1
         assert executor.calls[0]["job_id"] == job.job_id
@@ -2403,7 +2438,7 @@ async def test_library_retry_clears_executor_unhealthy_gate_explicitly(
             source_path=str(source),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         assert executor.calls[0]["explicit_retry"] is False
         executor.trigger_failure(
             0,
@@ -2457,7 +2492,7 @@ async def test_parakeet_retry_keeps_job_local_override_and_scope_path_private(
                 }
             },
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         first_options = executor.calls[0]["options"]
         assert first_options["transcription_model_dir"] == selected
         assert first_options["transcription_context"]["external_scope_id"] == scope_id
@@ -2513,7 +2548,7 @@ async def test_local_stt_cancel_and_force_stop_are_exact_attempt_scoped(
             source_path=str(source),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         attempt_id = executor.calls[0]["attempt_id"]
         executor.trigger_event(
             0,
@@ -2693,7 +2728,7 @@ async def test_explicit_parakeet_directory_is_snapshotted_before_dispatch(
         (model_dir / filename).write_bytes(filename.encode("utf-8"))
     _allow_test_external_root(app, model_dir)
 
-    async with app.run_test() as pilot:
+    async with app.run_test():
         app.submit_library_ingest_job(
             source_path=str(source),
             ingest_options={
@@ -2703,7 +2738,7 @@ async def test_explicit_parakeet_directory_is_snapshotted_before_dispatch(
                 }
             },
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
 
         assert len(executor.calls) == 1
         snapshot = executor.calls[0]["local_source"]
@@ -2740,7 +2775,7 @@ async def test_explicit_parakeet_directory_uses_central_validated_path(
         "validate_path_simple",
         return_value=validated_dir,
     ):
-        async with app.run_test() as pilot:
+        async with app.run_test():
             app.submit_library_ingest_job(
                 source_path=str(source),
                 ingest_options={
@@ -2752,7 +2787,7 @@ async def test_explicit_parakeet_directory_uses_central_validated_path(
                     }
                 },
             )
-            await pilot.pause()
+            await _wait_for_dispatches(executor)
 
     assert len(executor.calls) == 1
     assert executor.calls[0]["options"]["transcription_model_dir"] == str(validated_dir)
@@ -3056,14 +3091,14 @@ async def test_executor_heavy_job_leaves_remaining_pool_slots_for_documents(
         for index in range(3)
     ]
 
-    async with app.run_test() as pilot:
+    async with app.run_test():
         app.submit_library_ingest_job(
             source_path=str(audio),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
         for document in documents:
             app.submit_library_ingest_job(source_path=str(document))
-        await pilot.pause()
+        await _wait_for_dispatches(executor, pool=pool, pool_count=2)
 
         assert len(executor.calls) == 1
         assert len(pool.calls) == 2
@@ -3273,7 +3308,7 @@ async def test_library_terminal_hands_executor_to_pending_dictation_before_top_u
             source_path=str(first_path),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         coordinator = app._ensure_local_stt_dispatch_coordinator()
         handle = coordinator.begin_dictation(
             capture_generation=2,
@@ -3290,7 +3325,7 @@ async def test_library_terminal_hands_executor_to_pending_dictation_before_top_u
             source_path=str(second_path),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         first_attempt = executor.calls[0]["attempt_id"]
 
         executor.trigger_failure(
@@ -3362,7 +3397,7 @@ async def test_executor_admits_only_one_local_job_when_legacy_heavy_cap_is_highe
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
         document_job = app.submit_library_ingest_job(source_path=str(document))
-        await pilot.pause()
+        await _wait_for_dispatches(executor, pool=pool, pool_count=1)
 
         states = {job.job_id: job.state for job in app.library_ingest_jobs.jobs()}
         assert len(executor.calls) == 1
@@ -3410,7 +3445,7 @@ async def test_executor_callbacks_are_fenced_and_progress_has_no_percentage(
             source_path=str(source),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         call = executor.calls[0]
         attempt_id = call["attempt_id"]
         persisted_before_tick = tuple(store.upserts)
@@ -3474,7 +3509,7 @@ async def test_executor_cpu_retry_generation_is_accepted_after_preparing_event(
             source_path=str(source),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         attempt_id = executor.calls[0]["attempt_id"]
 
         executor.trigger_event(
@@ -3504,12 +3539,12 @@ async def test_executor_terminal_can_bind_before_submitted_callback(
     source = tmp_path / "speech.wav"
     source.write_bytes(b"fixture")
 
-    async with app.run_test() as pilot:
+    async with app.run_test():
         job = app.submit_library_ingest_job(
             source_path=str(source),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         attempt_id = executor.calls[0]["attempt_id"]
         app._ingest_local_stt_jobs[job.job_id] = (0, attempt_id)
 
@@ -3558,7 +3593,7 @@ async def test_executor_failure_uses_stable_job_terminal(
             source_path=str(source),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         attempt_id = executor.calls[0]["attempt_id"]
         executor.trigger_failure(
             0,
@@ -3634,7 +3669,7 @@ async def test_parakeet_failed_attempt_reaches_faster_whisper_retry_row(
             source_path=str(source),
             ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
-        await pilot.pause()
+        await _wait_for_dispatches(executor)
         attempt_id = executor.calls[0]["attempt_id"]
         failed_attempt = {
             "attempt_id": attempt_id,

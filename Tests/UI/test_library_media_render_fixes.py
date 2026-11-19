@@ -756,11 +756,44 @@ async def test_pressing_analyze_leaves_select_mode_and_paints_its_receipt():
             )
             screen.query_one("#library-media-row-0").press()
             screen.query_one("#library-media-row-1").press()
-            await pilot.pause()
+            # TASK-41505: the toggles arm Analyze in place, and pressing it
+            # while still disabled is a silent no-op; wait for both.
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._media_state.row_selection.count == 2
+                and not screen.query_one(
+                    "#library-media-analyze-selected", Button
+                ).disabled,
+                message=lambda: (
+                    "Two row presses never armed Analyze: "
+                    f"{screen._media_state.row_selection.count} checked"
+                ),
+            )
+            # Hold the partition pass, so a toolbar drop seen while it is
+            # held came from the press itself, not the worker's first sync.
+            partition_entered = asyncio.Event()
+            release_partition = asyncio.Event()
+            unanalyzed_ids = screen._library_media_unanalyzed_ids
+
+            async def _held_partition(media_ids):
+                partition_entered.set()
+                await release_partition.wait()
+                return await unanalyzed_ids(media_ids)
+
+            screen._library_media_unanalyzed_ids = _held_partition
             screen.query_one("#library-media-analyze-selected", Button).press()
-            await pilot.pause()
-            assert not screen.query("#library-media-select-actions")
-            assert not screen.query("#library-media-select-analyze")
+            await _wait_for_condition(
+                pilot,
+                lambda: not screen.query("#library-media-select-actions")
+                and not screen.query("#library-media-select-analyze"),
+                message="Analyze never dropped the select-mode toolbar.",
+            )
+            await _wait_for_condition(
+                pilot,
+                partition_entered.is_set,
+                message="The run never reached its partition pass.",
+            )
+            release_partition.set()
             receipt = await _wait_for_selector(
                 screen, pilot, "#library-media-analyze-receipt"
             )
@@ -909,7 +942,14 @@ async def test_analyze_bulk_action_follows_the_selection_in_place():
                 is True
             )
             screen.query_one("#library-media-row-1").press()
-            await pilot.pause()
+            # TASK-41505: the toggle lands once the press has bubbled to the
+            # screen; its handler patches Analyze in the same call, so the
+            # flip is checked at once, before any later recompose.
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._media_state.row_selection.count == 1,
+                message="The row press never toggled its selection.",
+            )
             analyze = screen.query_one("#library-media-analyze-selected", Button)
             assert analyze.disabled is False, "checked rows must arm Analyze"
             assert "Analyze" in str(analyze.label)
@@ -923,7 +963,11 @@ async def test_analyze_bulk_action_follows_the_selection_in_place():
             )
             screen._media_state.analyze_reason_cache = None
             screen.query_one("#library-media-row-0").press()
-            await pilot.pause()
+            await _wait_for_condition(
+                pilot,
+                lambda: screen._media_state.row_selection.count == 2,
+                message="The second row press never toggled its selection.",
+            )
             gated = screen.query_one("#library-media-analyze-selected", Button)
             assert gated.disabled is True
             assert gated.tooltip == "No analysis provider is configured."

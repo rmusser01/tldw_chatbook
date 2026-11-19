@@ -75,6 +75,63 @@ async def open_confirmation(h, pilot):
     return screen
 
 
+async def click_modal_button(pilot, selector="#change-revert-yes"):
+    """Click a confirmation button once the modal has laid it out.
+
+    TASK-41505: `pilot.click` aims at the region the button has when it is
+    called. A mounted button has an empty region until the modal's next
+    layout, so an earlier click lands at (0, 0) and the Undo never runs.
+    """
+
+    def placed():
+        screen = pilot.app.screen
+        if not isinstance(screen, ChangeRevertConfirmModal):
+            return False
+        return any(button.region for button in screen.query(selector))
+
+    await _wait_for(pilot, placed, f"{selector} laid out on the confirmation")
+    region = pilot.app.screen.query_one(selector).region
+    assert await pilot.click(selector), f"the click at {region} missed {selector}"
+
+
+async def confirm_and_settle(pilot, screen):
+    """Confirm, then wait for the revert worker the confirmation starts, if any.
+
+    TASK-41505: the modal's dismiss callback calls `confirm()` and, unless that
+    refuses, starts the revert worker in the same synchronous call. It can run
+    after the click returns, so `workers.wait_for_complete()` right after the
+    click can find no revert worker and return before any revert.
+    """
+    from tldw_chatbook.Workspaces.change_revert_ownership import _UndoConfirmation
+
+    outcomes = []
+    original = _UndoConfirmation.confirm
+
+    def confirm(self):
+        try:
+            original(self)
+        except Exception as exc:
+            outcomes.append(exc)
+            raise
+        outcomes.append("confirmed")
+
+    _UndoConfirmation.confirm = confirm
+    try:
+        await click_modal_button(pilot)
+        await _wait_for(
+            pilot, lambda: outcomes, "the confirmation callback's confirm()"
+        )
+    finally:
+        _UndoConfirmation.confirm = original
+    try:
+        await asyncio.wait_for(screen.workers.wait_for_complete(), 30)
+    except TimeoutError:
+        raise AssertionError(
+            f"confirm() gave {outcomes[0]!r}; workers still running after 30 s: "
+            f"{list(screen.workers)}"
+        ) from None
+
+
 async def test_app_provider_cannot_revert_without_original_confirmation(undo_host):
     h = undo_host
     with pytest.raises(RevertRefusedError):
@@ -184,7 +241,7 @@ async def test_applying_engine_requires_exact_unconsumed_selection(
     monkeypatch.setattr(h.provider, "revert", apply)
     async with h.app.run_test(size=(120, 40)) as pilot:
         await open_confirmation(h, pilot)
-        assert await pilot.click("#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(
             pilot,
             lambda: calls and calls[0].retired.is_set(),
@@ -214,7 +271,7 @@ async def test_actual_preflight_has_finite_native_owner_before_modal(
         await open_confirmation(h, pilot)
         assert observed and observed[0].origin is WorkOrigin.MANUAL
         assert h.runtime.execution_capacity.snapshot().executions == ()
-        await pilot.click("#change-revert-no")
+        await click_modal_button(pilot, "#change-revert-no")
 
 
 async def test_writer_admitted_after_modal_refuses_whole_undo(undo_host):
@@ -229,8 +286,7 @@ async def test_writer_admitted_after_modal_refuses_whole_undo(undo_host):
             )
             claim.bind_owner(owner)
             try:
-                await pilot.click("#change-revert-yes")
-                await screen.workers.wait_for_complete()
+                await confirm_and_settle(pilot, screen)
                 assert (h.root / "edit.txt").read_text() == "after\n", (
                     "Undo wrote through live native claim"
                 )
@@ -243,8 +299,7 @@ async def test_confirmed_restore_records_original_row_and_retires(undo_host):
     h = undo_host
     async with h.app.run_test(size=(120, 40)) as pilot:
         screen = await open_confirmation(h, pilot)
-        await pilot.click("#change-revert-yes")
-        await screen.workers.wait_for_complete()
+        await confirm_and_settle(pilot, screen)
         assert (h.root / "edit.txt").read_text() == "before\n"
         assert '"edit.txt"' in h.db.change_snapshots_for_run(h.run)[0]["reverted"]
         assert h.runtime.execution_capacity.snapshot().executions == ()
@@ -273,8 +328,7 @@ async def test_confirmation_never_reselects_changed_sources(undo_host, change):
             restore = h.runtime._execution_capacity
             h.runtime._execution_capacity = RuntimeCapacity()
         try:
-            await pilot.click("#change-revert-yes")
-            await screen.workers.wait_for_complete()
+            await confirm_and_settle(pilot, screen)
             assert (h.root / "edit.txt").read_text() == (
                 "user edit while modal open\n" if change == "disk" else "after\n"
             )
@@ -307,8 +361,7 @@ async def test_native_ticket_exists_before_original_worker_enqueue(
     monkeypatch.setattr(_UndoCall, "run", enqueue)
     async with h.app.run_test(size=(120, 40)) as pilot:
         screen = await open_confirmation(h, pilot)
-        await pilot.click("#change-revert-yes")
-        await screen.workers.wait_for_complete()
+        await confirm_and_settle(pilot, screen)
     assert len(observations) == 2
     assert observations[0] is not observations[1]
     assert all(call.retired.is_set() for call in observations)
@@ -325,8 +378,7 @@ async def test_commit_then_raise_is_observed_on_original_sqlite(undo_host, monke
     monkeypatch.setattr(h.db, "update_change_snapshot_reverted", committed)
     async with h.app.run_test(size=(120, 40)) as pilot:
         screen = await open_confirmation(h, pilot)
-        await pilot.click("#change-revert-yes")
-        await screen.workers.wait_for_complete()
+        await confirm_and_settle(pilot, screen)
         assert (h.root / "edit.txt").read_text() == "before\n"
         assert not h.runtime._change_revert_native.pending
         assert h.runtime.execution_capacity.snapshot().executions == ()
@@ -367,7 +419,7 @@ async def test_finish_return_retains_original_worker_db_and_scratch(
     async with h.app.run_test(size=(120, 40)) as pilot:
         screen = await open_confirmation(h, pilot)
         try:
-            await pilot.click("#change-revert-yes")
+            await click_modal_button(pilot)
             await _wait_for(pilot, entered.is_set, "actual finish entry")
             dispose = asyncio.create_task(h.runtime.dispose())
             await _wait_for(pilot, lambda: h.runtime._disposed, "runtime sealed")
@@ -426,7 +478,7 @@ async def test_historical_smudge_helper_retains_writer_after_ui_unmount(
             monkeypatch.setattr(ProcessTreeController, "terminate", lambda *args: None)
             monkeypatch.setattr(ProcessTreeController, "kill", lambda *args: None)
         try:
-            await pilot.click("#change-revert-yes")
+            await click_modal_button(pilot)
             await _wait_for(pilot, entered.exists, "actual historical smudge")
             call = next(
                 call
@@ -491,7 +543,7 @@ async def test_multiroot_undo_has_one_writer_for_rename_and_uncreate(
             "all-root confirmation",
         )
         assert h.runtime.execution_capacity.snapshot().executions == ()
-        await pilot.click("#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(
             pilot, lambda: calls and calls[0].retired.is_set(), "whole writer return"
         )
@@ -536,8 +588,7 @@ async def test_post_modal_admission_honors_original_conflicts(undo_host, kind):
                 )
                 assert claim is not None
         try:
-            await pilot.click("#change-revert-yes")
-            await screen.workers.wait_for_complete()
+            await confirm_and_settle(pilot, screen)
             assert (h.root / "edit.txt").read_text() == "after\n"
             assert not h.runtime._change_revert_native.pending
         finally:
@@ -577,7 +628,12 @@ async def test_unknown_required_settlement_retains_original_scopes(
             text=True,
             timeout=40,
         )
-        assert result.returncode == 0, result.stdout + result.stderr
+        # The child reports its traceback in the receipt, not on stdout.
+        assert result.returncode == 0, (
+            result.stdout
+            + result.stderr
+            + (result_path.read_text() if result_path.exists() else "")
+        )
         assert json.loads(result_path.read_text()) == {
             "failure": failure,
             "retained": True,
@@ -691,7 +747,7 @@ async def test_unknown_required_settlement_retains_original_scopes(
                 "_report_outcomes",
                 lambda value: outcomes.extend(value) or original_report(value),
             )
-            await pilot.click("#change-revert-yes")
+            await click_modal_button(pilot)
             await _wait_for(pilot, lambda: outcomes, "honest partial host result")
             call = next(iter(h.runtime._change_revert_native.pending))
             await _wait_for(
@@ -793,7 +849,7 @@ async def test_failed_path_after_actual_checkout_still_snapshots(
             original_report(result)
 
         monkeypatch.setattr(screen, "_report_outcomes", report)
-        assert await pilot.click("#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(pilot, lambda: outcomes, "actual checkout failure outcome")
         await screen.workers.wait_for_complete()
         assert (h.root / "edit.txt").read_text() == "before\n"
@@ -822,7 +878,7 @@ async def test_original_provider_refusal_reaches_review_as_per_path_outcome(
             original_report(result)
 
         monkeypatch.setattr(screen, "_report_outcomes", report)
-        assert await pilot.click("#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(pilot, lambda: outcomes, "actual provider refusal outcome")
         await screen.workers.wait_for_complete()
         assert len(outcomes) == 1 and not outcomes[0].ok
@@ -851,7 +907,7 @@ async def test_cancel_between_admission_and_enqueue_retires_only_unused_ticket(
     monkeypatch.setattr(_UndoCall, "run_async", gap)
     async with h.app.run_test(size=(120, 40)) as pilot:
         screen = await open_confirmation(h, pilot)
-        await pilot.click("#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(pilot, entered.is_set, "admitted enqueue gap")
         assert h.runtime.execution_capacity.snapshot().tool_workers == 1
         screen.workers.cancel_group(screen, "change-review-revert")
@@ -926,7 +982,7 @@ async def test_real_console_card_uses_native_confirmation_and_original_provider(
                 "card confirmation",
             )
             assert runtime.execution_capacity.snapshot().executions == ()
-            await pilot.click("#change-revert-yes")
+            await click_modal_button(pilot)
             await _wait_for(
                 pilot, lambda: str(button.label) == "Undone", "original card acceptance"
             )
@@ -974,7 +1030,7 @@ async def test_actual_host_return_keeps_original_worker_and_claim(
     async with h.app.run_test(size=(120, 40)) as pilot:
         screen = await open_confirmation(h, pilot)
         try:
-            await pilot.click("#change-revert-yes")
+            await click_modal_button(pilot)
             await _wait_for(pilot, entered.is_set, "original host return")
             assert not observed[0].host_proven
             assert h.runtime.execution_capacity.snapshot().tool_workers == 1
@@ -1003,8 +1059,7 @@ async def test_revoked_original_scratch_never_becomes_unmanaged(undo_host):
             screen = await open_confirmation(h, pilot)
             h.runtime.scratch_spaces.close("historical-original")
             assert h.runtime.scratch_spaces.existing_snapshot_for_root(root) is snapshot
-            await pilot.click("#change-revert-yes")
-            await screen.workers.wait_for_complete()
+            await confirm_and_settle(pilot, screen)
             assert (root / "edit.txt").read_text() == "after\n"
             assert not h.runtime._change_revert_native.pending
 
@@ -1053,7 +1108,7 @@ async def test_activation_entry_refusal_retires_without_effect_then_allows_later
     monkeypatch.setattr(ownership._UndoCall, "run_async", gap)
     async with h.app.run_test(size=(120, 40)) as pilot:
         screen = await open_confirmation(h, pilot)
-        await pilot.click("#change-revert-yes")
+        await click_modal_button(pilot)
         if unused:
             await _wait_for(pilot, entered.is_set, "unused admission")
             screen.workers.cancel_group(screen, "change-review-revert")
@@ -1065,8 +1120,7 @@ async def test_activation_entry_refusal_retires_without_effect_then_allows_later
         assert (h.root / "edit.txt").read_text() == "after\n"
         assert h.runtime.execution_capacity.snapshot().executions == ()
         await open_confirmation(h, pilot)
-        await pilot.click("#change-revert-yes")
-        await screen.workers.wait_for_complete()
+        await confirm_and_settle(pilot, screen)
         assert (h.root / "edit.txt").read_text() == "before\n"
 
 

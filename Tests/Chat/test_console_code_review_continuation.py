@@ -2,6 +2,7 @@
 
 import asyncio
 import subprocess
+import time
 from collections import defaultdict
 from copy import deepcopy
 
@@ -465,12 +466,21 @@ async def test_default_two_child_schedule(
             assert not controller.code_review.issuer._grants
             assert "trust" in result.visible_copy.lower()
             return
-        for _ in range(200):
-            if (
-                sum(counts.values()) >= sum(expected)
-                and not controller.fleet_wake.delivering_session_ids()
-            ):
-                break
+        # A wall-clock deadline, not 200 sleeps: under load the wake that
+        # launches the verifier can start after 200 x 0.03 s (TASK-41505).
+        deadline = time.monotonic() + 60.0
+        while (
+            sum(counts.values()) < sum(expected)
+            or controller.fleet_wake.delivering_session_ids()
+        ):
+            assert time.monotonic() < deadline, (
+                "schedule never settled within 60 s",
+                dict(counts),
+                expected,
+                controller.fleet_wake.delivering_session_ids(),
+                errors,
+                getattr(controller.code_review, "diagnostic", ""),
+            )
             await asyncio.sleep(0.03)
         assert result.accepted, result
         if (

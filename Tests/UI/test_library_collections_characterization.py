@@ -143,6 +143,42 @@ async def _open_collections(screen, pilot) -> None:
     await _wait_for_collections_entry(screen, pilot)
 
 
+async def _wait_for_capture_panes(screen, pilot) -> None:
+    """Wait until every mounted capture pane paints the current state (TASK-41505).
+
+    A pane sync runs after the action that queued it, so a control taken
+    before it lands can be pruned under the press. ``recompose_capture_panes``
+    rebuilds exactly the panes whose ``presentation`` differs or whose
+    rebuild never finished; when none does, the panes are current.
+    """
+    controller = screen._collections_controller
+
+    def stale() -> list[str]:
+        # `query`, not `query_one`: a pane caught mid-recompose is reported as
+        # missing, in the message too, instead of raising NoMatches there.
+        current = controller._library_collections_capture_presentation()
+        required = ("#library-collections-items", "#library-collections-work")
+        missing = [
+            f"{selector} missing" for selector in required if not screen.query(selector)
+        ]
+        panes = [
+            pane
+            for selector in ("#library-collections-scopes", *required)
+            for pane in screen.query(selector)
+        ]
+        return missing + [
+            pane.id
+            for pane in panes
+            if pane.presentation != current or getattr(pane, "_half_built", False)
+        ]
+
+    await _wait_for_condition(
+        pilot,
+        lambda: not stale(),
+        message=lambda: f"Capture panes never painted the current state: {stale()}",
+    )
+
+
 @pytest.mark.asyncio
 async def test_capture_filters_toggle_apply_clear_sort_and_free_text_reach_the_scope_service() -> None:
     """Characterization (pre-extraction): pins toggle/apply/clear filters,
@@ -183,8 +219,11 @@ async def test_capture_filters_toggle_apply_clear_sort_and_free_text_reach_the_s
         # toggle_library_collection_capture_filters: opens the disclosure.
         assert screen._collections_state.filters_open is False
         screen.query_one("#library-collections-filters", Button).press()
-        await pilot.pause()
-        assert screen._collections_state.filters_open is True
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._collections_state.filters_open is True,
+            message="Filters toggle never opened the disclosure.",
+        )
         await _wait_for_selector(screen, pilot, "#library-collections-filters-apply")
 
         # apply_library_collection_capture_filters: a domain filter narrows
@@ -457,8 +496,7 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
             lambda: controller.state.loaded_detail is not None,
             message="Setup selection never settled.",
         )
-        for _ in range(5):
-            await pilot.pause()
+        await _wait_for_capture_panes(screen, pilot)
 
         # favorite_library_collection_capture.
         assert controller.state.loaded_detail.capture.favorite is False
@@ -474,8 +512,7 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
             ),
             message="Favorite press never reached the capture controller.",
         )
-        for _ in range(3):
-            await pilot.pause()
+        await _wait_for_capture_panes(screen, pilot)
 
         # mark_library_collection_capture_read.
         assert controller.state.loaded_detail.capture.status == "reading"
@@ -491,8 +528,7 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
             ),
             message="Mark-read press never reached the capture controller.",
         )
-        for _ in range(3):
-            await pilot.pause()
+        await _wait_for_capture_panes(screen, pilot)
 
         # open_library_collection_capture_original.
         opened_urls: list[str] = []
@@ -503,7 +539,12 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
             screen, pilot, "#library-collections-open-original"
         )
         open_original_button.press()
-        await pilot.pause()
+        # The handler opens the URL on a thread worker; one pause can end first.
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(opened_urls),
+            message="Open-original press never reached webbrowser.open.",
+        )
         assert opened_urls == [controller.state.loaded_detail.capture.canonical_url]
 
         # save a highlight (already covered elsewhere) so this test can pin
@@ -525,8 +566,7 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
             lambda: len(screen._collections_state.highlights) == 1,
             message="Highlight setup did not persist.",
         )
-        for _ in range(3):
-            await pilot.pause()
+        await _wait_for_capture_panes(screen, pilot)
 
         # delete_library_collection_capture_highlight.
         delete_button = await _wait_for_selector(
@@ -538,8 +578,7 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
             lambda: len(screen._collections_state.highlights) == 0,
             message="Highlight-delete press never reached the scope service.",
         )
-        for _ in range(3):
-            await pilot.pause()
+        await _wait_for_capture_panes(screen, pilot)
 
         # link a note (already covered elsewhere) so this test can pin its
         # own UNLINK half.
@@ -563,8 +602,7 @@ async def test_detail_action_buttons_favorite_mark_read_open_original_highlight_
             ),
             message="Note-link setup did not persist.",
         )
-        for _ in range(3):
-            await pilot.pause()
+        await _wait_for_capture_panes(screen, pilot)
 
         # unlink_library_collection_capture_note.
         unlink_button = await _wait_for_selector(
@@ -653,7 +691,12 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
             screen, pilot, "#library-collections-capture-cancel"
         )
         cancel_button.press()
-        await pilot.pause()
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._collections_state.quick_capture_open is False
+            and not screen.query("#library-collections-capture-url"),
+            message="Quick-capture cancel never closed the form.",
+        )
 
         # cancel_library_collection_capture_hard_delete: backs out of the
         # confirmation without deleting anything.
@@ -664,8 +707,7 @@ async def test_quick_capture_refresh_hard_delete_cancel_and_legacy_recovery_clos
             lambda: controller.state.loaded_detail is not None,
             message="Setup selection never settled.",
         )
-        for _ in range(5):
-            await pilot.pause()
+        await _wait_for_capture_panes(screen, pilot)
         more_button = await _wait_for_selector(screen, pilot, "#library-collections-more")
         more_button.press()
         hard_delete_button = await _wait_for_selector(
