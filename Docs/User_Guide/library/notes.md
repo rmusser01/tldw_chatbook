@@ -141,10 +141,7 @@ leaves it alone. This holds in Library notes and in Folder files.
   the title field is protected from is a different one: a Notes refresh that
   lands mid-sentence never rebuilds the field under your hands, so the editor
   is not recomposed while you are typing in it and a body-only autosave costs
-  the list nothing. (Was "Renaming a note does not repaint its list row live
-  while the note stays open … the row shows the new title the next time the
-  canvas refreshes with focus outside the title and body" — superseded by
-  task-32612.)
+  the list nothing.
 
   Only one pane carries a "Next:" instruction at a time. With a note open, the
   work pane owns it; the list's own "Next: Create a note or add from files."
@@ -685,14 +682,11 @@ until you ask for them, and fold again the next time you open the view.
 
 This view is the task in hand while it is open, and it gets the pane width
 that goes with that (task-32544, task-32547). At 235 columns the empty list
-no longer inflates to the roughly 130 columns it once kept — it drops back
-to its own comfort width (around 62), leaving the view itself about 105
+keeps to its own comfort width (around 62), leaving the view itself about 105
 columns alongside the roughly 37-column navigation rail, room enough for
-the view's own status line to fit on one row instead of wrapping inside 52.
+the view's own status line to fit on one row.
 On a terminal too narrow to show both at once — 60 columns, say — the view takes
-the stage outright: before this, pressing **New** there changed the footer
-to "enter create | esc notes" while the list stayed on screen and **Blank
-note** never appeared at all. Escape returns to the list at the same size.
+the stage outright. Escape returns to the list at the same size.
 
 Opening this view parks keyboard focus on **Blank note**, so Enter creates
 a note straight away without tabbing to find it; ↑/↓ move between Blank
@@ -843,9 +837,7 @@ status line reads "Manual check finished. N change(s) to review." and the
 review it just built opens, while the row behind it becomes "◌ Changes
 available · Next: Review changes" so **Review** reaches the same review again
 without re-checking. A check that finds nothing says "Nothing to review." and
-leaves you on the list. (Was "Manual check finished. Review exact effects."
-printed over a root the check had left untouched, with no Review control
-anywhere — superseded by task-32604.) **Review** also appears on its own
+leaves you on the list. **Review** also appears on its own
 when a root's changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
 active root; a paused root reads "Ⅱ Paused · Next: Resume". **Resume**
@@ -884,16 +876,12 @@ Notes (or its name is blank), "Sync folder (name unavailable)" when the app
 could not read the name; the status line beside it says what to do. Names are
 read when the app starts and when a folder is set up: rename a sync-managed
 folder in the Notes tree and its row keeps the old title until the next start.
-(Was "Sync folder (name unavailable before cutover)" on every row,
-whatever you had named it, so two roots could only be told apart by their
-status lines and order — task-32451.)
 
 **Receipts**, under the root list, is where the writes lasting sync performs
 on its own show up: the newest 20 across every listed root, newest first, as
 "when · what happened · file · note" — "2026-09-14 07:34 · Wrote note to file ·
 People/Sam.md · Sam" for a note you edited in Chatbook, "Updated note from
-file" for a file you edited on disk (task-32534). Before this a completed
-write left no trace anywhere in the app.
+file" for a file you edited on disk (task-32534).
 
 Saving a note in Chatbook is enough to produce that "Wrote note to file" row:
 a note inside an active root that you save in the editor is written to its
@@ -951,14 +939,12 @@ winner. A file's line-ending convention is kept across an edit that leaves
 no line ending at all -- a Windows-style CRLF file whose note shrinks to one
 line stays a CRLF file, the next multi-line edit is written CRLF, and a
 folder that an older build held on exactly this ("Recovery failed" after
-such an edit) is healed by **Recovery** (TASK-34000.48). Before this
-an ordinary edit — Ctrl+End, then a word without Enter, in a vault whose files
-end with a newline — left a `postcondition_failed` entry open on the folder
-while the tree, the list and the editor went on saying Sync managed, Ready and
-Saved, and later edits on both sides silently diverged. That edit now
-completes (the written file is compared with what the note writes, newline
-convention included), and the entry's row in **Manage sync folders** reads
-"⚠ Needs attention · Next: Resolve recovery" with **Recovery** first.
+such an edit) is healed by **Recovery** (TASK-34000.48). An ordinary edit —
+Ctrl+End, then a word without Enter, in a vault whose files end with a
+newline — completes: the written file is compared with what the note writes,
+newline convention included. A folder still holding an entry an older build
+left open reads "⚠ Needs attention · Next: Resolve recovery" in **Manage
+sync folders**, with **Recovery** first.
 **Recovery** closes the open entry at the baseline it can prove on disk and in
 Notes, mutating neither side, then checks the folder again: whatever changed
 on one side since is synced, and a change on both sides becomes an ordinary
@@ -1014,9 +1000,7 @@ save or a rename of the note in Chatbook — none of those count as a change to
 the note's text, and none of them stop the next file edit from landing.) If
 you edited the note's text in Chatbook *and* the file on disk, the folder
 stops for the ordinary "Both file and note changed" review instead; nothing
-is chosen for you. Before this, deleting a synced note left the row at "✓ Up
-to date" with the file still on disk and nothing to say the folder had
-anything to decide (TASK-32633 slice, N-03).
+is chosen for you.
 
 **What this covers, exactly: editing an existing synced note in the Library
 note editor, and deleting or restoring one through the Library.** Those are
@@ -1093,13 +1077,7 @@ the click that focuses it, is the Folder files root picker's
 ([File notes](file-notes.md)); here `Ctrl+A` selects whatever you typed. An
 invalid path shows its reason on a row under the field ("The file must exist")
 and leaves the dialog open. **Select folder** picks the folder row you last
-clicked if you clicked one, otherwise the folder being browsed. (Was "Its
-**Folder path** field … The field arrives pre-filled with the directory being
-browsed, and the click that puts the cursor in it selects that value" —
-superseded by task-32271: Import once opens the files-or-one-folder
-dialog, whose field is "File name" and starts empty. Keep a folder synced no
-longer does — see task-32611; it and Folder files both open the
-folder-only dialog with the pre-filled "Folder path".)
+clicked if you clicked one, otherwise the folder being browsed.
 Once a folder is picked, the confirmation line shows its full path
 (elided in the middle only when the path is longer than the pane is wide,
 keeping the folder name itself visible), not just its name — and it is the
@@ -1378,11 +1356,7 @@ The receipt is then on screen. Tab stays inside Import once throughout —
    synced**.
 3. Click **Choose folder…**; type a path into the **Folder path** field and
    either press Enter (browses into it) or click **Select folder** (uses the
-   folder being browsed). (Was "type into the **File name** field ('File name
-   or path')… this is the files-or-one-folder dialog" — superseded by
-   task-32611: this door now opens the folder-only picker, whose field
-   is **Folder path**, arrives pre-filled with the folder being browsed and
-   selected, and which lists no files at all.) Choose a direction and local
+   folder being browsed). Choose a direction and local
    destination.
    Server sync remains unavailable until its separate capability is
    installed.
@@ -1393,8 +1367,7 @@ The receipt is then on screen. Tab stays inside Import once throughout —
 5. Choose **Activate reviewed root**. If the review is stale, choose **Check
    again** instead. **Manage sync folders** appears in the notes toolbar once
    a root is active. The receipt reads "N applied · listed under Receipts" and
-   names where to see them (task-32545; was "N applied · durable receipt
-   recorded"). The receipt's bar offers **Manage sync folders** and
+   names where to see them (task-32545). The receipt's bar offers **Manage sync folders** and
    **‹ Notes**; a second folder is set up from **Add from files…** again.
    Choosing **‹ Notes** returns to a Notes list that already
    counts the synced notes and shows them under a **⇄ Sync managed** folder

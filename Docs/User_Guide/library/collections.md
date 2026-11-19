@@ -14,17 +14,12 @@ for grouping, the surfaces that actually group content today are Notes
 folders ([Notes](notes.md)) and Prompt collections
 ([Prompts](prompts.md)).
 
-> **This page was rewritten.** Until 2026-09-08 it described a
-> create/rename/delete Collections manager. That surface no longer ships:
-> the generic Collections tables are read-only recovery data (see
-> [Legacy Collections data](#legacy-collections-data) below), and the row
-> opens the captures reading list documented here. The name question is
-> now settled (task-32057 AC#1, 2026-09-11): the feature is called
-> **Collections** in the rail and on the canvas, and **Quick Capture** is
-> the name of one action on it — the button that saves a URL — not of the
-> screen. The legacy local Collections service stays **read-only**: there is no
-> schema migration, no membership model and no "Add to collection"
-> affordance anywhere in the app.
+The feature is called **Collections** in the rail and on the canvas;
+**Quick Capture** is the name of one action on it — the button that saves a
+URL — not of the screen. Records in the older generic Collections tables are
+read-only recovery data (see [Legacy Collections data](#legacy-collections-data)
+below): there is no create, rename or delete for them, no membership model
+and no "Add to collection" affordance anywhere in the app.
 
 ## Getting there
 
@@ -188,7 +183,7 @@ capture is loaded and current."
 
 ### Legacy Collections data
 
-If your profile still holds records from the superseded generic
+If your profile still holds records from the older generic
 Collections tables, the reader shows:
 
 > Legacy Collections are read-only on this profile · Use the legacy

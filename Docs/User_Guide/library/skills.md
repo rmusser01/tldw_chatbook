@@ -130,7 +130,9 @@ chrome is drawn; this matches every other Library list.
 **Import skill…** opens an inline row: an input with placeholder "SKILL.md file
 or skill folder path… or GitHub/zip URL", plus **Browse…** (pick a
 SKILL.md file), **Browse folder…** (pick a skill folder), **Import**, and
-**Cancel**. Browsing and submission use separate rows, and the list's Sort and
+**Cancel**. The row opens with the caret in that input; **Cancel** closes it
+and puts focus back on **Import skill…**. Browsing and submission use separate
+rows, and the list's Sort and
 Import actions stay readable in the narrow Skills pane. A `http(s)://` value
 fetches the skill from that URL.
 

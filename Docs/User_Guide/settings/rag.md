@@ -401,9 +401,9 @@ field has focus the footer relabels the hints as `Esc, s` / `Esc, r` /
   could not start: the shared RAG service is unavailable right now. Try again
   shortly." is different — that one is transient, so press **Backfill** again.
 - **The chunking engine clamps instead of scolding.** With `Words`,
-  `Sentences` or `Paragraphs`, an overlap at or above the chunk size used to
-  be rejected; the engine now clamps the overlap just under the size and
-  produces more, smaller chunks instead. (The `tokens` method is the one
+  `Sentences` or `Paragraphs`, an overlap at or above the chunk size is not
+  rejected: the engine clamps the overlap just under the size and produces
+  more, smaller chunks instead. (The `tokens` method is the one
   exception — it still raises a clear error when overlap ≥ size.) Every
   chunk is also stamped with the engine version that produced it, and text is
   sanitized before chunking (null bytes and unusual control characters become

@@ -235,6 +235,7 @@ page links to each backend's setup guide and displays these restrictions.
 | Interface | **Console Behavior** | Rail presentation, composer behavior, and chat-flow defaults. | Draft — save with s |
 | Data & Privacy | **Storage** | Config path, local databases, and file locations. | Draft — save with s |
 | Data & Privacy | **Workspaces** | Create, rename, archive, and bind folders for agent file tools. | Immediate actions |
+| Data & Privacy | **Tool Profiles** | Import, export, review, bind, and remove portable tool permission profiles (Tool Packs). | Immediate actions |
 | Data & Privacy | **My Profile** → [own page](settings/personal-context-profile.md) | Personal and workspace context, interviews, agent proposals, authority, export, and removal. | Applies immediately |
 | Data & Privacy | **Privacy & Security** | Secrets, encryption, redaction, local privacy boundaries, and the raw CLI host-access gate. | Draft — save with s |
 | Troubleshooting | **Diagnostics** (view) | Config validation, logs, and troubleshooting signals. | Read-only |
@@ -427,8 +428,8 @@ saved Endpoint as it was, so the older key is still read. Nothing rewrites the
 file for this.
 
 Custom 2's key works as Custom's does: the key or env var saved for it, or no
-key at all, so a server that needs none also answers Dreams and import analysis
-(they used to stop with "API Key required"). The older
+key at all, so a server that needs none also answers Dreams and import analysis.
+The older
 `[API] custom_openai2_api_key` is read only by sends outside Console, such as
 Dreams and import analysis, and only while Custom 2 has no saved key choice.
 Settings and Console do not see it: with only that key set, Settings shows no
@@ -1681,7 +1682,7 @@ after it finishes to save that edit.
 These preferences take effect **at the next launch**; the gallery preview is the only in-session
 feedback.
 
-**Skip on keypress** does what it says as of TASK-21591: with it on (the
+**Skip on keypress** does what it says: with it on (the
 default), any key pressed while the splash is up dismisses it and boot
 continues immediately. That key is consumed by the splash and does nothing
 else — pressing `F4` mid-splash skips to the app's normal startup screen
@@ -1808,6 +1809,34 @@ tool (Read file, List directory, …) has its own switch, both under **Settings
 The built-in **Default** workspace has no controls at all: "Chats in the
 built-in Default workspace use private scratch. Create a named Workspace only
 to bind external folders."
+
+### Data & Privacy — Tool Profiles
+
+A tool permission profile is a set of Allow / Ask / Deny rules for the tools
+your agents can call: the policy [Tools & MCP's Permissions
+mode](mcp.md#permissions-mode--allow-ask-off) edits. Tool Profiles moves a
+profile between machines as a **Tool Pack**, a `.tldw-tool-pack` file. Under
+its title the pane states the limit: "Portable permission profiles change
+tool policy only. Importing a profile never installs tools or binds it to a
+workspace." There is no draft; each action applies when you confirm it.
+
+Each profile is a card showing its id; where it came from (**Local**,
+**Workspace-managed** or **Imported Tool Pack**), whether any workspace references
+it (**Bound** / **Unbound**) and "Policy lifecycle valid" (or "Invalid policy
+lifecycle"); for an imported profile, "First bind review required" or "First
+bind already reviewed"; its revision and policy digest; its import receipt
+and how many workspaces reference it ("References: N active · N archived");
+and how its rules resolve against the tools you have ("Allow N · Ask N ·
+Deny N"). With no profiles the pane reads "No visible Tool profiles. Import a
+Tool Pack to create an unbound profile."
+
+| Control | What it does |
+|---|---|
+| **Import Tool Pack** | Opens a file picker for `.tldw-tool-pack` files; its button is **Inspect**. Next, confirm the profile id and add any server mappings, one `source -> destination` pair per line, for a pack whose MCP server is named differently here; **Inspect pack** continues. **Review Tool Pack** shows the pack's identity, its policy (rule counts, exact matches, changed contracts, missing tools), the tools it matched here and the mappings. **Change id or mappings** goes back; **Import unbound profile** imports it. The import creates a permission profile only: it installs no tools and binds no workspace. |
+| **Export** | **Review Tool Pack export** shows the portable policy and what was left out; **Choose destination** saves the `.tldw-tool-pack` file, after which the pane reads "Exported Tool Pack · \<digest\>". The archive holds permission policy only, never tools, skills, plugins, credentials, workspace bindings or run history. |
+| **Edit** | Opens **Tools & MCP ▸ Permissions** with this profile chosen in its **Tool policy profile** selector, to change its rules there. |
+| **Bind** | Stages the profile for the active workspace and opens **Workspaces**: "Tool Profile staged — press Apply to review and save." (or "— choose a persona and apply." when the workspace has no persona yet). The first apply of an imported profile opens **Review first Tool Profile bind**, and **Confirm exact bind** authorizes that exact workspace, its assistant defaults, the profile revision, policy digest and tool inventory once; any later change needs a new review. With the built-in Default workspace active, Workspaces asks you to choose or create another workspace, make it active, and come back. |
+| **Remove** | Only for an imported profile that no workspace references or is using. Asks "Remove Tool Profile?"; **Remove profile** removes it, and its id stays reserved by a permanent Deny tombstone. Otherwise the button is disabled and its tooltip names the reason ("Cannot remove · referenced", for example). |
 
 ### Data & Privacy — Privacy & Security
 

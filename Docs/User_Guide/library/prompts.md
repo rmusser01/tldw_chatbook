@@ -200,7 +200,9 @@ filter. Choose **All prompts** or a collection row, then **Done**, to change it;
 
 ### Importing prompts
 
-Press **Import…**, enter a path, press **Import**. The path can be a
+Press **Import…**, enter a path, press **Import**. The row opens with the
+caret already in its path field, and **Cancel** closes it and puts focus back
+on **Import…**. The path can be a
 single file or a whole folder; **Browse…** opens a file picker for the
 single-file case only — a folder path must be typed by hand. Supported
 formats: `.json`, `.yaml`, `.yml`, `.md`, and `.txt`.

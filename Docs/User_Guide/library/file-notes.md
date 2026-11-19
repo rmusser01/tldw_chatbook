@@ -47,10 +47,7 @@ between Edit and Manage, autosaving, resolving a conflict, or resizing does
 not close it again. The automatic close resets only when you close or clear
 the open Folder files file, switch between Folder files and Library notes,
 change the linked folder, clear the selected Library note, or leave Notes.
-Using compact **‹ Files** does not reset it. (Was "**Back to navigator**" —
-the Session Git panel and the Folder-files
-work pane now use the same "‹ " cue as the Notes editor, naming where it
-goes.)
+Using compact **‹ Files** does not reset it.
 
 ## Layout tour
 
@@ -330,15 +327,10 @@ still running.
 The panel is headed "Review session changes" with the scope line "Review and
 commit only notes changed during this Chatbook session." and the keyboard
 guide "Up/Down select · Tab actions · Enter run · Esc back". Before anything
-runs it shows "Repository: not checked" / "Status: NOT CHECKED". *(Was
-headed "Prepare session for commit", with the scope line "Session paths only
-· stages complete file state" and a pipe-separated, title-case keyboard
-guide. All three were real once and all three were rewritten by task-15122
-on 2026-08-11.)*
+runs it shows "Repository: not checked" / "Status: NOT CHECKED".
 
 **Trust first.** Press **Trust and check status** and a confirmation dialog
-titled "Trust repository for session changes?" appears (was "Trust Session
-Git repository?"):
+titled "Trust repository for session changes?" appears:
 
 > Repository: \<path\>
 >
@@ -552,11 +544,7 @@ changes to "<file>"?' with **Keep editing** selected instead of exiting.
   group, under the line "Chunking Lab — compare how text is split for
   search", and open a full-screen developer tool for comparing chunking
   strategies; **Escape** there returns to the Library canvas you came from.
-  See [Library overview](../library.md). *(Was "It paints under the header
-  on every Library canvas … Escape does not leave it … demoting it is
-  tracked as task-32064" — superseded by task-32064, which is Done: the
-  strip left the header, the pair moved into Details ▸ Actions, and the Lab
-  gained its Escape route.)*
+  See [Library overview](../library.md).
 
 - **YAML frontmatter is hidden from the editor and kept exactly as it is on
   disk.** A file that opens with a `---` block (Obsidian properties, for

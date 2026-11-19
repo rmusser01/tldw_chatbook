@@ -203,6 +203,13 @@ verbatim).
   — so every label paints in full at every supported width (no more the old
   "Selec"/"Exp" clipping), and the word still holds its column across the
   disabled flip.
+- **Media says why its bulk actions are off.** Media's select-mode actions
+  are short words: **Clear**, **Export** and **Review** on one row,
+  **Analyze** on the next, **Delete** on a row of its own. While nothing is
+  checked and the list has rows, they read "○ Export", "○ Review" and
+  "○ Delete", and a line under the first row says why: "Select items to
+  enable." Checking a row hides that line and enables the three. The line
+  keeps its space while hidden, so the rows below do not move.
 
 **Media's "Analyze"** (Media only) generates an analysis for every checked
 item in one run, in list order, on its own row under Clear/Export/Review:
@@ -797,6 +804,13 @@ Global navigation keys live in the [guide index](../index.md).
 - **Highlight colors must parse.** "Color (optional)" accepts standard
   color names or hex values (e.g. `yellow`, `#ffcc00`); anything else is
   saved but renders as plain text with no tint on the swatch.
+- **Very large documents are slow to open in Rendered.** The Reader opens a
+  document that has headings, tables or fenced code in **Rendered**, and
+  Rendered lays out the whole document before it appears, so a document of
+  about a megabyte can take several seconds or more. **Raw** draws only the
+  lines in view and shows the same document at once: switch to it to read or
+  search a very large document. Bounding the Rendered view is tracked as
+  TASK-22660.
 - **"Open in Library ▸ Media" stays in Library.** The separate Media
   screen it used to jump to was retired; the button now returns to
   Library's own Media surface.
