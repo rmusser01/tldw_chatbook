@@ -56,8 +56,14 @@ _AUDITED_LITERAL_ALLOWLIST: dict[str, tuple[int, int]] = {
     "tldw_chatbook/Chat/console_provider_endpoints.py": (1, 2),
     # Audit-leave: identity aliases (setup persistence).
     "tldw_chatbook/Chat/provider_setup_persistence.py": (1, 1),
-    # Audit-leave: docstring reference to the legacy table's own keys.
-    "tldw_chatbook/Chat/provider_readiness.py": (1, 1),
+    # Audit-leave: legacy dispatch-key documentation (1/1), plus the
+    # is_self_hosted_provider docstring's legacy-handler reference (1/0).
+    "tldw_chatbook/Chat/provider_readiness.py": (2, 1),
+    # TASK-36946.1: display-key identity exclusions (1/1), built-in-slot
+    # record-prefix selection (1/0), and its comment (1/0). These select
+    # custom/custom_2 config slots, not the execution family; registry parity
+    # pins the slots and display names, including custom_hosted separately.
+    "tldw_chatbook/Chat/provider_catalog.py": (3, 1),
     # Audit-leave: identity/handler universe for model-list resolution.
     "tldw_chatbook/LLM_Provider_Catalog/model_discovery_provider_identity.py": (
         1,
@@ -67,9 +73,13 @@ _AUDITED_LITERAL_ALLOWLIST: dict[str, tuple[int, int]] = {
     # the swap; the kill switch keeps them the live path when off), and the
     # same two handlers' own keys on an endpoint refusal (TASK-41131 M-2).
     "tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py": (4, 3),
-    # Audit-leave: user-configured summarization endpoint dispatch;
+    # Audit-leave: user-configured summarization dispatch records: each
+    # legacy slot has a mapping key and its own spec.endpoint (2/2).
     # "custom-hosted" is not a selectable summarization endpoint.
-    "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": (1, 1),
+    "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": (2, 2),
+    # Audit-leave: _execution_endpoint's docstring explains readiness versus
+    # handler identity (1/1); executable code uses the shared identity resolver.
+    "tldw_chatbook/Library/library_rag_answer_service.py": (1, 1),
     # Audit-include (registry-parity-forced membership): the module is
     # deliberately pure (no provider imports), so it keeps literals --
     # NATIVE_TOOLS_PROVIDERS == provider_registry.NATIVE_TOOLS_KEYS pins it.

@@ -952,10 +952,10 @@ class PersonaBuddyController:
                     != ticket.requested_state
                     or resolution.cache_identity.reduced_motion != ticket.reduced_motion
                 ):
-                    return self._preserve_or_unavailable(
+                    return await self._preserve_or_unavailable(
                         ticket=ticket,
                         persona=persona,
-                        reason=PERSONA_BUDDY_FRAME_UNAVAILABLE,
+                        graph_identity=graph_identity,
                     )
                 cache_identity = resolution.cache_identity
                 if not await self._after_phase("runtime_resolve", ticket):
@@ -975,17 +975,11 @@ class PersonaBuddyController:
                 if not await self._after_phase("frame_prepare", ticket):
                     return self._stale_snapshot(ticket)
                 frames = prepared_outcome.value if prepared_outcome.completed else None
-                if not self._prepared_matches(resolution, frames):
-                    return self._preserve_or_unavailable(
+                if not self._prepared_matches(resolution, frames) or not frames:
+                    return await self._preserve_or_unavailable(
                         ticket=ticket,
                         persona=persona,
-                        reason=PERSONA_BUDDY_FRAME_UNAVAILABLE,
-                    )
-                if not frames:
-                    return self._preserve_or_unavailable(
-                        ticket=ticket,
-                        persona=persona,
-                        reason=PERSONA_BUDDY_FRAME_UNAVAILABLE,
+                        graph_identity=graph_identity,
                     )
 
                 visual = PersonaBuddyVisualSnapshot(
@@ -1343,31 +1337,42 @@ class PersonaBuddyController:
             )
         return frames == ()
 
-    def _preserve_or_unavailable(
+    async def _preserve_or_unavailable(
         self,
         *,
         ticket: _ResolutionTicket,
         persona: _LocalPersona,
-        reason: str,
+        graph_identity: PersonaVisualIdentity,
     ) -> PersonaBuddyVisualSnapshot:
-        if not self._is_current(ticket):
-            return self._stale_snapshot(ticket)
         with self._lock:
             if not self._is_current(ticket):
                 return self._stale_snapshot(ticket)
             previous = self._visual
-            if (
-                previous is not None
-                and previous.available
-                and previous.persona_id == persona.persona_id
-                and previous.buddy_id == persona.buddy_id
-                and previous.frames
-            ):
-                retained = replace(previous, reason=reason)
-                self._visual = retained
-                return retained
+        if (
+            previous is not None
+            and previous.available
+            and previous.graph_identity == graph_identity
+            and previous.frames
+        ):
+            # Decode can fail because the binding moved after the runtime read.
+            outcome = await self._drain_owned(
+                asyncio.to_thread(
+                    self._read_graph, persona.persona_id, buddy_id=persona.buddy_id
+                ),
+                name="resolve:fallback-graph-read",
+            )
+            graph = outcome.value if outcome.completed else None
+            if type(graph) is PersonaVisualGraph and graph.identity == graph_identity:
+                with self._lock:
+                    if not self._is_current(ticket):
+                        return self._stale_snapshot(ticket)
+                    retained = replace(
+                        previous, reason=PERSONA_BUDDY_FRAME_UNAVAILABLE, animate=False
+                    )
+                    self._visual = retained
+                    return retained
         return self._apply_unavailable(
-            reason,
+            PERSONA_BUDDY_FRAME_UNAVAILABLE,
             requested_state=ticket.requested_state,
             ticket=ticket,
             persona=persona,

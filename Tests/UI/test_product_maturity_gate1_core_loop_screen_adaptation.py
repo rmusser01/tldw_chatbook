@@ -101,6 +101,18 @@ class ConsoleHarness(ConsolidatedCSSApp):
         self.app_instance._ui_ready = True
         await self.push_screen(ChatScreen(self.app_instance))
 
+    async def _shutdown(self) -> None:
+        from tldw_chatbook.UI.Console_Modules.view_workers import (
+            capture_console_view_workers,
+            drain_console_view_workers,
+        )
+
+        try:
+            await super()._shutdown()
+        finally:
+            # Closed pumps fence retries; pending native Tasks remain in this host.
+            await drain_console_view_workers(capture_console_view_workers(self))
+
 
 @pytest.mark.asyncio
 async def test_home_core_loop_uses_dashboard_regions_and_selected_item_inspector():
@@ -199,6 +211,7 @@ async def test_home_selected_item_matches_prioritized_details_control():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_core_loop_exposes_agentic_shell_regions():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -248,6 +261,7 @@ async def test_console_core_loop_exposes_agentic_shell_regions():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_native_session_surface_survives_screen_recompose():
     app = _build_test_app()
     host = ConsoleHarness(app)

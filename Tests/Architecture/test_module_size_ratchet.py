@@ -1180,7 +1180,9 @@ _BUDGETS: dict[str, int] = {
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 5810 -> 5859 (+49), the exact measurement of a fresh build over TASK-38610's
     # hooks fixes.
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5859,
+    # 2026-11-17, TASK-41564 (standing fix-over-ratchet rule above):
+    # pinned safe-alias reads add eight generated lines; fresh build is 5,860.
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5860,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 5167 -> 5189 (+22), TASK-38589 decodes legacy SSE streams as UTF-8 at four sites.

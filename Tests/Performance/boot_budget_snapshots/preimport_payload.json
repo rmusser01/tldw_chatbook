@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "pass_added_modules": 555,
-  "pass_added_loc": 426470,
+  "pass_added_modules": 558,
+  "pass_added_loc": 427612,
   "routes": {
     "acp": {
       "loc": 535,
@@ -11,7 +11,7 @@
       ]
     },
     "ccp": {
-      "loc": 59855,
+      "loc": 59987,
       "modules": [
         "tldw_chatbook.Backup_Recovery.persona_visual_participants",
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",
@@ -55,6 +55,7 @@
         "tldw_chatbook.UI.stts_profile_library",
         "tldw_chatbook.UI.tts_profile_recovery",
         "tldw_chatbook.Widgets.Persona_Widgets.actor_pack_import_review",
+        "tldw_chatbook.Widgets.Persona_Widgets.actor_pack_recovery_notice",
         "tldw_chatbook.Widgets.Persona_Widgets.character_tts_portability_dialogs",
         "tldw_chatbook.Widgets.Persona_Widgets.conversation_attach_picker",
         "tldw_chatbook.Widgets.Persona_Widgets.persona_profile_card_widget",
@@ -120,7 +121,7 @@
       ]
     },
     "evals": {
-      "loc": 22129,
+      "loc": 22147,
       "modules": [
         "tldw_chatbook.Evals.character_probe",
         "tldw_chatbook.Evals.character_probe.cards",
@@ -172,7 +173,7 @@
       ]
     },
     "home": {
-      "loc": 1641,
+      "loc": 1643,
       "modules": [
         "tldw_chatbook.Home.home_rail_state",
         "tldw_chatbook.UI.Screens.home_screen",
@@ -191,7 +192,7 @@
       ]
     },
     "library": {
-      "loc": 132545,
+      "loc": 132844,
       "modules": [
         "tldw_chatbook.Audio.meeting_session",
         "tldw_chatbook.Chunking",
@@ -423,7 +424,7 @@
       ]
     },
     "plugins": {
-      "loc": 860,
+      "loc": 899,
       "modules": [
         "tldw_chatbook.UI.Screens.plugins_screen"
       ]
@@ -489,7 +490,7 @@
       ]
     },
     "settings": {
-      "loc": 78586,
+      "loc": 79238,
       "modules": [
         "tldw_chatbook.Audio.voice_process_types",
         "tldw_chatbook.Backup_Recovery.rag_definition_participant",
@@ -516,12 +517,14 @@
         "tldw_chatbook.UI.MCP_Modules.mcp_workbench",
         "tldw_chatbook.UI.Screens.settings_category_exports",
         "tldw_chatbook.UI.Screens.settings_context_memory",
+        "tldw_chatbook.UI.Screens.settings_network_defaults",
         "tldw_chatbook.UI.Screens.settings_rag_definition_actions",
         "tldw_chatbook.UI.Screens.settings_screen",
         "tldw_chatbook.UI.Screens.settings_search_index",
         "tldw_chatbook.UI.Screens.settings_storage_defaults",
         "tldw_chatbook.UI.Screens.settings_tools_hub",
         "tldw_chatbook.UI.Settings_Modules",
+        "tldw_chatbook.UI.Settings_Modules.category_panels",
         "tldw_chatbook.UI.Settings_Modules.settings_config_adapter",
         "tldw_chatbook.UI.Settings_Modules.settings_image_gen_defaults",
         "tldw_chatbook.UI.Settings_Modules.settings_video_gen_defaults",

@@ -1183,7 +1183,7 @@ def _install_open_settings_dependencies(screen: ChatScreen) -> None:
     async def effective_thinking_history_policy_for_session(_session_id):
         return "auto"
 
-    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+    controller = SimpleNamespace(
         run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
         effective_thinking_history_policy_for_session=(
             effective_thinking_history_policy_for_session
@@ -1194,6 +1194,7 @@ def _install_open_settings_dependencies(screen: ChatScreen) -> None:
         compact_context_now=lambda _session_id: None,
         rebase_console_settings_draft=lambda draft, **_kwargs: draft,
     )
+    screen._ensure_console_chat_controller = lambda: controller
     context_spend_for_test(screen)._console_settings_context_estimate_for_session = (
         lambda *_args, **_kwargs: ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
@@ -1251,7 +1252,7 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
     async def effective_thinking_history_policy_for_session(_session_id):
         return "auto"
 
-    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+    controller = SimpleNamespace(
         run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
         effective_thinking_history_policy_for_session=(
             effective_thinking_history_policy_for_session
@@ -1262,6 +1263,7 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
         compact_context_now=lambda _session_id: None,
         rebase_console_settings_draft=lambda *args, **kwargs: args[0],
     )
+    screen._ensure_console_chat_controller = lambda: controller
     context_spend_for_test(screen)._console_settings_context_estimate_for_session = lambda *args, **kwargs: (
         ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
@@ -3067,8 +3069,10 @@ def test_first_chat_reserved_target_never_adopts_preexisting_pristine_id(
     assert _pending_first_chat(app) == intent
 
 
+@private_profile_test
 def test_first_chat_reserved_create_preserves_concurrent_active_session_switch(
     monkeypatch,
+    request,
 ) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -3628,8 +3632,10 @@ def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     assert _pending_first_chat(app) == intent
 
 
+@private_profile_test
 def test_first_chat_ack_exception_rolls_back_create_and_survives_release_error(
     monkeypatch,
+    request,
 ) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -8183,7 +8189,7 @@ def _endpoint_command_screen_double(
     )
     context_spend_for_test(screen)._active_console_context_control_state = lambda **_k: None
     context_spend_for_test(screen)._console_context_control_state_for_session = lambda *_a, **_k: None
-    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+    controller = SimpleNamespace(
         run_state_for=lambda _session_id: SimpleNamespace(is_send_allowed=True),
         effective_thinking_history_policy_for_session=(
             lambda _session_id: _async_return("auto")
@@ -8194,6 +8200,7 @@ def _endpoint_command_screen_double(
         compact_context_now=lambda _session_id: None,
         rebase_console_settings_draft=lambda draft, **_k: draft,
     )
+    screen._ensure_console_chat_controller = lambda: controller
     screen._provider_readiness_app_config = lambda: {
         "api_settings": {"llama_cpp": {}}
     }

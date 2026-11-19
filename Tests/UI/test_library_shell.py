@@ -10255,6 +10255,7 @@ async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> N
             assert len(service.update_calls) == 1
 
             service.detail_release.set()
+            controller = screen._library_media_browse_controller
             # TASK-41532: the release starts the page and facet refreshes on
             # their own workers, so wait for both calls, not just the flag.
             await _wait_for_condition(
@@ -10263,6 +10264,8 @@ async def test_library_media_edit_save_stays_gated_through_detail_refresh() -> N
                     not screen._media_state.bulk_delete_in_flight
                     and len(service.search_calls) > initial_searches
                     and len(service.type_calls) > initial_facets
+                    and controller.freshness == "fresh"
+                    and not controller.facet_loading
                 ),
                 message=lambda: (
                     "Media edit never released into its refresh: in flight "
@@ -13208,6 +13211,13 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                     and not screen.query_one(
                         "#library-media-canvas", LibraryMediaCanvas
                     )._recompose_required
+                    and not screen._library_pending_list_entry_focus
+                    and not screen.query_one(
+                        "#library-media-canvas", LibraryMediaCanvas
+                    ).recompose_in_flight
+                    and not screen.query_one(
+                        "#library-media-canvas", LibraryMediaCanvas
+                    ).has_pending_recompose_callback
                     and bool(screen.query("#library-media-type-filter"))
                 ),
                 message="Complete facets never reached the settled Media canvas.",
@@ -13224,6 +13234,9 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                     message="Initial page failure never reached recovery state.",
                 )
 
+            if commit_phase == "loading":
+                assert controller.loading
+                assert not service.page_release.is_set()
             requested_before = controller.requested_scope
             opener = screen.query_one("#library-media-type-filter", Button)
             opener.press()
@@ -21015,6 +21028,8 @@ class _TouchingNotesScopeService(StaticLibraryNotesScopeService):
                 else note
                 for note in self.notes
             )
+            if isinstance(result, dict):
+                result = {**result, "last_modified": stamp}
         return result
 
 
@@ -21035,73 +21050,78 @@ async def test_library_shell_note_save_then_back_refreshes_list_title_and_age():
     app.notes_scope_service = _TouchingNotesScopeService(_two_notes())
     host = LibraryHarness(app)
 
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen = _active_library_screen(host)
-        await _wait_for_library_shell(screen, pilot)
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
 
-        # Open "Reading list" by note identity, not row position: the
-        # folder tree orders rows by title (task-32128), not the flat
-        # list's Newest-first order this test used to lean on to find it
-        # at row 1 (task-32175).
-        screen.query_one("#library-row-browse-notes").press()
-        await _wait_for_condition(
-            pilot,
-            lambda: len(screen.query(".library-notes-row")) >= 2,
-            message="Both note rows never mounted.",
-        )
-        row = next(
-            candidate
-            for candidate in screen.query(".library-notes-row").results(Button)
-            if candidate.note_id == "n-2"
-        )
-        # task-32137 unified the row label onto one "title · age" line
-        # (age used to sit on its own second line) -- strip the tree's
-        # indent and split on the join separator (task-32175).
-        assert str(row.label).strip().split(" · ")[0] == "Reading list"
-        row.press()
-        await _wait_for_selector(screen, pilot, "#library-note-title")
-        await pilot.pause()
-        await pilot.pause()
-
-        screen.query_one("#library-note-title", Input).value = "Reading list (edited)"
-        screen.query_one("#library-note-body", TextArea).text = "bravo, edited"
-        await pilot.pause()
-        screen.query_one("#library-note-save").press()
-        for _ in range(150):
-            if screen._notes_state.autosave_state == "saved":
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("Save never completed.")
-
-        list_calls_before = len(app.notes_scope_service.calls)
-        _press_note_back(screen)
-        await _wait_for_selector(screen, pilot, ".library-notes-row")
-
-        def _edited_row_label() -> str:
-            edited = next(
+            # Open "Reading list" by note identity, not row position: the
+            # folder tree orders rows by title (task-32128), not the flat
+            # list's Newest-first order this test used to lean on to find it
+            # at row 1 (task-32175).
+            screen.query_one("#library-row-browse-notes").press()
+            await _wait_for_condition(
+                pilot,
+                lambda: len(screen.query(".library-notes-row")) >= 2,
+                message="Both note rows never mounted.",
+            )
+            row = next(
                 candidate
                 for candidate in screen.query(".library-notes-row").results(Button)
                 if candidate.note_id == "n-2"
             )
-            return str(edited.label)
+            # task-32137 unified the row label onto one "title · age" line
+            # (age used to sit on its own second line) -- strip the tree's
+            # indent and split on the join separator (task-32175).
+            assert str(row.label).strip().split(" · ")[0] == "Reading list"
+            row.press()
+            await _wait_for_selector(screen, pilot, "#library-note-title")
+            await pilot.pause()
+            await pilot.pause()
 
-        first_label = _edited_row_label().strip()
-        assert first_label.split(" · ") == ["Reading list (edited)", "now"]
+            screen.query_one(
+                "#library-note-title", Input
+            ).value = "Reading list (edited)"
+            screen.query_one("#library-note-body", TextArea).text = "bravo, edited"
+            await pilot.pause()
+            screen.query_one("#library-note-save").press()
+            for _ in range(150):
+                if screen._notes_state.autosave_state == "saved":
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError("Save never completed.")
 
-        # Back re-kicked the authoritative snapshot refetch.
-        for _ in range(150):
-            if len(app.notes_scope_service.calls) > list_calls_before:
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError("Back never re-fetched the notes snapshot.")
+            list_calls_before = len(app.notes_scope_service.calls)
+            _press_note_back(screen)
+            await _wait_for_selector(screen, pilot, ".library-notes-row")
 
-        # And the refetched truth keeps the same row state (no revert).
-        await pilot.pause()
-        await pilot.pause()
-        first_label = _edited_row_label().strip()
-        assert first_label.split(" · ")[0] == "Reading list (edited)"
+            def _edited_row_label() -> str:
+                edited = next(
+                    candidate
+                    for candidate in screen.query(".library-notes-row").results(Button)
+                    if candidate.note_id == "n-2"
+                )
+                return str(edited.label)
+
+            first_label = _edited_row_label().strip()
+            assert first_label.split(" · ") == ["Reading list (edited)", "now"]
+
+            # Back re-kicked the authoritative snapshot refetch.
+            for _ in range(150):
+                if len(app.notes_scope_service.calls) > list_calls_before:
+                    break
+                await pilot.pause(0.02)
+            else:
+                raise AssertionError("Back never re-fetched the notes snapshot.")
+
+            # And the refetched truth keeps the same row state (no revert).
+            await pilot.pause()
+            await pilot.pause()
+            first_label = _edited_row_label().strip()
+            assert first_label.split(" · ")[0] == "Reading list (edited)"
+    finally:
+        await app._shutdown_notes_sync_runtime()
 
 
 @pytest.mark.asyncio

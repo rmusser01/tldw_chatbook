@@ -26,12 +26,9 @@ PR_TEST_RUNNER = (
     "github.event.pull_request.head.repo.full_name == github.repository && "
     "vars.CI_TEST_RUNNER || 'ubuntu-latest' }}"
 )
-#: The push-to-dev-only jobs' condition (library-shell-dev, backup-owner-suites-dev).
-DEV_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/dev'"
-LANES = (
-    "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
-    "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
-)
+#: Dev regression jobs retain push cadence until the nightly tier is enabled.
+DEV_PUSH = "(github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TIERED_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.nightly)"
+LANES = "needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))"
 PLUGIN_RECOVERY_UI_TARGETS = (
     "Tests/UI/test_plugins_browse.py::test_restored_plugins_recover_from_the_plugins_screen",
     "Tests/UI/test_plugins_browse.py::test_reset_after_restore_sets_plugins_aside_and_kept_data_reattaches",
@@ -711,6 +708,7 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-41140: the [skill] case and the managed received file, green once
     # re-pinned (bootstrap_profile, private subprocesses).
     "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[skill]",
+    "Tests/Performance/test_app_wiring_held_pointer_currentness.py::test_actual_stock_held_pointer_refuses_before_foreign_access[skill-factory]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[cancel]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[recancel]",
     "Tests/Performance/test_console_skill_trust_stock_owned.py::test_stock_console_skill_setup_has_original_owned_lifetime[shutdown]",
@@ -958,6 +956,7 @@ ADMISSION_2_TARGETS = (
     "Tests/UI/test_console_modal_dismissal.py::test_settings_redirected_select_click_uses_real_mro_dispatch",
     "Tests/UI/test_console_modal_dismissal.py::test_task4_shared_modal_cancel_sources_return_exact_result",
     "Tests/UI/test_console_modal_dismissal.py::test_task2_contract_selector_exists_and_escape_returns_cancel_result",
+    "Tests/UI/test_console_modal_dismissal.py::test_held_tool_slots_cancel_preserves_capacity",
     "Tests/UI/test_console_modal_dismissal.py::test_task3_contract_selector_exists_and_escape_returns_cancel_result",
     # TASK-33666 (Phase 9 fix): a Stop keeps the chat start's automatic slot
     # until the provider worker, and the bridge worker, exit (bootstrap_profile).
@@ -1188,6 +1187,8 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # TASK-35575: the admission-sensitive suites run in two jobs.
     assert required.get("needs") == [
         "preflight",
+        "dev-light",
+        "release-qualification",
         "pr-fast-lane",
         "pr-fast-lane-admission",
         "pr-fast-lane-admission-2",
@@ -1218,7 +1219,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     assert preflight_verdict["if"] == "${{ !cancelled() && needs.preflight.result != 'success' }}"
     assert "exit 1" in preflight_verdict["run"]
     for lane in required["needs"]:
-        if lane != "preflight":
+        if lane not in {"preflight", "release-qualification"}:
             assert workflow["jobs"][lane]["needs"] == ["preflight"]
 
     # TASK-33621.27 review round 4: `!cancelled() &&` drops the implicit
@@ -1466,8 +1467,7 @@ def test_heavy_tests_run_only_on_main_push_or_manual_dispatch() -> None:
     workflow = _workflow("test.yml")
     triggers = _triggers(workflow)
 
-    assert set(triggers) == {"push", "workflow_dispatch"}
-    assert triggers["push"]["branches"] == ["main"]
+    assert set(triggers) == {"workflow_call", "workflow_dispatch"}
     assert set(workflow["jobs"]) == HEAVY_JOB_KEYS
     assert workflow["jobs"]["backup-platform-windows"]["if"] == (
         "github.event_name == 'workflow_dispatch' && inputs.backup_platform_only == true"
@@ -2265,7 +2265,7 @@ def test_focused_guards_keep_dev_pr_and_dev_main_push_coverage() -> None:
     for workflow_name in STANDALONE_WORKFLOWS:
         triggers = _triggers(_workflow(workflow_name))
 
-        assert triggers["pull_request"]["branches"] == ["dev"]
+        assert triggers["pull_request"]["branches"] == (["dev", "main"] if workflow_name == "derived-artifacts.yml" else ["dev"])
         assert triggers["pull_request"]["types"] == PULL_REQUEST_TYPES
         assert triggers["push"]["branches"] == ["dev", "main"]
 

@@ -7,9 +7,8 @@ moves later, so the child stops first and writes its stacks to a file the
 parent quotes; a child that still cannot finish is asked once more and ended
 before the parent's moved limit.
 
-One real pytest child (a few seconds); every other case is a bare
-interpreter standing in for the child, or a direct call, so the file stays
-cheap in the PR Fast Lane.
+Real pytest children cover deadlines and lease-census inheritance. Other cases
+use a bare interpreter standing in for the child, or a direct call.
 """
 
 import asyncio
@@ -452,3 +451,74 @@ async def test_a_test_without_a_timeout_moves_no_timer(request, tmp_path, monkey
 
     assert _child_timeout(seen) == "0.0"
     assert 95.0 < seen["alarm"] <= 100.0
+
+
+@pytest.mark.parametrize(
+    "selected,flag_count",
+    [(False, 0), (True, 1), (None, 0)],
+    ids=["off", "on", "undeclared"],
+)
+async def test_parent_storage_lease_guard_selection_reaches_child_command(
+    request, tmp_path, monkeypatch, selected, flag_count
+):
+    seen = {}
+    _watch_the_spawn(monkeypatch, seen, "raise SystemExit(3)")
+    if selected is None:
+        monkeypatch.delattr(request.config.option, "storage_lease_guard")
+        with pytest.raises(ValueError, match="no option named"):
+            request.config.getoption("--storage-lease-guard")
+    else:
+        monkeypatch.setattr(request.config.option, "storage_lease_guard", selected)
+    child = test_child_whose_worker_never_answers
+    with pytest.raises(pytest.fail.Exception):
+        await child(request=_as_parent(request, tmp_path, child))
+    assert seen["command"].count("--storage-lease-guard") == flag_count
+    assert seen["command"][3].endswith("::test_child_whose_worker_never_answers")
+
+
+@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
+@private_profile_test
+async def test_child_storage_lease_census(request):
+    import atexit
+
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    expected = os.environ["TLDW_TEST_EXPECT_LEASE_GUARD"] == "1"
+    assert request.config.getoption("--storage-lease-guard") is expected
+    assert request.config.pluginmanager.hasplugin("storage-lease-guard") is expected
+    outcome = os.environ["TLDW_TEST_LEASE_CENSUS_OUTCOME"]
+    lease = storage.acquire_storage()
+    try:
+        assert lease in storage._live_leases
+        if outcome.startswith("xfail"):
+            pytest.xfail("zq-private-profile-body-xfail")
+    finally:
+        if outcome.endswith("leaked"):
+            # Retain the real token through the child's teardown census only.
+            atexit.register(lease.close)
+        else:
+            lease.close()
+
+
+@pytest.mark.parametrize("guarded", [False, True], ids=["off", "on"])
+@pytest.mark.parametrize("outcome", ["clean", "leaked", "xfail", "xfail_leaked"])
+async def test_private_child_storage_census_enforces_the_parent_selection(
+    request, tmp_path, monkeypatch, guarded, outcome
+):
+    monkeypatch.setattr(request.config.option, "storage_lease_guard", guarded)
+    monkeypatch.setenv("TLDW_TEST_EXPECT_LEASE_GUARD", "1" if guarded else "0")
+    monkeypatch.setenv("TLDW_TEST_LEASE_CENSUS_OUTCOME", outcome)
+    child = test_child_storage_lease_census
+    parent = _as_parent(request, tmp_path, child)
+    if guarded and outcome.endswith("leaked"):
+        with pytest.raises(pytest.fail.Exception) as failure:
+            await child(request=parent)
+        text = str(failure.value)
+        assert "--- child error:" in text
+        assert "left 1 new live storage lease(s) open" in text
+    elif outcome.startswith("xfail"):
+        with pytest.raises(pytest.skip.Exception) as skipped:
+            await child(request=parent)
+        assert "zq-private-profile-body-xfail" in str(skipped.value)
+    else:
+        await child(request=parent)

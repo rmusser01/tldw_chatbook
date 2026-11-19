@@ -1151,7 +1151,8 @@ MINIMUM_FILES = 2257
 MINIMUM_FILES = 2249
 # TASK-41604 (2026-11-18): append the Trace import failure notice node at the
 # tail. The floor is the measured entry count.
-MINIMUM_FILES = 2258
+# TASK-41564: retain both wrapper-host native retirement and retry-fence guards.
+MINIMUM_FILES = 2260
 
 
 def read_census(path: Path) -> list[str]:

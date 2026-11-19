@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+from rich.console import Console
 from textual.app import ComposeResult
 from textual.screen import Screen
 
@@ -36,7 +37,11 @@ from tldw_chatbook.Persona_Buddy.rendering import (
     PersonaBuddyFrameError,
     prepare_persona_buddy_frame,
 )
-from tldw_chatbook.Persona_Visual.repository import PersonaVisualRepository
+from tldw_chatbook.Persona_Visual.contracts import PersonaVisualRegion
+from tldw_chatbook.Persona_Visual.repository import (
+    PersonaVisualGraph,
+    PersonaVisualRepository,
+)
 from tldw_chatbook.Persona_Visual.runtime import (
     PersonaVisualCacheAsset,
     PersonaVisualCacheIdentity,
@@ -140,7 +145,7 @@ def _runtime(
     reduced_motion: bool = False,
     phase_barrier=None,
     portrait: bytes | None = None,
-) -> tuple[PersonaBuddyController, CharactersRAGDB, object | None]:
+) -> tuple[PersonaBuddyController, CharactersRAGDB, PersonaVisualGraph | None]:
     root = tmp_path / "profile"
     root.mkdir()
     persona_path = root / "personas.json"
@@ -341,6 +346,15 @@ async def test_state_idle_portrait_fallback_never_blanks(tmp_path: Path) -> None
     assert fallback.frames[0].paint_digest
     assert fallback.cache_identity is not None
     assert fallback.cache_identity.portrait_id == "local-portrait"
+    frame = fallback.frames[0]
+    console = Console(color_system="truecolor")
+    assert any(
+        segment.text.strip()
+        and segment.style is not None
+        and segment.style.color is not None
+        and segment.style.color.triplet == (120, 90, 210)
+        for segment in console.render(frame.renderable)
+    )
 
 
 @pytest.mark.asyncio
@@ -524,6 +538,20 @@ def test_sprite_frames_prepare_distinct_painted_frames() -> None:
     assert first.paint_digest != second.paint_digest
     assert first.selected_frame == 0
     assert second.selected_frame == 1
+    blue = (20, 20, 220, 255)
+    assert second.paint_digest == hashlib.sha256(bytes(blue) * 16).hexdigest()
+
+    sprite = Image.new("RGBA", (8, 8), (220, 20, 20, 255))
+    sprite.paste(blue, (4, 0, 8, 8))
+    output = BytesIO()
+    sprite.save(output, format="PNG")
+    data = output.getvalue()
+    frame = replace(_resolved_frame(data), region=PersonaVisualRegion(4, 0, 4, 8))
+    cropped = prepare_persona_buddy_frame(
+        frame, resolution_cache_identity=_cache(data), cols=4, lines=4
+    )
+    assert (cropped.width, cropped.height) == (4, 8)
+    assert cropped.paint_digest == hashlib.sha256(bytes(blue) * 32).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -543,22 +571,81 @@ async def test_reduced_motion_prepares_only_frame_zero(tmp_path: Path) -> None:
     assert visual.cache_identity.reduced_motion is True
 
 
+@pytest.mark.parametrize(
+    "publish_phase",
+    (None, "before_resolve", "graph_read", "runtime_resolve"),
+    ids=("same-pack", "new-version", "between-graph-reads", "after-runtime-read"),
+)
 @pytest.mark.asyncio
-async def test_decode_failure_keeps_previous_or_portrait_frame(tmp_path: Path) -> None:
-    controller, db, _graph = _runtime(tmp_path)
-    first = await controller.resolve_current_visual(cols=20, lines=8)
-    assert first.available and first.frames
-    (tmp_path / "profile/persona_visual/buddy/v1/idle.png").write_bytes(b"broken")
-    controller.invalidate_profile()
+async def test_decode_failure_keeps_previous_or_portrait_frame(
+    tmp_path: Path, publish_phase: str | None
+) -> None:
+    pending_phase = None
+    published = None
+
+    async def publish_when(phase: str) -> None:
+        nonlocal published
+        if phase != pending_phase:
+            return
+        published = await asyncio.to_thread(
+            PersonaVisualRepository(db).publish_version,
+            persona_id=graph.identity.persona_id,
+            manifest=_manifest(),
+            manifest_storage_relpath="persona_visual/buddy/v2/manifest.json",
+            assets=[
+                {
+                    "asset_key": asset.asset_key,
+                    "role": asset.role,
+                    "storage_relpath": f"persona_visual/buddy/v2/{asset.asset_key}.png",
+                    "mime_type": asset.mime_type,
+                    "bytes": asset.byte_count,
+                    "sha256": asset.sha256,
+                    "width": asset.width,
+                    "height": asset.height,
+                    "frame_count": asset.frame_count,
+                    "duration_ms": asset.duration_ms,
+                }
+                for asset in graph.assets
+            ],
+            expected_identity=graph.identity,
+            expected_persona_revision=graph.identity.persona_revision,
+            authority_guard=lambda: True,
+        )
+
+    controller, db, graph = _runtime(tmp_path, phase_barrier=publish_when)
+    assert graph is not None
+    controller.acquire_state(source="voice", owner="turn", state="listening")
     try:
+        first = await controller.resolve_current_visual(cols=20, lines=8)
+        assert first.available and first.animate and len(first.frames) == 2
+        assert first.graph_identity == graph.identity
+
+        for asset in graph.assets:
+            path = tmp_path / f"profile/persona_visual/buddy/v1/{asset.asset_key}.png"
+            path.write_bytes(b"broken")
+        pending_phase = publish_phase
+        await publish_when("before_resolve")
+        controller.invalidate_profile()
         failed = await controller.resolve_current_visual(cols=20, lines=8)
+
+        assert controller.snapshot().visual is failed
+        assert failed.reason == "persona_buddy_frame_unavailable"
+        if publish_phase is None:
+            assert failed.available is True
+            assert failed.graph_identity == first.graph_identity
+            assert failed.frames == first.frames
+            assert failed.animate is False
+        else:
+            assert published is not None
+            assert published.identity.owner_id == graph.identity.owner_id
+            assert published.identity.pack_id == graph.identity.pack_id
+            assert published.identity.pack_version_id != graph.identity.pack_version_id
+            assert failed.available is False
+            assert failed.graph_identity is None
+            assert failed.frames == ()
     finally:
         await controller.shutdown()
         db.close_connection()
-
-    assert failed.available is True
-    assert failed.frames == first.frames
-    assert failed.reason == "persona_buddy_frame_unavailable"
 
 
 @pytest.mark.asyncio

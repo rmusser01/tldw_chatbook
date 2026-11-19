@@ -17,6 +17,7 @@ from textual.events import Key
 from textual.widgets import Button
 
 from Tests.UI.pump_probe import console_attach_ended
+from Tests.UI.background_signals import await_background_task
 from Tests.UI.console_fixture_ownership import (
     owned_console_apps as owned_console_apps,  # noqa: PLC0414 - pytest fixture export
 )
@@ -914,9 +915,20 @@ async def test_console_active_run_queues_without_a_screen_worker(monkeypatch):
         # queued capture refuses with "Original queued skill preparation
         # changed; send again." (TASK-40714 review).
         await until(
-            lambda: console._console_attach_reconciled
-            and not console._console_attach_reconcile_running
+            lambda: (
+                console._console_attach_reconciled
+                and not console._console_attach_reconcile_running
+            )
         )
+        # The earlier accepted turn also follows its original trust discovery.
+        await until(lambda: console._skill._console_skill_refresh_serial > 0)
+        for worker in tuple(host.workers):
+            if worker.node is console and worker.group == "console-skill-discovery":
+                await await_background_task(
+                    worker._task, what="the original Console skill discovery"
+                )
+                # Textual's Task can swallow cancellation; keep its Worker outcome.
+                await worker.wait()
 
         controller = console._ensure_console_chat_controller()
         monkeypatch.setattr(

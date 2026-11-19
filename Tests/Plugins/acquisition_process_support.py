@@ -7,6 +7,49 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+@contextmanager
+def acquisition_failure_diagnostic():
+    """Preserve only native stage/errno while re-raising the seed failure."""
+    from tldw_chatbook.Plugins import acquisition
+
+    try:
+        yield
+    except acquisition.AcquisitionError as error:
+        try:
+            import json
+
+            native = error.__context__
+            if isinstance(native, OSError):
+                codes = set()
+                trace = native.__traceback__
+                for _ in range(64):
+                    if trace is None:
+                        break
+                    codes.add(trace.tb_frame.f_code)
+                    trace = trace.tb_next
+                if acquisition.ProcessTreeController.spawn.__code__ in codes:
+                    stage = "spawn"
+                elif acquisition._Producer.quota.__code__ in codes:
+                    stage = "quota"
+                elif any(
+                    code.co_qualname
+                    == acquisition._Producer.command.__qualname__ + ".<locals>.read"
+                    for code in codes
+                ):
+                    stage = "read"
+                else:
+                    stage = "unknown_io"
+                native_errno = native.errno if type(native.errno) is int else None
+                print(
+                    "ACQUISITION_NATIVE_FAILURE",
+                    json.dumps({"stage": stage, "errno": native_errno}),
+                    flush=True,
+                )
+        except BaseException:  # noqa: BLE001, S110 - diagnostics cannot replace the seed failure.
+            pass
+        raise
+
+
 def git(repository: Path, *args: str, input: bytes | None = None) -> bytes:
     environment = {
         "PATH": os.environ["PATH"],

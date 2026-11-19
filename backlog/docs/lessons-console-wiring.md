@@ -828,3 +828,36 @@ an outer coroutine task that propagates its exception. A real held provider fail
 after submit cancellation and produced `Task exception was never retrieved` even
 though the maintenance owner had consumed the inner error. Retaining the wrapper
 through that same owner preserves prompt Stop and observes its eventual outcome.
+
+## A wrapper host must join its own Console workers (#3533, 2026-11-19)
+
+Hosted UI19 passed a non-default-data-directory Send, then refused AgentRuns
+retirement. Native observations reproduced an active historical-read acquisition
+in the wrapper host while factory cleanup disposed the wrapped app, whose worker
+manager did not own that read. Shipping shutdown already joins those workers.
+The shared ConsoleHarness now completes normal Textual shutdown, then drains its
+remaining vetted workers before factory disposal. Textual retains each worker
+until its actual Task finishes, including shielded native retirement.
+
+A first pre-shutdown drain passed held-callback checks but left sync retries
+admissible: its flags were not the stock teardown predicate. A mounted-view
+control caught that gap. Real closed pumps fence retries without a fake closing
+flag or permanent disposal of the reusable wrapped runtime. Keep parent-shutdown
+failure limits separate from successful shutdown and native-join evidence.
+
+The same qualification exposed a separate queued-Send fixture race. Native
+monitoring identified mount-time skill discovery publishing both trust-service
+slots after the test captured None/None; the queue correctly refused the changed
+source. Before faking an earlier accepted turn, the fixture now joins only its
+already-issued discovery workers. After the bounded Task wait, check Worker.wait
+too: Textual can consume cancellation and return normally. A real cancellation
+control reproduced that normal return and then WorkerCancelled before any queue
+dispatch, with clean teardown. No publication guard or source authority changed.
+
+Checking the actual comprehensive release selection then exposed six more
+fixture failures hidden outside the PR census: two profile-bound Console tests
+needed per-node bootstrap markers, and four native cancellation controls reached
+an async function that their coroutine-only worker double rejected. Match the
+installed worker's async-function contract in the shared double, keeping invalid
+synchronous work rejected. The original six failures and one pass became twenty
+passing affected/caller controls with all native and UI assertions unchanged.

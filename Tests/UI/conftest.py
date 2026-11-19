@@ -28,7 +28,7 @@ _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
 _REAL_HOME = _real_profile_guard._real_home()
 if _existing_test_config_root and _REAL_HOME is not None:
     _supplied_root = Path(_existing_test_config_root).resolve()
-    _real_home_path = _REAL_HOME.resolve()
+    _real_home_path = _real_profile_guard.resolved_real_home()
     if _supplied_root == _real_home_path or _supplied_root in _real_home_path.parents:
         _existing_test_config_root = None
 # Per-xdist-worker sandbox subtree; see Tests/conftest.py for the rationale

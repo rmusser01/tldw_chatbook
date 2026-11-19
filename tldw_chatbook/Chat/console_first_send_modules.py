@@ -130,9 +130,8 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.response_rules.chat_state",
     "tldw_chatbook.UI.Console_Modules.response_rules",
     # Not app_served: TldwCli.on_mount imports it (_start_served_canvas_control).
+    # Guardian wiring also completes before the deferred warm-up is scheduled.
     "textual_serve",
-    "tldw_chatbook.Web_Server.served_relay_publisher",
-    "tldw_chatbook.Guardian.settings",
     "tldw_chatbook.Agents.local_tool_provider",
     "tldw_chatbook.Chat.console_run_start_tools",
     "tldw_chatbook.MCP.console_tool_preparation",

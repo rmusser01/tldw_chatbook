@@ -2196,7 +2196,7 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
         screen.query_one(
             "#settings-speech-configure-provider", Select
         ).value = "audio_cpp"
-        await pilot.pause()
+        await _wait_for_selector(screen, pilot, "#settings-speech-audio_cpp-base-url")
         screen.query_one(
             "#settings-speech-audio_cpp-base-url", Input
         ).value = "http://127.0.0.1:18081"

@@ -3303,3 +3303,7 @@ Tests/UI/test_screen_navigation.py::test_late_completions_after_the_exit_fence_s
 # TASK-41604 (2026-11-18): the Trace import failure notice shows a quoted file
 # value masked and literally (3.0-6.4 s serially, load 66-77).
 Tests/UI/test_trajectory_import_ui.py::test_import_failure_shows_file_values_masked_and_literally
+# TASK-41564: wrapper-host shutdown joins native Console workers after its
+# real view pumps close, preserving held callbacks and fencing sync retries.
+Tests/UI/test_console_view_worker_groups.py::test_original_app_runtime_shutdown_waits_for_selected_native_callback
+Tests/UI/test_console_view_worker_groups.py::test_console_harness_fences_sync_retry_before_native_worker_retirement

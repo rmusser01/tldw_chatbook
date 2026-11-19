@@ -168,24 +168,26 @@ class PluginService:
             if (
                 self._thread is not None
                 and self._ready.done()
-                and not self._thread.is_alive()
                 and isinstance(self._ready.exception(), PluginUnavailable)
                 and str(self._ready.exception()) == "plugin_owner_busy"
             ):
-                # Another holder (a backup capture, another instance) had the
-                # runtime lock; try again rather than stay busy until restart.
+                # Failed readiness is published only after startup cleanup.
                 self._thread, self._ready = None, Future()
+            ready = self._ready
             if self._thread is None:
                 self._thread = threading.Thread(
-                    target=self._worker, name="chatbook-plugin-storage", daemon=True
+                    target=self._worker,
+                    args=(ready,),
+                    name="chatbook-plugin-storage",
+                    daemon=True,
                 )
                 self._thread.start()
-        return self._ready
+            return ready
 
-    def _worker(self):
+    def _worker(self, ready):
         loop = owner = registry = None
+        startup_error = None
         try:
-            from tldw_chatbook.DB.base_db import operation_owned_connection
             from tldw_chatbook.Skills_Interop.local_skills_service import (
                 default_local_skills_store_dir,
             )
@@ -231,23 +233,24 @@ class PluginService:
                 restore_review=lambda: self._restore_review,
             )
             self._loop = loop
-            self._ready.set_result(loop)
-            workspace_db = getattr(
-                getattr(self.workspace_lookup, "__self__", None), "db", None
-            )
-            with operation_owned_connection(workspace_db):
-                loop.run_forever()
-        # Publish all startup failures to waiters before releasing the owner.
+            ready.set_result(loop)
+            loop.run_forever()
         except BaseException as error:  # noqa: BLE001
-            if not self._ready.done():
-                self._ready.set_exception(error)
+            startup_error = error
         finally:
-            if registry is not None:
-                registry.close()
-            if owner is not None:
-                owner.close()
-            if loop is not None:
-                loop.close()
+            try:
+                if registry is not None:
+                    registry.close()
+                if owner is not None:
+                    owner.close()
+                if loop is not None:
+                    loop.close()
+            except BaseException as error:  # noqa: BLE001
+                if not ready.done():
+                    ready.set_exception(error)
+                raise
+            if startup_error is not None and not ready.done():
+                ready.set_exception(startup_error)
 
     async def _invoke(self, callback, *, terminal=False):
         # Admission is checked again on the worker: a callback queued before
@@ -2671,7 +2674,7 @@ class PluginService:
                 raise PluginUnavailable("plugin_revision_work_not_drained")
             if self._live_runs:
                 raise PluginUnavailable("plugin_owned_work_not_drained")
-            thread = self._thread
+            thread, ready = self._thread, self._ready
         if thread is not None:
 
             async def finalize():
@@ -2692,14 +2695,14 @@ class PluginService:
 
             # Root settlement runs on the owning worker; callers can still submit
             # exact terminal evidence after a refused close, but never new grants.
-            if self._ready.done() and self._ready.exception() is None:
+            if ready.done() and ready.exception() is None:
                 await self._call(finalize, terminal=True)
         with self._lock:
             self._closed = True
             self._catalog = {}
         if thread is not None:
             try:
-                loop = await asyncio.wrap_future(self._ready)
+                loop = await asyncio.wrap_future(ready)
             except Exception:  # noqa: BLE001 -- a failed worker still needs joining.
                 loop = None
             if loop is not None:

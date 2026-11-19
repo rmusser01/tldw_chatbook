@@ -81,11 +81,29 @@ async def test_host_drain_retains_finite_presentation_worker(group):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("group", ["console-agent-history", "console-subagent-counts", "console-hook-refresh", "console-attach-reconciliation"])
-async def test_original_app_runtime_shutdown_waits_for_selected_native_callback(group):
+@pytest.mark.parametrize("host_kind", ["app", "console-harness"])
+@pytest.mark.parametrize(
+    "group",
+    [
+        "console-agent-history",
+        "console-subagent-counts",
+        "console-hook-refresh",
+        "console-attach-reconciliation",
+    ],
+)
+async def test_original_app_runtime_shutdown_waits_for_selected_native_callback(
+    group, host_kind
+):
     from tldw_chatbook.app_lifecycle import LifecycleMixin
 
-    host = App()
+    if host_kind == "console-harness":
+        from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+            ConsoleHarness,
+        )
+
+        host = ConsoleHarness(None)
+    else:
+        host = App()
     host._console_runtime_shutdown_task = None
     entered, release, returned = threading.Event(), threading.Event(), threading.Event()
     reads = set()
@@ -99,15 +117,26 @@ async def test_original_app_runtime_shutdown_waits_for_selected_native_callback(
 
     with host._context():
         worker = host.run_worker(
-            run_preparation_read(callback, creator=host, session_id=None,
-                reads=reads, require_current=lambda: None),
-            group=group, exit_on_error=False,
+            run_preparation_read(
+                callback,
+                creator=host,
+                session_id=None,
+                reads=reads,
+                require_current=lambda: None,
+            ),
+            group=group,
+            exit_on_error=False,
         )
         shutdown = None
         try:
             assert await asyncio.to_thread(entered.wait, 5)
-            read, = reads
-            shutdown = asyncio.create_task(LifecycleMixin._shutdown_console_runtime(host))
+            (read,) = reads
+            operation = (
+                host._shutdown()
+                if host_kind == "console-harness"
+                else LifecycleMixin._shutdown_console_runtime(host)
+            )
+            shutdown = asyncio.create_task(operation)
             await asyncio.wait({shutdown}, timeout=0.05)
             returned_early = shutdown.done()
             assert not read._producer.done() and not returned.is_set()
@@ -118,3 +147,31 @@ async def test_original_app_runtime_shutdown_waits_for_selected_native_callback(
             await asyncio.gather(worker._task, return_exceptions=True)
         assert returned.is_set() and read._producer.done() and not reads
         assert not returned_early, "App disposal returned while its callback was live"
+
+
+@pytest.mark.asyncio
+async def test_console_harness_fences_sync_retry_before_native_worker_retirement(
+    monkeypatch,
+):
+    from Tests.UI.test_console_native_chat_flow import _build_console_send_test_app
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.UI.Console_Modules import view_workers
+    from tldw_chatbook.UI.Screens.chat_screen import _console_screen_is_torn_down
+
+    observed = []
+    original = view_workers.drain_console_view_workers
+
+    async def drain(captured):
+        observed.append(_console_screen_is_torn_down(console))
+        await original(captured)
+
+    monkeypatch.setattr(view_workers, "drain_console_view_workers", drain)
+    host = ConsoleHarness(_build_console_send_test_app())
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await pilot.pause()
+        console._console_sync_requested = True
+
+    assert observed and all(observed), "A sync retry could re-arm behind the drain"

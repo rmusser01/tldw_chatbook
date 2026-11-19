@@ -25,6 +25,7 @@ from urllib.request import Request
 import pytest
 
 from Tests.Performance import run_console_three_turn_profile as profile
+from Tests.private_profile import private_profile_test
 
 
 REVIEWED_ARTIFACT_NAMES = {
@@ -2915,13 +2916,17 @@ def test_campaign_attempt_cleanup_rejects_attempt_root_inode_swap(
     assert (outside / "candidate").is_dir()
 
 
+# This frozen ancestor carries the original runner with its pinned SHA256.
+_ORIGINAL_RUNNER_FIXTURE_REVISION = "eab59dc0ac1dd9d57c7d24e94870fba6fea32192"
+
+
 def _materialize_original_runner(candidate_root: Path) -> Path:
     repository_root = Path(__file__).resolve().parents[2]
     completed = subprocess.run(
         [
             "git",
             "show",
-            f"{profile.ORIGINAL_HARNESS_SHA}:Tests/Performance/"
+            f"{_ORIGINAL_RUNNER_FIXTURE_REVISION}:Tests/Performance/"
             "run_console_three_turn_profile.py",
         ],
         cwd=repository_root,
@@ -3495,7 +3500,7 @@ def test_original_protocol_uses_real_detached_runner_and_retained_evidence(
         git_repository,
         run_root,
         name="candidate",
-        revision=profile.ORIGINAL_HARNESS_SHA,
+        revision=_ORIGINAL_RUNNER_FIXTURE_REVISION,
     )
     try:
         assert not (
@@ -10643,9 +10648,8 @@ def test_remove_target_worktree_real_git_resumes_namespace_checkpoints(
     target = run_root / "candidate"
     _add_real_worktree(repository, target, branch="candidate")
     admin = _linked_worktree_admin(target)
-    removable_admin_entry = next(
-        entry.name for entry in admin.iterdir() if entry.name != "gitdir"
-    )
+    removable_admin_entry = "HEAD"
+    assert stat.S_ISREG((admin / removable_admin_entry).lstat().st_mode)
     admin_metadata = admin.stat()
     admin_identity = (admin_metadata.st_dev, admin_metadata.st_ino)
     target_metadata = target.stat()
@@ -11580,8 +11584,10 @@ def test_prepare_workspace_runtime_enabled_waits_for_real_ready_snapshot(
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+@private_profile_test
 async def test_scripted_mounted_sample_uses_real_composer_queue_and_fs_write(
     tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     run_scripted_mounted_sample = getattr(profile, "run_scripted_mounted_sample", None)
 

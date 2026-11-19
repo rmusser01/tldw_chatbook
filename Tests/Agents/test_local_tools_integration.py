@@ -58,7 +58,10 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
     WorkspaceToolExecutor,
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
-from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+from Tests.workspace_worker_test_support import run_in_process_workspace_worker
+
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class InProcessWorkspaceExecutor:
@@ -70,7 +73,7 @@ class InProcessWorkspaceExecutor:
     def execute(self, operation, arguments, *, intent):
         request = self._executor._build_request(operation, arguments, intent=intent)
         stdout = BytesIO()
-        run_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
+        run_in_process_workspace_worker(BytesIO(request.to_bytes()), stdout, BytesIO())
         response = WorkspaceToolResponse.from_bytes(
             stdout.getvalue().splitlines()[-1],
             expected_operation_id=request.operation_id,

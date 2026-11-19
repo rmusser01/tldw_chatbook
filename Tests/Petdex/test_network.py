@@ -330,7 +330,9 @@ def test_ambiguous_or_unsupported_body_framing_rejected(headers, transport):
 
 
 @pytest.mark.parametrize(
-    "body", [gzip.compress(b"hi")[:-2], gzip.compress(b"hi") + gzip.compress(b"extra")]
+    "body",
+    [gzip.compress(b"hi")[:-2], gzip.compress(b"hi") + gzip.compress(b"extra")],
+    ids=("truncated", "concatenated"),
 )
 def test_truncated_or_concatenated_gzip_rejected(body, transport):
     transport[4][:] = [response(body, b"Content-Encoding: gzip\r\n")]
