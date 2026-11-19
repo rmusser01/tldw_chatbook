@@ -3537,3 +3537,18 @@ Tests/UI/test_settings_console_thinking.py
 Tests/UI/test_console_staged_context.py
 Tests/UI/test_polling_static_update_idempotence.py
 Tests/UI/test_console_compaction_hold_cardless_sends.py
+# TASK-41630..41655 burn-down lanes (2026-11-19, serial times at load 31-40):
+# TASK-41634 / TASK-41648: turn attention (43 tests, 20 s), transcript context
+# projection (9, 20 s) and the workspace tree (63, 19 s), red on dev before.
+Tests/UI/test_console_turn_attention.py
+Tests/UI/test_console_transcript_context_projection.py
+Tests/UI/test_console_workspace_tree.py
+# TASK-41650: the trajectory snapshot builder files sub-agent runs under the
+# spawning turn (13 tests, 10 s).
+Tests/UI/test_trajectory_live.py
+# TASK-41649: a queued Send made before attach is sealed by its registered copy
+# (14 s).
+Tests/UI/test_console_send_draft_snapshot.py::test_console_queued_send_made_before_attach_finishes_is_not_refused
+# TASK-41635: a folder held by a retained cleanup reads the restart copy with no
+# retry (about 14 s).
+Tests/UI/test_settings_workspaces_category.py::test_change_review_restart_required_root_names_the_restart_without_retry

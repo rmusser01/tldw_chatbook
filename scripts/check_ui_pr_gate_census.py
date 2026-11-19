@@ -1186,6 +1186,11 @@ MINIMUM_FILES = 2262
 # TASK-41507, TASK-41509, TASK-41511 (2026-11-18): append five whole Console
 # and Settings files at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2429
+# TASK-41630..41655 burn-down lanes (2026-11-19): append four Console/trace UI
+# files made green or added by the round and two new nodes at the tail (no
+# re-deal: about 107 s of local serial time over six shards). The floor is the
+# measured entry count.
+MINIMUM_FILES = 2435
 
 
 def read_census(path: Path) -> list[str]:

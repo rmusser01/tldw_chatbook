@@ -347,6 +347,10 @@ FAST_LANE_TARGETS = (
     "Tests/MCP/test_control_plane_permissions.py::test_remember_exact_inputs_writer_failure_preserves_error_and_stale_rule",
     "Tests/MCP/test_unified_control_plane_service.py::test_remember_exact_inputs_persistence_failure_keeps_current_call",
     "Tests/Canvas/test_canvas_kill_switch.py",
+    # TASK-41650 (2026-11-19): the stored-call usage normalizer and the trace
+    # projection's child-call rows (92 pure tests, 8 s serially).
+    "Tests/Chat/test_provider_usage.py",
+    "Tests/Chat/test_trajectory_projection.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -498,6 +502,11 @@ ARCHITECTURE_GUARD_TARGETS = (
     # and archive both exclude whole and refuses one the archive lacks (the
     # plugins owner's never-listed fetch members). Hypothesis-free module.
     "Tests/Backup_Recovery/test_restore_plan_excluded_directories.py",
+    # TASK-41653 / TASK-41655 (2026-11-19): the ChaChaNotes historical bootstrap
+    # sweep (versions 4..86) and the trigger census, on no lane before; sandboxed,
+    # so before the bootstrap_profile node below (102 tests, 99 s serially).
+    "Tests/ChaChaNotesDB/test_historical_bootstrap.py",
+    "Tests/ChaChaNotesDB/test_trigger_census.py",
     # TASK-39153: last, after every sandboxed suite (one bootstrap_profile node).
     "Tests/Architecture/test_persistent_terminal_privacy_boundary.py",
 )
@@ -1081,6 +1090,20 @@ ADMISSION_4_TARGETS = (
     # pre-run cleanup on Stop (30 s serially for the two).
     "Tests/Chat/test_console_spawn_subagent_trace_capture.py",
     "Tests/Chat/test_console_pre_run_cleanup_stop.py",
+    # TASK-41630..41655 burn-down (2026-11-19): reference custody (TASK-41655,
+    # owner decision: a busy worktree refuses the Send), change-turn tracking
+    # (TASK-41633), configuration preparation (TASK-41644/41649/41655) and the
+    # runtime lifetime file with the no-running-app round guard (TASK-41637);
+    # 218 tests, 7.2 min serially at load 33-43.
+    "Tests/Chat/test_console_reference_custody.py",
+    "Tests/Chat/test_change_turn_tracking.py",
+    "Tests/Chat/test_console_configuration_preparation.py",
+    "Tests/Chat/test_console_runtime_lifetime.py",
+    # TASK-41633: the Console right rail (37 tests, 213 s) and rail
+    # reconciliation (54, 348 s), green with their bootstrap_profile markers;
+    # here rather than the UI census, whose newest entries had no CI timings yet.
+    "Tests/UI/test_console_right_rail.py",
+    "Tests/UI/test_console_rail_reconciliation.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
