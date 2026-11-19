@@ -87,7 +87,8 @@ class ConsoleSettingsDurabilityOwner:
                 awaitable.close()  # type: ignore[attr-defined]
             raise ValueError("Console settings lease is not active")
         try:
-            task = asyncio.create_task(awaitable, name=name)
+            # Configured factories may step native work before returning a handle.
+            task = asyncio.Task(awaitable, loop=asyncio.get_running_loop(), name=name)
             self._tasks.add(task)
         except BaseException:
             if hasattr(awaitable, "close"):

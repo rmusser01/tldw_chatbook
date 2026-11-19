@@ -1623,7 +1623,7 @@ def test_fixture_cli_writes_valid_json_and_content_free_summary(
     expected_exit: int,
     expected_passed: bool,
 ) -> None:
-    _prerequisites(tmp_path)
+    _prerequisites(tmp_path, platform_key="macos-arm64")
     output = tmp_path / f"{fixture}-physical.json"
 
     result = main(

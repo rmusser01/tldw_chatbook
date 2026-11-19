@@ -3757,6 +3757,23 @@ class ConsoleRuntime:
                 )
             return authority
 
+    def _retire_canvas_native_view(self) -> None:
+        """Release disposable browser callbacks while retaining run-owned state."""
+        with self._canvas_native_lock:
+            self._canvas_native_view_binding = None
+            authority = self._canvas_native_authority
+            if authority is not None:
+
+                def unavailable(_session_id):
+                    raise RuntimeError("canvas_scope_unavailable")
+
+                authority.rebind_view(
+                    scope_resolver=unavailable,
+                    bridge_sink=None,
+                    auto_open=None,
+                    publication_guard=lambda _publication: False,
+                )
+
     def canvas_native_view_is_bound(
         self,
         view: Any,
@@ -5768,6 +5785,7 @@ class ConsoleRuntime:
 
                 _end_canvas_poll_handoffs(previous)
                 self._pause_project_instruction_generation(self._attached_generation)
+                self._retire_canvas_native_view()
             self._attachment_generation += 1
             generation = self._attachment_generation
             self.view = view
@@ -5832,6 +5850,7 @@ class ConsoleRuntime:
             from tldw_chatbook.Canvas.config_policy import _end_canvas_poll_handoffs
 
             _end_canvas_poll_handoffs(self.view)
+            self._retire_canvas_native_view()
             self._clear_view_hooks()
             self.view = None
             self._attached_generation = None

@@ -19931,12 +19931,11 @@ class LibraryScreen(BaseAppScreen):
                 unsaved (the quit discards it later, in ``prepare_for_quit``).
         """
         self._invalidate_library_note_autosave()
-        from ..Library_Modules.library_pending_work import (
-            gc_untouched_session_blank_note,
-        )
+        from ..Library_Modules.library_pending_work import flush_blank_note_gc
 
-        if await gc_untouched_session_blank_note(self, discard=gc_untouched_blank):
-            return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+        blank_outcome = await flush_blank_note_gc(self, discard=gc_untouched_blank)
+        if blank_outcome is not None:
+            return blank_outcome
         before = self._library_note_session.snapshot
         before_saved_revision = before.saved_revision if before is not None else None
         outcome = await self._library_note_session.flush()
