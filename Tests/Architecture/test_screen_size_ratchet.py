@@ -1894,7 +1894,16 @@ _LIBRARY_INIT_LAMBDAS = 354
 #: TASK-36952.3.7 lowered it to 511, still in 57 files: the 7 calls and the
 #: `MethodType` binding that reached its 23 moved bodies now name
 #: `LibraryMediaController` (none sits inside an `assert`).
-_LIBRARY_UNBOUND_TEST_CALLS = 511
+#: 2026-11-19, polish-1b (PR #3423) rebased onto dev a6df4d8d48: 511 -> 539
+#: (+28 in 5 files: test_library_ctrl_s_refusals 11, test_library_notes_
+#: riders_trash +8, test_library_honesty_accessibility +4,
+#: test_library_skills_canvas +4, test_library_notes_deferred_visit_reload
+#: 1). Each reaches a body the screen still owns (the Ctrl+S dispatcher and
+#: its refusals, the Notes Trash and select-mode seams, the skill save key);
+#: the 3 that reached Media bodies TASK-36952.3 moved now name
+#: `LibraryMediaController`. Same owner decision: expand limits, don't
+#: contort code.
+_LIBRARY_UNBOUND_TEST_CALLS = 539
 
 
 def _library_init_lambdas() -> int:
