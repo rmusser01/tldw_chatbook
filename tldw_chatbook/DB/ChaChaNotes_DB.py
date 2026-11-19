@@ -709,7 +709,11 @@ class ConsoleLibraryMigrationSeed:
 
 
 # --- Database Class ---
-@declare_store("db.chachanotes.primary", closer="close_connection")
+@declare_store(
+    "db.chachanotes.primary",
+    closer="close_connection",
+    finite_closer="retire_finite_worker_connection",
+)
 class CharactersRAGDB:
     """
     Manages SQLite connections and operations for the Character Cards, Chats, and Notes database.
@@ -3471,6 +3475,24 @@ DELETE FROM keywords
             local.voice_trace_import_authorization = None
         elif conn is not None:
             self._close_connection_handle(conn, local, self._connection_quiescence, checkpoint=checkpoint)
+
+    def retire_finite_worker_connection(self) -> None:
+        """Close this thread's connection without the TRUNCATE checkpoint.
+
+        ``run_finite_local_worker`` retires the connection a finite worker
+        opened through this, not ``close_connection`` (TASK-34100.16.1
+        pre-merge review). Its TRUNCATE checkpoint once waited on the 15 s
+        busy handler behind any other writer, stalling each wrapped
+        interactive read 3,004-3,101 ms behind a 3 s write; TASK-41115 later
+        made that checkpoint never wait. Skipping it here is still the finite
+        contract, as ``run_owned_db_call``'s read-only close does: with other
+        connections open SQLite's own close does not checkpoint; writers'
+        commits still autocheckpoint; quit, a backup pause and an explicit
+        owner close keep the TRUNCATE close; and capture copies the database
+        with its WAL. Commit durability stays the WAL/NORMAL contract the
+        connection setup states.
+        """
+        self.close_connection(checkpoint=False)
 
     def _close_connection_handle(self, conn, local, registry, *, strict=False, checkpoint=True):
         """Apply the current close policy to this exact captured native handle."""
