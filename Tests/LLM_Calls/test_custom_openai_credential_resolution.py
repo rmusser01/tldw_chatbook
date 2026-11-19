@@ -116,10 +116,12 @@ def test_legacy_positional_custom_adapter_layout_and_credential_fallback(
         LLM_API_Calls_Local,
         "load_settings",
         lambda: {
+            # TASK-41710: the loader puts the legacy [API] custom_openai2_api_key
+            # in the slot, the one place the handler reads a key from.
+            "api_settings": {"custom_2": {"api_key": legacy_credential}},
             "custom_openai_api_2": {
                 "api_ip": "https://legacy.example.test/v1/chat/completions",
-                "api_key": legacy_credential,
-            }
+            },
         },
     )
     adapter = (
@@ -194,11 +196,12 @@ def test_explicit_keyless_custom_adapter_does_not_reload_stale_credential(
         LLM_API_Calls_Local,
         "load_settings",
         lambda: {
+            "api_settings": {"custom_2": {"api_key": stale_credential}},
             "custom_openai_api_2": {
                 "api_ip": "https://legacy.example.test/v1/chat/completions",
                 "api_key": stale_credential,
                 "model": "legacy-model",
-            }
+            },
         },
     )
     adapter = (
@@ -250,11 +253,13 @@ def test_legacy_custom_adapter_call_still_loads_configured_credential(
         LLM_API_Calls_Local,
         "load_settings",
         lambda: {
+            # TASK-41710: the loader puts the legacy [API] custom_openai2_api_key
+            # in the slot, the one place the handler reads a key from.
+            "api_settings": {"custom_2": {"api_key": legacy_credential}},
             "custom_openai_api_2": {
                 "api_ip": "https://legacy.example.test/v1/chat/completions",
-                "api_key": legacy_credential,
                 "model": "legacy-model",
-            }
+            },
         },
     )
     adapter = (
@@ -292,10 +297,11 @@ def test_explicit_keyless_custom_configuration_error_omits_stale_credential(
         LLM_API_Calls_Local,
         "load_settings",
         lambda: {
+            "api_settings": {"custom_2": {"api_key": stale_credential}},
             "custom_openai_api_2": {
                 "api_ip": "https://legacy.example.test/v1/chat/completions",
                 "api_key": stale_credential,
-            }
+            },
         },
     )
     adapter = (

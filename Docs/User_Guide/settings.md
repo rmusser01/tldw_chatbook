@@ -292,7 +292,8 @@ The **API key** row also reads **saved in config** for nine keys of the legacy
 save recorded the key as stored, the env var is unset: `openai_api_key`, `anthropic_api_key`, `cohere_api_key`,
 `groq_api_key`, `huggingface_api_key`, `openrouter_api_key`,
 `deepseek_api_key`, `google_api_key` and `mistral_api_key` (the last on
-**Mistral AI (legacy alias)**, not on **Mistral AI**). Saving a change of
+**Mistral AI (legacy alias)**, not on **Mistral AI**). Custom 2's
+`custom_openai2_api_key` is the tenth, on its own rule (below). Saving a change of
 provider, model or endpoint with that provider chosen copies the key into its
 own `[api_settings.<provider>]` table, so it stays the key in use if you set
 the env var later; a save of other rows alone copies nothing. No other `[API]`
@@ -430,10 +431,13 @@ file for this.
 Custom 2's key works as Custom's does: the key or env var saved for it, or no
 key at all, so a server that needs none also answers Dreams and import analysis.
 The older
-`[API] custom_openai2_api_key` is read only by sends outside Console, such as
-Dreams and import analysis, and only while Custom 2 has no saved key choice.
-Settings and Console do not see it: with only that key set, Settings shows no
-key and Console sends without one, while Dreams and import analysis send it.
+`[API] custom_openai2_api_key` is read as Custom 2's saved key while Custom 2
+has no saved key choice, no key of its own and an unset env var: the
+**API key** row reads **saved in config**, and Console, Dreams and import
+analysis all send it. A save with Custom 2 chosen copies it into
+`[api_settings.custom_2]`. A key of its own that is still encrypted keeps the
+older key out: Custom 2 is not ready, because its saved key is still encrypted,
+until you enter the master password or re-enter the key.
 
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version

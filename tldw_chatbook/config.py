@@ -2319,15 +2319,12 @@ def _load_settings_uncached(
     ) -> Optional[str]:
         return os.getenv(env_var, section.get(toml_key))
 
-    # PR-T2 Task 7: these 9 providers' legacy `[API] <provider>_api_key`
-    # value and `api_settings.<provider>.api_key` are resolved together by
-    # `_normalize_legacy_provider_api_key` -- ONE normalization -- so
-    # `final_api_settings` (below, "api_settings" in config_dict, what
-    # `get_provider_readiness` reads) and this same value (below, the
-    # `<provider>_api` dicts `chat_with_<provider>` spends through) can
-    # never disagree about the same config. `elevenlabs` is untouched: it
-    # is a TTS credential, not a Chat provider `get_provider_readiness`
-    # resolves.
+    # PR-T2 Task 7: these 9 providers' legacy `[API] <provider>_api_key` and
+    # `api_settings.<provider>.api_key` are resolved together by ONE
+    # normalization, so `final_api_settings` (what `get_provider_readiness`
+    # reads) and the `<provider>_api` dicts `chat_with_<provider>` spends
+    # through never disagree. Custom 2's own rule follows (TASK-41710).
+    # `elevenlabs` is a TTS credential, not a Chat provider: untouched.
     _legacy_api_key_providers: set[str] = set()
     _bridged_provider_api_keys = {
         provider_key: _normalize_legacy_provider_api_key(
@@ -2340,6 +2337,9 @@ def _load_settings_uncached(
         )
         for provider_key, toml_key, env_var in _LEGACY_PROVIDER_API_KEY_BRIDGE
     }
+    from tldw_chatbook.Utils.legacy_custom_2_endpoint import bridge_legacy_custom_2_api_key
+
+    bridge_legacy_custom_2_api_key(final_api_settings, api_section_legacy.get("custom_openai2_api_key"), _legacy_api_key_providers)
     openai_api_key = _bridged_provider_api_keys["openai"]
     anthropic_api_key = _bridged_provider_api_keys["anthropic"]
     cohere_api_key = _bridged_provider_api_keys["cohere"]

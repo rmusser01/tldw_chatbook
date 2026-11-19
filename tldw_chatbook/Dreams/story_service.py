@@ -33,7 +33,7 @@ from tldw_chatbook.Chat.provider_setup_persistence import (
     canonical_provider_key,
     resolve_remembered_provider_model,
 )
-from tldw_chatbook.config import load_cli_config_and_ensure_existence
+from tldw_chatbook.config import load_settings
 from tldw_chatbook.Dreams.discovery import Candidate
 from tldw_chatbook.Dreams.settings import dreams_setting
 from tldw_chatbook.Library.ingest_analysis import chat_dispatch_name
@@ -225,7 +225,9 @@ def resolve_dreams_chat() -> Callable[..., Any]:
     borrowing). The endpoint maps through ``chat_dispatch_name`` — the one
     provider→``chat_api_call``-handler table the chat surfaces share — and
     the credential through ``get_provider_readiness`` (explicit config key,
-    env, or the keyless-local case). The returned closure pre-binds
+    env, or the keyless-local case), over ``load_settings`` -- the view the
+    handlers spend from, with legacy ``[API]`` keys bridged -- and a provider
+    that readiness blocks is refused (TASK-41709). The returned closure pre-binds
     ``api_endpoint``/``api_key``/``model`` so callers (query synthesis, story
     generation) pass only payload and sampling kwargs.
 
@@ -236,9 +238,11 @@ def resolve_dreams_chat() -> Callable[..., Any]:
     Raises:
         RuntimeError: ``"Dreams provider/model unavailable"`` when neither
             the Dreams settings nor the persisted chat defaults resolve a
-            usable provider/model, or the provider has no chat handler.
+            usable provider/model, or the provider has no chat handler;
+            ``"Dreams provider is not ready (<reason>)"`` with readiness's
+            reason when readiness blocks the provider, before any send.
     """
-    persisted = load_cli_config_and_ensure_existence(force_reload=True)
+    persisted = load_settings()
     provider = dreams_setting("provider")
     model = dreams_setting("model")
     if not provider:
@@ -254,7 +258,10 @@ def resolve_dreams_chat() -> Callable[..., Any]:
     endpoint = chat_dispatch_name(provider_key)
     if not provider_key or not model or not endpoint:
         raise RuntimeError("Dreams provider/model unavailable")
-    api_key = get_provider_readiness(provider_key, persisted).api_key
+    readiness = get_provider_readiness(provider_key, persisted)
+    if not readiness.ready:
+        raise RuntimeError(f"Dreams provider is not ready ({readiness.reason})")
+    api_key = readiness.api_key
 
     def dreams_chat(**kwargs: Any) -> Any:
         return chat_api_call(

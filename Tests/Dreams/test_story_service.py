@@ -92,11 +92,11 @@ def test_resolve_dreams_chat_prebinds_endpoint_key_and_model(monkeypatch):
     monkeypatch.setattr("tldw_chatbook.Dreams.settings.get_cli_setting",
                         lambda section, key, default=None: default)
     monkeypatch.setattr(
-        story_service, "load_cli_config_and_ensure_existence",
+        story_service, "load_settings",
         lambda **kw: {"chat_defaults": {"provider": "OpenAI", "model": "gpt-5"}})
     monkeypatch.setattr(
         story_service, "get_provider_readiness",
-        lambda provider, config, **kw: SimpleNamespace(api_key="sk-dreams"))
+        lambda provider, config, **kw: SimpleNamespace(ready=True, api_key="sk-dreams"))
 
     chat = story_service.resolve_dreams_chat()
     out = chat(messages_payload=[{"role": "user", "content": "hi"}],
@@ -111,7 +111,7 @@ def test_resolve_dreams_chat_prebinds_endpoint_key_and_model(monkeypatch):
     assert captured["streaming"] is False
 
 
-# This test deliberately leaves ``load_cli_config_and_ensure_existence``
+# This test deliberately leaves ``load_settings``
 # real (the resolver's production config path), which enters the guarded
 # config-participant admission. Under the per-test TLDW_CONFIG_PATH redirect
 # the participant admitted at collection time no longer matches and
@@ -133,7 +133,7 @@ def test_resolve_dreams_chat_prefers_dreams_provider_settings(monkeypatch):
                                             else "glm-5" if key == "model" else default))
     monkeypatch.setattr(
         story_service, "get_provider_readiness",
-        lambda provider, config, **kw: SimpleNamespace(api_key=None))
+        lambda provider, config, **kw: SimpleNamespace(ready=True, api_key=None))
 
     chat = story_service.resolve_dreams_chat()
     chat(messages_payload=[{"role": "user", "content": "hi"}],
@@ -147,7 +147,7 @@ def test_resolve_dreams_chat_raises_when_nothing_resolves(monkeypatch):
     monkeypatch.setattr(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
         lambda section, key, default=None: default)
-    monkeypatch.setattr(story_service, "load_cli_config_and_ensure_existence",
+    monkeypatch.setattr(story_service, "load_settings",
                         lambda **kw: {})
     with pytest.raises(RuntimeError, match="Dreams provider/model unavailable"):
         story_service.resolve_dreams_chat()
