@@ -20,6 +20,8 @@ priority: medium
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
 The Media controller extraction (wave-7) left 111 of 251 media-named LibraryScreen methods behind, the largest exclusion set of the Library decomposition program and by far its highest rate at 44% of the cluster. The cause is TEST DEBT, not code entanglement: 89 of the 111 are fixture shapes -- 73 unbound-fake-self call sites and 16 instance-attribute monkeypatches -- each removable by retargeting one test, against just 4 genuine module-globals couplings and 5 screen-identity/lifecycle couplings. Nobody owns draining them, and until someone does, the Media cluster keeps two homes: the controller for 140 methods and LibraryScreen for 111 that are there only because a test reaches them through a bypass. The debt is also LIVE and growing: dev's own 306 commits merged at the wave-7 close added the first post-cleanup bypass fixture for an already-MOVED name and the first bound call to an already-PRUNED delegator, both of which the merge had to absorb by hand.
+
+2026-11-18: duplicate of TASK-32013 (same body; 32013's renumbering provenance names 32013 as this task's id), to be archived. TASK-32013 carries the 2026-11-18 status note.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
