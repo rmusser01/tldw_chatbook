@@ -201,10 +201,11 @@ _entry: _Entry | None = None
 
 
 def forget() -> None:
-    """Drop the kept composition (tests; a new service never matches)."""
-    global _entry
+    """Drop the kept composition and switch read (tests; a new service never matches)."""
+    global _entry, _switch_proof
     with _lock:
         _entry = None
+        _switch_proof = None
 
 
 def _identity(fingerprint: tuple) -> tuple:
@@ -554,6 +555,101 @@ def _keep(
             composition=None if engaged else provider.composition(),
             anchor=anchor,
         )
+
+
+@dataclass(frozen=True)
+class _SwitchProof:
+    """A preview's kill-switch read, kept for the next preview (TASK-33620.15.52)."""
+
+    permission: Any  # weakref.ref to the permission store it read through
+    identity: tuple  # that store's installed identity, the store itself left out
+    stamp: tuple | None  # its file's stamp before the read (None: no file)
+    epoch: Any  # the admission epoch before the read
+    engaged: bool
+
+
+_switch_proof: _SwitchProof | None = None
+
+
+def _permission_identity(permission: Any) -> tuple:
+    """Type, path, binding, config and selected generation, never a file read."""
+    from tldw_chatbook.MCP.console_snapshot import _source_identity
+
+    return _source_identity(permission)[1:]
+
+
+def preview_switch_anchor(permission: Any) -> tuple | None:
+    """What a preview's real kill-switch read is proven by, taken just before it.
+
+    Drops any kept read first: this one replaces it. Returns None (keep
+    nothing) when the store is not installed or cannot be stamped.
+    """
+    global _switch_proof
+    with _lock:
+        _switch_proof = None
+    try:
+        return (
+            permission,
+            _permission_identity(permission),
+            _stamp(permission.path),
+            time.time_ns(),
+            _admission_epoch(),
+        )
+    except Exception:  # noqa: BLE001 -- an unstamped store is read every time
+        return None
+
+
+def keep_preview_switch(anchor: tuple | None, engaged: bool) -> None:
+    """Keep a preview's switch read that returned, for the next preview.
+
+    Kept only when its anchor can vouch for it, as TASK-33620.15.38's anchor
+    vouches for a pending catalog: the file was last changed ``SETTLE_NS``
+    before the anchor (so a later write changes its stamp), and the admission
+    epoch and the store's installed identity did not move during the read.
+    """
+    global _switch_proof
+    if anchor is None:
+        return
+    permission, identity, stamp, observed_at, epoch = anchor
+    try:
+        if (
+            not _settled(((permission.path, stamp),), observed_at)
+            or _admission_epoch() != epoch
+            or _permission_identity(permission) != identity
+        ):
+            return
+        proof = _SwitchProof(
+            weakref.ref(permission), identity, stamp, epoch, bool(engaged)
+        )
+    except Exception:  # noqa: BLE001 -- not keeping is always safe
+        return
+    with _lock:
+        _switch_proof = proof
+
+
+def proven_preview_switch(permission: Any) -> bool | None:
+    """The kept read's answer while it is provably current, else None.
+
+    Current means: the same store object, with the same installed identity
+    (path, binding, config, selected generation), the admission epoch
+    unmoved, and its file at the stamp anchored before that read -- one
+    ``stat``, no admission scope and no hop. The answer is the preview's
+    estimate only: run start and every tool call read the switch themselves.
+    """
+    with _lock:
+        proof = _switch_proof
+    if proof is None or permission is None or proof.permission() is not permission:
+        return None
+    try:
+        if (
+            _admission_epoch() != proof.epoch
+            or _permission_identity(permission) != proof.identity
+            or _stamp(permission.path) != proof.stamp
+        ):
+            return None
+    except Exception:  # noqa: BLE001 -- the hop reads it then
+        return None
+    return proof.engaged
 
 
 def local_tools_kill_switch(
