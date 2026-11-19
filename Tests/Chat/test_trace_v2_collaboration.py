@@ -1571,12 +1571,20 @@ _ADVERSARIAL_TEXTS = {
     "quoted-prose-1mb": ('"client' + '_secret": "a b" ') * 40_000,
     # TASK-41510: one-word labels are labels too.
     "chained-simple-labels": "a=" * 100_000,
-    # review r16tr-rev1: one label per line, 150k lines (0.93 s; 5.6 s for
-    # the labels alone at 200k when each line end searched to the text's end).
-    "many-label-lines": ("tok" + "en: x9\n") * 150_000,
+    # review r16tr-rev1: one label per line (5.6 s for the labels alone at
+    # 200k when each line end searched to the text's end). 50k lines: at 150k
+    # the fixed scan took 1.07 s here and 2.56 s on a GitHub runner, over the
+    # 2 s bound. The old scan grew faster than linear (3x the lines took 5.4x
+    # the time) but with a small constant: 0.63 s at 50k, under this bound.
+    # test_runs_after_a_value_scan_in_linear_time[label-lines] fails on it
+    # (63a3d9c671, 2026-11-19), though only by a narrow margin: large/plain
+    # measured 3.26-3.44 against its 3x limit.
+    "many-label-lines": ("tok" + "en: x9\n") * 50_000,
     # review r16tr-rev2: CR-only lines whose value sits below the label (19.7 s
     # at 80k lines when each looked back for an LF to the start of the text).
-    "cr-only-value-below": ("pass" + "word:\r  hunter2x\r") * 80_000,
+    # 40k lines: the old scan took 5.0 s here, the fixed one 0.44 s (0.89 s at
+    # 80k, too close to the bound on a GitHub runner).
+    "cr-only-value-below": ("pass" + "word:\r  hunter2x\r") * 40_000,
     # review r16tr-rev3: a separator holds one "."; a label after ".." ran on
     # through every later ".." (47.7 s and 58.3 s at 40k).
     "dot-runs": "..a" * 40_000,
@@ -1649,8 +1657,10 @@ def test_runs_after_a_value_scan_in_linear_time(unit: str, plain_unit: str) -> N
 def test_adversarial_bundle_text_is_masked_in_bounded_time(name: str) -> None:
     """Measured as this thread's CPU time, so machine load does not count.
     The slowest 200 KB case measured 0.104 s and the 920 KB quoted-prose
-    case 0.368 s (review r15tr-rev4, best of three at load 57), so 2 s
-    leaves over 5x headroom."""
+    case 0.368 s (review r15tr-rev4, best of three at load 57). The slowest
+    case is now cr-only-value-below at 0.43-0.46 s (2026-11-19), so 2 s
+    leaves about 4.4x headroom. A GitHub runner's CPU measured about 2.4x
+    slower than that host's."""
     text = _ADVERSARIAL_TEXTS[name]
     started = time.thread_time()
 
