@@ -218,8 +218,9 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: 2026-10-31). Its ``Notes.agent_lessons`` import moved into the one function
 #: that uses it, so it adds one module, not two. The review service a first
 #: send also imported stays out: an ordinary turn no longer loads it.
-#: 2026-11-18 (TASK-41533, after #3627 / TASK-41800): this census reads 92,
-#: and the limit is lowered to match. Two changes took it to 99.
+#: 2026-11-18 (TASK-41533, after #3627 / TASK-41800; rebased onto dev
+#: 8be7babc14 on 2026-11-19): this census reads 90, and the limit is lowered
+#: to match. Two changes took it to 99.
 #: ``RAG_Search.scope_evidence`` (TASK-36947.3) is listed because a first
 #: Automatic send's evidence capture imports it on the UI loop. TASK-41319
 #: took ``Chat.console_ordinary_tree`` off the boot path, so the listed
@@ -231,17 +232,19 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #:   only, 99 -> 94: app_served, Canvas.compilation, Canvas.profiles,
 #:   Canvas.runtime_assets and Workspaces.worktree_activity. A booted Console
 #:   already holds all five, so the live warm-up does not change.
-#: - This branch removed two modules for real, 94 -> 92: served_relay_publisher
-#:   and its ``Web_Server`` package. They are served mode only, and a native
-#:   warm-up no longer loads them. It also unlisted textual_serve, a
-#:   third-party step that was listed only for them.
-#: The limit drops 94 -> 92 (ADR-097's tightening convention). This row was
+#: - #3533 (395d2e8b91, 59365c0a36) unlisted served_relay_publisher, which is
+#:   served mode only, and Guardian.settings, which startup already holds.
+#:   The census reads 90 on dev 8be7babc14 and on this branch. This branch
+#:   also unlisted textual_serve, a third-party step listed only for the
+#:   relay publisher.
+#: The limit drops 94 -> 90 (ADR-097's tightening convention). This row was
 #: pinned exactly, with no slack, so headroom it frees is banked rather than
 #: left to be used up silently, which is how the collision happened. When
-#: #3571 unlists scope_evidence, the limit should drop again, to 91, and the
+#: #3571 unlists scope_evidence, the limit should drop again, to 89, and the
 #: owner's "Accept until #3571" closes.
-#: Live, measured from a warm boot after a 3 s settle and the screen-route
-#: walk (where the real warm-up starts), the native warm-up loads 78 modules
+#: Live, measured before the rebase onto 8be7babc14 from a warm boot after a
+#: 3 s settle and the screen-route walk (where the real warm-up starts), the
+#: native warm-up loads 78 modules
 #: (80 on ffdf0c5472, which is dev d0486978dd plus round-16 waves 1 and 2
 #: without this branch). The last in-budget trees, a94c4aec67 and
 #: 5d1fc43130, load 77, so this is one live module more. That module is the
@@ -255,7 +258,7 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: about 1,500 to 2,300 more lines. Counted right at ``_ui_ready`` with no
 #: settle, one tree read 80 and 93 in two runs, so that count is not
 #: comparable from one run to the next.
-MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 92
+MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 90
 
 _CENSUS_SCRIPT = """
 import json
