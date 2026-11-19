@@ -1074,6 +1074,12 @@ and surface. Every sub-agent failed under Capture On, the shipped default.
 Readers that walk the owner's root lineage do not show child calls yet; that is
 a follow-up, not a change to this contract.
 
+Note 2026-11-18 (TASK-41650): the Trace view now lists them. It reads the
+calls of every child segment linked to the conversation's attached owner
+(`ConsoleTraceRepository.read_child_calls`) and shows each as a `Child call`
+row of the spawning turn. The root-lineage readers above are unchanged, so the
+Conversation Inspector's per-message reconstruction still omits child calls.
+
 ## Renumbering provenance
 
 Renumbered from ADR-097 to ADR-337 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-097 now refers to 097-boot-budget-ratchets.md.

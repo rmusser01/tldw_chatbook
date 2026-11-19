@@ -31,6 +31,7 @@ Purity contract
       ``provider``, ``model``, ``provider_usage_json``).
     - ``agent_runs`` / ``agent_steps``: AgentRunsDB-shaped plain rows.
     - ``retrieval_runs``: safe citation-provenance ``EvidenceRun`` summaries.
+    - ``child_calls``: ``TraceCallRecord``-shaped spawned-child trace calls.
 
 Never-fabricate contract
     Timing is surfaced exactly as stored. NULL sidecar timing becomes
@@ -454,6 +455,7 @@ def derive_trajectory(
     agent_steps: Iterable[Any] = (),
     retrieval_runs: Iterable[Any] = (),
     diagnostic_events: Iterable[Any] = (),
+    child_calls: Iterable[Any] = (),
 ) -> TrajectorySnapshot:
     """Project a conversation's persisted facts into a trajectory snapshot.
 
@@ -497,6 +499,9 @@ def derive_trajectory(
         agent_runs: Optional durable agent-run metadata rows.
         agent_steps: Optional append-only agent-step rows.
         retrieval_runs: Optional safe retrieval-provenance run summaries.
+        child_calls: Optional spawned-child trace calls; each joins the
+            turn that spawned it, and is dropped when that turn is not shown
+            (TASK-41650).
 
     Returns:
         The snapshot; ``turns`` is empty for an empty conversation.
@@ -636,10 +641,18 @@ def derive_trajectory(
     turns = _group_turns(events)
     turns = _insert_compaction_markers(turns, compaction_records, turn_msg_times)
     turns = _apply_variant_sets(turns, variant_sets)
+    shown_turn_ids = {turn.turn_id for turn in turns}
     extra_records = [
         *_records_from_agent_runs(agent_runs),
         *_records_from_agent_steps(agent_steps),
         *_records_from_retrieval_runs(retrieval_runs),
+        # A child call of a turn not shown (deleted, edited away) is left
+        # out rather than opening a turn of its own.
+        *(
+            record
+            for record in _records_from_child_calls(child_calls)
+            if record.turn_id in shown_turn_ids
+        ),
         *(_record_from_sidecar_event(event) for event in diagnostic_events),
     ]
     records = [record for turn in turns for record in turn.records]
@@ -1303,6 +1316,66 @@ def _records_from_agent_steps(steps: Iterable[Any]) -> list[TrajectoryRecord]:
                     or ("conversation_content" if kind == "model" else None)
                     or ("tool_content" if has_tool_content else "diagnostic")
                 ),
+            )
+        )
+    return records
+
+
+def _records_from_child_calls(calls: Iterable[Any]) -> list[TrajectoryRecord]:
+    """Adapt spawned-child trace calls into nested rows of the spawning turn.
+
+    Children are numbered per turn in dispatch order (the order the ledger
+    shows them), so siblings read as ``sub-agent 1``/``sub-agent 2`` and
+    never as the parent's own calls.
+    """
+    records: list[TrajectoryRecord] = []
+    numbers: dict[tuple[str, str], int] = {}
+    timed = [(_parse_timestamp(_field(c, "dispatch_started_at")), c) for c in calls]
+    timed.sort(key=lambda pair: (pair[0] is None, pair[0] or 0.0))
+    for started_at, call in timed:
+        call_id = _optional_text(_field(call, "call_id"))
+        turn_id = _optional_text(_field(call, "turn_id"))
+        run_id = _optional_text(_field(call, "run_id"))
+        if not (call_id and turn_id and run_id):
+            continue
+        if (turn_id, run_id) not in numbers:
+            numbers[(turn_id, run_id)] = 1 + sum(t == turn_id for t, _ in numbers)
+        sequence = _optional_int(_field(call, "call_sequence")) or 0
+        route = _optional_text(_field(call, "route_identity")) or "call"
+        state = _field(call, "state")
+        model = _optional_text(_field(call, "model_name"))
+        provider = _optional_text(_field(call, "provider_name"))
+        records.append(
+            TrajectoryRecord(
+                seq=0,
+                kind="child_call",
+                turn_id=turn_id,
+                message_id=None,
+                content_preview=(
+                    f"sub-agent {numbers[(turn_id, run_id)]} · call {sequence + 1}"
+                    f" · {route.replace('_', ' ')}"
+                ),
+                usage=ProviderUsage.from_stored_call_usage(
+                    _field(call, "usage"), provider=provider or "", model=model or ""
+                ),
+                step_started_at=started_at,
+                first_token_at=None,
+                completed_at=_parse_timestamp(_field(call, "settled_at")),
+                model=model,
+                provider=provider,
+                payload=None,
+                variants=(),
+                depth=1,
+                event_id=f"trace-call:{call_id}",
+                label="Child call",
+                status=_optional_text(getattr(state, "value", state)),
+                # The chain is runtime state with no durable AgentRuns link,
+                # so it names the child (inspector) but is not its run: the
+                # Agent filter keeps one entry per real run.
+                actor_kind="subagent",
+                actor_id=run_id,
+                observed_at=started_at,
+                sensitivity="diagnostic",
             )
         )
     return records

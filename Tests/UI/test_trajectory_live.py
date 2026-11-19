@@ -519,6 +519,64 @@ def test_build_trajectory_snapshot_threads_agent_and_retrieval_owners():
     assert requested_agent_kinds == ["primary", "subagent"]
 
 
+
+def test_snapshot_builder_puts_sub_agent_runs_in_the_spawning_turn():
+    """TASK-41650: a sub-agent run has no reply of its own, so it inherits
+    its parent run's turn whatever order list_runs returns (newest first
+    here, with a grandchild read before its parent); a run whose parent is
+    missing falls back to the conversation as before."""
+
+    class _DB:
+        def get_messages_for_conversation(self, *_args, **_kwargs):
+            return [
+                msg("u1", "user", content="q", ts=1.0),
+                msg("a1", "assistant", content="a", ts=2.0, parent="u1"),
+            ]
+
+        def get_trajectory_rows(self, _conversation_id):
+            return [
+                TrajRow("u1", turn_id="t1", seq=1, event_kind="user"),
+                TrajRow("a1", turn_id="t1", seq=2, event_kind="assistant"),
+            ]
+
+        def get_conversation_active_leaf(self, _conversation_id):
+            return "a1"
+
+    def run(run_id, kind, created, **extra):
+        return {
+            "id": run_id,
+            "conversation_id": "conv-1",
+            "agent_kind": kind,
+            "status": "done",
+            "created_at": created,
+            **extra,
+        }
+
+    class _Runs:
+        def list_runs(self, _conversation_id, *, agent_kind=None):
+            if agent_kind == "primary":
+                return [run("p1", "primary", "2026-08-22T12:00:00Z", assistant_message_id="a1")]
+            return [  # newest first, as AgentRunsDB orders them
+                run("orphan", "subagent", "2026-08-22T12:00:03Z", parent_run_id="gone"),
+                run("g1", "subagent", "2026-08-22T12:00:02Z", parent_run_id="c1"),
+                run("c1", "subagent", "2026-08-22T12:00:01Z", parent_run_id="p1"),
+            ]
+
+    store = SimpleNamespace(
+        persistence=SimpleNamespace(db=_DB()),
+        variant_sets_for_conversation=lambda _conversation_id: (),
+    )
+
+    snapshot = _build_trajectory_snapshot(store, "conv-1", agent_runs_db=_Runs())
+    turn_of = {
+        record.run_id: record.turn_id
+        for turn in snapshot.turns
+        for record in turn.records
+        if record.kind == "agent_run"
+    }
+
+    assert turn_of == {"p1": "t1", "c1": "t1", "g1": "t1", "orphan": "conv-1"}
+
 def test_snapshot_builder_prefilters_citations_and_pages_context_failures():
     class _DB:
         def get_messages_for_conversation(self, *_args, **_kwargs):

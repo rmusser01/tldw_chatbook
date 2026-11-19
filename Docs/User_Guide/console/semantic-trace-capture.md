@@ -266,6 +266,29 @@ Because prefixes are shared, purging the source conversation's trace may not
 reclaim history still owned by a fork. Console reports the remaining owners.
 There is no lineage-wide one-click purge.
 
+## Sub-agent calls
+
+With Capture On, a sub-agent started during a turn (the `spawn_subagent` tool)
+has its provider calls traced too, kept apart from the parent's own calls. In
+the Trace (**y** from the transcript), each of them is a **Child call** row
+under the turn that started the sub-agent, indented like the turn's other
+steps, for example `sub-agent 1 · call 2 · tool loop`. Sub-agents are numbered
+within the turn in the order they first called the provider, and calls within
+each sub-agent; the parent's own calls never carry this label. The State column
+shows how the call ended, **In**, **Cache** and **Out** show that call's own
+token counts, and **Enter** opens its model, provider and timing in the
+inspector. The sub-agent's run (its **Agent run** row and steps) sits in the
+same turn, so starting sub-agents never adds turns to the Trace. **a** and
+**s** move to the next and previous child-agent row, including Child call rows.
+The **Agent** filter lists each run once; choosing a sub-agent there shows its
+**Agent run** row and steps, but not its Child call rows, which the trace does
+not tie to a run.
+
+An unfinished sub-agent call never holds up its parent's turn. Child calls of a
+turn that is no longer shown (deleted, or replaced by Edit & resend) are left
+out. A fork does not carry the source conversation's sub-agent calls, and the
+Conversation Inspector shows only the parent's own calls.
+
 ## Older captures
 
 Older `message_exchanges` captures remain readable. After the interface is

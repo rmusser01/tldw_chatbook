@@ -1163,7 +1163,9 @@ _BUDGETS: dict[str, int] = {
     # read a child run's segment, and its owner resolution.
     # 2026-11-17, TASK-41310 B: 4017 -> 4021 (+4), exact measurement. A
     # child's open calls never block the parent's turn.
-    "tldw_chatbook/Chat/console_trace_repository.py": 4021,
+    # 2026-11-18, TASK-41650: 4021 -> 4040 (+19), exact measurement. The
+    # owner-requested Trace view read of spawned children's calls.
+    "tldw_chatbook/Chat/console_trace_repository.py": 4040,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,

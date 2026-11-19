@@ -929,3 +929,119 @@ def test_multiple_feedback_events_on_one_message_all_survive_in_seq_order() -> N
         "first",
         "second",
     ]
+
+
+def _child_call(call_id, chain, seq, started, *, turn_id="u1", route="agent_first"):
+    """A ``TraceCallRecord``-shaped spawned-child call (TASK-41650)."""
+    return {
+        "call_id": call_id,
+        "turn_id": turn_id,
+        "run_id": chain,
+        "call_sequence": seq,
+        "route_identity": route,
+        "state": "complete",
+        "dispatch_started_at": started,
+        "settled_at": started,
+        "model_name": "m",
+        "provider_name": "p",
+        "usage": {"prompt_tokens": 12, "completion_tokens": 3},
+    }
+
+
+def _child_rows(snapshot):
+    return {
+        turn.turn_id: [r.content_preview for r in turn.records if r.kind == "child_call"]
+        for turn in snapshot.turns
+    }
+
+
+def test_child_calls_nest_under_their_turn_numbered_in_dispatch_order() -> None:
+    """TASK-41650: siblings number by dispatch time, not input order."""
+    snapshot = derive_trajectory(
+        [msg("u1", "user", ts="2026-08-14 10:00:00")],
+        {},
+        [],
+        [],
+        [],
+        child_calls=[
+            _child_call("b2", "chain-b", 1, "2026-08-14T10:00:09+00:00", route="tool_loop"),
+            _child_call("b1", "chain-b", 0, "2026-08-14T10:00:05+00:00"),
+            _child_call("a1", "chain-a", 0, "2026-08-14T10:00:03+00:00"),
+        ],
+    )
+
+    (turn,) = snapshot.turns
+    children = [record for record in turn.records if record.kind == "child_call"]
+    assert [record.content_preview for record in children] == [
+        "sub-agent 1 · call 1 · agent first",
+        "sub-agent 2 · call 1 · agent first",
+        "sub-agent 2 · call 2 · tool loop",
+    ]
+    assert {(r.label, r.depth, r.actor_kind, r.status) for r in children} == {
+        ("Child call", 1, "subagent", "complete")
+    }
+    # The chain names the child in the inspector, but it is not an AgentRuns
+    # id, so it never becomes a second Agent-filter entry for the sub-agent.
+    assert [record.actor_id for record in children] == ["chain-a", "chain-b", "chain-b"]
+    assert {record.run_id for record in children} == {None}
+    # Each child call carries its own normalized usage, as parent rows do.
+    assert children[0].usage == ProviderUsage(
+        uncached_input=12, output=3, provider="p", model="m"
+    )
+
+
+def test_child_call_numbering_restarts_in_each_spawning_turn() -> None:
+    snapshot = derive_trajectory(
+        [
+            msg("u1", "user", ts="2026-08-14 10:00:00"),
+            msg("a1", "assistant", ts="2026-08-14 10:00:10", parent="u1"),
+            msg("u2", "user", ts="2026-08-14 10:01:00", parent="a1"),
+        ],
+        {},
+        [],
+        [],
+        [],
+        active_leaf_message_id="u2",
+        child_calls=[
+            _child_call("c1", "chain-1", 0, "2026-08-14T10:00:05+00:00"),
+            _child_call("c2", "chain-2", 0, "2026-08-14T10:01:05+00:00", turn_id="u2"),
+        ],
+    )
+
+    assert _child_rows(snapshot) == {
+        "u1": ["sub-agent 1 · call 1 · agent first"],
+        "u2": ["sub-agent 1 · call 1 · agent first"],
+    }
+
+
+def test_child_calls_of_a_turn_not_shown_open_no_turn_of_their_own() -> None:
+    """A deleted turn, an edited-away branch, or an unknown turn keeps its
+    child calls out of the ledger instead of inventing a turn for them."""
+    snapshot = derive_trajectory(
+        [
+            msg("u1", "user", ts="2026-08-14 10:00:00"),
+            msg("a1", "assistant", ts="2026-08-14 10:00:10", parent="u1"),
+            # Edit & resend: u1b replaces u1 as a sibling; a1b is the leaf.
+            msg("u1b", "user", ts="2026-08-14 10:02:00"),
+            msg("a1b", "assistant", ts="2026-08-14 10:02:10", parent="u1b"),
+            msg("u2", "user", ts="2026-08-14 10:03:00", parent="a1b"),
+            msg("a2", "assistant", ts="2026-08-14 10:03:10", parent="u2"),
+            msg("u3", "user", ts="2026-08-14 10:04:00", parent="a2", deleted=True),
+        ],
+        {},
+        [],
+        [],
+        [],
+        active_leaf_message_id="a2",
+        child_calls=[
+            _child_call("on", "chain-on", 0, "2026-08-14T10:03:05+00:00", turn_id="u2"),
+            _child_call("off", "chain-off", 0, "2026-08-14T10:00:05+00:00"),
+            _child_call("del", "chain-del", 0, "2026-08-14T10:04:05+00:00", turn_id="u3"),
+            _child_call("gone", "chain-gone", 0, "2026-08-14T10:05:05+00:00", turn_id="gone"),
+        ],
+    )
+
+    assert _child_rows(snapshot) == {
+        "u1b": [],
+        "u2": ["sub-agent 1 · call 1 · agent first"],
+    }
