@@ -805,3 +805,133 @@ async def test_console_retrieval_scope_read_and_write_retire_their_worker_connec
         assert _local_pause_drains(), "a backup's local pause could not drain"
     finally:
         db.close_connection()
+
+
+# TASK-34100.16.1 pre-merge review (2026-11-13), Important 1: retiring a
+# finite worker's ChaChaNotes connection ran ``close_connection``, whose
+# ``PRAGMA wal_checkpoint(TRUNCATE)`` waits on the 15 s busy handler until no
+# other connection is writing. Every wrapped interactive read (the ``[[``
+# picker per keystroke, backlinks per note open, the RAG legs) then stalled
+# behind any long write: 3,004-3,101 ms behind a 3 s write transaction, where
+# the bare cached reads it replaced never waited on a writer.
+_WRITER_HOLD_SECONDS = 3.0
+
+
+def _hold_a_write(db):
+    """Hold a write transaction on another thread's connection until released."""
+    holding, release = threading.Event(), threading.Event()
+
+    def writer():
+        try:
+            with db.transaction(immediate=True) as cursor:
+                cursor.execute("UPDATE notes SET title = title")
+                holding.set()
+                release.wait(_WRITER_HOLD_SECONDS)
+        finally:
+            db.close_connection()
+
+    thread = threading.Thread(target=writer, name="held-writer")
+    thread.start()
+    assert holding.wait(10), "the writer never took the write lock"
+    return thread, release
+
+
+@pytest.mark.asyncio
+async def test_finite_read_does_not_wait_for_another_connections_write(
+    tmp_path, local_root
+):
+    """A wrapped read returns while another connection still holds a write.
+
+    The bound is well under the 3 s hold: before the fix the read's retirement
+    checkpoint waited for the writer's commit, so the call took the full hold.
+    """
+    import time
+
+    from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+    db = CharactersRAGDB(tmp_path / "notes.db", "test")
+    db.add_note("Alpha", "body")
+    db.close_connection()  # setup's own main-thread handle is not under test
+    thread, release = _hold_a_write(db)
+    try:
+        start = time.monotonic()
+        rows = await asyncio.to_thread(run_finite_local_worker, db.list_notes)
+        elapsed = time.monotonic() - start
+        writer_held_throughout = thread.is_alive() and not release.is_set()
+    finally:
+        release.set()
+        thread.join(10)
+
+    assert [row["title"] for row in rows] == ["Alpha"]
+    assert elapsed < 1.0, f"the read waited {elapsed:.2f}s on another writer"
+    assert writer_held_throughout, "the writer let go before the read returned"
+    assert not worker_leases(db), "the worker kept its connection"
+    assert _local_pause_drains(), "a backup's local pause could not drain"
+
+
+@pytest.mark.asyncio
+async def test_note_link_picker_does_not_wait_for_another_connections_write(
+    tmp_path, local_root
+):
+    """The ``[[`` picker, one read per keystroke, does not stall behind a write."""
+    import time
+
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+
+    db, notes, target, other = _local_notes(tmp_path)
+    db.close_connection()
+    service = NotesScopeService(
+        local_notes_service=notes, server_service=None, policy_enforcer=None
+    )
+    thread, release = _hold_a_write(db)
+    try:
+        start = time.monotonic()
+        rows = await service.list_note_link_candidates(
+            scope="local_note", query="", exclude_note_id=target, user_id="test-user"
+        )
+        elapsed = time.monotonic() - start
+    finally:
+        release.set()
+        thread.join(10)
+
+    assert [row["id"] for row in rows] == [other]
+    assert elapsed < 1.0, f"the picker waited {elapsed:.2f}s on another writer"
+    assert not worker_leases(db), "the link-picker worker kept its connection"
+
+
+def test_final_close_still_checkpoints_and_truncates_the_wal(tmp_path, local_root):
+    """Only finite retirement skips the checkpoint; the final close keeps it.
+
+    ``close_connection`` (quit, a backup pause's retirement, explicit owner
+    close) still runs ``wal_checkpoint(TRUNCATE)``: with another connection
+    open, the WAL is emptied, not deleted, by it alone.
+    """
+    from tldw_chatbook.DB import store_declarations
+
+    declaration = store_declarations["db.chachanotes.primary"]
+    assert declaration.closer == "close_connection"
+    assert declaration.finite_closer not in (None, "close_connection")
+
+    db = CharactersRAGDB(tmp_path / "notes.db", "test")
+    wal = tmp_path / "notes.db-wal"
+    other_ready, other_release = threading.Event(), threading.Event()
+
+    def other_reader():
+        try:
+            db.list_notes()
+            other_ready.set()
+            other_release.wait(10)
+        finally:
+            db.close_connection()
+
+    thread = threading.Thread(target=other_reader, name="other-reader")
+    thread.start()
+    try:
+        assert other_ready.wait(10)
+        db.add_note("Alpha", "body")
+        assert wal.stat().st_size > 0
+        db.close_connection()
+        assert wal.stat().st_size == 0, "the final close no longer truncates the WAL"
+    finally:
+        other_release.set()
+        thread.join(10)
