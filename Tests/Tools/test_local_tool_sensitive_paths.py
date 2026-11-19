@@ -830,6 +830,36 @@ def test_resolve_workspace_path_still_confines_and_still_allows_hidden(tmp_path)
         resolve_workspace_path("../x", ws)
 
 
+def test_write_path_reads_fresh_policy_for_target_and_any_missing_ancestors(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Utils import sensitive_paths
+
+    target = tmp_path / "edit.txt"
+    target.touch()
+    missing = tmp_path / "missing"
+    protected = ()
+    reads = []
+
+    def raw_inputs():
+        reads.append(protected)
+        return None, protected, None, (), ()
+
+    monkeypatch.setattr(sensitive_paths, "_raw_inputs", raw_inputs)
+    assert resolve_workspace_path(target.name, tmp_path, intent="write") == target.resolve()
+    assert reads == [()]
+
+    protected = (target,)
+    with pytest.raises(LocalToolError, match="is a protected path"):
+        resolve_workspace_path(target.name, tmp_path, intent="write")
+    assert reads == [(), (target,)]
+
+    protected = (missing,)
+    with pytest.raises(LocalToolError, match="would collide with a protected path"):
+        resolve_workspace_path("missing/nested/edit.txt", tmp_path, intent="write")
+    assert reads == [(), (target,), (missing,), (missing,)]
+
+
 # ---------------------------------------------------------------------------
 # Shape 5: writes into a repository's own `.git/` metadata (TASK-19700).
 #

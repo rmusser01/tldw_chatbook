@@ -10,6 +10,16 @@ Both original journeys passed on `498cba77b6`, including two README approvals, t
 
 README took 14.4103 s from Send to first HTTP, including 0.6645 s of measured disclosure wait. Edit took 9.1038 s to first HTTP. Provider response handling totaled 0.0326 s and 0.0132 s respectively. The database held eleven normalized trace calls and eleven response links after verification. The frozen source manifest was `a1e034270127cdae3da2801d8d3dd0fd2fc2a8d1fb169624b45579a63d2997c8`. [Runtime and writer ownership](../../../backlog/decisions/126-complete-local-backup-and-recovery.md#task-40608-external-console-runtime-and-profile-writer)
 
+### Matched run of the default external runtime
+
+Batch `qe` uses baseline `b6b53f084a63058ca4b4dac99e074cff42192f7e` and
+candidate `854bac202165793abbf9ebcfe6b683f7224d4aa2`. Its candidate manifest
+SHA-256 is `41329ce77c0d1243cd5df6d6978400df6f92f415c269018ad1da545a8e012abd`
+and its pair configuration SHA-256 is `40142a06d0f05cf349e506890cb474f05d942059e1945d202d3cacd5ef567269`.
+The original driver orders the arms B1/C1, C2/B2 and B3/C3. The first
+baseline started on November 19. The later config, display and Notes
+changes on the draft PR require their own candidate measurement.
+
 ## Remaining time on the latest fully paired candidate
 
 Pair 3 took **21.5187 s** for README and **20.7955 s** for approved edit. Each arrow covers a different part of the same original turn.

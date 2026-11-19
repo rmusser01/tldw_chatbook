@@ -1664,7 +1664,6 @@ def refuses_new_directory_chain(target_dir: Path, context: SensitivePathContext 
         True if ``target_dir`` or any of its not-yet-existing ancestors
         would be a sensitive path once created.
     """
-    ctx = context if context is not None else resolve_sensitive_context()
     node = target_dir
     while True:
         resolved = _resolved(str(node))
@@ -1672,7 +1671,9 @@ def refuses_new_directory_chain(target_dir: Path, context: SensitivePathContext 
             return True
         if resolved.exists():
             return False
-        if is_sensitive_path(resolved, context=ctx):
+        if context is None:
+            context = resolve_sensitive_context()
+        if is_sensitive_path(resolved, context=context):
             return True
         parent = node.parent
         if parent == node:
@@ -5975,4 +5976,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("bb583fe85c7de4c130bbc78f3219030287e44e1445bbfcec92876bdcb9c86390")
+BUNDLE_SHA256 = _enter_worker_exchange("b81ba8b1c4e27d8105533e0e3e02ebc9317bc93574277b63599b67020bcd7166")

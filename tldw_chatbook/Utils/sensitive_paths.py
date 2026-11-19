@@ -1457,7 +1457,6 @@ def refuses_new_directory_chain(
         True if ``target_dir`` or any of its not-yet-existing ancestors
         would be a sensitive path once created.
     """
-    ctx = context if context is not None else resolve_sensitive_context()
     node = target_dir
     while True:
         resolved = _resolved(str(node))
@@ -1465,7 +1464,10 @@ def refuses_new_directory_chain(
             return True
         if resolved.exists():
             return False
-        if is_sensitive_path(resolved, context=ctx):
+        # Only a directory that mkdir would create needs the deny policy.
+        if context is None:
+            context = resolve_sensitive_context()
+        if is_sensitive_path(resolved, context=context):
             return True
         parent = node.parent
         if parent == node:
