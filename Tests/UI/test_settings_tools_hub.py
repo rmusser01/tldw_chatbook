@@ -861,3 +861,46 @@ async def test_scrolled_mcp_rail_rows_paint_inside_their_rows(size, request, tmp
             )
             screen_line = host.screen._compositor.render_strips()[row.region.y].text
             assert cell_len(screen_line) == size[0], (row.id, screen_line)
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("store", ["unbound", "bound"])
+async def test_mcp_rail_warns_when_console_cannot_use_the_mcp_store(store):
+    """TASK-41630: the hub says what the Console Inspector row says.
+
+    A bootstrap test app keeps its MCP store outside the profile's data folder,
+    so it stays unbound (TASK-41308); one built at that folder binds.
+    """
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.MCP.console_snapshot import (
+        UNBOUND_MCP_STORE_REASON,
+        unbound_console_sources,
+    )
+    from tldw_chatbook.UI.MCP_Modules.mcp_rail import MCPRail
+
+    if store == "bound":
+        app = _build_test_app(user_data_dir=config_module.get_user_data_dir())
+    else:
+        app = _build_test_app()
+    assert unbound_console_sources(app.unified_mcp_service) is (store == "unbound")
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-tools")
+        rail = host.screen.query_one(MCPRail)
+        # The built-in server's row arrives with the first snapshot load.
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and len(rail.query("Button.mcp-rail-row")) < 2:
+            await pilot.pause(0.05)
+        await pilot.pause()
+        assert len(rail.query("Button.mcp-rail-row")) >= 2
+        warnings = list(rail.query("#mcp-rail-console-warning"))
+        texts = [str(w.render()) for w in warnings]
+        painted = [w.region.height > 0 for w in warnings]
+
+    if store == "bound":
+        assert texts == []
+    else:
+        assert texts == [UNBOUND_MCP_STORE_REASON]
+        assert painted == [True]

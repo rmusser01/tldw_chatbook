@@ -313,6 +313,7 @@ class ConsoleLiveWorkSourceReadinessState:
         *,
         mcp_tool_count: int | None = None,
         rag_available: bool | None = None,
+        mcp_unavailable_reason: str = "",
     ) -> "ConsoleLiveWorkSourceReadinessState":
         """Build readiness rows in which every status word has a source.
 
@@ -338,6 +339,8 @@ class ConsoleLiveWorkSourceReadinessState:
                 ``None`` when the caller has not looked.
             rag_available: Whether RAG's optional extras are installed, or
                 ``None`` when the caller has not looked.
+            mcp_unavailable_reason: Why Sends carry no MCP tools (the store
+                is unbound), or "" (TASK-41631).
 
         Returns:
             The readiness rows for the Console live-work card.
@@ -374,7 +377,13 @@ class ConsoleLiveWorkSourceReadinessState:
         # for both, which is an assertion the data does not support and made
         # "Not wired" unreachable for the ordinary zero-tool result. "Not
         # wired" is true in every one of those cases, so both map to it.
-        if mcp_tool_count is None or mcp_tool_count == 0:
+        if mcp_unavailable_reason:
+            # TASK-41631: the Inspector row's reason (TASK-41308), winning
+            # over the counts as it does there.
+            mcp_label = "Off"
+            mcp_recovery = mcp_unavailable_reason
+            mcp_classes = unavailable
+        elif mcp_tool_count is None or mcp_tool_count == 0:
             mcp_label = "Not wired"
             mcp_recovery = "MCP servers."
             mcp_classes = unavailable

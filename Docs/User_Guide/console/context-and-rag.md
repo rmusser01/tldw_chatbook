@@ -59,7 +59,8 @@ Where this page's controls live:
   on optional extras (RAG). **Available** marks an in-app destination you
   can hand work off to — Watchlists, Workflows, Schedules, Artifacts — which
   is always there and is not a connection. **Not checked** means nothing was
-  looked up.
+  looked up. **Off** on the MCP row means Console can't use this profile's MCP
+  settings file, so a Send carries no MCP tools; the row says why.
 - **The status chips** above the composer — "Library · Auto off/on · Agent
   blocked/allowed", "Sources: N staged", and the "Scope: N" chip once
   retrieval is narrowed.

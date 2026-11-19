@@ -83,7 +83,13 @@ async def make_console_pilot(*, size=(160, 45), css: str | None = None):
     default (closed) -- the deliberately chosen, unambiguous starting point
     for the toggle tests below.
     """
-    app = _build_test_app()
+    from tldw_chatbook.config import get_user_data_dir
+
+    # At the profile's own data folder the MCP store binds, as by default in
+    # the app. At the factory's folder it stays unbound, and the live-work
+    # MCP row names that reason in place of "Not wired" (TASK-41631), which
+    # also makes the readiness card one row taller.
+    app = _build_test_app(user_data_dir=get_user_data_dir())
     _configure_native_ready_console(app)
     if css is None:
         host = ConsoleHarness(app)

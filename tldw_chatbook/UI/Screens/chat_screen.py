@@ -14180,10 +14180,17 @@ class ChatScreen(BaseAppScreen):
             else:
                 if isinstance(raw_snapshot, dict):
                     acp_status = str(raw_snapshot.get("status") or acp_status)
+        from tldw_chatbook.app_services import read_mcp_service
+        from tldw_chatbook.MCP.console_snapshot import console_mcp_unavailable_reason
+
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
             acp_status,
             mcp_tool_count=self._console_mcp_tool_count(),
             rag_available=self._console_rag_extras_available(),
+            # TASK-41631: the Inspector row's reason when the store is unbound.
+            mcp_unavailable_reason=console_mcp_unavailable_reason(
+                read_mcp_service(self.app_instance)
+            ),
         )
         for row in readiness.rows:
             if acp_unknown and row.widget_id == ACP_READINESS_ROW_ID:
@@ -14272,10 +14279,17 @@ class ChatScreen(BaseAppScreen):
         # Imported locally, not at module scope: this screen is on the boot
         # path and ADR-097's import-weight budget is a ratchet that may only
         # ever fall.
+        from tldw_chatbook.app_services import read_mcp_service
+        from tldw_chatbook.MCP.console_snapshot import console_mcp_unavailable_reason
+
         readiness = ConsoleLiveWorkSourceReadinessState.from_acp_runtime_status(
             acp_status,
             mcp_tool_count=self._console_mcp_tool_count(),
             rag_available=self._console_rag_extras_available(),
+            # TASK-41631: the Inspector row's reason when the store is unbound.
+            mcp_unavailable_reason=console_mcp_unavailable_reason(
+                read_mcp_service(self.app_instance)
+            ),
         )
         # TASK-24611: the Library search controls used to live HERE, as the
         # first three children of the readiness card at the very bottom of

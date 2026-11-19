@@ -786,7 +786,9 @@ _BUDGETS: dict[str, int] = {
     # off its native route is refused with its copy before it is submitted.
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6194,  # 2026-11-06: +3, a schemeless loopback draft endpoint restores (TASK-39042 review C1, owner waiver)
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7010,
+    # TASK-41630, 2026-11-18 (owner rule: a fix raises the row by its own
+    # lines): 7010 -> 7012, the rail gets the Console's MCP off reason.
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7012,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
     # (TTSProfileRepository 4,880 lines / 118 methods; TTSService 2,825 / 93)

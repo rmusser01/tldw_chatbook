@@ -49,6 +49,7 @@ from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
     save_setting_to_cli_config,
 )
+from tldw_chatbook.MCP.console_snapshot import console_mcp_unavailable_reason
 from tldw_chatbook.MCP.hub_test_execution import (
     LocalHubExecutionOutcome,
     ToolTestAdmissionBlocked,
@@ -991,6 +992,7 @@ class MCPWorkbench(Container):
                     scope_value=self._scope,
                     scope_ref_options=[],
                     scope_ref_value=self._scope_ref,
+                    console_mcp_off_reason=console_mcp_unavailable_reason(self._service()),
                     id="mcp-hub-rail",
                     classes="destination-workbench-pane",
                 )

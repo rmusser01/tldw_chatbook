@@ -297,17 +297,24 @@ def unbound_console_sources(service: Any) -> bool:
     )
 
 
+#: One reason true for every skip in ``mcp_source_participants.bind`` (no
+#: pinned I/O, no config cache, another config source or path). It names
+#: Console, so it reads right in the Inspector, the live-work card and the MCP
+#: hub's rail, where that same file is edited; it is kept short because the
+#: live-work row wraps at the rail's width.
+UNBOUND_MCP_STORE_REASON = "Console can't use the MCP settings file"
+
+
 def console_mcp_unavailable_reason(service: Any) -> str:
     """Why Console turns run without MCP tools, or "" when they do not.
 
     TASK-41308: the Inspector's MCP row shows this, so an unbound store is
-    never silent. A pure check; nothing reads the store.
+    never silent; so do the live-work card (TASK-41631) and the MCP hub's
+    rail (TASK-41630). A pure check; nothing reads the store.
     """
     if service is None or not unbound_console_sources(service):
         return ""
-    # One reason true for every skip in ``mcp_source_participants.bind``
-    # (no pinned I/O, no config cache, another config source or path).
-    return "this profile's MCP settings file can't be used here"
+    return UNBOUND_MCP_STORE_REASON
 
 
 def standard_console_catalog_sources(service: Any, *, _include_log: bool = True) -> bool:
