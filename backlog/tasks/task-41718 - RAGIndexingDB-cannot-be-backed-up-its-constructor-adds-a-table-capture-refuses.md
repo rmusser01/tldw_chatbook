@@ -4,7 +4,7 @@ title: "RAGIndexingDB cannot be backed up: its constructor adds a table capture 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-18 06:57
-updated_date: 2026-11-19 15:45
+updated_date: 2026-11-19 16:08
 labels:
 - follow-up
 - backup
@@ -42,8 +42,8 @@ Found by TASK-41521 (round 16). `RAGIndexingDB`'s constructor adds an `embedding
 - AC#2 (adapter): `Tests/Backup_Recovery/test_rag_indexing_recovery.py::test_indexing_snapshot_preserves_schema_rows_and_source` already built the database through `RAGIndexingDB` and captured it, and was red at base (`ValueError: unsupported_schema`); so were `test_sqlite_validation.py::test_native_rag_indexing_schema_zero_survives_restricted_validation[False|True]`. All three are green now. Neither file ran on any lane, which is why dev never showed it.
 - New: `test_indexing_catalog_from_before_the_embedding_cache_is_accepted` (the older catalog still validates; red with the older alternative removed from `_SCHEMA`), and `test_indexing_unknown_schema_is_rejected[DROP INDEX idx_embedding_cache_created]` (the cache table without its index still refuses; red with the index left out of the new alternative). The unknown-table case still refuses.
 
-**Lane.** `test_rag_indexing_recovery.py` (8 tests, about 5 s at `-n 4`) joins the Backup_Recovery owner suites job in `.github/workflows/derived-artifacts.yml`, beside the created-owner rollback file.
+**Lane.** `test_rag_indexing_recovery.py` (8 tests, about 5 s at `-n 4`) joins the Backup_Recovery owner suites job in `.github/workflows/derived-artifacts.yml`, and `BACKUP_OWNER_SUITE_TARGETS` in `Tests/CI/test_ci_queue_pressure_contract.py`. That pin failed on the lane edit alone (`At index 23 diff: 'Tests/Backup_Recovery/test_rag_indexing_recovery.py' != ...`) and passes with the entry added.
 
-**Covering runs** (`-n 4`, load 26-61): the Backup_Recovery plan, destination, data-group, empty-group, absence, later-rollback, group-scope, isolated-restore, pet roundtrip, RAG discovery/indexing/validation, group CLI and RAG retained roundtrip files, with `Tests/UI/test_backup_restore_screen.py`, `test_backup_data_groups.py` and `test_backup_restore_destinations.py`: 562 passed, 2 failed (18 min). The two (`test_shared_home_pet_roundtrip.py::test_native_shared_home_pets_and_backups_restore_for_both_profiles`, `test_rag_retained_roundtrip.py::test_native_rag_retained_roundtrip_with_fresh_passive_reads`) fail the same way with all five changed source files at base c176f553b3: their capture preview is incomplete (`missing_required`) before anything this task touches runs. Serially, `Tests/Architecture/test_backup_owner_inventory.py` and `test_module_size_ratchet.py`: 284 passed. `./scripts/preflight.sh`: passed. Ruff: no new findings on the changed lines (the five it reports in the touched files are on untouched lines and exist at base).
+**Covering runs** (after TASK-41719's part was withdrawn from this branch; `-n 4`, load 43-65): `test_rag_indexing_recovery.py`, `test_sqlite_validation.py`, `test_rag_discovery.py` and the whole of `test_created_owner_rollback.py` (all five cases, 86-321 s each): 105 passed (7 min). `Tests/CI`: 1811 passed, 2 skipped. `./scripts/preflight.sh`: passed. Earlier, on the same TASK-41718 code, `Tests/Architecture/test_backup_owner_inventory.py` and `test_module_size_ratchet.py` (serial): 284 passed. Ruff reports nothing new on the changed lines.
 
-**Files.** `tldw_chatbook/Backup_Recovery/rag_indexing.py`, `Tests/Backup_Recovery/test_rag_indexing_recovery.py`, `Tests/Backup_Recovery/test_created_owner_rollback.py`, `.github/workflows/derived-artifacts.yml`.
+**Files.** `tldw_chatbook/Backup_Recovery/rag_indexing.py`, `Tests/Backup_Recovery/test_rag_indexing_recovery.py`, `Tests/Backup_Recovery/test_created_owner_rollback.py`, `Tests/CI/test_ci_queue_pressure_contract.py`, `.github/workflows/derived-artifacts.yml`.

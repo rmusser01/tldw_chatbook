@@ -819,23 +819,6 @@ def plan_restore(
     }
     if group_ids is not None:
         destinations = {key: value for key, value in destinations.items() if key in group_ids}
-    from .restore_groups import LEFT_IN_PLACE_ISSUE, LEFT_IN_PLACE_OWNERS
-
-    left_in_place = frozenset(
-        row.logical_id
-        for row in doc.files
-        if mode == "replace"
-        and local_snapshot is None
-        and row.owner_id in LEFT_IN_PLACE_OWNERS
-        and row.root_id in destinations
-    )
-    # Capture gives each single file its own synthetic root; it goes with it.
-    left_roots = {row.root_id for row in doc.files if row.logical_id in left_in_place}
-    destinations = {
-        key: value for key, value in destinations.items() if key not in left_roots
-    }
-    if group_ids is not None:
-        group_ids = group_ids - left_in_place - left_roots
     retirement_only_selection = (
         mode == "replace"
         and group_scope is not None
@@ -1424,8 +1407,7 @@ def plan_restore(
     metadata, issues = (
         [],
         ["owner_setup_required:" + owner for owner in sorted(deferred_selected)]
-        + sorted(set(projection_issues))
-        + ([LEFT_IN_PLACE_ISSUE] if left_in_place else []),
+        + sorted(set(projection_issues)),
     )
     from tldw_chatbook.Personal_Context.recovery import restore_plan_issue
 

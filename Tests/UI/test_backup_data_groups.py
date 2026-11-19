@@ -676,23 +676,6 @@ async def test_restore_review_says_how_personal_context_will_end(
 
 
 @pytest.mark.asyncio
-async def test_restore_review_says_why_pet_settings_stay_in_place(tmp_path):
-    """TASK-41719: a replace restore that leaves pet settings out says why."""
-    from textual.widgets import Static
-
-    from tldw_chatbook.Backup_Recovery.restore_plan import RestorePlan
-
-    issue = "pet_settings_left_in_place"
-    plan = RestorePlan("digest", "replace", (), (), (), "fingerprint", issues=(issue,))
-    async with mounted(tmp_path) as (pilot, screen, _service):
-        await screen._restore_ready(screen._revision, plan, None)
-        await pilot.pause()
-        review = str(screen.query_one("#backup-restore-preview", Static).render())
-    assert "Issue: " + issue + " — Pet settings are not restored" in review
-    assert "shared by every profile" in review
-
-
-@pytest.mark.asyncio
 async def test_locked_personal_context_restore_is_acknowledged_with_its_copy(tmp_path):
     """TASK-40136 AC#4: a restore that will leave Personal Context locked asks
     for an acknowledgement of each case, with its copy, before anything runs."""

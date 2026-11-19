@@ -769,6 +769,8 @@ BACKUP_OWNER_SUITE_TARGETS = (
     "Tests/Backup_Recovery/test_restore_data_groups.py",
     "Tests/Backup_Recovery/test_credentials.py",
     "Tests/Backup_Recovery/test_data_groups.py",
+    # TASK-41718: the RAG indexing owner file, red on dev in no lane before.
+    "Tests/Backup_Recovery/test_rag_indexing_recovery.py",
     "Tests/Personal_Context/test_repository.py",
     "Tests/Personal_Context/test_runtime_policy.py",
     "Tests/Personal_Context/test_service.py",

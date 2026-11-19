@@ -2781,7 +2781,7 @@ class BackupRestoreScreen(Screen):
             f"Issue: {issue}"
             + (
                 f" — {self.service.issue_message(issue.split(':profile:', 1)[0])}"
-                if issue.startswith(("personal_context_", "pet_settings_"))
+                if issue.startswith("personal_context_")
                 else ""
             )
             for issue in plan.issues

@@ -6,12 +6,6 @@ from dataclasses import replace
 from .data_groups import ResolvedGroups, group_for_owner, resolve_inventory_groups
 from .group_selection import archive_inventory
 
-# TASK-41719: pet settings live in one folder outside every profile, shared by
-# all of them. A replace restore neither publishes nor retires them; the plan
-# names why (LEFT_IN_PLACE_ISSUE). An isolated restore still restores them.
-LEFT_IN_PLACE_OWNERS = frozenset({"tamagotchi.config"})
-LEFT_IN_PLACE_ISSUE = "pet_settings_left_in_place"
-
 
 def directed_dependency_groups(doc) -> dict[str, str]:
     """Recognize exact per-owner dependency records emitted by our writer.
@@ -268,7 +262,6 @@ def selected_absent_target_ids(doc, scope, target, restore, retained_configs):
             )
             or group_for_owner(item.owner) not in scope.effective_groups
             or f"profile:{parts[1]}:config" not in item.dependencies
-            or item.owner in LEFT_IN_PLACE_OWNERS
         ):
             continue
         target_prefix = f"profile:{parts[1]}:"
