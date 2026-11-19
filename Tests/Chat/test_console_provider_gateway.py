@@ -4,7 +4,6 @@ import dataclasses
 from copy import deepcopy
 import http.server
 import json
-import socket
 import threading
 import time
 from types import SimpleNamespace
@@ -115,27 +114,12 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
 
 
 # Real config/TLS/app consumers retain their collection-selected private profile.
-pytestmark = pytest.mark.bootstrap_profile
-
-
-@pytest.fixture(autouse=True)
-def _no_dns_in_egress_checks(monkeypatch):
-    """Answer the egress check's lookups as CI's resolver does, without one.
-
-    TASK-41708: the context-window probe's egress check resolved custom
-    endpoint hosts (`owner-custom.example.test`, `api.example.com`, ...) for
-    real. A test that needs an answer patches the same seams itself.
-    """
-    from tldw_chatbook.Utils import egress
-
-    def unresolved(host):
-        raise socket.gaierror(socket.EAI_NONAME, f"{host}: no DNS in tests")
-
-    async def unresolved_async(host):
-        unresolved(host)
-
-    monkeypatch.setattr(egress, "_resolve", unresolved)
-    monkeypatch.setattr(egress, "_resolve_async", unresolved_async)
+# TASK-41708: the context-window probe's egress check resolved custom endpoint
+# hosts (`owner-custom.example.test`, `api.example.com`, ...) for real.
+pytestmark = [
+    pytest.mark.bootstrap_profile,
+    pytest.mark.usefixtures("unresolved_egress_dns"),
+]
 
 
 async def _settle_gateway_metadata(gateway):

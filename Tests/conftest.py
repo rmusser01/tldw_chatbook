@@ -914,6 +914,36 @@ def _no_network_io(request: pytest.FixtureRequest) -> Iterator[None]:
         )
 
 
+@pytest.fixture
+def unresolved_egress_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer the egress check's lookups without DNS (TASK-41708).
+
+    `Utils/egress.py` resolves a URL's host before any fetch, which the network
+    guard refuses. Local names (`localhost`, numeric IPs) still resolve; any
+    other name raises `socket.gaierror`, as an unregistered test name such as
+    `example.test` does on CI. A test that needs an answer patches
+    `egress._resolve`/`_resolve_async` itself.
+    """
+    import socket
+
+    from tldw_chatbook.Utils import egress
+
+    resolve, resolve_async = egress._resolve, egress._resolve_async
+
+    def unresolved(host):
+        if network_guard._is_local_name(host):
+            return resolve(host)
+        raise socket.gaierror(socket.EAI_NONAME, f"{host}: no DNS in tests")
+
+    async def unresolved_async(host):
+        if network_guard._is_local_name(host):
+            return await resolve_async(host)
+        return unresolved(host)
+
+    monkeypatch.setattr(egress, "_resolve", unresolved)
+    monkeypatch.setattr(egress, "_resolve_async", unresolved_async)
+
+
 @pytest.fixture(autouse=True)
 def _no_local_server_probes(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch

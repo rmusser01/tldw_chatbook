@@ -481,7 +481,7 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
 async def test_collections_actions_repaint_their_panes_without_a_library_recompose(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, unresolved_egress_dns  # TASK-41708: the capture's fetch
 ):
     """TASK-41126: an action repaints the reader panes, not the Library screen.
 
@@ -491,21 +491,7 @@ async def test_collections_actions_repaint_their_panes_without_a_library_recompo
     the same control, or the content's first one when the control is gone.
     One launch runs them in turn (the UI lane has no time to spare).
     """
-    import socket
-
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
-    from tldw_chatbook.Utils import egress
-
-    # TASK-41708: the capture's background extraction resolved example.test
-    # for real. Answer as CI's resolver does for that name, without a lookup.
-    def unresolved(host):
-        raise socket.gaierror(socket.EAI_NONAME, f"{host}: no DNS in tests")
-
-    async def unresolved_async(host):
-        unresolved(host)
-
-    monkeypatch.setattr(egress, "_resolve", unresolved)
-    monkeypatch.setattr(egress, "_resolve_async", unresolved_async)
 
     composes = []
     compose_content = LibraryScreen.compose_content

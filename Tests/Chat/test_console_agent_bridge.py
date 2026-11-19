@@ -12258,23 +12258,10 @@ def test_same_provider_child_clears_parent_only_sampling_values():
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("family", ["llama_cpp", "openai_compatible"])
-def test_routed_adapter_real_gateway_keeps_saved_url_after_registry_edit(monkeypatch, family):
-    import socket
-
+def test_routed_adapter_real_gateway_keeps_saved_url_after_registry_edit(
+    monkeypatch, family, unresolved_egress_dns  # TASK-41708: "saved-server"
+):
     import httpx
-
-    from tldw_chatbook.Utils import egress
-
-    # TASK-41708: the egress check resolved "saved-server" for real. Answer as
-    # CI's resolver does for that name, without a lookup.
-    def unresolved(host):
-        raise socket.gaierror(socket.EAI_NONAME, f"{host}: no DNS in tests")
-
-    async def unresolved_async(host):
-        unresolved(host)
-
-    monkeypatch.setattr(egress, "_resolve", unresolved)
-    monkeypatch.setattr(egress, "_resolve_async", unresolved_async)
     requests = []
     def handler(request):
         requests.append(str(request.url))
