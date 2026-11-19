@@ -4,7 +4,7 @@ title: "A Library landing return leaves keyboard focus on the nav bar's Home but
 status: To Do
 assignee: []
 created_date: 2026-11-18 06:57
-updated_date: 2026-11-19 19:54
+updated_date: 2026-11-19 19:58
 labels:
 - follow-up
 - ui
@@ -12,6 +12,7 @@ labels:
 - a11y
 priority: low
 references:
+- Docs/User_Guide/library.md
 - tldw_chatbook/UI/Screens/library_screen.py
 dependencies: []
 ---
@@ -26,8 +27,8 @@ Owner decision, 2026-11-19: "Content (rail list)". A cold landing (booting strai
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A fresh landing (boot to Library, or arrival from another screen) and a reused bare return focus the rail's first Browse row (Media); on the Get started compact rail of a new profile they focus Import…, as F6 does today
+- [ ] #1 A fresh landing (boot to Library, or arrival from another screen) and a reused bare return focus the rail's first Browse row (Media); on the Get started compact rail of a new profile they focus Import…, as F6 does today; with the rail collapsed for the session, they focus the collapsed rail's **Nav** handle
+- [ ] #2 A pilot test pins the focused widget id on each landing path in AC#1 (boot, arrival from another screen, reused return, Get started, collapsed rail), each red before the fix
 - [ ] #3 A landing that already sets its own focus, such as a deep link into a destination or a click on a rail row, keeps it
 - [ ] #4 Docs/User_Guide/library.md describes the landing
-- [ ] #2 A pilot test pins the focused widget id on both paths
 <!-- AC:END -->
