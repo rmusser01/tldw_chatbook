@@ -1,8 +1,7 @@
 name: Tests
 
 on:
-  push:
-    branches: ["main"]
+  workflow_call:
   workflow_dispatch:
     inputs:
       backup_platform_only:
@@ -26,11 +25,9 @@ on:
           - qodo-review
         default: full
 
-# Comprehensive tests run on main pushes or explicit dispatch. Pull requests
-# use the bounded fast lane in derived-artifacts.yml; scheduled full-tree
-# breadth lives in nightly-deep.yml, activated from default-branch main.
+# Publishing callers qualify their exact commit; direct dispatch stays available.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.backup_platform_selection == 'support-diagnostic' && '-support-diagnostic' || '' }}
+  group: comprehensive-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.backup_platform_selection == 'support-diagnostic' && '-support-diagnostic' || '' }}
   # Keep the shared push-only cancellation policy. `main` and manual runs are
   # never cancelled; this workflow no longer accepts pull_request events.
   cancel-in-progress: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
@@ -297,7 +294,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip setuptools wheel
         pip install -e .
-        pip install pytest pytest-asyncio pytest-timeout
+        pip install pytest pytest-asyncio pytest-timeout pytest-xdist
         # Floor check against the declared minimum supported Textual (pinned in pyproject.toml).
         pip install "textual==8.2.8"
 
@@ -307,13 +304,14 @@ jobs:
           Tests/CI/test_textual_runtime_contract.py \
           Tests/UI/test_mcp_workbench.py \
           Tests/UI/test_mcp_tools_mode.py \
+          -n 2 --dist=load \
           --timeout=180 \
           --tb=short
   
   all-tests:
     name: Full Test Suite (Manual)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && inputs.backup_platform_only != true
+    if: github.workflow == 'Tests' && github.event_name == 'workflow_dispatch' && inputs.backup_platform_only != true
     timeout-minutes: 60
     
     steps:
