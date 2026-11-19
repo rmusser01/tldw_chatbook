@@ -38,7 +38,7 @@ def test_capture_outside_scope_refusal_names_an_action_not_a_generic_failure():
     """
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
-    result = issue_code(RecoveryRequired("capture_source_outside_scope"), kind="capture")
+    result = issue_code(RecoveryRequired("capture_source_outside_scope"), kind="backup")
 
     assert result == "capture_source_outside_scope"
     message = issue_message(result).lower()
@@ -54,3 +54,18 @@ def test_capture_outside_scope_refusal_names_an_action_not_a_generic_failure():
     assert issue_code(RecoveryRequired("maintenance_roots_required")) == (
         "backup_operation_failed"
     )
+
+
+@pytest.mark.parametrize("kind", ["restore", "later_rollback", "preview_rollback", ""])
+def test_capture_outside_scope_copy_is_shown_only_for_create_backup(kind):
+    """Its copy and remedy are Create backup's; other flows keep the generic code.
+
+    TASK-34100.16.1 pre-merge review (Important 2): the same refusal can come
+    from later rollback's held scope (``later_rollback`` -> ``capture_scope``),
+    where "carry config.toml and the data folder by hand" is no remedy at all.
+    """
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    error = RecoveryRequired("capture_source_outside_scope")
+
+    assert issue_code(error, kind=kind) == "backup_operation_failed"
