@@ -184,7 +184,7 @@ The SHA-256 of the private evidence manifest is
 
 ## Local Notes page and total
 
-TASK-41637 uses the exact `75994498f7` baseline with the same sealed
+TASK-41806 uses the exact `75994498f7` baseline with the same sealed
 120×50 macOS PTY profile. In two stock traces, the second same-file
 Notes owner took 243 ms and 324 ms to initialize. The count then used
 its own worker connection. A disposable joined-read prototype removed

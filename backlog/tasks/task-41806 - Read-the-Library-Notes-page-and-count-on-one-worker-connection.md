@@ -1,5 +1,5 @@
 ---
-id: TASK-41637
+id: TASK-41806
 title: Read the Library Notes page and count on one worker connection
 status: In Progress
 created_date: 2026-11-18 04:15
@@ -58,3 +58,7 @@ The follow-up remains local while CI evaluates the published PR commit. Existing
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Filed as TASK-41637. The MCP approval task already used that ID on `dev` when PR #3610 was rebased.

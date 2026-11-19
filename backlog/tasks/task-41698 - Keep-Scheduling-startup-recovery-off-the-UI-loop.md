@@ -46,6 +46,8 @@ Reason: The existing boot and storage policies apply. The change moves finite lo
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Moved stale automation-run reconciliation, definition recovery and initial reminder discovery onto finite workers for the exact file-backed Scheduling store. Each worker reacquires and holds the original SQLite execution admission. The app drains recovery on shutdown and gates the scheduler on local completion after UI readiness. Remote reminder matching can finish independently.
 
+The diagnostic inventory records the existing fixed-message reconciliation failure at its new Scheduling service call site.
+
 Thirteen Scheduling recovery tests, five native checks, the real slow-mount scheduler test, the boot census and three isolated pre-ready exit controls passed. Six paired 120×50 Terminal runs confirmed order and ordinary quit with zero scoped SQLite descriptors. Median UI-thread Scheduling preparation fell from 258 to 66 ms. The QA record retains every measured window, loop-gap misses, the reproduced baseline fixture failures and the private receipt hash.
 
 ADRs 097 and 126 cover the existing boot budget and guarded storage boundaries. The ordered startup path is documented in Docs/Architecture/scheduling-workflows.md.
