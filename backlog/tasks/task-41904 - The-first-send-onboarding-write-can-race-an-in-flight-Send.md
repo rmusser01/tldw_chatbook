@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 20:31
-updated_date: 2026-11-19 17:16
+updated_date: 2026-11-19 18:17
 labels:
 - follow-up
 - console
@@ -57,4 +57,10 @@ Files: `tldw_chatbook/UI/Console_Modules/composer_run_controls.py`, `Tests/UI/te
 **Review r17cn-rev2 (fix round 2).**
 - The unseen-receipt wait and its assertion now cover only this test's own chats (`persisted_conversation_id` of its sessions), since the bootstrap profile's database is shared and an earlier test's leaked receipt must not fail this one.
 - While the save is held, the test also requires that no turn was admitted (`runtime._turn_custody` empty; the save itself starts only when it is). It breaks out of the 5 s hold as soon as one is. With the save's fence opened in both scopes (temporary, reverted): red 2 of 2 with "the Send was admitted during the save", 6.2-6.4 s per call. At head, serially: 3 of 3 passed, 15.1-15.3 s each, load 12. With TASK-41903's node and all of `test_console_send_without_mcp_store.py` at `-n 4`: 22 passed. Preflight passed.
+
+**Review r17cn-rev3 (fix round 3).**
+- **Leaked receipts from earlier tests.** Bootstrap-profile tests share one ChaChaNotes database, and an app announces any unseen terminal receipt there ("A Console turn completed while hidden."), which landed in this test's `notices`. The leaker was TASK-41900's new `[*-agent]` ordinary sends: a probe listing unseen marks after each test of `test_console_send_without_mcp_store.py` showed one left from `[bound-agent]` on. The fix does not filter notice text. Before mounting, the test now marks every unseen receipt already in the shared database seen (`_acknowledge_leaked_receipts`; the test has no chats yet, so none is its own), and at the end it waits for its own receipts through the shared `_wait_for_own_receipts_seen`.
+- **Red before, green after.** The coordinator's order (`[non-default-data-dir-gateway]` then this test) passed 8 of 8 at the old test, because that send leaks nothing. With the real leaker first (`[bound-agent]`, then this test, serially, old test): 1 of 6 failed with the reviewer's error, and 3 of 44 in diagnostic loops without the acknowledgement. Deterministic control: a completed, unseen receipt planted for another conversation before mounting (temporary). Without the acknowledgement the test failed 2 of 2 with that notice; with it, it passed 2 of 2. After the fix, `[bound-agent]` then this test passed 12 of 12 (four concurrent loops, load 14-17), and the coordinator's order 2 of 2. The combined `-n 4` set (TASK-41903's test, this one, all of `test_console_send_without_mcp_store.py`) passed 5 of 5, 22 passed each, at load 12-14. Before the fix it failed 1 of 5, at `test_unbound_store_with_a_replaced_mcp_reader_is_still_refused`, from the same leak.
+- **The dropped second Send seen once by the reviewer: (a), the bound.** After `release.set()` the path is: the held writer resumes; the save task clears `_first_send_publishing` in its `finally`; the waiting `_first_send_source_scope_async` re-checks and enters; then the synchronous intake runs. Every exit from the intake either sends, notifies, writes a transcript refusal row, or records a recovery. Its one quiet `""` is a capture another send already took. The quiet exit in `observed_send` (`superseded`) runs before the wait. So no path drops a waited Send without a trace. I saw the same failure once (1 of 7, leaker first, old 200-pause bound, load about 20). It did not recur in 68 later runs, including 44 with a dump of every transcript row, custody, recoveries and the composer on failure. The reply wait is now a 30 s monotonic deadline that ends as soon as the second reply is saved. The final assertions show every transcript row, so a refusal row would be visible if this ever recurs.
+- `test_unbound_store_with_a_replaced_mcp_reader_is_still_refused` takes the same acknowledgement before mounting: its first notice must be the refusal. Preflight passed.
 

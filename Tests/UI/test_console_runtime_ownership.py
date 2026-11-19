@@ -448,6 +448,10 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
         _wait_for_reply,
     )
     from Tests.UI.test_console_send_admission_off_pump import _record_notices
+    from Tests.UI.test_console_send_without_mcp_store import (
+        _acknowledge_leaked_receipts,
+        _wait_for_own_receipts_seen,
+    )
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
         ConsoleHarness,
     )
@@ -471,6 +475,8 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
         return writer(mutations, **kwargs)
 
     monkeypatch.setattr(config, "apply_settings_mutation_to_cli_config", held)
+    # Earlier tests' unseen receipts would be announced into ``notices``.
+    _acknowledge_leaked_receipts(app)
     host = ConsoleHarness(app)
     try:
         async with host.run_test(size=(160, 48)) as pilot:
@@ -513,27 +519,18 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
                     if m.role.value == "assistant" and m.status == "complete"
                 ]
 
-            for _ in range(200):  # the second reply is saved
-                if len(replies()) == 2:
-                    break
+            # The second turn starts after the save's real write, then
+            # captures, admits and commits: allow for a loaded host.
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and len(replies()) < 2:
                 await pilot.pause(0.05)
             saved = replies()
-            # Its terminal receipt is seen on screen before the app closes;
-            # left unseen in this shared profile's database, a later app
-            # opens with "A Console turn completed while hidden."
-            # Only this test's own chats: the database is shared.
-            marks = runtime._console_local_marks_service()
-            mine = {s.persisted_conversation_id for s in store.sessions()} - {None}
-            assert mine
-
-            def unseen() -> list:
-                return [m for m in marks.list_console_unseen_marks() if m[0] in mine]
-
-            for _ in range(200):
-                if not unseen():
-                    break
-                await pilot.pause(0.05)
-            assert unseen() == []
+            # Every row, so a refusal written to the transcript shows here.
+            rows = [
+                (m.role.value, (m.content or "")[:80])
+                for m in store.messages_for_session(store.active_session_id)
+            ]
+            await _wait_for_own_receipts_seen(console, pilot)
     finally:
         release.set()
 
@@ -541,8 +538,8 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
     assert [m[-1]["content"] for m in gateway.sent_messages] == [
         "first message",
         "second message",
-    ]
-    assert saved == ["accepted", "accepted"]
+    ], rows
+    assert saved == ["accepted", "accepted"], rows
     assert app.app_config["console"]["onboarding"]["first_send_completed"] is True
 
 
