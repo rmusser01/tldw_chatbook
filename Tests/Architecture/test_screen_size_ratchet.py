@@ -1529,7 +1529,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: records the control a click or Tab focused: 38280 -> 38312 lines, 1380
     #: methods.
     #: 2026-11-18, fix round 2 on the round-16 stack (the unreachable emergency-Tab record removed): measured 32823 lines, 1288 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32823, 1288),
+    #: 2026-11-08, TASK-38227 (owner decision "expand limits, never contort
+    #: code"): the note-export docstring now says shell metacharacters are legal
+    #: file-name characters since the validate_path_simple flip: 38161 -> 38162
+    #: lines, 1376 methods.
+    #: 2026-11-19, TASK-38227 rebased onto dev a6df4d8d48 (dev's row 32823/1288
+    #: plus this PR's one docstring line): measured 32824 lines, 1288 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32824, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

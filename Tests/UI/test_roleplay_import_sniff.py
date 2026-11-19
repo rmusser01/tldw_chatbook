@@ -152,6 +152,38 @@ def test_cross_kind_shapes_dev_accepts_silently_are_told_apart(fixtures):
     assert sniff.classify(".json", export).kinds == ("dictionary",)
 
 
+def test_a_legal_name_with_shell_characters_sniffs_to_its_kind(tmp_path):
+    """``Q3 P&L; card.json`` imports (TASK-38227).
+
+    Dev's sniff refused it before any read with ``dangerous pattern: ;``,
+    because ``validate_path_simple`` rejected shell metacharacters by default
+    in a path that only ever reaches ``stat`` and ``open``. This PR flips
+    that default.
+    """
+    path = tmp_path / "Q3 P&L; card.json"
+    path.write_bytes(json.dumps(card_v2()).encode())
+    result = sniff.sniff_import_file(path, max_bytes=CAP)
+    assert (result.verdict, result.kinds) == ("decided", ("character",))
+
+
+def test_a_double_parent_spelling_is_still_refused_before_any_read(
+    tmp_path, monkeypatch
+):
+    """``../../x.json`` is a kept refusal after TASK-38227: no stat, no open."""
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    target = tmp_path / "x.json"
+    target.write_bytes(json.dumps(card_v2()).encode())
+    spelled = pathlib.Path(f"{tmp_path}/a/b/../../x.json")
+    touched: list[object] = []
+    monkeypatch.setattr(sniff, "open", lambda *a, **k: touched.append(a), raising=False)
+    monkeypatch.setattr(
+        pathlib.Path, "stat", lambda self, *a, **k: touched.append(self) or None
+    )
+    with pytest.raises(ValueError, match=r"dangerous pattern: \.\./\.\."):
+        sniff.sniff_import_file(spelled, max_bytes=CAP)
+    assert touched == []
+
+
 def test_an_11_mb_file_is_refused_before_any_read(tmp_path, monkeypatch):
     path = write_sparse(tmp_path / "huge.json", 11 * 1024 * 1024)
     opened: list[object] = []

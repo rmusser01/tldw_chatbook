@@ -4474,7 +4474,11 @@ async def test_audio_export_rejects_unsafe_dialog_destination(
 ) -> None:
     del audio_cpp_playground
     source = tmp_path / "source.wav"
-    unsafe_destination = tmp_path / "bad;name.wav"
+    # TASK-38227: dev pinned this with "bad;name.wav"; ";" is a legal
+    # file-name character this PR admits, so the kept double-parent refusal
+    # carries the pin now. The spelling resolves INSIDE tmp_path (a/b do not
+    # exist), so a validator that let it through could not write outside it.
+    unsafe_destination = tmp_path / "a" / "b" / ".." / ".." / "bad-name.wav"
     source.write_bytes(b"audio")
     app = _PaneHost()
 

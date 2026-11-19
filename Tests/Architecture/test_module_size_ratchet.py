@@ -1199,7 +1199,12 @@ _BUDGETS: dict[str, int] = {
     # hooks fixes.
     # 2026-11-17, TASK-41564 (standing fix-over-ratchet rule above):
     # pinned safe-alias reads add eight generated lines; fresh build is 5,860.
-    "tldw_chatbook/Tools/remote_worker_bundle.py": 5860,
+    # 2026-11-06 owner decision ("expand limits, never contort code"), TASK-38227:
+    # 5810 -> 5814, the generated bundle re-emitted after the vendored
+    # `validate_path_simple` docstring grew by four lines (its shell-metacharacter
+    # default is now opt-in). Measured, not padded.
+    # 2026-11-19 rebase onto dev a6df4d8d48: fresh build measured 5,864 (dev 5,860 +4).
+    "tldw_chatbook/Tools/remote_worker_bundle.py": 5864,
     # TASK-41501, 2026-11-18 (owner rule 2026-10-04): 5530 -> 5544 (+14), measured;
     # liveness checks before late worker and mount queries on a removed screen.
     # 2026-11-19 rebase onto dev 8be7babc14: measured 5544.
@@ -1228,7 +1233,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-05, TASK-38226: the Markdown card regexes moved to
     # Character_Chat/card_markdown_scan.py as linear scans; 4,760 -> 4,758
     # (set to the measurement, rebased 2026-11-12).
-    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4758,
+    # 2026-11-06 owner decision ("expand limits, never contort code"), TASK-38227:
+    # 4775 -> 4776, one comment line at the character-card import boundary saying
+    # shell metacharacters pass since the validator's default flipped. Measured.
+    # 2026-11-19 rebase onto dev a6df4d8d48: measured 4,759 (dev 4,758 +1).
+    "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4759,
     # 2026-11-04, TASK-38686 (owner size waiver 2026-10-31): +1, the comment
     # on update_prompt_by_id's IMMEDIATE transaction.
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
