@@ -2484,7 +2484,14 @@ def _same_bound_attribute(holder, name, original, slot) -> bool:
     registration and current state decide, not ``__func__`` identity.
     """
     current = getattr(holder, name, None)
-    return current is original or (
+    if current is original:
+        return True
+    if not hasattr(holder, "__dict__"):
+        # No instance dict to prove "no override" against: fail closed.
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    return (
         type(current) is MethodType
         and type(original) is MethodType
         and name not in vars(holder)
@@ -2520,16 +2527,16 @@ async def capture_mounted_configuration_owned(
     if stock is None:
         return None
     selector, stock_still_current = stock
+    adapter = owner._scratch_snapshot_provider
+    screen = adapter.args[0]
+    runtime_accessor = screen._console_runtime
+    runtime_slot = _class_slot(screen, "_console_runtime")
     selection = selector(session_id, scratch_owner=controller._scratch_spaces)
     if selection is None:
         return None
     worker_reads_rag_depth = (
         selection.rag_defaults is not None and "top_k" not in selection.rag_defaults
     )
-    adapter = owner._scratch_snapshot_provider
-    screen = adapter.args[0]
-    runtime_accessor = screen._console_runtime
-    runtime_slot = _class_slot(screen, "_console_runtime")
 
     def current():
         require_current()
