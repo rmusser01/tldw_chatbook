@@ -1104,6 +1104,10 @@ ADMISSION_4_TARGETS = (
     # here rather than the UI census, whose newest entries had no CI timings yet.
     "Tests/UI/test_console_right_rail.py",
     "Tests/UI/test_console_rail_reconciliation.py",
+    # TASK-41645/41646/41647 and TASK-41320: workflow controls under an
+    # unproven return, the driver closing never-launched preparations, and
+    # "applied" reporting (14 tests, 6.6 min serially at load 31-44).
+    "Tests/Chat/test_workflow_failed_phase_release.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
