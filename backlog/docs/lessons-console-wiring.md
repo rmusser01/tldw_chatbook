@@ -844,3 +844,12 @@ admissible: its flags were not the stock teardown predicate. A mounted-view
 control caught that gap. Real closed pumps fence retries without a fake closing
 flag or permanent disposal of the reusable wrapped runtime. Keep parent-shutdown
 failure limits separate from successful shutdown and native-join evidence.
+
+The same qualification exposed a separate queued-Send fixture race. Native
+monitoring identified mount-time skill discovery publishing both trust-service
+slots after the test captured None/None; the queue correctly refused the changed
+source. Before faking an earlier accepted turn, the fixture now joins only its
+already-issued discovery workers. After the bounded Task wait, check Worker.wait
+too: Textual can consume cancellation and return normally. A real cancellation
+control reproduced that normal return and then WorkerCancelled before any queue
+dispatch, with clean teardown. No publication guard or source authority changed.
