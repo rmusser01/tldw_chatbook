@@ -1299,7 +1299,10 @@ class InterruptRoundHost(InitialHookReviewMixin):
             # at a never-run TldwCli beside a live view. A host without
             # is_running (mobile context) is live. An exit mid-wait is runtime
             # disposal's to settle.
-            app_gone = not getattr(app, "is_running", True)
+            try:
+                app_gone = not app.is_running
+            except AttributeError:
+                app_gone = False
             app_gone = app_gone and self.read_controller__approval_view_is_detached()()
             park_toast = self.read_controller_park_pending_approval()
             if hard_expired() or app_gone:
