@@ -220,9 +220,24 @@ async def test_ready_local_skill_capture_runs_original_body_on_worker_and_matche
     )
 
 
+def test_freezing_plain_configuration_detaches_containers_without_scalar_deepcopies(
+    monkeypatch,
+):
+    from tldw_chatbook.Chat import console_turn_context
+
+    def unexpected_deepcopy(value):
+        pytest.fail(f"unexpected deepcopy of {type(value).__name__}")
+
+    monkeypatch.setattr(console_turn_context, "deepcopy", unexpected_deepcopy)
+    profile = {"console": {"settings": ["default", False, 7, 1.5, None]}}
+    snapshot = console_turn_context._freeze(profile)
+    profile["console"]["settings"].clear()
+    assert snapshot["console"]["settings"] == ("default", False, 7, 1.5, None)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("selected_options", [None, {"native_tool_calls_enabled": True}])
-async def test_capture_copies_only_the_provider_setting_used_by_runtime_tools(
+async def test_capture_preserves_injected_configuration_copy_hooks(
     runtime_case, monkeypatch, selected_options
 ):
     from tldw_chatbook.Chat.console_configuration_preparation import (
@@ -237,8 +252,13 @@ async def test_capture_copies_only_the_provider_setting_used_by_runtime_tools(
 
     class CatalogEntry:
         def __deepcopy__(self, memo):
-            copies.append("catalog")
+            copies.append(("catalog", threading.get_ident()))
             return self
+
+    class NativeToolKey(str):
+        def __deepcopy__(self, memo):
+            copies.append(("key", threading.get_ident()))
+            return "native_tool_calls"
 
     class NativeToolSetting:
         def __deepcopy__(self, memo):
@@ -246,7 +266,7 @@ async def test_capture_copies_only_the_provider_setting_used_by_runtime_tools(
             return "false"
 
     profile = {
-        "console": {"native_tool_calls": NativeToolSetting()},
+        "console": {NativeToolKey("alias"): NativeToolSetting()},
         "providers": {"model_catalog": [CatalogEntry()]},
     }
 
@@ -266,13 +286,46 @@ async def test_capture_copies_only_the_provider_setting_used_by_runtime_tools(
         require_current=lambda: None,
     )
 
+    assert copies == [
+        ("key", loop_thread),
+        ("native_tool_calls", loop_thread),
+        ("catalog", loop_thread),
+    ]
     if selected_options is None:
         assert snapshot.tool_configuration["native_tool_calls_enabled"] is False
         assert reads == [loop_thread]
-        assert copies == [("native_tool_calls", loop_thread)]
     else:
         assert snapshot.tool_configuration["native_tool_calls_enabled"] is True
-        assert reads == copies == []
+        assert reads == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selected_options", [None, {"native_tool_calls_enabled": True}])
+async def test_capture_preserves_failure_to_copy_unrelated_configuration(
+    runtime_case, monkeypatch, selected_options
+):
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        capture_console_turn_configuration_owned,
+    )
+
+    class UnavailableSetting:
+        def __deepcopy__(self, memo):
+            raise ValueError("unavailable setting")
+
+    case = runtime_case
+    selected = _selection(case, tool_configuration=selected_options)
+    case.app.app_config = {"providers": {"catalog": [UnavailableSetting()]}}
+    monkeypatch.setattr(case.controller, "_provider_config", lambda: case.app.app_config)
+    with pytest.raises(ValueError, match="unavailable setting"):
+        await capture_console_turn_configuration_owned(
+            case.app,
+            case.store,
+            case.session.id,
+            selection=selected,
+            creator=case.controller,
+            reads=case.controller._preparation_reads,
+            require_current=lambda: None,
+        )
 
 
 @pytest.mark.asyncio

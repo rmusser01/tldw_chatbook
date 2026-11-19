@@ -73,6 +73,18 @@ def test_sanitizer_drops_compound_credential_field_names() -> None:
     assert all(canary not in _serialized(result) for canary in canaries.values())
 
 
+def test_credential_key_matching_preserves_component_boundaries() -> None:
+    from tldw_chatbook.Chat.console_trace_redaction import _CREDENTIAL_KEYS
+
+    for name in _CREDENTIAL_KEYS:
+        assert CredentialSanitizer._credential_key(name)
+        for separator in ("_", ".-", " ", "é"):
+            embedded = separator.join(("prefix", *name.upper().split("_"), "suffix"))
+            assert CredentialSanitizer._credential_key(embedded)
+    for key in ("TOKENIZER", "secretary", "an-api2-key", "private_keyed", "https://test/token"):
+        assert not CredentialSanitizer._credential_key(key)
+
+
 def test_sanitizer_does_not_treat_credential_substrings_as_components() -> None:
     result = CredentialSanitizer().sanitize(
         {"tokenizer_value": "keep", "secretary_note": "keep too"}

@@ -287,9 +287,16 @@ class ConsoleCharacterAuthoritySnapshot:
 
 def _freeze(value: Any) -> Any:
     """Return a recursively detached, immutable configuration value."""
+    # Exact TOML scalars can be shared. Subclasses keep their deepcopy hooks.
+    kind = type(value)
+    if value is None or kind is str or kind is bool or kind is int or kind is float:
+        return value
     if isinstance(value, Mapping):
         return MappingProxyType(
-            {deepcopy(key): _freeze(item) for key, item in value.items()}
+            {
+                (key if type(key) is str else deepcopy(key)): _freeze(item)
+                for key, item in value.items()
+            }
         )
     if isinstance(value, (list, tuple)):
         return tuple(_freeze(item) for item in value)

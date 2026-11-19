@@ -87,6 +87,12 @@ _CREDENTIAL_KEYS = frozenset(
         "token",
     }
 )
+# Match the same complete ASCII-alphanumeric components across any separator.
+_CREDENTIAL_KEY_COMPONENTS = re.compile(
+    r"(?<![a-z0-9])(?:"
+    + "|".join(name.replace("_", "[^a-z0-9]+") for name in sorted(_CREDENTIAL_KEYS))
+    + r")(?![a-z0-9])"
+)
 _SECRET_TEXT = re.compile(
     r"(?i)(?:authorization\s*:\s*\S+(?:\s+\S+)?|bearer\s+\S+|"
     r"(?:set-)?cookie\s*:\s*\S+(?:\s*;[^\r\n]*)?|"
@@ -752,19 +758,11 @@ class CredentialSanitizer:
 
     @staticmethod
     def _credential_key(key: str) -> bool:
+        if key.isascii() and key.isalnum():
+            return key.lower() in _CREDENTIAL_KEYS
         if "://" in key:
             return False
-        normalized = re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
-        components = tuple(part for part in normalized.split("_") if part)
-        for credential in _CREDENTIAL_KEYS:
-            credential_components = tuple(credential.split("_"))
-            width = len(credential_components)
-            if any(
-                components[index : index + width] == credential_components
-                for index in range(len(components) - width + 1)
-            ):
-                return True
-        return False
+        return _CREDENTIAL_KEY_COMPONENTS.search(key.lower()) is not None
 
     def _known_credential_key(self, key: str) -> bool:
         return any(credential in key for credential in self._known_credentials)
