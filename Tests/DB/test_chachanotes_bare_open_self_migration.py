@@ -486,7 +486,9 @@ def test_a_sigkill_inside_the_v48_transaction_cannot_brick_the_database(
         text=True,
     )
     try:
-        deadline = time.monotonic() + 60.0
+        # TASK-41638: a hang bound for reaching the step; loaded children run ~3x
+        # slower. The 60 s waits below only reap a child already SIGKILLed.
+        deadline = time.monotonic() + 180.0
         entered = False
         while time.monotonic() < deadline:
             entered = marker_path.exists()

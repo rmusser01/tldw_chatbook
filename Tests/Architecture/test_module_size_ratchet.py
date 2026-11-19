@@ -297,7 +297,10 @@ _BUDGETS: dict[str, int] = {
     # the skill trust a cold capture reads (Chat/console_configuration_preparation.py).
     "tldw_chatbook/Chat/console_chat_controller.py": 28764,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6298,
+    # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
+    # answerable view fails closed instead of waiting forever (dev's row +
+    # growth: 6298 -> 6307).
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
     "tldw_chatbook/Chat/console_context_compaction.py": 4217,
@@ -1054,7 +1057,9 @@ _BUDGETS: dict[str, int] = {
     # unreadable stream is retried without streaming; exact measurement after
     # rebasing onto dev 4b90eb860b (8337 -> 8345, inside dev's 8364 row).
     # 2026-11-16: re-measured after rebasing onto dev 1a1f00c052 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 8345 -> 8371.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8371,
+    # TASK-41636, 2026-11-18: +5, a generic reply that arrived whole keeps its
+    # usage when a stop interrupts the wait for its worker (8371 -> 8376).
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8376,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,

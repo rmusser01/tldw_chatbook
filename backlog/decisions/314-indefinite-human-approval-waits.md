@@ -104,6 +104,24 @@ reclamation requires proof that every physical invocation has drained and is
 outside this fix; host disposal releases its sets. This restores the existing
 cancellation contract without adding a provider dispatch authority boundary.
 
+## TASK-41637 clarification (2026-11-18): no running app, no wait
+
+"Indefinite" assumes someone can still answer. A round can settle without a
+user answer when it arms with no running App (constructed but never started,
+or already exited) and no answerable Console view. Such a round can show no
+card and receive no decision, so `InterruptRoundHost.run_round` settles it as
+`cancelled` within one poll: it fails closed and is recorded as unresolved,
+never as a user Deny. Two kinds of host keep waiting as above:
+- a host without an `is_running` attribute (the mobile `HeadlessAppContext`);
+- any round while an answerable view exists. The view condition is not a claim
+  that a non-running App can render a card: it accommodates test harnesses that
+  re-point `controller.app` at a never-run `TldwCli` beside a live view.
+
+Liveness is read once, at arm time. An App that exits mid-wait is settled by
+runtime disposal (the visit and shutdown fences). A per-poll read would also
+cancel live rounds in test harnesses that re-point `controller.app` at a
+never-run App on every Console ensure.
+
 ## Renumbering provenance
 
 Renumbered from ADR-067 to ADR-314 on 2026-11-03 under TASK-36943.3 (owner decision 2026-10-25: the younger file of a shared number is renumbered). ADR-067 now refers to 067-library-top-level-pagination-contracts.md.

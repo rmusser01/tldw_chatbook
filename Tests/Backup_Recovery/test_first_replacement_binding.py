@@ -446,7 +446,8 @@ def test_first_binding_uses_full_reviewed_local_census_and_one_profile_view(
             cwd=tmp_path,
             capture_output=True,
             text=True,
-            timeout=60,
+            # TASK-41638: a hang bound, not a speed bound; loaded children run ~3x slower.
+            timeout=180,
             check=False,
         )
         (tmp_path / f"setup-{role}.log").write_text(

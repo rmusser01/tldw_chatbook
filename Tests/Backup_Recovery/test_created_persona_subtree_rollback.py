@@ -484,11 +484,16 @@ def native_persona_negatives(tmp_path_factory):
     ],
 )
 # TASK-41115: a node's timeout also covers the module fixture it builds. At
-# load 75-90 that build outlasted 600 s while busy, so the cap now sits above
-# the fixture's five child caps (600 s each) plus this node's own child.
-@pytest.mark.timeout(3600)
+# load 75-90 that build outlasted 600 s while busy, so the cap sits above the
+# fixture's five child caps (600 s each) plus this node's own child (600 s,
+# TASK-41638): 3600 s of child caps, and 600 s more so a child's own
+# TimeoutExpired (with its log) fires before pytest-timeout does.
+@pytest.mark.timeout(4200)
 def test_native_persona_mapping_refuses_unproved_graph(native_persona_negatives, case):
-    output = _child(native_persona_negatives, _NEGATIVE, case, timeout=60)
+    # TASK-41638: fail on a hang (no CPU for 60 s), not on a slow loaded child.
+    output = _child(
+        native_persona_negatives, _NEGATIVE, case, timeout=600, idle=_HANG_SECONDS
+    )
     assert "NATIVE_PERSONA_NEGATIVE_COMPLETE" in output
 
 
@@ -573,7 +578,7 @@ print('NATIVE_PERSONA_OVERLAP_REFUSED',case,flush=True)
         "ancestor-replaced",
     ],
 )
-@pytest.mark.timeout(3600)  # As above.
+@pytest.mark.timeout(4200)  # As above.
 def test_native_persona_retirement_keeps_ancestor_exclusion(
     native_persona_negatives, case
 ):
@@ -581,7 +586,8 @@ def test_native_persona_retirement_keeps_ancestor_exclusion(
         native_persona_negatives,
         _OVERLAP,
         case,
-        timeout=180 if sys.platform == "win32" else 60,
+        timeout=600,
+        idle=_HANG_SECONDS,  # TASK-41638: was a fixed 60 s (180 s on Windows)
     )
     assert "NATIVE_PERSONA_OVERLAP_REFUSED" in output
 

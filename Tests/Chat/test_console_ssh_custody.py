@@ -1349,7 +1349,8 @@ async def test_unproven_startup_instruction_read_holds_a_daemon_worker(
             ),
             capture_output=True,
             text=True,
-            timeout=60,
+            # TASK-41638: a hang bound, not a speed bound; loaded children run ~3x slower.
+            timeout=180,
         )
         assert result.returncode == 0, result.stdout[-6000:] + result.stderr[-2000:]
         assert json.loads(receipt.read_text()) == {

@@ -814,6 +814,142 @@ async def test_leaving_console_does_not_resolve_a_pending_approval_round():
     assert decisions == {"write_file": "deny"}
 
 
+# -- TASK-41637: no running app means no one can answer ---------------------
+
+
+def _request_round_in_thread(controller, session_id):
+    """Start one approval round on a worker thread; return (thread, result box)."""
+    box: dict = {}
+
+    def _run_round() -> None:
+        box["decisions"] = controller.request_mcp_approvals(
+            [_pending_call()], session_id=session_id
+        )
+
+    worker = threading.Thread(target=_run_round, daemon=True)
+    worker.start()
+    return worker, box
+
+
+def _assert_refused_unanswered(worker, box, controller) -> None:
+    """The round settled, failed closed, and says nobody answered it."""
+    try:
+        assert not worker.is_alive(), "the approval round is still waiting"
+    finally:
+        # Free a red run's worker instead of leaking a forever-waiting round.
+        for round_id in list(controller._pending_approval_rounds):
+            controller.resolve_pending_approval({"write_file": "deny"}, round_id=round_id)
+    assert box["decisions"] == {"write_file": "deny"}
+    assert box["decisions"].unresolved_keys == frozenset({"write_file"})
+    assert not controller._pending_approval_rounds
+
+
+@pytest.mark.asyncio
+async def test_approval_round_with_an_app_that_never_ran_is_refused_promptly():
+    """A constructed but never-started App can show no card and take no answer.
+
+    TASK-41314 saw a private-App planning child hang here: the round
+    waited with no deadline for a decision no one could give.
+    """
+    from textual.app import App
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
+    controller.mcp_approval_timeout_seconds = lambda: 0.0  # ADR-314: no deadline
+    controller.app = App()
+    assert not controller.app.is_running
+
+    worker, box = _request_round_in_thread(controller, session.id)
+    await asyncio.to_thread(worker.join, 10)
+
+    _assert_refused_unanswered(worker, box, controller)
+
+
+@pytest.mark.asyncio
+async def test_approval_round_requested_after_the_app_exited_is_refused_promptly():
+    """An App that has already exited cannot answer a new round either."""
+    from textual.app import App
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
+    controller.mcp_approval_timeout_seconds = lambda: 0.0  # ADR-314: no deadline
+    app = App()
+    async with app.run_test():
+        pass
+    controller.app = app
+    assert not app.is_running
+
+    worker, box = _request_round_in_thread(controller, session.id)
+    await asyncio.to_thread(worker.join, 10)
+
+    _assert_refused_unanswered(worker, box, controller)
+
+
+def _runtime_owned_controller(app, view: _View | None = None):
+    """The private-child shape: the runtime hands the controller its App."""
+    store = ConsoleChatStore()
+    viewed = store.ensure_session()
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
+    controller.mcp_approval_timeout_seconds = lambda: 0.0  # ADR-314: no deadline
+    runtime = ConsoleRuntime(app=app)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    assert controller.app is app
+    if view is not None:
+        view.attachment_generation = runtime.attach_view(view)
+        runtime.finish_view_reconciliation(view, view.attachment_generation)
+    return controller, store, viewed
+
+
+@pytest.mark.asyncio
+async def test_runtime_round_with_a_never_run_app_and_no_view_is_refused_promptly():
+    """The runtime router (no answerable view) is what the planning child had."""
+    from textual.app import App
+
+    controller, _store, viewed = _runtime_owned_controller(App())
+
+    worker, box = _request_round_in_thread(controller, viewed.id)
+    await asyncio.to_thread(worker.join, 10)
+
+    _assert_refused_unanswered(worker, box, controller)
+
+
+@pytest.mark.asyncio
+async def test_never_run_app_round_stays_pending_while_a_view_can_answer():
+    """An answerable view keeps the round live (harnesses pair one with a
+    never-run TldwCli as controller.app); only an explicit answer settles it."""
+    from textual.app import App
+
+    controller, store, _viewed = _runtime_owned_controller(App(), _View())
+    background = store.create_session(title="Background", activate=False)
+
+    worker, box = _request_round_in_thread(controller, background.id)
+    try:
+        assert await _wait_until(lambda: controller._pending_approval_rounds)
+        await asyncio.sleep(2.5 * controller._interrupt_host.POLL_SECONDS)
+        assert worker.is_alive(), "the round settled with a view still answerable"
+        (round_id,) = controller._pending_approval_rounds
+    finally:
+        for pending in list(controller._pending_approval_rounds):
+            controller.resolve_pending_approval({"write_file": "deny"}, round_id=pending)
+        await asyncio.to_thread(worker.join, 10)
+
+    assert not worker.is_alive()
+    assert box["decisions"] == {"write_file": "deny"}
+    assert box["decisions"].unresolved_keys == frozenset()
+
+
+async def _wait_until(condition, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        await asyncio.sleep(0.05)
+    return bool(condition())
+
+
 # -- the owner ruling: a wake turn is NOT a user turn ----------------------
 
 

@@ -53,7 +53,8 @@ def test_prompt_evidence_driver_rejects_xdg_path_outside_scratch(tmp_path) -> No
         env=env,
         capture_output=True,
         text=True,
-        timeout=60,
+        # TASK-41638: a hang bound, not a speed bound; loaded children run ~3x slower.
+        timeout=180,
         check=False,
     )
 
@@ -77,7 +78,8 @@ def test_prompt_evidence_driver_rejects_invalid_journey_selector(
         env=_isolated_env(root, scratch),
         capture_output=True,
         text=True,
-        timeout=60,
+        # TASK-41638: a hang bound, not a speed bound; loaded children run ~3x slower.
+        timeout=180,
         check=False,
     )
 
@@ -104,7 +106,8 @@ def test_prompt_evidence_driver_replaces_existing_external_data_config(
         env=_isolated_env(root, scratch),
         capture_output=True,
         text=True,
-        timeout=60,
+        # TASK-41638: a hang bound, not a speed bound; loaded children run ~3x slower.
+        timeout=180,
         check=False,
     )
 

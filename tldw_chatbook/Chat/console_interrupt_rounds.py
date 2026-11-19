@@ -1293,8 +1293,19 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 is_head = self.park_round_payload(kind, round_id, payload)
         try:
             app = self.read_controller_app()
+            # TASK-41637: a never-started or exited App cannot show a card, so with
+            # no answerable view nobody can answer: fail closed. The view
+            # condition exists because Console harnesses re-point controller.app
+            # at a never-run TldwCli beside a live view. A host without
+            # is_running (mobile context) is live. An exit mid-wait is runtime
+            # disposal's to settle.
+            try:
+                app_gone = not app.is_running
+            except AttributeError:
+                app_gone = False
+            app_gone = app_gone and self.read_controller__approval_view_is_detached()()
             park_toast = self.read_controller_park_pending_approval()
-            if hard_expired():
+            if hard_expired() or app_gone:
                 pass
             elif retained_decision:
                 if (
@@ -1344,7 +1355,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 # permission summary INSIDE the human-wait mark so the
                 # summariser's own model call never counts against the
                 # owning run's tool clock.
-                if before_wait is not None and not hard_expired():
+                if before_wait is not None and not hard_expired() and not app_gone:
                     before_wait()
                 while True:
                     if hard_expired():
@@ -1358,7 +1369,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                     )
                     if event.wait(min(self.POLL_SECONDS, remaining)):
                         break
-                    if self.read_controller__is_session_cancelled()(
+                    if app_gone or self.read_controller__is_session_cancelled()(
                         session_id,
                         cancel_event=state.get("cancel_event"),
                         visit_event=state.get("visit_event"),

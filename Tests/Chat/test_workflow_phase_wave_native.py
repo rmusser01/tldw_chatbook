@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.restart_observation import _wait_while_busy
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -236,7 +237,7 @@ def test_suppressed_original_owned_workspace_close_keeps_unpublished_wave(tmp_pa
     )
     log = tmp_path / "owned-close-output.log"
     with log.open("w") as output:
-        result = subprocess.run(
+        process = subprocess.Popen(
             [
                 sys.executable,
                 "-X",
@@ -250,11 +251,11 @@ def test_suppressed_original_owned_workspace_close_keeps_unpublished_wave(tmp_pa
             env=environment,
             stdout=output,
             stderr=subprocess.STDOUT,
-            timeout=60,
-            check=False,
         )
+        # TASK-41638: fail on a hang (no CPU for 60 s), not on a slow loaded child.
+        returncode = _wait_while_busy(process, idle=60, timeout=240)
     stdout = log.read_text()
-    assert result.returncode == 0, stdout[-3000:]
+    assert returncode == 0, stdout[-3000:]
     line = next(
         line
         for line in stdout.splitlines()
