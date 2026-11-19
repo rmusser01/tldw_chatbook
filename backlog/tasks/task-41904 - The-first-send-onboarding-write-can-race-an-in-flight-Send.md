@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 20:31
-updated_date: 2026-11-19 16:48
+updated_date: 2026-11-19 17:16
 labels:
 - follow-up
 - console
@@ -53,3 +53,8 @@ Files: `tldw_chatbook/UI/Console_Modules/composer_run_controls.py`, `Tests/UI/te
 - It waits for the second reply to be saved (two complete assistant rows) before reading them, and then for its terminal receipt to be seen (no unseen marks). Without that last wait the receipt stayed unseen in the shared bootstrap profile's database, and the next app in the same process opened with "A Console turn completed while hidden.": run first, it failed `test_console_send_without_mcp_store.py::test_unbound_store_with_a_replaced_mcp_reader_is_still_refused` 1 of 1 serially, and that node failed in 2 of 3 combined `-n 4` runs. With the wait the same ordered pair passed 2 of 2 and the combined `-n 4` run (this test, TASK-41903's, and all of `test_console_send_without_mcp_store.py`) passed 3 of 3, 22 passed each, at load 14-17. Preflight passed.
 - User Guide: a `!` command still asks you to press Send again during the save (`test_raw_publication_refusal_keeps_original_live_draft`), and the line now says so.
 - AC#1 reworded (above) and the "no callers" claim corrected (it has one test caller).
+
+**Review r17cn-rev2 (fix round 2).**
+- The unseen-receipt wait and its assertion now cover only this test's own chats (`persisted_conversation_id` of its sessions), since the bootstrap profile's database is shared and an earlier test's leaked receipt must not fail this one.
+- While the save is held, the test also requires that no turn was admitted (`runtime._turn_custody` empty; the save itself starts only when it is). It breaks out of the 5 s hold as soon as one is. With the save's fence opened in both scopes (temporary, reverted): red 2 of 2 with "the Send was admitted during the save", 6.2-6.4 s per call. At head, serially: 3 of 3 passed, 15.1-15.3 s each, load 12. With TASK-41903's node and all of `test_console_send_without_mcp_store.py` at `-n 4`: 22 passed. Preflight passed.
+

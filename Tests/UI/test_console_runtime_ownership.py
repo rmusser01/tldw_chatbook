@@ -492,15 +492,16 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
 
             composer.load_draft("second message")
             send.press()
-            # Hold the save open long enough for a Send that does not wait to
-            # reach the provider: with the save's fence opened (temporary),
-            # it got there 2.0-2.5 s after the press at load 20.
+            # Hold the save open. A Send that does not wait is admitted into
+            # custody within milliseconds (and reached the provider 2.0-2.5 s
+            # after the press at load 20, with the save's fence opened).
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                if len(gateway.sent_messages) > 1 or notices:
+                if runtime._turn_custody or len(gateway.sent_messages) > 1 or notices:
                     break
                 await pilot.pause(0.05)
             assert notices == []
+            assert not runtime._turn_custody, "the Send was admitted during the save"
             assert len(gateway.sent_messages) == 1, "the Send did not wait"
             release.set()
             store = console._ensure_console_chat_store()
@@ -520,12 +521,19 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
             # Its terminal receipt is seen on screen before the app closes;
             # left unseen in this shared profile's database, a later app
             # opens with "A Console turn completed while hidden."
+            # Only this test's own chats: the database is shared.
             marks = runtime._console_local_marks_service()
+            mine = {s.persisted_conversation_id for s in store.sessions()} - {None}
+            assert mine
+
+            def unseen() -> list:
+                return [m for m in marks.list_console_unseen_marks() if m[0] in mine]
+
             for _ in range(200):
-                if not marks.list_console_unseen_marks():
+                if not unseen():
                     break
                 await pilot.pause(0.05)
-            assert marks.list_console_unseen_marks() == ()
+            assert unseen() == []
     finally:
         release.set()
 
