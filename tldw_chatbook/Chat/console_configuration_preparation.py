@@ -1894,13 +1894,18 @@ async def capture_console_turn_configuration_owned(
     runtime = getattr(creator, "_hooks_v2_runtime", None)
     runtime_store = getattr(runtime, "_chat_store", None)
     runtime_controller = getattr(runtime, "_chat_controller", None)
-    raw_config = refs.app_config
-    # Existing configurable selection callbacks keep their caller-loop affinity.
-    if selection.tool_configuration is None:
-        raw_config = (
-            _freeze(refs.provider_config()) if callable(refs.provider_config) else {}
-        )
-    else:
+    raw_config = {}
+    if selection.tool_configuration is None and callable(refs.provider_config):
+        # Only this option crosses to the worker. Keep the original items-based
+        # projection for custom mappings and the provider callback on this loop.
+        raw_config = refs.provider_config()
+        if (
+            type(raw_config) is dict
+            and type(section := raw_config.get("console", {})) is dict
+        ):
+            raw_config = {
+                "console": {"native_tool_calls": section.get("native_tool_calls", True)}
+            }
         raw_config = _freeze(raw_config)
     require_current()
 

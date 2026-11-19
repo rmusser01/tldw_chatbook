@@ -221,6 +221,61 @@ async def test_ready_local_skill_capture_runs_original_body_on_worker_and_matche
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("selected_options", [None, {"native_tool_calls_enabled": True}])
+async def test_capture_copies_only_the_provider_setting_used_by_runtime_tools(
+    runtime_case, monkeypatch, selected_options
+):
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        capture_console_turn_configuration_owned,
+    )
+
+    case = runtime_case
+    selected = _selection(case, tool_configuration=selected_options)
+    loop_thread = threading.get_ident()
+    reads = []
+    copies = []
+
+    class CatalogEntry:
+        def __deepcopy__(self, memo):
+            copies.append("catalog")
+            return self
+
+    class NativeToolSetting:
+        def __deepcopy__(self, memo):
+            copies.append(("native_tool_calls", threading.get_ident()))
+            return "false"
+
+    profile = {
+        "console": {"native_tool_calls": NativeToolSetting()},
+        "providers": {"model_catalog": [CatalogEntry()]},
+    }
+
+    def read_provider():
+        reads.append(threading.get_ident())
+        return profile
+
+    case.app.app_config = profile
+    monkeypatch.setattr(case.controller, "_provider_config", read_provider)
+    snapshot = await capture_console_turn_configuration_owned(
+        case.app,
+        case.store,
+        case.session.id,
+        selection=selected,
+        creator=case.controller,
+        reads=case.controller._preparation_reads,
+        require_current=lambda: None,
+    )
+
+    if selected_options is None:
+        assert snapshot.tool_configuration["native_tool_calls_enabled"] is False
+        assert reads == [loop_thread]
+        assert copies == [("native_tool_calls", loop_thread)]
+    else:
+        assert snapshot.tool_configuration["native_tool_calls_enabled"] is True
+        assert reads == copies == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_absent_provider_config_retains_original_default_and_one_budget_read(
     runtime_case,
     monkeypatch,
