@@ -5197,6 +5197,93 @@ async def test_scope_recovery_mirror_mounts_nothing_once_the_app_is_exiting():
         assert error is None, f"the mirror mounted after the exit fence: {error}"
 
 
+@pytest.mark.parametrize(
+    ("region", "builder", "widget_id"),
+    (
+        ("query-status", "library_rag_query_status_children", "library-rag-query-blocked-callout"),
+        ("answer", "library_rag_answer_children", "library-rag-answer"),
+        ("results", "library_rag_results_body_children", "library-rag-results-empty"),
+        ("history", "library_rag_history_children", "library-rag-history-empty"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_rag_panel_refreshers_mount_nothing_once_the_app_is_exiting(
+    monkeypatch, region, builder, widget_id
+):
+    """TASK-41711: the scope mirror's siblings, fenced the same way.
+
+    Each refresher removes its region's widgets and then mounts the new ones.
+    The builder is stubbed so every region has one widget to remove and one
+    to mount; the fence lands between the removal and the mount.
+    """
+    from textual.containers import Vertical
+    from textual.widget import MountError
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Library_Modules import library_rag_search_controller
+
+    widget_type = Vertical if region == "answer" else Static
+    monkeypatch.setattr(
+        library_rag_search_controller,
+        builder,
+        lambda _state: [widget_type(id=widget_id)],
+    )
+    app = _build_unsplashed_test_app(configured_default="search")
+
+    async with app.run_test(size=(170, 48)) as pilot:
+
+        def settled() -> bool:
+            return bool(
+                type(app.screen).__name__ == "LibraryScreen"
+                and app.screen.query("#library-rag-history-empty")
+                and not app.screen._rag_search_state.panel_refresh_lock.locked()
+            )
+
+        await _wait_for_initial_screen(pilot)
+        assert await _settle(pilot, settled, timeout=30), (
+            "the Search canvas never settled"
+        )
+        screen = app.screen
+        controller = screen._rag_search_controller
+        refresh = {
+            "query-status": controller._refresh_library_rag_query_status_widgets,
+            "answer": controller._refresh_library_rag_answer_widgets,
+            "results": controller._refresh_library_rag_results_widgets,
+            "history": controller._refresh_library_rag_history_widget,
+        }[region]
+        panel_state = screen._library_rag_panel_state()
+        # Held so no snapshot refresh rebuilds the panel under the test.
+        async with screen._rag_search_state.panel_refresh_lock:
+            controller._library_rag_answer_render_key = None
+            await refresh(panel_state)
+            old = screen.query_one(f"#{widget_id}")  # mounts while the app runs
+            real_remove = old.remove
+            held = asyncio.Event()
+            release = asyncio.Event()
+
+            async def held_remove():
+                held.set()
+                await release.wait()
+                await real_remove()
+
+            old.remove = held_remove
+            controller._library_rag_answer_render_key = None
+            refreshing = asyncio.create_task(refresh(panel_state))
+            error = None
+            try:
+                await asyncio.wait_for(held.wait(), timeout=15)
+                app._exit = True
+                release.set()
+                try:
+                    await refreshing
+                except MountError as exc:
+                    error = exc
+            finally:
+                app._exit = False
+                release.set()
+        assert error is None, f"the {region} refresher mounted after the exit fence: {error}"
+
+
 @pytest.mark.asyncio
 async def test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected():
     """Sibling of ``test_boot_with_search_default_tab_lands_on_library_rag_canvas``
@@ -6408,6 +6495,101 @@ async def test_late_completions_after_the_exit_fence_skip_the_empty_stack():
         assert errors == [], f"a late completion read the emptied stack: {errors!r}"
         assert paints == []
         assert home._home_pending_refresh_sync is pending
+
+
+@pytest.mark.asyncio
+async def test_library_completions_after_the_exit_fence_skip_the_empty_stack(tmp_path):
+    """TASK-41715: Library's own late completions, fenced like TASK-41702's.
+
+    A prompts import awaits each lookup and save, then checks that its screen
+    is still the current one before it applies the outcome. Here the exit
+    fence lands, and the stack empties, inside the last save; the rest of
+    the completion runs without yielding, as in the test above. The other
+    Library readers are then called inside the same window. Each used to
+    raise ``ScreenStackError: No screens on stack``.
+    """
+    import json
+
+    from textual.app import ScreenStackError
+
+    from tldw_chatbook.UI.Library_Modules.library_note_autosave import (
+        resume_library_note_autosave,
+    )
+
+    app = _build_unsplashed_test_app()
+
+    async with app.run_test(size=(160, 40)) as pilot:
+        await _wait_for_initial_screen(pilot)
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        library = app.screen
+        assert type(library).__name__ == "LibraryScreen"
+
+        stack = app._screen_stack
+        saved: list = []
+        errors: list = []
+
+        def enter_window() -> None:
+            if app._exit:
+                return
+            saved[:] = stack
+            app._exit = True
+            stack.clear()
+
+        def leave_window() -> None:
+            if app._exit:
+                stack.extend(saved)
+                app._exit = False
+
+        source = tmp_path / "late.json"
+        source.write_text(json.dumps({"name": "Late import", "user_prompt": "x"}))
+        service_calls: list[str] = []
+        real_service_call = library._run_library_service_call
+        probe = None
+
+        async def service_call(callable_obj, **kwargs):
+            if asyncio.current_task() is not probe:
+                return await real_service_call(callable_obj, **kwargs)
+            service_calls.append(callable_obj.__name__)
+            if callable_obj.__name__ == "save_prompt":
+                enter_window()
+            return None
+
+        async def import_completion() -> None:
+            try:
+                await library._run_library_prompts_import(str(source))
+            except ScreenStackError as exc:
+                errors.append(("prompts import completion", exc))
+            finally:
+                leave_window()
+
+        library._prompts_state.import_path = str(source)
+        library._run_library_service_call = service_call
+        try:
+            probe = asyncio.create_task(import_completion())
+            await probe
+        finally:
+            del library._run_library_service_call
+        assert service_calls == ["get_prompt", "save_prompt"]
+        # Past the fence the completion applies nothing.
+        assert library._prompts_state.import_path == str(source)
+
+        enter_window()
+        try:
+            for name, late_call in (
+                ("prompts import status", lambda: library._apply_library_prompts_import_status("x")),
+                ("skills import snapshot", lambda: library._present_library_skills_import_snapshot(refresh_sources=False)),
+                ("skills import choice", library._present_library_skills_import_choice_if_needed),
+                ("notes autosave resume", lambda: resume_library_note_autosave(library)),
+                ("prompt action result", lambda: library._prompts_controller._report_library_prompt_action_result("x")),
+                ("artifacts share", library._artifacts_share_controller._active),
+            ):
+                try:
+                    late_call()
+                except ScreenStackError as exc:
+                    errors.append((name, exc))
+        finally:
+            leave_window()
+        assert errors == [], f"a late Library completion read the emptied stack: {errors!r}"
 
 
 def _nav_strip_clips(app) -> bool:

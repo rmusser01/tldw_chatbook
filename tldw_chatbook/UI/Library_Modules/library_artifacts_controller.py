@@ -202,7 +202,7 @@ class LibraryArtifactsController:
             and not self.suspended
             and self.presentation == generation
             and self.profile() == profile
-            and self.screen.is_mounted
+            and self.screen.is_mounted and self.screen.is_attached  # TASK-41715: the stack may be empty
             and self.screen.app.screen is self.screen
         )
 
@@ -988,7 +988,7 @@ class LibraryArtifactsController:
             or self.scope != scope
             or self.selected != key
             or not self.active()
-            or not self.screen.is_mounted
+            or not self.screen.is_mounted or not self.screen.is_attached  # TASK-41715: the stack may be empty
             or self.screen.app.screen is not self.screen
         ):
             return

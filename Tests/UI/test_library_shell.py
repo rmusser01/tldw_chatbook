@@ -13239,56 +13239,11 @@ async def test_library_media_complete_facets_commit_during_initial_recovery(
                 assert not service.page_release.is_set()
             requested_before = controller.requested_scope
             opener = screen.query_one("#library-media-type-filter", Button)
+            # TASK-41532/TASK-41703: the wait above now covers the facet
+            # recompose (CI run 43917600414 pressed the opener while it was
+            # still being removed), and a press queued below a canvas child
+            # that a later recompose removes still reaches the screen.
             opener.press()
-            # TASK-41532: CI run 43917600414 saw no chooser for 30 s here
-            # ([loading-All]). Once locally (load ~31) a background canvas
-            # recompose pruned the opener and its press never reached the
-            # handler (TASK-41703); usually such a press is delivered late.
-            # Once the opener is detached (parent None), every queue being
-            # removed above it has emptied, so a surviving press is already
-            # queued at or above the canvas, ahead of the drain's markers. A
-            # re-press made only after a complete drain, and only if the strip
-            # is still closed, therefore never toggles it twice, by message
-            # order. A drain cut short re-presses nothing.
-            pressed = [opener]
-            deadline = time.monotonic() + 30.0
-
-            async def drain_canvas_pumps() -> bool:
-                """True only once a marker has passed every pump to the screen."""
-                try:
-                    canvas = screen.query_one("#library-media-canvas")
-                    for node in (canvas, *canvas.ancestors):
-                        done = asyncio.Event()
-                        if not node.call_later(done.set):
-                            return False
-                        await asyncio.wait_for(
-                            done.wait(), max(deadline - time.monotonic(), 0.01)
-                        )
-                        if node is screen:
-                            return True
-                except (TimeoutError, NoMatches):
-                    pass  # The loop's deadline check reports the full state.
-                return False
-
-            while not screen._media_state.type_choices_visible:
-                assert time.monotonic() < deadline, (
-                    f"{len(pressed)} type opener press(es) never opened the "
-                    f"strip: last opener disabled={pressed[-1].disabled}, "
-                    f"display={pressed[-1].display}, "
-                    f"pruning={pressed[-1]._pruning}, "
-                    f"parent={pressed[-1].parent!r}, focused={screen.focused!r}."
-                )
-                if pressed[-1].parent is None and await drain_canvas_pumps():
-                    live = screen.query("#library-media-type-filter")
-                    if (
-                        not screen._media_state.type_choices_visible
-                        and live
-                        and live.first() is not pressed[-1]
-                        and not live.first()._pruning
-                    ):
-                        pressed.append(live.first())
-                        pressed[-1].press()
-                await pilot.pause(0.02)
             chooser = await _wait_for_selector(
                 screen, pilot, "#library-media-type-choices"
             )

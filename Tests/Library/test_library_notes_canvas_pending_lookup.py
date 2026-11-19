@@ -22,6 +22,11 @@ lands on the new children when the recompose completes. The fourth covers
 the other half of that window (the row still attached, its children already
 pruned), for a recompose and for the canvas being removed outright.
 
+TASK-41703: the last test is the press half of that window, on the
+recompose seam every Library canvas shares (``PostRecomposeCallback``): a
+press still queued below a canvas child the recompose removes reaches the
+screen.
+
 Fast lane: a bare Textual app (``run_test``), no product app boot; the
 fallback and recompose tests mount one ``LibraryNotesCanvas`` under the app
 stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
@@ -29,18 +34,22 @@ stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
 
 from __future__ import annotations
 
+import asyncio
 from typing import ClassVar
 
 import pytest
 from loguru import logger
+from textual import on
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.screen import Screen
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.Widgets.Library.test_library_notes_canvas import _editor_state
 from tldw_chatbook.Widgets.Library import library_notes_canvas as canvas_module
+from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     LibraryNotesCanvas,
     _pending_widget_lookup,
@@ -286,3 +295,75 @@ async def test_a_resize_landing_while_the_header_is_torn_down_never_raises(
             # ... and the shape it asked for lands on the new children.
             row = canvas.query_one("#library-note-header-second-row")
             assert row.styles.layout.name == "vertical"
+
+
+class _PressCanvas(PostRecomposeCallback, Vertical):
+    """The Media toolbar's shape: a button one level below a canvas child."""
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="toolbar"):
+            yield Button("type", id="opener")
+
+
+class _PressScreen(Screen):
+    def __init__(self) -> None:
+        super().__init__()
+        self.handled = 0
+
+    def compose(self) -> ComposeResult:
+        yield _PressCanvas(id="canvas")
+
+    @on(Button.Pressed, "#opener")
+    def _count(self, event: Button.Pressed) -> None:
+        self.handled += 1
+
+
+class _PressApp(App):
+    def get_default_screen(self) -> Screen:
+        return _PressScreen()
+
+
+@pytest.mark.asyncio
+async def test_a_press_queued_below_a_removed_canvas_child_still_reaches_the_screen():
+    """TASK-41703: a Library canvas recompose does not drop a pending press.
+
+    Textual removes a recompose's old children top down. The toolbar (a
+    canvas child) stops taking messages first; the button below it then
+    handles its queued press and would bubble it into the closing toolbar,
+    where Textual drops it. The press is held in the button until the
+    toolbar is closing, so the order is driven, not timed.
+    """
+    app = _PressApp()
+    async with app.run_test(size=(40, 6)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        canvas = screen.query_one(_PressCanvas)
+        toolbar = screen.query_one("#toolbar")
+        opener = screen.query_one("#opener", Button)
+        held = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hold() -> None:
+            held.set()
+            await release.wait()
+
+        opener.call_later(hold)
+        try:
+            await asyncio.wait_for(held.wait(), timeout=5)
+            opener.press()  # queued in the button, behind ``hold``
+            canvas.refresh(recompose=True)
+            deadline = asyncio.get_running_loop().time() + 5
+            while not toolbar._closing:
+                assert asyncio.get_running_loop().time() < deadline, (
+                    "the recompose never closed the toolbar"
+                )
+                await asyncio.sleep(0)
+        finally:
+            release.set()
+        for _ in range(100):
+            if screen.handled:
+                break
+            await pilot.pause(0.02)
+
+        assert screen.handled == 1, "the press below the removed toolbar was dropped"
+        assert screen.query_one("#opener") is not opener, "the canvas never recomposed"
