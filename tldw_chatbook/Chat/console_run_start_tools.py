@@ -43,6 +43,13 @@ same sources, every file still at its anchored stamp and settled before the
 anchor, the epoch unmoved. Only then does that fingerprint's identity become
 the kept identity; anything else refuses the pending composition and the run
 composes from the stores.
+
+The tool-surface preview's kill-switch read is proven by the same file stamp
+(TASK-33620.15.52): a preview's real read keeps its answer with the permission
+file's stamp taken just before it, and the next preview answers from it,
+without a store read or a worker hop, while the same store and installed
+identity are selected, the admission epoch has not moved and the file still
+has that stamp (``proven_preview_switch``). It is an estimate only.
 """
 
 from __future__ import annotations
