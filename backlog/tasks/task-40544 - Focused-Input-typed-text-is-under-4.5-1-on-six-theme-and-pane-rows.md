@@ -17,7 +17,7 @@ priority: low
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Typed text in a focused Input (`$text` on the house focus tint `$ds-input-focus-bg`, over the pane) is under 4.5:1 on six rows: nord on `$panel` 4.47, litestep on `$background` 3.47, catppuccin-mocha on `$panel` 4.19, catppuccin-macchiato on `$panel` 4.47, catppuccin-frappe on `$panel` 4.12 and atom-one-dark on `$panel` 4.33. It exists on dev today (`4b90eb860b`). No open PR fixes it: PR #3468 (TASK-38229) holds these six rows at their dev value in its painted gate on purpose (`TYPED_TEXT_ON_DEV`). Found by the Roleplay B2b follow-up burn-down (2026-11-07); evidence in `fu-caret-report.md`.
+Typed text in a focused Input (`$text` on the house focus tint `$ds-input-focus-bg`, over the pane) is under 4.5:1 on six rows: nord on `$panel` 4.47, litestep on `$background` 3.47, catppuccin-mocha on `$panel` 4.19, catppuccin-macchiato on `$panel` 4.47, catppuccin-frappe on `$panel` 4.12 and atom-one-dark on `$panel` 4.33. It exists on dev today (`4b90eb860b`). No open PR fixes it. PR #3468 (TASK-38229, merged 2026-11-14) holds these six rows at their dev value in its painted gate on purpose (`TYPED_TEXT_ON_DEV` in `Tests/UI/test_theme_contrast.py`). Found by the Roleplay B2b follow-up burn-down (2026-11-07); evidence in `fu-caret-report.md`.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
