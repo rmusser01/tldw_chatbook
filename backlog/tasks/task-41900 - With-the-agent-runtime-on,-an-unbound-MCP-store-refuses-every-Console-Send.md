@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 20:31
-updated_date: 2026-11-19 18:17
+updated_date: 2026-11-19 18:34
 labels:
 - follow-up
 - console
@@ -74,4 +74,10 @@ Files: `tldw_chatbook/Agents/native_source_storage.py`, `Tests/UI/test_console_s
 **Review r17cn-rev1 (fix round 1).** The docstring of `test_inspector_keeps_the_unbound_reason_when_the_kill_switch_is_on` said a Send never reads the kill switch for an unbound store; with the agent runtime on, its tools now do. It now says the row's reason comes from the store's binding, which wins over any kill-switch read a Send makes.
 
 **Review r17cn-rev3 (fix round 3).** The new `[*-agent]` ordinary sends left their turn's receipt unseen in the shared bootstrap database: the reply text showed before the receipt was marked seen, and the test closed the app. A later app in the same process then announced it ("A Console turn completed while hidden."), and that failed `test_unbound_store_with_a_replaced_mcp_reader_is_still_refused` in 1 of 5 combined `-n 4` runs. Each ordinary send now waits for its own receipts to be seen (`_wait_for_own_receipts_seen`). The replaced-reader test also marks any receipt leaked by an earlier test seen before mounting (`_acknowledge_leaked_receipts`). TASK-41904's notes have the runs.
+
+**Review r17cn-rev4 (fix round 4).**
+- The problem: in 1 of 5 combined `-n 4` runs, `[bound-agent]` and `[non-default-data-dir-agent]` failed with "no reply". An agent turn under I/O load took about 4.5 s from press to reply. The shared `_wait_for_reply` allows about 4 s (80 x 0.05 s).
+- The ordinary-send test now uses a local `_wait_for_saved_reply`. It waits on a 30 s monotonic deadline and returns as soon as the reply is saved in the store or shown. The shared helper is unchanged.
+- A missing reply still fails, bounded, with the notices printed. Negative control, temporary: waiting for a reply that never arrives failed after 34 s with "no reply; notices: []".
+- Runs: the combined `-n 4` set passed 5 of 5, 22 tests each, at load 12-13. Preflight passed.
 

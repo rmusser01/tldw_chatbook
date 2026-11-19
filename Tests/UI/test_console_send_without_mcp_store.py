@@ -23,6 +23,7 @@ Console default). Unbound, the turn's native sources refused it with
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -41,6 +42,7 @@ from Tests.UI.test_console_send_admission_off_pump import _record_notices
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
+    _visible_text,
 )
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Agents import native_source_storage
@@ -138,6 +140,32 @@ async def _wait_for_own_receipts_seen(console, pilot) -> None:
     assert unseen() == []
 
 
+async def _wait_for_saved_reply(console, pilot, reply: str = "accepted") -> None:
+    """Wait up to 30 s for ``reply`` to be saved or shown.
+
+    An agent-runtime turn took about 4.5 s from press to reply under I/O
+    load, past the shared ``_wait_for_reply``'s 4 s (TASK-41900 review).
+    """
+    from tldw_chatbook.Chat.console_display_state import QUEUE_REASON_PREPARING
+
+    store = console._ensure_console_chat_store()
+
+    def arrived() -> bool:
+        saved = any(
+            m.role is ConsoleMessageRole.ASSISTANT and m.content == reply
+            for m in store.messages_for_session(store.active_session_id)
+        )
+        return saved or reply in _visible_text(console).replace(
+            QUEUE_REASON_PREPARING, ""
+        )
+
+    deadline = time.monotonic() + 30
+    while not arrived():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"Reply not found: {reply!r}")
+        await pilot.pause(0.05)
+
+
 def _turn_on_agent_runtime(app, monkeypatch) -> list:
     """Run the agent runtime (the builder turns it off) and record its sources."""
     assert config_module.save_setting_to_cli_config("console", "agent_runtime", True)
@@ -185,7 +213,7 @@ async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
         composer.load_draft("hello without mcp")
         console.query_one("#console-send-message", Button).press()
         try:
-            await _wait_for_reply(console, pilot)
+            await _wait_for_saved_reply(console, pilot)
         except AssertionError:
             raise AssertionError(f"no reply; notices: {notices}") from None
         await _wait_for_own_receipts_seen(console, pilot)
