@@ -1801,7 +1801,11 @@ marked Failed, and the fleet section reads **Paused: context limit. Results
 saved. Run /compact to continue.** Compacting the chat (`/compact`, **Compact now**, or `/rewind` ▸
 **Summarize**) lets the wake go on; so does switching **When limit nears** to
 Automatic or Off, the next time anything in Console settles (for example
-after your next message). See
+after your next message). The time the agent waits here does not count
+toward its automatic-work time limit (`[agents] max_autowake_wall_seconds`,
+900 seconds by default, counted from its first automatic turn), so compacting
+long after the pause still lets it go on with the time it had left. Other
+waits, such as an approval card, still count. See
 [When a chat reaches its context limit](context-and-rag.md#when-a-chat-reaches-its-context-limit).
 
 **Exactly-once, by ledger.** Every sub-agent run has a durable
