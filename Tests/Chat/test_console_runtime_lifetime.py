@@ -887,6 +887,69 @@ async def test_approval_round_requested_after_the_app_exited_is_refused_promptly
     _assert_refused_unanswered(worker, box, controller)
 
 
+def _runtime_owned_controller(app, view: _View | None = None):
+    """The private-child shape: the runtime hands the controller its App."""
+    store = ConsoleChatStore()
+    viewed = store.ensure_session()
+    controller = ConsoleChatController(store=store, provider_gateway=_StalledGateway())
+    controller.mcp_approval_timeout_seconds = lambda: 0.0  # ADR-314: no deadline
+    runtime = ConsoleRuntime(app=app)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    assert controller.app is app
+    if view is not None:
+        view.attachment_generation = runtime.attach_view(view)
+        runtime.finish_view_reconciliation(view, view.attachment_generation)
+    return controller, store, viewed
+
+
+@pytest.mark.asyncio
+async def test_runtime_round_with_a_never_run_app_and_no_view_is_refused_promptly():
+    """The runtime router (no answerable view) is what the planning child had."""
+    from textual.app import App
+
+    controller, _store, viewed = _runtime_owned_controller(App())
+
+    worker, box = _request_round_in_thread(controller, viewed.id)
+    await asyncio.to_thread(worker.join, 10)
+
+    _assert_refused_unanswered(worker, box, controller)
+
+
+@pytest.mark.asyncio
+async def test_never_run_app_round_stays_pending_while_a_view_can_answer():
+    """An answerable view keeps the round live (harnesses pair one with a
+    never-run TldwCli as controller.app); only an explicit answer settles it."""
+    from textual.app import App
+
+    controller, store, _viewed = _runtime_owned_controller(App(), _View())
+    background = store.create_session(title="Background", activate=False)
+
+    worker, box = _request_round_in_thread(controller, background.id)
+    try:
+        assert await _wait_until(lambda: controller._pending_approval_rounds)
+        await asyncio.sleep(2.5 * controller._interrupt_host.POLL_SECONDS)
+        assert worker.is_alive(), "the round settled with a view still answerable"
+        (round_id,) = controller._pending_approval_rounds
+    finally:
+        for pending in list(controller._pending_approval_rounds):
+            controller.resolve_pending_approval({"write_file": "deny"}, round_id=pending)
+        await asyncio.to_thread(worker.join, 10)
+
+    assert not worker.is_alive()
+    assert box["decisions"] == {"write_file": "deny"}
+    assert box["decisions"].unresolved_keys == frozenset()
+
+
+async def _wait_until(condition, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        await asyncio.sleep(0.05)
+    return bool(condition())
+
+
 # -- the owner ruling: a wake turn is NOT a user turn ----------------------
 
 

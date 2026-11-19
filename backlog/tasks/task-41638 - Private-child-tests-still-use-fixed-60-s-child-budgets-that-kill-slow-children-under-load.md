@@ -65,4 +65,6 @@ ADR required: no (test budgets only).
 - Persona negatives, both node functions run serially: 19 passed in 465 s at load ~45 (module fixture included).
 
 Files (12): `Tests/Chat/{test_workflow_pause_partial_native,test_workflow_phase_wave_native,workflow_wave_archive,test_console_ssh_custody}.py`, `Tests/Backup_Recovery/{test_created_persona_subtree_rollback,test_first_replacement_binding,test_compound_chat_source_lifetimes}.py`, `Tests/Workspaces/test_project_index_detached_cleanup.py`, `Tests/RAG/test_state_paths.py`, `Tests/Library/test_library_prompt_evidence_driver.py`, `Tests/DB/test_chachanotes_bare_open_self_migration.py`, `Tests/TTS/test_profile_reference_storage.py`.
+
+Review round (2026-11-19): the negative nodes' pytest-timeout raised 3600 -> 4200 so it sits above the fixture's five 600 s child caps plus the node's own 600 s child; the child's TimeoutExpired (with its log) now fires first.
 <!-- SECTION:NOTES:END -->
