@@ -205,7 +205,8 @@ async def test_refresh_error_survives_partial_dom_removal():
         await release.wait()
         raise ValueError("review unavailable")
 
-    screen = status_screen(SimpleNamespace(service=SimpleNamespace(), get=get))
+    # The detail view reads through coordinator.view (TASK-41645).
+    screen = status_screen(SimpleNamespace(service=SimpleNamespace(), view=get))
     async with mounted(screen):
         screen._reading = screen._read_again = True
         task = asyncio.create_task(screen._refresh())

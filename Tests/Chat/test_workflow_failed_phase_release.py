@@ -52,11 +52,20 @@ def test_ownership_error_in_a_phase_keeps_a_claim_it_does_not_own(tmp_path):
     _run(tmp_path, "ownership_error", "native", script=_SCRIPT, timeout=180)
 
 
-def test_open_unlaunched_preparation_is_reconciled_without_effects(tmp_path):
+def test_phase_failing_before_launch_returns_its_chat_without_reconcile(tmp_path):
     """A phase that failed after preparing task-1 but before launching it kept
-    the run retained: the open preparation counted as live work, so reconcile
-    refused with `workflow_resources_still_live` and the chat stayed held until
-    restart (TASK-41320). Reconcile now closes that never-launched preparation
+    the run retained: the driver's failure handler counted the open preparation
+    as live work, so only a reconcile released the chat (TASK-41646). The
+    handler now closes that never-launched preparation itself, and the phase
+    retires as a resumable failed phase, as `blocked_phase` does."""
+    _run(tmp_path, "failed_before_launch", "native", script=_SCRIPT, timeout=180)
+
+
+def test_open_unlaunched_preparation_is_reconciled_without_effects(tmp_path):
+    """A retained run whose wave call was cancelled after preparing task-1 but
+    before launching it kept that preparation open: it counted as live work, so
+    reconcile refused with `workflow_resources_still_live` and the chat stayed
+    held until restart (TASK-41320). Reconcile now closes that never-launched preparation
     without launching or dispatching anything, records the review, and returns
     the chat's claim. A stale revision is refused before anything closes.
 
@@ -68,8 +77,51 @@ def test_open_unlaunched_preparation_is_reconciled_without_effects(tmp_path):
 def test_unproven_control_return_is_released_only_by_restart(tmp_path):
     """A Stop whose worker returned but whose outcome is unproven keeps the
     chat until restart. Reconcile says so with `workflow_return_unproven`
-    instead of "still live, wait", and records nothing (TASK-41320)."""
+    instead of "still live, wait", and records nothing (TASK-41320). A plain
+    refusal by the phase is proven and is not that case (TASK-41645); here the
+    control's storage handle does not return."""
     _run(tmp_path, "unproven_control", "native", script=_SCRIPT, timeout=180)
+
+
+def test_a_refusal_after_a_stored_decision_stays_unknown(tmp_path):
+    """The phase's refusal counts as a refusal only when no decision was
+    stored: a Stop whose decision committed before the phase raised keeps the
+    chat until restart (TASK-41645)."""
+    _run(tmp_path, "refusal_after_decision", "native", script=_SCRIPT, timeout=180)
+
+
+def test_stop_racing_the_end_of_a_phase_is_a_refusal(tmp_path):
+    """Stop passed its revision check, then the phase it targeted retired and
+    refused it with `workflow_authority_changed`. That ordinary refusal was
+    recorded as an unknown control, so the finished phase kept its chat until
+    restart. A refusal whose worker returned, with no decision stored, storage
+    returned and sources current, is now just a refusal: the phase releases
+    its chat and a new turn is accepted (TASK-41645)."""
+    _run(tmp_path, "stop_races_phase_end", "native", script=_SCRIPT, timeout=180)
+
+
+def test_detail_view_stops_a_running_phase_under_an_unproven_read(tmp_path):
+    """Under the unproven-read marker the workflow detail view could not read
+    its workflow, so every button stayed disabled and Stop was unreachable.
+    The view now reads saved state through the service path the commands use;
+    its Stop button stops the running phase and says it was applied
+    (TASK-41645)."""
+    _run(tmp_path, "detail_stop_under_unproven_read", "native", script=_SCRIPT, timeout=240)
+
+
+def test_a_failing_close_in_the_failure_handler_keeps_the_original_failure(tmp_path):
+    """The driver's failure handler closes never-launched preparations; a close
+    that raises must not replace the original failure and push the phase down
+    the "did not retire normally" path (a held chat). The live-resource check
+    still decides custody (TASK-41645 review)."""
+    _run(tmp_path, "close_raises_in_failure_handler", "native", script=_SCRIPT, timeout=180)
+
+
+def test_detail_view_under_the_marker_refuses_a_closing_or_stale_read(tmp_path):
+    """`view` under the unproven-read marker skipped `get`'s closing check and
+    its monotonic floor; a screen left open while the coordinator closed could
+    render saved state with live Stop buttons (TASK-41645 review)."""
+    _run(tmp_path, "view_refuses_closing_and_stale", "native", script=_SCRIPT, timeout=180)
 
 
 def test_unproven_final_metadata_read_is_released_only_by_restart(tmp_path):
@@ -89,6 +141,25 @@ def test_an_earlier_unproven_metadata_read_keeps_the_chat_until_restart(tmp_path
     unproven already carries that reason, and another chat's detail view names
     a restart without saying that chat is held."""
     _run(tmp_path, "unproven_earlier_read", "native", script=_SCRIPT, timeout=180)
+
+
+def test_stop_under_an_unproven_read_applies_and_says_so(tmp_path):
+    """Another chat's workflow read lost a storage handle, which leaves the
+    coordinator's unproven-read marker. Stop on a running phase then took
+    effect, but its trailing read-back was refused, so Stop reported plain
+    `workflow_return_unproven` for an action it had applied (TASK-41647). It
+    now reports `workflow_command_applied`, and the Console says Stop was
+    applied and names a restart for the view."""
+    _run(tmp_path, "stop_under_unproven_read", "native", script=_SCRIPT, timeout=180)
+
+
+def test_unproven_read_refuses_approve_but_stop_still_applies(tmp_path):
+    """Under the unproven-read marker an approved phase claimed the chat and
+    ran, yet could never publish its terminal state, so it held the chat
+    until restart. Approve (like Start and Revise) now refuses with
+    `workflow_return_unproven` before any effect, while Stop, which needs no
+    proven read, still applies (TASK-41645, ADR-285)."""
+    _run(tmp_path, "approve_under_unproven_read", "native", script=_SCRIPT, timeout=180)
 
 
 async def _started(rig):
@@ -421,25 +492,73 @@ async def ownership_error(tmp_path):
         await rig.close()
 
 
-async def _retained_unlaunched(rig):
-    """Fail the phase after task-1 is prepared, before any wave binds it."""
+async def _failed_before_launch(rig, error, *, on_prepared=None):
+    """The wave call raises `error` after task-1 is prepared, before any wave
+    binds it; returns once the phase driver has finished."""
     import asyncio
 
     from tldw_chatbook.Chat import console_workflow_wave
 
+    prepared = []
+
     async def refused_before_launch(phase, selected, **kwargs):
-        raise RuntimeError("wave refused before launch")
+        prepared.extend(selected)
+        if on_prepared is not None:
+            on_prepared(selected)
+        raise error
 
     decision = await _started(rig)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(console_workflow_wave, "run_workflow_wave", refused_before_launch)
         await rig.coordinator.approve(decision, command_id="approved-once")
         run = rig.coordinator._runs[rig.workflow.id]
-        await asyncio.wait_for(asyncio.shield(run.driver), 60)
-    # task-1 is prepared and was never enrolled in a wave or launched.
-    (item,) = run.preparations.values()
-    assert item in rig.runtime._workflow_preparations and not item._closed
+        await asyncio.wait({run.driver}, timeout=60)
+    assert run.driver.done()
+    # task-1 was prepared and never enrolled in a wave or launched.
+    (item,) = prepared
     assert item._wave is None and not item.authorization._native_launch
+    return run, item
+
+
+async def failed_before_launch(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    session_id = "workflow-test-chat"
+    try:
+        run, item = await _failed_before_launch(
+            rig, RuntimeError("wave refused before launch")
+        )
+        # The driver closed the preparation itself, without effects.
+        assert item._closed and item not in rig.runtime._workflow_preparations
+        assert not item.authorization._native_launch
+        assert [key for key, _ in rig.provider.calls] == ["planning"]
+        assert not rig.runtime.execution_capacity.snapshot().executions
+        assert rig.workflow.id not in rig.coordinator._runs
+        assert not [key for key in rig.coordinator._commands if key[0] == "reconcile"]
+        # The same resumable failed phase as `blocked_phase`.
+        assert (await rig.coordinator.get(rig.workflow.id)).status == "paused"
+        sent = await rig.controller.submit_draft(
+            "A new turn after the failed phase", session_id=session_id
+        )
+        assert sent.accepted, sent
+        stream = rig.controller._active_stream_tasks.get(session_id)
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
+    finally:
+        await rig.close()
+
+
+async def _retained_unlaunched(rig):
+    """A cancelled wave call leaves task-1's preparation open in a retained
+    run: the driver's failure handler takes ordinary exceptions only."""
+    import asyncio
+
+    run, item = await _failed_before_launch(rig, asyncio.CancelledError())
+    assert item in run.preparations.values()
+    assert item in rig.runtime._workflow_preparations and not item._closed
     assert rig.coordinator._runs.get(rig.workflow.id) is run
     assert not (
         await rig.controller.submit_draft("Still held", session_id="workflow-test-chat")
@@ -541,8 +660,14 @@ async def _close_unresolved(rig, reason):
 
 
 async def unproven_control(tmp_path):
+    import contextlib
+
     from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+        preparation_read_for,
+    )
+    from tldw_chatbook.Chat import console_workflow_runs
 
     rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
     try:
@@ -551,11 +676,34 @@ async def unproven_control(tmp_path):
         def refused(decision=None, *, expected_control_revision=None):
             raise AutomaticWorkRefused("workflow_authority_changed")
 
+        storage_return = console_workflow_runs._remaining_storage_return
+
+        @contextlib.contextmanager
+        def control_handle_lost(databases):
+            read = preparation_read_for(rig.controller)
+            try:
+                with storage_return(databases):
+                    yield
+            finally:  # As the real check does, even when the control raised.
+                if read is not None and read.source is run.phase:
+                    raise RuntimeError("original source database handle did not return")
+
         current = await rig.service.call(rig.service.get, rig.workflow.id)
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(run.phase, "_control", refused)
-            with pytest.raises(RuntimeError, match="control worker return unproven"):
+            # A plain refusal is proven (TASK-41645): nothing is retained.
+            with pytest.raises(AutomaticWorkRefused, match="workflow_authority_changed"):
                 await rig.coordinator.stop(
+                    rig.workflow.id, expected_control_revision=current.control_revision
+                )
+            assert not run.control_unknown and run.control_return.is_set()
+            # A refusal whose storage handle did not return is unknown. (Pause:
+            # a repeated Stop at this revision replays the recorded command.)
+            patch.setattr(
+                console_workflow_runs, "_remaining_storage_return", control_handle_lost
+            )
+            with pytest.raises(RuntimeError, match="control reader return unproven"):
+                await rig.coordinator.pause(
                     rig.workflow.id, expected_control_revision=current.control_revision
                 )
         # The control's worker returned; its outcome stays unproven.
@@ -647,12 +795,10 @@ async def unproven_final_read(tmp_path):
                 "Still held", session_id="workflow-test-chat"
             )
         ).accepted
-        # The detail view reads through coordinator.get, which the marker
-        # refuses: it names a restart and does not offer a refresh.
+        # The detail view reads saved state under the marker (TASK-41645): it
+        # renders, names a restart and does not offer a refresh.
         notice = await _detail_notice(rig)
-        assert (
-            "Restart Chatbook to read workflows again and release held chats" in notice
-        ), notice
+        assert "Restart Chatbook to approve or revise work" in notice, notice
         assert "Refresh" not in notice, notice
     finally:
         await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
@@ -687,7 +833,7 @@ async def _detail_notice(rig, conversation_id=None, workflow_id=None):
     def notice():
         found = status.query("#workflow-notice") if status.is_mounted else ()
         text = str(found.first().content) if found else ""
-        return text if "unavailable" in text else ""
+        return text if "unavailable" in text or "Restart Chatbook" in text else ""
 
     async with Host().run_test(size=(140, 42)) as pilot:
         async with asyncio.timeout(30):
@@ -740,10 +886,10 @@ async def unproven_earlier_read(tmp_path):
         assert [f.result() for f in rig.coordinator._metadata_cells.values()] == [False]
         _restart_only(await _refused(rig, "workflow_return_unproven", "reconcile-read"))
         assert not item._closed and item in rig.runtime._workflow_preparations
-        # The marker refuses every workflow's reads, so another chat's view
-        # names a restart without claiming that chat is held.
+        # The marker covers every workflow, so another chat's view names a
+        # restart without claiming that chat is held.
         notice = await _detail_notice(rig, "other", other.id)
-        assert "Restart Chatbook to read workflows again" in notice, notice
+        assert "Restart Chatbook to approve or revise work" in notice, notice
         assert "this chat" not in notice, notice
         assert rig.coordinator._runs.get(rig.workflow.id) is run
         assert not (
@@ -751,6 +897,282 @@ async def unproven_earlier_read(tmp_path):
                 "Still held", session_id="workflow-test-chat"
             )
         ).accepted
+    finally:
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
+
+
+async def _unproven_other_read(rig):
+    """Another chat's workflow read loses a storage handle: the coordinator's
+    unproven-read marker is set without touching this workflow's run."""
+    import asyncio
+    import contextlib
+
+    from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
+    from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+        preparation_read_for,
+    )
+    from tldw_chatbook.Chat import console_workflow_runs
+
+    with owned_goal_storage(rig.service):
+        other = rig.service.db.workflow_runs.create(
+            rig.workflow.request.model_copy(update={"conversation_id": "other"}),
+            launch_id="other-chat-workflow",
+        )
+    storage_return = console_workflow_runs._remaining_storage_return
+    reader = []
+
+    @contextlib.contextmanager
+    def handle_lost(databases):
+        read = preparation_read_for(rig.controller)
+        with storage_return(databases):
+            yield
+        if read is not None and read.task in reader:  # Only that read.
+            raise RuntimeError("original source database handle did not return")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(console_workflow_runs, "_remaining_storage_return", handle_lost)
+        reader.append(asyncio.create_task(rig.coordinator.get(other.id)))
+        with pytest.raises(RuntimeError, match="workflow_return_unproven"):
+            await reader[0]
+    assert rig.coordinator._metadata_unproven()
+
+
+async def _held_at_wave(rig, gate):
+    """Approve phase-1 and hold its running driver at the wave call, with
+    task-1 prepared, until `gate` is set; then the real wave runs."""
+    import asyncio
+
+    from tldw_chatbook.Chat import console_workflow_wave
+
+    original = console_workflow_wave.run_workflow_wave
+    entered = asyncio.Event()
+
+    async def gated(phase, selected, **kwargs):
+        entered.set()
+        await gate.wait()
+        return await original(phase, selected, **kwargs)
+
+    decision = await _started(rig)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(console_workflow_wave, "run_workflow_wave", gated)
+        await rig.coordinator.approve(decision, command_id="approved-once")
+        run = rig.coordinator._runs[rig.workflow.id]
+        await asyncio.wait_for(entered.wait(), 60)
+    return run
+
+
+async def stop_under_unproven_read(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.UI.Console_Modules.workflows import workflow_view_error
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    gate = asyncio.Event()
+    try:
+        run = await _held_at_wave(rig, gate)
+        await _unproven_other_read(rig)
+        running = await rig.service.call(rig.service.get, rig.workflow.id)
+        assert not run.driver.done() and run.control is None  # Still running.
+        with pytest.raises(RuntimeError) as applied:
+            await rig.coordinator.stop(
+                rig.workflow.id, expected_control_revision=running.control_revision
+            )
+        assert applied.value.args == ("workflow_command_applied",), applied.value
+        assert applied.value.__cause__.args == ("workflow_return_unproven",)
+        # Stop took effect: the phase is revoked and the stop is stored.
+        assert run.control == "stop"
+        stopped = await rig.service.call(rig.service.get, rig.workflow.id)
+        assert stopped.status == "stopped", stopped.status
+        assert stopped.control_revision > running.control_revision
+        message = workflow_view_error("Stop", applied.value)
+        assert message.startswith("Stop applied"), message
+        assert "Restart Chatbook to read workflows again" in message, message
+        # A read-back that failed for another reason offers a refresh.
+        other = workflow_view_error("Pause", RuntimeError("workflow_command_applied"))
+        assert other.startswith("Pause applied") and "Refresh to read" in other
+        gate.set()
+        await asyncio.wait({run.driver}, timeout=60)
+        assert run.driver.done()
+        assert [key for key, _ in rig.provider.calls] == ["planning"]
+    finally:
+        gate.set()
+        # The marker stays until restart (TASK-41320).
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
+
+
+async def detail_stop_under_unproven_read(tmp_path):
+    import asyncio
+
+    from textual.app import App
+    from textual.widgets import Button
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Widgets.Console.console_workflow_status import (
+        ConsoleWorkflowStatus,
+    )
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    gate = asyncio.Event()
+    try:
+        run = await _held_at_wave(rig, gate)
+        await _unproven_other_read(rig)
+        # The real detail view over the real coordinator, in a bare host (see
+        # `_detail_notice`).
+        status = ConsoleWorkflowStatus(
+            rig.coordinator,
+            rig.workflow.request.conversation_id,
+            rig.workflow.id,
+            open_changes=lambda *args: None,
+            open_fleet=lambda *args: None,
+            pending_approvals=lambda *args: False,
+            open_approval=lambda *args: None,
+        )
+
+        class Host(App):
+            def on_mount(self):
+                self.push_screen(status)
+
+        def button(name):
+            return status.query_one("#workflow-" + name, Button)
+
+        def notice():
+            return str(status.query_one("#workflow-notice").content)
+
+        async with Host().run_test(size=(140, 42)) as pilot:
+
+            async def until(check):
+                async with asyncio.timeout(60):
+                    while not (status.is_mounted and check()):
+                        await pilot.pause(0.05)
+
+            await until(lambda: status.snapshot is not None and not button("stop").disabled)
+            assert status.snapshot.status == "running", status.snapshot.status
+            assert "Restart Chatbook to approve or revise work" in notice(), notice()
+            button("stop").press()
+            await until(lambda: status._action_notice.startswith("Stop applied"))
+            await until(lambda: not status._sending and not status._reading)
+            assert "Stop applied" in notice(), notice()
+        # The Stop took effect: the phase is revoked and the stop is stored.
+        assert run.control == "stop"
+        stored = await rig.service.call(rig.service.get, rig.workflow.id)
+        assert stored.status == "stopped", stored.status
+        gate.set()
+        await asyncio.wait({run.driver}, timeout=60)
+        assert [key for key, _ in rig.provider.calls] == ["planning"]
+    finally:
+        gate.set()
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
+
+
+async def refusal_after_decision(tmp_path):
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    try:
+        run, item = await _retained_unlaunched(rig)
+        original = run.phase._control
+
+        def stored_then_refused(decision=None, *, expected_control_revision=None):
+            original(decision, expected_control_revision=expected_control_revision)
+            raise AutomaticWorkRefused("workflow_authority_changed")
+
+        current = await rig.service.call(rig.service.get, rig.workflow.id)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(run.phase, "_control", stored_then_refused)
+            with pytest.raises(RuntimeError, match="control refusal unproven"):
+                await rig.coordinator.stop(
+                    rig.workflow.id, expected_control_revision=current.control_revision
+                )
+        assert run.control_unknown and run.control_return.is_set()
+        stored = await rig.service.call(rig.service.get, rig.workflow.id)
+        assert stored.status == "stopped", stored.status  # The decision is stored.
+        _restart_only(
+            await _refused(rig, "workflow_return_unproven", "reconcile-control")
+        )
+    finally:
+        await _close_unresolved(rig, "workflow_original_shutdown_unresolved")
+
+
+async def stop_races_phase_end(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    session_id = "workflow-test-chat"
+    coordinator = rig.coordinator
+    publish = coordinator._publish
+    at_release, resume = asyncio.Event(), asyncio.Event()
+
+    async def held_terminal(workflow_id, *, _terminal_run=None):
+        # The phase has settled and retired; hold its driver before release.
+        if _terminal_run is not None:
+            at_release.set()
+            await resume.wait()
+        return await publish(workflow_id, _terminal_run=_terminal_run)
+
+    try:
+        decision = await _started(rig)
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(coordinator, "_publish", held_terminal)
+            await coordinator.approve(decision, command_id="approved-once")
+            run = coordinator._runs[rig.workflow.id]
+            try:
+                await asyncio.wait_for(at_release.wait(), 60)
+                assert run.phase._retired
+                current = await rig.service.call(rig.service.get, rig.workflow.id)
+                # Stop passes its revision check; the retired phase refuses it.
+                with pytest.raises(
+                    AutomaticWorkRefused, match="workflow_authority_changed"
+                ):
+                    await coordinator.stop(
+                        rig.workflow.id,
+                        expected_control_revision=current.control_revision,
+                    )
+                assert not run.control_unknown and run.control_return.is_set()
+                assert run.control is None and run.status != "recovery_required"
+            finally:
+                resume.set()
+            await asyncio.wait({run.driver}, timeout=60)
+        assert run.driver.done() and rig.workflow.id not in coordinator._runs
+        sent = await rig.controller.submit_draft(
+            "A new turn after the refused Stop", session_id=session_id
+        )
+        assert sent.accepted, sent
+        stream = rig.controller._active_stream_tasks.get(session_id)
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
+    finally:
+        await rig.close()
+
+
+async def approve_under_unproven_read(tmp_path):
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    session_id = "workflow-test-chat"
+    try:
+        decision = await _started(rig)
+        await _unproven_other_read(rig)
+        stored = await rig.service.call(rig.service.get, rig.workflow.id)
+        # Refused: its driver could not release the chat under the marker.
+        with pytest.raises(ValueError, match="^workflow_return_unproven$"):
+            await rig.coordinator.approve(decision, command_id="approve-under-marker")
+        assert rig.workflow.id not in rig.coordinator._runs
+        wake = rig.controller._fleet_wake
+        assert session_id not in wake._automatic_primary_claims
+        assert await rig.service.call(rig.service.get, rig.workflow.id) == stored
+        assert [key for key, _ in rig.provider.calls] == ["planning"]
+        # Allowed: Stop needs no proven read, so it still applies.
+        with pytest.raises(RuntimeError, match="^workflow_command_applied$"):
+            await rig.coordinator.stop(
+                rig.workflow.id, expected_control_revision=stored.control_revision
+            )
+        stopped = await rig.service.call(rig.service.get, rig.workflow.id)
+        assert stopped.status == "stopped", stopped.status
     finally:
         await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")
 
@@ -830,3 +1252,75 @@ async def finalize_during_record(tmp_path):
         rig.provider_release()
         await asyncio.wait_for(asyncio.gather(*waves, return_exceptions=True), 60)
         await rig.close()
+
+
+async def close_raises_in_failure_handler(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    session_id = "workflow-test-chat"
+    closes = []
+
+    def break_first_close(selected):
+        for item in selected:
+            real = item.close
+
+            async def close(real=real):
+                closes.append(1)
+                await real()
+                if len(closes) == 1:
+                    # Closed, then refused its own bookkeeping: benign.
+                    raise PermissionError("launch in flight")
+
+            item.close = close
+
+    try:
+        run, item = await _failed_before_launch(
+            rig, RuntimeError("wave refused before launch"), on_prepared=break_first_close
+        )
+        assert closes and run.status != "recovery_required"
+        assert (await rig.coordinator.get(rig.workflow.id)).status == "paused"
+        sent = await rig.controller.submit_draft(
+            "A new turn after the failed phase", session_id=session_id
+        )
+        assert sent.accepted, sent
+        stream = rig.controller._active_stream_tasks.get(session_id)
+        if stream is not None:
+            await asyncio.wait_for(asyncio.shield(stream), 15)
+    finally:
+        await rig.close()
+
+
+async def view_refuses_closing_and_stale(tmp_path):
+    import asyncio
+
+    from Tests.Chat.workflow_rig import WorkflowProvider, build_workflow_rig
+
+    rig = await build_workflow_rig(tmp_path, None, WorkflowProvider())
+    gate = asyncio.Event()
+    coordinator = rig.coordinator
+    try:
+        await _held_at_wave(rig, gate)
+        await _unproven_other_read(rig)
+        assert coordinator.reads_unproven
+        shown = await coordinator.view(rig.workflow.id)
+        # A snapshot older than what this coordinator already published.
+        coordinator._metadata_floor[rig.workflow.id] = (
+            shown.control_revision + 5,
+            shown.progress_cursor + 5,
+        )
+        with pytest.raises(ValueError, match="workflow_snapshot_superseded"):
+            await coordinator.view(rig.workflow.id)
+        coordinator._metadata_floor.pop(rig.workflow.id)
+        assert (await coordinator.view(rig.workflow.id)).id == shown.id
+        coordinator._closing = True
+        try:
+            with pytest.raises(RuntimeError, match="workflow coordinator closed"):
+                await coordinator.view(rig.workflow.id)
+        finally:
+            coordinator._closing = False
+    finally:
+        gate.set()
+        await _close_unresolved(rig, "workflow_original_metadata_shutdown_unresolved")

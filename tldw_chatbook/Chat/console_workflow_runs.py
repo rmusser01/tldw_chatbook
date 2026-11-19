@@ -880,6 +880,16 @@ class ConsoleWorkflowCoordinator:
             for future in self._metadata_cells.values()
         )
 
+    def _refuse_new_driver_if_unproven(self):
+        """Refuse Start, Approve and Revise under the unproven-read marker.
+
+        TASK-41645 (ADR-285): their new driver returns its chat only through a
+        proven terminal metadata read, which the marker refuses until restart,
+        so the work would run and then hold the chat. Refused before any effect.
+        """
+        if self._metadata_unproven():
+            raise ValueError("workflow_return_unproven")
+
     def _metadata_lower_bound(self, snapshot):
         current = self._metadata_floor.get(snapshot.id, (0, 0))
         self._metadata_floor[snapshot.id] = (
@@ -1131,6 +1141,68 @@ class ConsoleWorkflowCoordinator:
         ):
             return full.model_copy(update={"status": view.status})
 
+    @property
+    def reads_unproven(self) -> bool:
+        """The unproven-read marker is set; it stays until restart (ADR-285)."""
+        return self._metadata_unproven()
+
+    async def view(self, workflow_id: str) -> WorkflowSnapshot:
+        """The detail view's read of one workflow.
+
+        TASK-41645 (ADR-285): under the unproven-read marker, ``get`` refuses,
+        so this reads saved state through the service calls commands already
+        use, with the same runtime status, so the controls that need no proven
+        read stay reachable.
+        """
+        if self._closing:
+            raise RuntimeError("workflow coordinator closed")
+        if not self._metadata_unproven():
+            return await self.get(workflow_id)
+        _metadata_source(self)
+        controller, runtime, service = self.controller, self.runtime, self.service
+        bridge = controller._agent_bridge
+
+        def sources_unchanged():
+            # The identity checks `_metadata` makes that hold without a read cell.
+            if (
+                type(self) is not _COORDINATOR_CLASS
+                or controller.app.console_runtime is not runtime
+                or runtime.agent_bridge is not bridge
+                or controller.store is not bridge._store
+                or service.db is not bridge.runs_db
+                or self._closing
+            ):
+                raise PermissionError("workflow original metadata source changed")
+
+        sources_unchanged()
+        full = await self.service.call(self.service.get, workflow_id)
+        view = await self.service.call(self.service.runtime_snapshot, workflow_id)
+        if (view.control_revision, view.progress_cursor) != (
+            full.control_revision,
+            full.progress_cursor,
+        ):
+            raise ValueError("workflow_snapshot_superseded")
+        floor = self._metadata_floor.get(workflow_id, (0, 0))
+        if view.control_revision < floor[0] or view.progress_cursor < floor[1]:
+            raise ValueError("workflow_snapshot_superseded")
+        sources_unchanged()  # A close or source swap during the reads refuses the result.
+        run = self._runs.get(workflow_id)
+        status = run.status if run is not None and run.status is not None else view.status
+        return full.model_copy(update={"status": status})
+
+    async def _applied(self, workflow_id):
+        """Publish and read back a command that has already taken effect.
+
+        TASK-41647: a failed read-back cannot undo the command, so it raises
+        ``workflow_command_applied`` (chained from the cause), never a plain
+        failure. Cancellation still propagates as itself.
+        """
+        try:
+            await self._publish(workflow_id)
+            return await self.get(workflow_id)
+        except Exception as error:  # noqa: BLE001 - any read-back failure follows a change already made.
+            raise RuntimeError("workflow_command_applied") from error
+
     async def _command(self, key, identity, operation):
         import asyncio
 
@@ -1346,6 +1418,7 @@ class ConsoleWorkflowCoordinator:
         async def accept():
             import asyncio
 
+            self._refuse_new_driver_if_unproven()
             session, binding = self._selection(request)
             run = _WorkflowRun(
                 None,
@@ -1397,9 +1470,7 @@ class ConsoleWorkflowCoordinator:
             except BaseException:
                 run.status = "recovery_required"
                 raise
-            _metadata_source(self)
-            await self._publish(run.workflow_id)
-            return await self.get(run.workflow_id)
+            return await self._applied(run.workflow_id)
 
         return await self._command(
             ("start", launch_id), request.canonical_json(), accept
@@ -1571,11 +1642,10 @@ class ConsoleWorkflowCoordinator:
                 await self.service.call(
                     self.service.review_quality, decision, accepted=True
                 )
-                _metadata_source(self)
-                await self._publish(decision.workflow_id)
-                return await self.get(decision.workflow_id)
+                return await self._applied(decision.workflow_id)
             if decision.action != "approve":
                 raise ValueError("workflow_approval_required")
+            self._refuse_new_driver_if_unproven()
             snapshot = await self.service.call(self.service.get, decision.workflow_id)
             session, binding = self._selection(snapshot.request)
             if decision.workflow_id in self._runs:
@@ -1634,9 +1704,7 @@ class ConsoleWorkflowCoordinator:
             run.driver = asyncio.create_task(
                 self._execute(run), name="native-workflow-phase"
             )
-            _metadata_source(self)
-            await self._publish(run.workflow_id)
-            return await self.get(run.workflow_id)
+            return await self._applied(run.workflow_id)
 
         return await self._command(
             ("approve", command_id), decision.canonical_json(), accept
@@ -2123,6 +2191,15 @@ class ConsoleWorkflowCoordinator:
                 # TASK-40718: a failure that left no workflow work live retires
                 # below as a failed phase, so the chat gets its claim back.
                 # Settlement re-proves the return; live work keeps custody.
+                # TASK-41646: a never-launched preparation is not live work;
+                # close it here, as reconcile would (TASK-41320).
+                for item in self._unlaunched(run):
+                    try:
+                        await item.close()
+                    except Exception:  # noqa: BLE001 - a benign close failure must not replace the original failure; the live check below decides custody.
+                        logger.exception(
+                            "Never-launched workflow preparation did not close"
+                        )
                 if self.service._has_live_workflow_resources(run.workflow_id):
                     raise
                 logger.exception("Native workflow phase failed")
@@ -2214,6 +2291,18 @@ class ConsoleWorkflowCoordinator:
             raise PermissionError("original workflow run did not return")
         return binding
 
+    @staticmethod
+    def _unlaunched(run):
+        """Preparations never enrolled in a wave, so never launched (TASK-41320).
+
+        Read from runtime state; ``close()`` rechecks it under the task lock.
+        """
+        return [
+            item
+            for item in run.preparations.values()
+            if item._wave is None and not item.authorization._native_launch
+        ]
+
     def _notify_execution_release(self, binding):
         _execution_release_source(self, binding, released=True)
         runtime, wake, registry_lock = binding[5], binding[8], binding[11]
@@ -2250,7 +2339,7 @@ class ConsoleWorkflowCoordinator:
             service.persistence.db,
             service.persistence.workspace_registry.db,
         )
-        returned = []
+        returned, refused = [], []
         if (
             run.control_unknown
             or run.control_return is not None
@@ -2281,9 +2370,13 @@ class ConsoleWorkflowCoordinator:
         def controlled():
             with owned_goal_storage(service):
                 current()
-                return phase._control(
-                    decision, expected_control_revision=expected_control_revision
-                )
+                try:
+                    return phase._control(
+                        decision, expected_control_revision=expected_control_revision
+                    )
+                except AutomaticWorkRefused as refusal:
+                    refused.append(refusal)  # The phase's own refusal.
+                    raise
 
         def invoke():
             run.control_read = _capture_workflow_read(controller, phase, issuing)
@@ -2305,9 +2398,13 @@ class ConsoleWorkflowCoordinator:
             )
         except BaseException as caught:  # noqa: BLE001 - preserve cancellation separately from original return proof.
             error = caught
+        # TASK-41645 (ADR-285): an execution control the phase itself refused is
+        # a refusal when that same exception is the worker's whole outcome (no
+        # storage or guard exit replaced it) and no decision was stored.
+        refusal = refused[0] if refused and decision is not None else None
         try:
             current()
-            if run.control_read is None or not returned:
+            if run.control_read is None or not returned and refusal is None:
                 raise RuntimeError("workflow control worker return unproven")
             read, producer, retired = run.control_read
             if (
@@ -2318,20 +2415,30 @@ class ConsoleWorkflowCoordinator:
                 or read.retired is not retired
                 or not asyncio.Future.done(producer)
                 or asyncio.Future.cancelled(producer)
-                or asyncio.Future.exception(producer) is not None
+                or asyncio.Future.exception(producer) is not refusal
                 or not asyncio.Future.done(retired)
                 or asyncio.Future.cancelled(retired)
                 or asyncio.Future.result(retired) is not None
                 or error is not None
+                and error is not refusal
                 and not isinstance(error, asyncio.CancelledError)
             ):
                 raise RuntimeError("workflow control reader return unproven")
-            self._metadata_lower_bound(returned[0])
-            run.control = action
-            if run.status != "recovery_required":
-                run.status = "pausing" if action == "pause" else "stopping"
-            if run.wake is not None:
-                run.wake.set()
+            if refusal is not None:
+                # decision_recorded reads service.db; the phase's ledger must be
+                # the same database or "no decision stored" proves nothing.
+                if phase._ledger._db is not service.db:
+                    raise RuntimeError("workflow control refusal unproven")
+                if await service.call(service.decision_recorded, decision.id):
+                    raise RuntimeError("workflow control refusal unproven")
+                current()
+            else:
+                self._metadata_lower_bound(returned[0])
+                run.control = action
+                if run.status != "recovery_required":
+                    run.status = "pausing" if action == "pause" else "stopping"
+                if run.wake is not None:
+                    run.wake.set()
         except BaseException:
             run.control_unknown = True
             run.status = "recovery_required"
@@ -2340,6 +2447,8 @@ class ConsoleWorkflowCoordinator:
             control_return.set()
         if error is not None:
             raise error
+        if refusal is not None:
+            raise refusal
         return returned[0]
 
     async def _control(self, workflow_id, expected_control_revision, action):
@@ -2394,9 +2503,7 @@ class ConsoleWorkflowCoordinator:
                     run.control = action
                     if run.status != "recovery_required":
                         run.status = "pausing" if action == "pause" else "stopping"
-            _metadata_source(self)
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             (action, workflow_id, expected_control_revision), action, control
@@ -2428,9 +2535,7 @@ class ConsoleWorkflowCoordinator:
                 expected_control_revision=expected_control_revision,
                 command_id=command_id,
             )
-            _metadata_source(self)
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             ("resume", command_id), (workflow_id, expected_control_revision), resume
@@ -2471,13 +2576,7 @@ class ConsoleWorkflowCoordinator:
                         # TASK-41320 (ADR-285): the control returned unproven.
                         # An unproven read was refused above, before any change.
                         raise ValueError("workflow_return_unproven")
-                    # TASK-41320: never enrolled in a wave means never launched;
-                    # close() rechecks that under the task lock.
-                    unlaunched = [
-                        item
-                        for item in run.preparations.values()
-                        if item._wave is None and not item.authorization._native_launch
-                    ]
+                    unlaunched = self._unlaunched(run)
                     if unlaunched:
                         current = await self.service.call(self.service.get, workflow_id)
                         if current.control_revision != revision:
@@ -2511,8 +2610,7 @@ class ConsoleWorkflowCoordinator:
                 if run.prepared is None:
                     self._return_reviewed_admission(run)
                 self._runs.pop(workflow_id)
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             ("reconcile", command_id),
@@ -2531,8 +2629,7 @@ class ConsoleWorkflowCoordinator:
                 workflow_id,
                 expected_control_revision=expected_control_revision,
             )
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             ("remove", command_id), (workflow_id, expected_control_revision), remove
@@ -2554,6 +2651,7 @@ class ConsoleWorkflowCoordinator:
         async def revise():
             import asyncio
 
+            self._refuse_new_driver_if_unproven()
             if workflow_id in self._runs:
                 raise PermissionError("workflow original producer still active")
             snapshot = await self.service.call(self.service.get, workflow_id)
@@ -2611,9 +2709,7 @@ class ConsoleWorkflowCoordinator:
             except BaseException:
                 run.status = "recovery_required"
                 raise
-            _metadata_source(self)
-            await self._publish(workflow_id)
-            return await self.get(workflow_id)
+            return await self._applied(workflow_id)
 
         return await self._command(
             ("revise", command_id),

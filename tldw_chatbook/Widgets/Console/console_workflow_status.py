@@ -166,6 +166,13 @@ class ConsoleWorkflowHistory(SafeModalDismissMixin, ModalScreen[None]):
             return
 
 
+_UNPROVEN_NOTICE = (
+    "Chatbook could not confirm that a Pause, Stop or background check finished "
+    "cleanly. This view shows saved state. Restart Chatbook to approve or revise "
+    "work and release held chats."
+)
+
+
 class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
     """Present the exact chat/workflow and the decision prepared against its revision."""
 
@@ -360,7 +367,7 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                     self._read_again = False
                     try:
                         full = await self.reads.read(
-                            self.coordinator.get, self.workflow_id
+                            self.coordinator.view, self.workflow_id
                         )
                         if full.request.conversation_id != self.conversation_id:
                             raise PermissionError("Workflow belongs to another chat.")
@@ -384,7 +391,7 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                         )
                         if repair_required:
                             current = await self.reads.read(
-                                self.coordinator.get, self.workflow_id
+                                self.coordinator.view, self.workflow_id
                             )
                             if (
                                 current.status,
@@ -408,7 +415,10 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                         if self._can_render:
                             self.decision = None
                             self._disable_commands()
-                            self.query_one("#workflow-notice").update(message)
+                            # TASK-41647: keep "<Action> applied" visible.
+                            self.query_one("#workflow-notice").update(
+                                "\n".join(filter(None, (message, self._action_notice)))
+                            )
             finally:
                 self._reading = False
         except NoMatches:
@@ -589,6 +599,9 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
             or full.accounting.uncertain
             or full.status == "recovery_required"
         )
+        # TASK-41645: under the unproven-read marker, work that starts a new
+        # driver (Approve, Revise) waits for a restart; other controls work.
+        unproven = self.coordinator.reads_unproven
         quality = decision is not None and decision.action == "complete"
         first = (
             full.plans
@@ -633,6 +646,8 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
             btn.disabled = (
                 disabled
                 or not applicable
+                or unproven
+                and name in {"approve", "revise"}
                 or (
                     name in {"approve", "accept"}
                     and not (
@@ -668,6 +683,8 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
             if decision and not getattr(decision.evidence, "ready", False)
             else spent.pause_reason or ""
         )
+        if unproven:
+            reason = "\n".join(filter(None, (_UNPROVEN_NOTICE, reason)))
         self.query_one("#workflow-notice").update(
             "\n".join(filter(None, (reason, self._action_notice)))
         )
@@ -884,7 +901,7 @@ class ConsoleWorkflowStatus(SafeModalDismissMixin, ModalScreen[None]):
                     or not self._can_render
                 ):
                     return
-            current = await self.reads.read(self.coordinator.get, self.workflow_id)
+            current = await self.reads.read(self.coordinator.view, self.workflow_id)
             if (current.control_revision, current.status) != (expected, full.status):
                 raise ValueError("This review changed. Review the refreshed revision.")
             co = self.coordinator

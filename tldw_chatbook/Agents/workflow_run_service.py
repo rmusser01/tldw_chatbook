@@ -458,6 +458,7 @@ class WorkflowRunService:
             "remove_payloads",
             "record_returned_planning",
             "record_returned_execution",
+            "decision_recorded",
         }
         if (
             type(operation) is not MethodType
@@ -604,6 +605,17 @@ class WorkflowRunService:
             status=status,
             expected_control_revision=expected_control_revision,
         )
+
+    @goal_storage_operation
+    def decision_recorded(self, decision_id: str) -> bool:
+        """Whether this control decision was committed (TASK-41645)."""
+        with self.db.connection() as conn:
+            return (
+                conn.execute(
+                    "SELECT 1 FROM workflow_decisions WHERE id=?", (decision_id,)
+                ).fetchone()
+                is not None
+            )
 
     @goal_storage_operation
     def phase_task_ids(self, phase):
