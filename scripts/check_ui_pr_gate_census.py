@@ -1194,6 +1194,10 @@ MINIMUM_FILES = 2435
 # TASK-41711, TASK-41715 (2026-11-19): append two test_screen_navigation.py
 # nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2437
+# TASK-41715 review r17ls-rev2 (2026-11-19): append the two repaired
+# _focus_library_list_entry nodes at the tail. The floor is the measured
+# entry count.
+MINIMUM_FILES = 2439
 
 
 def read_census(path: Path) -> list[str]:

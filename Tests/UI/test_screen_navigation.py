@@ -4004,6 +4004,9 @@ def test_focus_library_list_entry_prefers_still_checked_row_in_select_mode():
     screen._media_state.select_mode = True
     screen._media_state.row_selection = selection
     screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b, row_c])
+    # BaseAppScreen.set_focus refuses a detached target (29a03afb5a); the
+    # fake rows are not in a DOM, so focus them directly, as the sibling does.
+    screen.set_focus = lambda target, **_kwargs: target.focus()
 
     screen._focus_library_list_entry()
 
@@ -4067,6 +4070,7 @@ def test_focus_library_list_entry_checked_row_preference_is_media_only():
     row_a = _FakeMediaRowButton("n1")
     row_b = _FakeMediaRowButton("n2")
     screen.query = lambda selector: _FakeMediaRowQuery([row_a, row_b])
+    screen.set_focus = lambda target, **_kwargs: target.focus()
 
     screen._focus_library_list_entry()
 
