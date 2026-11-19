@@ -157,7 +157,9 @@ decide:
   the agent's results keep waiting and stay readable in **View all runs**.
 
 If the chat is still over its trigger when the agent tries again, it pauses
-again; it never retries on its own. A goal run's iterations send the goal's
+again; it never retries on its own. However long the results wait, the wait
+does not count toward the agent's automatic-work time limit, so a `/compact`
+long after the pause does not stop the agent at **Paused: time limit**. A goal run's iterations send the goal's
 handoff instead of the chat's history, so the trigger does not apply to them.
 
 For plain-provider requests with measured inputs, you can see an estimated pause coming. Once the chat's history is over its trigger

@@ -1,5 +1,14 @@
 # Lessons: verifying against the real thing
 
+## A live "later wake held at Ask" needs the first wake delivered under Off, sizing from Next request minus overhead, and children that outlive their parent (TASK-33621.153, 2026-11-19)
+
+**Incident.** TASK-33621.153 needed a chain whose first wake is accepted and whose second wake pauses at the Ask compaction trigger. Three live rounds failed before one worked.
+- A delivered wake's System notice ends the chat's compactable units (TASK-33621.155). So a chat that is over the trigger only after the first wake gives NON_COMPACTABLE, and nothing is held. The real-controller rig showed the same: 12 turns after a delivered wake never produced a hold (decision NON_COMPACTABLE at up to 3,358 of 1,800 tokens). The history that /compact can summarize has to come before the first wake. The round that worked sent one long turn, ran the first wake under `compaction_mode = "off"`, then set **When limit nears** to Ask in Chat settings while the second child ran.
+- A 1,500-token custom budget looked ample, but the second wake ran unheld. Chat settings ▸ Context and memory showed **Next request** 11,765 tokens and **Request overhead** 10,665 (tool schemas 8,874), so the history the trigger counts was only about 1,100 tokens. A 1,000-token budget (trigger 800) then held it at 1,067.
+- A child that settled 0.9 s before its parent's run row took its last update was refused as a non-survivor. The chain went to "Paused: work may have run" (TASK-33621.156).
+
+**What to do.** Read **Next request** minus **Request overhead** before you pick a custom budget. Put the compactable history before the first wake, and run that wake under Off. Make each child outlive its parent's turn with the review proxy's `slow` mode and a multi-step child task. Read the chain and attempt rows read-only from `agent_runs.db` (`automatic_work_chains`, `automatic_wake_attempts`) after each step. The driver used is `tools/evidence/bd5/C153/round.sh` (session-local). It finds click targets by text; under zsh, `set -- $XY` does not split, so run coordinate clicks from a bash script.
+
 ## Verify that a reused RAG fixture still has searchable vectors (TASK-40290, 2026-11-11)
 
 **Incident.** The reopened UAT profile listed the Juniper media fixture after a Library source refresh. RAG Answer still reported an empty index. Backfill returned zero indexed and one skipped because the tracking DB already had the fixture's timestamp. Reindexing that one disposable media entry restored the paraphrase match, and the Library Run action produced a live DeepSeek answer with a validated citation. [Walkthrough evidence](../../qa/uat-core-workflows-2026-11-11/deepseek-rag-fixed.txt)
