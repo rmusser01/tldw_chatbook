@@ -235,9 +235,9 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: - #3533 (395d2e8b91, 59365c0a36) removed four, 94 -> 90: it unlisted
 #:   served_relay_publisher (served mode only) and Guardian.settings (which
 #:   startup already holds), and each took its package, ``Web_Server`` and
-#:   ``Guardian``, out of the census. It reads 90 on dev 8be7babc14 and here. This branch
-#:   also unlisted textual_serve, a third-party step listed only for the
-#:   relay publisher.
+#:   ``Guardian``, out of the census. It reads 90 on dev 8be7babc14 and here.
+#:   This branch also unlisted textual_serve, a third-party step listed only
+#:   for the relay publisher.
 #: The limit drops 94 -> 90 (ADR-097's tightening convention). This row was
 #: pinned exactly, with no slack, so headroom it frees is banked rather than
 #: left to be used up silently, which is how the collision happened. When
