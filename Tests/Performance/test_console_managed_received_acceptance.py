@@ -32,7 +32,8 @@ logger.remove()
 assert sys.argv[1:] == ["managed_received", "cold_policy_switch"]
 CHILD_LIMIT = 240  # seconds for the whole exercise
 # A hang bound, not a latency bound (TASK-41140 review r15co-rev1): half the
-# child limit, leaving the rest to setup. See its first use.
+# child limit. The custody waits use it, and so does settle() (since
+# 2026-11-19).
 CUSTODY_HANG_BOUND = CHILD_LIMIT // 2
 
 
@@ -251,7 +252,10 @@ async def exercise():
         sent = False
 
         async def settle(predicate):
-            deadline = time.monotonic() + 10
+            # A hang bound too: settle(entered.is_set), the wait for the
+            # controlled read after the Send, took over 10 s on GitHub runners
+            # (4 recovered-suites runs, 2026-11-18/19).
+            deadline = time.monotonic() + CUSTODY_HANG_BOUND
             while not predicate():
                 assert time.monotonic() < deadline, (
                     "managed_received_prerequisite_timeout"
