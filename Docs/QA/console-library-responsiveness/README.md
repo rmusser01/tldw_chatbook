@@ -779,3 +779,67 @@ Ruff added no diagnostics, and the changed ranges passed format checks.
 
 The 192-entry private receipt manifest has SHA-256
 `e168bedb864342029556ef81249026f06fc73f0be66bb23c1ca044422bda36a0`.
+
+## Capture On preparation and trace persistence
+
+TASK-41805 compares the checkout with
+`d397a52bce9995b818a07662faab7f817b106e19`. Trace preparation assigns
+ordinals with one counter per domain. It selects the domain before resolving
+values and reads direct saved messages through the existing bounded SQLite
+projector. The projector retains canonical ownership, message and attachment
+validation. Persistence starts the event sequence from the current tail once
+per contiguous append, then writes each node and event in the existing
+transaction before the dispatch checkpoint. ADR-337 governs both stages.
+
+Three alternating pairs used the same owned 120×50 macOS PTY, sealed
+10,000-conversation corpus and 10,000-message target used in the trace-gap
+investigation. Each fresh profile staged a Capture On Send against the fake
+provider. The harness observed the busy frame, first streamed chunk, typing,
+Page Up, Stop and ordinary Quit. Send observation continued for at least
+13 seconds and included nine seconds after Stop or the later scroll paint.
+All six runs persisted the same normalized sequence of 10,001 trace nodes
+and the same event counts, settled one authoritative Stop and returned with
+zero open fixture database descriptors, network denials or protected-profile
+violations.
+
+| Pair and arm in order | One-minute load, start → end | Reservation wall / CPU (ms) | Worker persistence wall / CPU (ms) | Return to first chunk (ms) | Full gaps over 50 ms / worst (ms) | Busy paint (ms) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 baseline | 4.46 → 4.07 | 1652.7 / 1650.4 | 2640.2 / 1484.1 | 10522.8 | 30 / 2373.2 | 31.3 |
+| 1 candidate | 3.90 → 3.77 | 296.1 / 295.4 | 2271.1 / 1406.4 | 9133.4 | 21 / 1041.2 | 73.3 |
+| 2 candidate | 3.79 → 3.34 | 300.6 / 299.5 | 2164.3 / 1372.5 | 9738.0 | 28 / 1155.0 | 176.6 |
+| 2 baseline | 3.34 → 3.35 | 1625.3 / 1622.9 | 2356.7 / 1471.8 | 10260.1 | 27 / 2354.0 | 65.9 |
+| 3 baseline | 3.64 → 4.52 | 1685.4 / 1676.0 | 2409.7 / 1490.7 | 11449.3 | 29 / 2376.3 | 34.8 |
+| 3 candidate | 4.52 → 4.52 | 350.4 / 349.6 | 2411.6 / 1415.5 | 9547.1 | 28 / 1069.8 | 324.7 |
+
+Median reservation wall time fell from 1.65 to 0.30 seconds. Median worker
+persistence fell from 2.41 to 2.27 seconds wall and from 1.48 to 1.41
+seconds CPU. First-chunk paint improved in every pair. Its median fell
+from 10.52 to 9.55 seconds. The full Send windows recorded 86 versus 77
+gaps above 50 ms and a worst gap of 2.38 versus 1.16 seconds. Two candidate
+busy frames missed 100 ms. Both occurred more than four seconds before
+trace reservation began, during earlier Send processing. The cause of
+those slow frames and full timing qualification remain open.
+
+The separate instrumented runs counted 30,003 versus 10,001 ownership
+checks and 70,007 versus 10,001 individual revision reads in preparation.
+The worker read the event tail 10,001 times on the baseline and once on
+the candidate. Both runs wrote all 10,001 nodes and append events. A
+private SQLite `RETURNING` readback control matched the same ordered rows
+and took 180.30 ms median CPU for 3,000 node and event pairs, compared
+with 176.15 ms on the installed readback path. The control stayed private.
+
+The original ordinal regression counted 325 prefix comparisons for 26
+items. A 24-message regression went from 48 canonical message reads to
+one and preserved the canonical provider values. The append regression
+preserves contiguous node references with one tail read per append. A
+pre-existing wrong-policy fixture failed on both source versions because
+it used two compatible credential filters. The corrected matrix verifies
+both the accepted pairing and a genuinely incompatible filter.
+
+The final trace and size-ratchet selection passed 301 tests. The provider
+entry and cancellation selection passed 23. Both Backlog guards and
+scoped format checks passed. Ruff added zero diagnostics. The trace
+service size pin fell to 6,731 lines.
+
+The 177-entry private receipt manifest has SHA-256
+`c1a10ee42a7f3d7f4e104c2f2fdf22503ec54e6e6a002d25a1e0de705d18cc65`.

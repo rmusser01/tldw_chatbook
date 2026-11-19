@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 import inspect
@@ -406,6 +407,90 @@ def _initial_bound_request(
         surface_boundary=boundary,
     )
     return bundle, admission, boundary.provenance
+
+
+def test_initial_surface_numbers_domains_without_counting_preceding_rows(
+    db: CharactersRAGDB,
+    repository: ConsoleTraceRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Chat import console_trace_service
+
+    owner_id, segment_id = _owned_segment(db, repository)
+    policy = _policy()
+    message = ProviderArtifactTraceProvenance(TraceProvenanceSource.RAG_CONTEXT, policy)
+    continuation = ProviderArtifactTraceProvenance(
+        TraceProvenanceSource.CONTINUATION, policy
+    )
+    messages = [{"role": "user", "content": str(index)} for index in range(24)]
+    continuations = [_continuation_value("first"), _continuation_value("second")]
+    provenance = replace(
+        _provenance((message,) * len(messages)),
+        continuations=(continuation,) * len(continuations),
+    )
+    boolean_terms = 0
+
+    def count_terms(values, start=0):
+        nonlocal boolean_terms
+        items = tuple(values)
+        boolean_terms += builtins.sum(type(value) is bool for value in items)
+        return builtins.sum(items, start)
+
+    monkeypatch.setattr(console_trace_service, "sum", count_terms, raising=False)
+    with db.transaction() as cursor:
+        bundle, admission, projected = _initial_bound_request(
+            ConsoleTraceService(repository),
+            cursor,
+            owner_id=owner_id,
+            segment_id=segment_id,
+            provenance=provenance,
+            messages=messages,
+            continuations=continuations,
+        )
+        delta = build_verified_surface_delta(projected, bundle, admission=admission)
+
+    assert [(item.component_name, item.ordinal) for item in delta.items] == [
+        *(("messages_payload", index) for index in range(len(messages))),
+        *(("provider_continuations", index) for index in range(len(continuations))),
+    ]
+    assert boolean_terms <= len(delta.items)
+
+
+def test_initial_surface_reads_canonical_saved_messages_once_in_a_batch(
+    db: CharactersRAGDB, repository: ConsoleTraceRepository
+) -> None:
+    owner_id, segment_id = _owned_segment(db, repository)
+    owner = repository.get_owner(db.get_connection().cursor(), owner_id)
+    assert owner is not None and owner.conversation_id is not None
+    messages = [{"role": "user", "content": str(index)} for index in range(24)]
+    descriptors = tuple(
+        SavedRevisionTraceProvenance(
+            _revision(db, repository, owner.conversation_id, content=row["content"])
+        )
+        for row in messages
+    )
+    statements: list[str] = []
+    connection = db.get_connection()
+    with db.transaction() as cursor:
+        connection.set_trace_callback(statements.append)
+        try:
+            _, boundary = ConsoleTraceService(repository).prepare_current_surface_delta(
+                cursor,
+                owner_id=owner_id,
+                segment_id=segment_id,
+                route_identity=ConsoleRequestRoute.FRESH.value,
+                preparation_identity=new_opaque_id(),
+                provenance=_provenance(descriptors),
+                values=({"role": "user", "content": "untrusted"},) * len(messages),
+            )
+        finally:
+            connection.set_trace_callback(None)
+
+    projected = boundary._provider_request_surface_values()["messages_payload"]
+    assert list(projected) == messages
+    reads = [sql for sql in statements if sql.lstrip().startswith("SELECT")]
+    assert len([sql for sql in reads if "FROM messages" in sql]) == 1
+    assert len([sql for sql in reads if "FROM message_attachments" in sql]) == 1
 
 
 def test_initial_available_bundle_is_exact_object_bound_before_any_write(
@@ -1011,6 +1096,7 @@ def test_incremental_append_uses_tail_queries_and_stores_no_history_list(
                 previous_surface_head_id=first.surface_head_id,
             )
             rows = repository.read_surface_nodes(cursor, segment_id)
+            events = repository.read_events(cursor, segment_id)
     finally:
         connection.set_trace_callback(None)
 
@@ -1018,7 +1104,16 @@ def test_incremental_append_uses_tail_queries_and_stores_no_history_list(
     assert len(second.appended_nodes) == 1
     assert len(rows) == 4
     assert rows[-1].predecessor_node_id == rows[-2].node_id
-    assert any("ORDER BY sequence DESC" in statement for statement in statements)
+    assert [(event.sequence, event.surface_node_id) for event in events] == [
+        (index, row.node_id) for index, row in enumerate(rows)
+    ]
+    tail_reads = [
+        sql
+        for sql in statements
+        if "FROM console_trace_events" in sql
+        and "ORDER BY sequence DESC, event_id DESC LIMIT 1" in sql
+    ]
+    assert len(tail_reads) == 2
     assert not any("history" in field.name for field in fields(type(rows[-1])))
 
 
