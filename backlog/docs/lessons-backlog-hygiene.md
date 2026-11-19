@@ -5,7 +5,12 @@ known, expensive to rediscover. Every entry states the incident that produced it
 
 ## A "page has no section for X" finding can be a section a squash deleted (TASK-41526, 2026-11-19)
 
-**Incident.** TASK-41101's stamp sweep reported that no User Guide page covered Change Review's commit and push dialogs, and TASK-41526 was filed to write them. `console/agent-runs-and-tools.md` had a full "Git actions in change review" section, kept current by TASK-19701 and TASK-19703, until 6a6242ce3a (2026-09-12) squashed a feature branch onto dev. That squash removed 15 headings from the page. Most came back later; "Git actions in change review" and "Reviewing or undoing a turn's changed files" did not. The sweep only saw the leftover stamps that named the lost section.
+**Incident.** TASK-41101's stamp sweep reported that no User Guide page covered Change Review's commit and push dialogs, and TASK-41526 was filed to write them. `console/agent-runs-and-tools.md` had a full "Git actions in change review" section, kept current by TASK-19701 and TASK-19703, until 6a6242ce3a (2026-09-12) squashed a feature branch onto dev. That squash removed 16 headings from the page. Thirteen came back later. Three never did:
+- "Git actions in change review", until TASK-41526 wrote its replacement, "Commit and push from the working tree";
+- "Reviewing or undoing a turn's changed files";
+- "Queued progress from sub-agents", which 827b622638 added (`report_to_supervisor`, **Agent → Progress: N queued**, **Discard selected**). The feature still ships (`Agents/fleet_message_tools.py`).
+
+The sweep only saw the leftover stamps that named the lost section; a review of the fix found the third loss. The `comm` command below, run at 1f1fdba3b4, prints 16 removed headings and these three still absent.
 
 **What to do.** Before writing a "missing" section, run `git log -S "<a phrase it would contain>" -- <page>`. A hit means the section existed. Restore its text and re-check every sentence against current code; do not write the section from scratch, and do not paste it back unchecked. When the deleting commit is a squash or rebase, diff the page's headings across it, because the same commit may have taken sibling sections:
 

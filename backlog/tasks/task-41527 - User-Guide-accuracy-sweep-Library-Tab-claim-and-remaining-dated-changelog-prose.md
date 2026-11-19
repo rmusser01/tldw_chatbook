@@ -3,7 +3,7 @@ id: TASK-41527
 title: "User Guide accuracy sweep: Library Tab claim and remaining dated changelog prose"
 status: Done
 assignee: ['@claude']
-updated_date: 2026-11-19 15:42
+updated_date: 2026-11-19 16:10
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -79,6 +79,25 @@ After, the same grep matches 17 lines, none of them changelog:
 Undated "no longer …" contrasts (for example settings.md's Theme lines, agent-runs "Sub-agents … no longer run one at a time") state present behaviour and carry no date or task, so they are out of this criterion and were left.
 
 Checks: no test or script pins any removed sentence (grep of `Tests/` and `scripts/`; the only hits are unrelated code comments). `Tests/Docs`: 44 passed.
+
+**Fix round 1 (review r17dc-rev1, finding 3).** The grep above missed task-stamped history in `settings/rag.md`:
+- the Reranker provider paragraph's "since TASK-17065 the reranker dispatches…";
+- step 5's "since TASK-17065 those calls really go out. Before that fix reranking silently no-opped…".
+
+Both are now present tense: the reranker dispatches through the same table, so the name you pick is the provider that gets called and billed. Step 5 keeps the live warning: "A profile with the toggle already ticked spends on its next search without you touching anything; untick **Enable reranking** to opt out."
+
+The recorded grep is widened with `[Bb]efore that` and `since (task|TASK)-`:
+
+```
+P='\((W|w)as |(W|w)as "|superseded|[Ff]ixed (as|in|by) (task|TASK)|corrected 20|[Uu]ntil 20[0-9]{2}|rewritten (by|on|in) |[Aa]s first shipped|[Bb]efore this|[Bb]efore that|since (task|TASK)-|as of (task|TASK)-|[Mm]easured on 20|[Pp]reviously|used to|20[0-9]{2}-[01][0-9]-[0-3][0-9]'
+```
+
+Re-run across the same pages, it matches 20 lines, none of them changelog. They are the 17 listed above, with their line numbers shifted by the rag.md edit, plus three present-tense "before that":
+- agent-runs 1499, "review before that chain can wake again";
+- settings.md 1447, "the theme that was active before that change", the Revert target;
+- settings/personal-context-profile.md 118, "pressed again before that, it asks".
+
+A separate check for `[Ss]ince (task|TASK)-`, `[Ss]ince 20…`, `Before that fix` and `After (task|TASK)-` finds nothing. No test or script pins the two removed rag.md sentences; the hits for "silently no-opped", "since TASK-17065" and "really is the" are unrelated code comments.
 
 Files: `Docs/User_Guide/library.md`, `library/notes.md`, `library/file-notes.md`, `library/collections.md`, `console/agent-runs-and-tools.md`, `settings.md`, `settings/rag.md`.
 <!-- SECTION:NOTES:END -->

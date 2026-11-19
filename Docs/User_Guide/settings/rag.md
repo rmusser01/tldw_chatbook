@@ -196,9 +196,9 @@ not:
   the "Reranking is not free" quirk below states all three shapes and what
   each really costs. **Reranker provider** enumerates
   every chat provider this build registers, with the default shown
-  explicitly as "openai (default)" — and since TASK-17065 the reranker
-  dispatches through that same table, so the name you pick really is the
-  provider that gets called and billed. It resolves no credential of its
+  explicitly as "openai (default)" — and the reranker dispatches through
+  that same table, so the name you pick is the provider that gets called
+  and billed. It resolves no credential of its
   own: each provider handler finds its key the usual way (explicit
   `api_settings.<provider>.api_key` over env var over legacy `[API]`), and
   the local providers that need no key at all need none here either. Pick
@@ -265,11 +265,9 @@ testing a connection ("RAG check started." → "RAG check: `<state>` index ·
    results** at or below **Default results**, and **Save (s)** — no backfill
    needed. Every search this profile runs now issues one extra provider
    call per candidate result — three, if that call keeps failing — at that
-   provider's rates, and since TASK-17065 those calls really go out. Before
-   that fix reranking silently no-opped for every provider the picker
-   offered, so a profile with the toggle already ticked starts spending on
-   its next search without you touching anything; untick **Enable
-   reranking** to opt out. The tick is not the only door: the built-in
+   provider's rates. A profile with the toggle already ticked spends on its
+   next search without you touching anything; untick **Enable reranking**
+   to opt out. The tick is not the only door: the built-in
    **Hybrid Full**, **High Accuracy** and **Research Papers** presets carry
    a reranker config of their own, so making one of them active spends too
    (see Quirks). If the

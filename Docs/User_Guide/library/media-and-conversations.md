@@ -206,10 +206,13 @@ verbatim).
 - **Media says why its bulk actions are off.** Media's select-mode actions
   are short words: **Clear**, **Export** and **Review** on one row,
   **Analyze** on the next, **Delete** on a row of its own. While nothing is
-  checked and the list has rows, they read "○ Export", "○ Review" and
-  "○ Delete", and a line under the first row says why: "Select items to
-  enable." Checking a row hides that line and enables the three. The line
-  keeps its space while hidden, so the rows below do not move.
+  checked and the list has rows, the four after Clear read "○ Export",
+  "○ Review", "○ Analyze" and "○ Delete", and a line under the first row
+  says why: "Select items to enable." Checking a row hides that line and
+  enables them. The line keeps its space while hidden, so the rows below do
+  not move. Analyze also needs an analysis provider: without one it stays
+  "○ Analyze" however many rows are checked, with its own reason line under
+  it (see **Media's "Analyze"** below).
 
 **Media's "Analyze"** (Media only) generates an analysis for every checked
 item in one run, in list order, on its own row under Clear/Export/Review:

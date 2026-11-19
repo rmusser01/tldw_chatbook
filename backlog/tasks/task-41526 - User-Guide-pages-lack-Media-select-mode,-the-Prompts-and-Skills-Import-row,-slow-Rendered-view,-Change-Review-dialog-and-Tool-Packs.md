@@ -3,7 +3,7 @@ id: TASK-41526
 title: "User Guide pages lack Media select mode, the Prompts and Skills Import row, slow Rendered view, Change Review dialog and Tool Packs"
 status: Done
 assignee: ['@claude']
-updated_date: 2026-11-19 15:42
+updated_date: 2026-11-19 16:10
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -43,7 +43,7 @@ Found by the docs sweep (TASK-41101, round 15). Facts with no owning page: Media
 Each fact now has a place on its owning page, written from the code at c176f553b3 and checked headlessly against the mounted screen (run_test through run.sh; the brief rules out the live TUI). No date or stamp text was added: `git diff -- Docs | grep '^+'` finds no ISO date, "Verified", "(Was" or "superseded".
 
 **Where each fact went, with the code behind it.**
-- **Media select mode**, `library/media-and-conversations.md`, a new bullet under "The shared select / export grammar". Media's labels are short words: Export/Review/Delete at `Widgets/Library/library_media_canvas.py:898`, `:906`, `:939`, disabled with "○" while `selected_count == 0` (`:867`). The rows are Clear/Export/Review (`:1440`), the reason line (`:1481`), Analyze (`:1501`) and Delete (`:1520`). The line is `LIBRARY_BULK_ACTIONS_NO_SELECTION_REASON = "Select items to enable."` (`Library/library_shell_state.py:96`). It is visible only with nothing checked, rows present and no failed load (`:1488-1495`), and it uses `visibility`, so it keeps its height.
+- **Media select mode**, `library/media-and-conversations.md`, a new bullet under "The shared select / export grammar". Media's labels are short words: Export/Review/Delete at `Widgets/Library/library_media_canvas.py:898`, `:906`, `:939`, disabled with "○" while `selected_count == 0` (`:867`). The rows are Clear/Export/Review (`:1440`), the reason line (`:1481`), Analyze (`:1501`) and Delete (`:1520`). The line is `LIBRARY_BULK_ACTIONS_NO_SELECTION_REASON = "Select items to enable."` (`Library/library_shell_state.py:96`). It is visible only with nothing checked, rows present and no failed load (`:1488-1495`), and it uses `visibility`, so it keeps its height. Analyze (`:925`) uses the same count gate, so it also reads "○ Analyze" with nothing checked. An unready analysis provider outranks the count: the label stays "○ Analyze" at compose (`:930-933`) and through the in-place flip (`UI/Library_Modules/canvas_sync.py:528-529`), with its own reason line (`library_media_canvas.py:1513`).
 - **Prompts and Skills Import row**, `library/prompts.md` ("Importing prompts") and `library/skills.md` ("Importing"). Opening parks the caret in the path field; Cancel returns focus to the opener. Prompts: `UI/Library_Modules/library_prompts_controller.py:1748` and `:1770`; the opener label is "Import…" (`Widgets/Library/library_prompts_canvas.py:735`). Skills: `UI/Screens/library_screen.py:22732` and `:22761`; the opener label is "Import skill…" (`Widgets/Library/library_skills_canvas.py:1284`).
 - **Slow Rendered view**, a Quirks bullet in `library/media-and-conversations.md` that points at TASK-22660 (still To Do). Rendered mounts Textual's `Markdown` on the whole content (`Widgets/Library/library_media_content.py:224`, `:375`); Raw is the virtualized `VirtualizedRawContent` (`:352`). A document defaults to Rendered whenever a heading, fence or table appears in its sniff window, whatever its size (`Library/library_media_viewer_state.py:200`, `:242`).
 - **Change Review commit and push dialogs**, a new "Commit and push from the working tree" subsection under "Change review" in `console/agent-runs-and-tools.md`. This page's "Git actions in change review" section, which had both facts, was dropped by the squash 6a6242ce3a (2026-09-12); the replacement is shorter and was re-checked line by line:
@@ -69,7 +69,16 @@ Each fact now has a place on its owning page, written from the code at c176f553b
 
 `Tests/Docs`: 44 passed (the stamp contract test included).
 
-Lesson: added to `backlog/docs/lessons-backlog-hygiene.md`. A "no page covers X" finding can be a section a squash deleted. The same squash also took "Reviewing or undoing a turn's changed files" (the card's Undo All), which is still missing; it is listed as a proposed follow-up.
+Lesson: added to `backlog/docs/lessons-backlog-hygiene.md`. A "no page covers X" finding can be a section a squash deleted. 6a6242ce3a removed 16 headings from this page. Two more of them are still missing, both listed as proposed follow-ups:
+- "Reviewing or undoing a turn's changed files" (the card's Undo All);
+- "Queued progress from sub-agents" (`report_to_supervisor`).
+
+**Fix round 1 (review r17dc-rev1, five Minor findings).**
+- The Media bullet now names Analyze. It reads "○ Analyze" with nothing checked, and with no analysis provider it stays off with its own reason line (code cited above).
+- The lesson's heading count is now 16, not 15, and it names the third lost section. Its `comm` command, re-run at 1f1fdba3b4, prints 16 removed headings and three still absent.
+- `settings.md`'s Tool Profiles intro notes that Deny is shown as **Off** in Permissions mode.
+- `mcp.md`'s Tool policy profile paragraph now sits after the precedence paragraph, so the matrix introduction runs straight into the states list.
+- The settings/rag.md history fix is in TASK-41527.
 
 Files: `Docs/User_Guide/library/media-and-conversations.md`, `library/prompts.md`, `library/skills.md`, `console/agent-runs-and-tools.md`, `settings.md`, `mcp.md`; `backlog/docs/lessons-backlog-hygiene.md`.
 <!-- SECTION:NOTES:END -->

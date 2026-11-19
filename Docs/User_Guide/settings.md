@@ -1812,8 +1812,8 @@ to bind external folders."
 
 ### Data & Privacy — Tool Profiles
 
-A tool permission profile is a set of Allow / Ask / Deny rules for the tools
-your agents can call: the policy [Tools & MCP's Permissions
+A tool permission profile is a set of Allow / Ask / Deny rules (Deny is
+shown as **Off** in Permissions mode) for the tools your agents can call: the policy [Tools & MCP's Permissions
 mode](mcp.md#permissions-mode--allow-ask-off) edits. Tool Profiles moves a
 profile between machines as a **Tool Pack**, a `.tldw-tool-pack` file. Under
 its title the pane states the limit: "Portable permission profiles change
