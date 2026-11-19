@@ -184,7 +184,7 @@ def _config_targets(data, profile, config_target, doc, plan, owners, *, derive=F
             expected = user_data_dir(configured) / "briefing_audio"
         elif type(owner) is _ConfiguredPets:
             expected = owner._restore_path(
-                profile, payload, directories[payload.root_id]
+                profile, payload, directories[payload.root_id], config_target
             )
         elif type(owner) is _Diagnostics:
             expected = owner._restore_path(configured, payload.relative_path)

@@ -1,10 +1,12 @@
-"""Exact optional ConfigFileStorage state; dormant custom stores have no locator."""
+"""The profile's ConfigFileStorage pet files; dormant custom stores have no locator.
 
-import hashlib
-import os
+TASK-42000: pets live beside the profile's config (``tamagotchi_pets.json``, its
+dated copies and the seed-once marker), so they are captured and restored like
+the profile's other settings files. The archive rows are unchanged, so a backup
+taken while pets sat in the old shared folder restores into the profile too.
+"""
+
 import re
-from dataclasses import replace
-from pathlib import Path
 
 from tldw_chatbook.Backup_Recovery.models import (
     OwnerAdapter,
@@ -14,29 +16,23 @@ from tldw_chatbook.Backup_Recovery.models import (
 )
 from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
 
+_CURRENT = "tamagotchi_pets.json"
+_DATED = re.compile(r"tamagotchi_pets\.backup_\d{8}_\d{6}\.json")
+#: ConfigFileStorage's seed-once marker; its local ID is ``seeded``.
+_MARKER = "tamagotchi_pets.seeded"
+
 
 class _ConfiguredPets(_RawDeclaration):
-    def _parent(self) -> Path:
-        # ConfigFileStorage's actual platform/default app_name path. No override
-        # is invented for dormant arbitrary-path JSONStorage/SQLiteStorage APIs.
-        return (
-            Path(os.environ.get("APPDATA", "~"))
-            if os.name == "nt"
-            else Path("~/.config")
-        ).expanduser() / "tldw_chatbook"
-
-    def _restore_path(self, profile, payload, root) -> Path:
-        """Recognize only native pet files in their existing default container."""
+    def _restore_path(self, profile, payload, root, config_target):
+        """Map only native pet files in their own top-level synthetic root."""
         key = f"profile:{profile}:tamagotchi.config"
         leaf = payload.relative_path
-        canonical = leaf == "tamagotchi_pets.json" and payload.logical_id == key
-        backup = (
-            re.fullmatch(r"tamagotchi_pets\.backup_\d{8}_\d{6}\.json", leaf)
-            and payload.logical_id == key + ":" + leaf
-        )
+        canonical = leaf == _CURRENT and payload.logical_id == key
+        backup = _DATED.fullmatch(leaf) and payload.logical_id == key + ":" + leaf
+        marker = leaf == _MARKER and payload.logical_id == key + ":seeded"
         if not (
             self.owner_id == payload.owner_id == "tamagotchi.config"
-            and (canonical or backup)
+            and (canonical or backup or marker)
             and root.synthetic
             and root.parent_id is None
             and root.relative_path == ""
@@ -44,76 +40,36 @@ class _ConfiguredPets(_RawDeclaration):
             and payload.parent_id == payload.root_id
         ):
             raise ValueError("owner_relocation_unverified:tamagotchi.config")
-        return self._parent() / leaf
+        return config_target.parent / leaf
 
     def discover(self, config):
-        parent = self._parent()
-        path = parent / "tamagotchi_pets.json"
-        from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
+        from tldw_chatbook.Backup_Recovery.bootstrap import pinned_directory
+        from tldw_chatbook.Utils.platform_files import os
 
-        # A checked absent canonical parent also proves its JSON/backups absent.
-        # Inspect the parent itself first so links and unsafe traversal refuse.
-        parent_item = _inventory_root(parent, owner=self.owner_id, external=False)
-        if parent_item.status == "unavailable":
-            container = _inventory_root(
-                parent.parent, owner=self.owner_id, external=False
-            )
-            if container.status == "unused":
-                parent_item = replace(parent_item, status="unused")
-        if parent_item.status != "included_directory":
-            context = discovery_context(config)
-            return (
-                replace(
-                    parent_item,
-                    path=path,
-                    logical_id=storage_logical_id(context, self.owner_id),
-                    status="unused"
-                    if parent_item.status == "unused"
-                    else "unavailable",
-                    metadata=None,
-                ),
-            )
-        items = [self._item(config, path)]
-        if not parent.exists():
-            return tuple(items)
+        context = discovery_context(config)
+        parent = context.config_path.parent
+        items = [self._item(config, parent / _CURRENT)]
         try:
-            names = list(parent.iterdir())
-            if len(names) > 100000:
-                raise ValueError("pet_inventory_limit")
-            for candidate in sorted(names):
-                if re.fullmatch(
-                    r"tamagotchi_pets\.backup_\d{8}_\d{6}\.json", candidate.name
-                ):
-                    items.append(self._item(config, candidate, candidate.name))
-                elif candidate != path:
-                    context = discovery_context(config)
-                    items.append(
-                        StorageItem(
-                            self.owner_id,
-                            storage_logical_id(
-                                context,
-                                self.owner_id,
-                                "unknown-"
-                                + hashlib.sha256(
-                                    os.fsencode(candidate.name)
-                                ).hexdigest(),
-                            ),
-                            candidate,
-                            "unsupported",
-                            (),
-                        )
-                    )
-        except (OSError, ValueError):
-            context = discovery_context(config)
-            items.append(
+            with pinned_directory(parent) as fd:
+                names = sorted(os.listdir(fd))
+        except FileNotFoundError:
+            return tuple(items)
+        except (OSError, ValueError, RuntimeError):
+            return (
                 StorageItem(
                     self.owner_id,
-                    storage_logical_id(context, self.owner_id, "unavailable"),
-                    None,
+                    storage_logical_id(context, self.owner_id),
+                    parent,
                     "unavailable",
-                    (),
-                )
+                    (storage_logical_id(context, "config"),),
+                ),
             )
+        # Other files beside the config belong to other owners.
+        for name in names:
+            if _DATED.fullmatch(name):
+                items.append(self._item(config, parent / name, name))
+            elif name == _MARKER:
+                items.append(self._item(config, parent / name, "seeded"))
         return tuple(items)
 
 

@@ -179,6 +179,104 @@ _CASES = {
     },
 }
 
+# TASK-42000 (TASK-41719's cases): pet files sit where the installed pet owner
+# discovers them ("pets": the profile's config folder; before TASK-42000 the
+# old shared ~/.config/tldw_chatbook). "shared" files go into the target's old
+# shared folder, which must never change; "target_files" are the target's own
+# files, "retired" the ones the restore must retire and the rollback bring
+# back; "pets_after_restore" is what the target's pet store lists once
+# started after the restore (no copy from the old shared folder).
+_PET = '{"bit": {"name": "Bit", "happiness": 70}}'
+_PET_GROUPS = ("conversations", "settings", "workspaces")
+_CASES.update(
+    {
+        "pets-missing": {
+            "groups": _PET_GROUPS,
+            "stores": (),
+            "extra": (),
+            "files": {
+                "pets": ("pets", "tamagotchi_pets.json", _PET),
+                "pets.dated": (
+                    "pets",
+                    "tamagotchi_pets.backup_20260101_000000.json",
+                    "{}",
+                ),
+            },
+            "delete": (),
+            "extract": True,
+            "refusal": None,
+        },
+        "pets-present": {
+            "groups": _PET_GROUPS,
+            "stores": (),
+            "extra": (),
+            "files": {"pets": ("pets", "tamagotchi_pets.json", _PET)},
+            "shared": {
+                "tamagotchi_pets.backup_20250101_000000.json": '{"old": {"name": "Old"}}'
+            },
+            "delete": (),
+            "refusal": None,
+        },
+        "pets-dated-only": {
+            "groups": _PET_GROUPS,
+            "stores": (),
+            "extra": (),
+            "files": {
+                "pets.dated": (
+                    "pets",
+                    "tamagotchi_pets.backup_20260101_000000.json",
+                    _PET,
+                )
+            },
+            "target_files": {
+                "own": ("pets", "tamagotchi_pets.json", '{"own": {"name": "Own"}}')
+            },
+            "retired": ("own",),
+            "delete": (),
+            "refusal": None,
+        },
+        # A Replace from a backup with no pets retires the target's pets, and
+        # the next start must not copy the old shared pets back (seed once).
+        "pets-none": {
+            "groups": _PET_GROUPS,
+            "stores": (),
+            "extra": (),
+            "files": {},
+            "target_files": {
+                "own": ("pets", "tamagotchi_pets.json", '{"own": {"name": "Own"}}'),
+                "seeded": ("pets", "tamagotchi_pets.seeded", "{}\n"),
+            },
+            "shared": {"tamagotchi_pets.json": '{"old": {"name": "Old"}}'},
+            "retired": ("own",),
+            "pets_after_restore": [],
+            "delete": (),
+            "refusal": None,
+        },
+        # An ungrouped backup (format 1 with no data_groups) Replaces the
+        # whole profile; its pet rows are the rows older backups hold.
+        "pets-ungrouped": {
+            "groups": None,
+            "stores": (),
+            "extra": (),
+            "common_stores": ("subscriptions", "scheduled_tasks"),
+            "common_extra": (
+                ("db.evals", "DB.Evals_DB", "EvalsDB"),
+                (
+                    "db.library_collections",
+                    "DB.Library_Collections_DB",
+                    "LibraryCollectionsDB",
+                ),
+            ),
+            "files": {"pets": ("pets", "tamagotchi_pets.json", _PET)},
+            "shared": {
+                "tamagotchi_pets.backup_20250101_000000.json": '{"old": {"name": "Old"}}'
+            },
+            "delete": (),
+            "refusal": None,
+        },
+    }
+)
+
 # The row the [databases] writer adds after the restore, only in the WAL.
 _BOARD_INSERT = (
     "INSERT INTO kanban_boards(uuid,name,created_at,updated_at) VALUES (?,?,?,?)"
@@ -204,7 +302,9 @@ credential_store=KeyringServerCredentialStore(keyring_backend=Keyring())
 credentials._credential_store=lambda:credential_store
 name,role=sys.argv[1:3]
 case=CASES[name]
-groups=tuple(case['groups'])
+groups=None if case['groups'] is None else tuple(case['groups'])
+os.environ['APPDATA']=str(Path.home()/'AppData'/'Roaming')
+backup_options={} if groups is None else {'data_groups':groups}
 source=Path(os.environ['TLDW_CONFIG_PATH'])
 data=Path(os.environ['XDG_DATA_HOME'])/'fixture';data.mkdir(mode=0o700)
 source.write_text('[general]\nusers_name="default_user"\n[paths]\ndata_dir='+json.dumps(str(data))+'\n')
@@ -218,6 +318,10 @@ network_guard.install()
 for module in ('sounddevice','pyaudio'):sys.modules[module]=None
 case=json.loads(os.environ['CREATED_CASE'])
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
+if sys.argv[1]=='start':
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+    print(json.dumps({'pets':sorted(ConfigFileStorage().list_pets())}))
+    raise SystemExit(0)
 from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
 from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
 preview=preview_capture((selector,),options={'allow_partial':True})
@@ -225,37 +329,51 @@ _populate_required_dependencies(preview)
 from tldw_chatbook.config import get_user_data_dir
 root=get_user_data_dir()
 paths={item.owner:item.path for item in preview.items if item.path is not None and item.logical_id.endswith(':'+item.owner)}
-folders={'data':root,'config':selector.parent}
+folders={'data':root,'config':selector.parent,'pets':paths['tamagotchi.config'].parent}
 made={}
-if sys.argv[1]=='source':
+def write(folder,leaf,text):
+    path=folders[folder]/leaf
+    path.parent.mkdir(parents=True,exist_ok=True,mode=0o700);path.write_text(text);path.chmod(0o600)
+def build(stores,extra):
     from Tests.Backup_Recovery.test_operational_owners import STORES
-    for store_name in case['stores']:
+    built={}
+    for store_name in stores:
         module,symbol,_,owner,_=STORES[store_name]
         constructor=getattr(importlib.import_module('tldw_chatbook.'+module),symbol)
         store=constructor(db_path=paths[owner]) if store_name=='kanban' else constructor(paths[owner])
         if store_name in {'kanban','notifications','events','sync'}:store._ensure_schema()
         getattr(store,'close',lambda:None)()
-        made[owner]=('data',paths[owner].relative_to(root).as_posix())
-    for owner,module,symbol in case['extra']:
+        built[owner]=('data',paths[owner].relative_to(root).as_posix())
+    for owner,module,symbol in extra:
         store=getattr(importlib.import_module('tldw_chatbook.'+module),symbol)(paths[owner])
         if hasattr(store,'_ensure_schema'):store._ensure_schema()
         for closer in ('close','close_connection'):
             if hasattr(store,closer):getattr(store,closer)();break
-        made[owner]=('data',paths[owner].relative_to(root).as_posix())
+        built[owner]=('data',paths[owner].relative_to(root).as_posix())
+    return built
+# Stores both profiles hold ("common"): a whole-profile Replace needs them.
+build(case.get('common_stores',()),case.get('common_extra',()))
+if sys.argv[1]=='source':
+    made.update(build(case['stores'],case['extra']))
     for label,(folder,leaf,text) in case['files'].items():
-        path=folders[folder]/leaf
         if text is None:
             # A chatbook registry naming the archive written above, in the
             # layout capture rewrites it to.
             text=json.dumps({'records':[{'title':'saved','file_path':str(root/'chatbooks'/'saved.zip')}]},ensure_ascii=False,indent=2)
-        path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text);path.chmod(0o600)
+        write(folder,leaf,text)
         made[label]=(folder,leaf)
 else:
     for owner in case['delete']:
         for suffix in ('','-wal','-shm','-journal'):
             Path(str(paths[owner])+suffix).unlink(missing_ok=True)
         made[owner]=('data',paths[owner].relative_to(root).as_posix())
-print(json.dumps({'root':str(root),'made':made}))
+    shared=Path(os.environ['APPDATA']) if os.name=='nt' else Path.home()/'.config'
+    for leaf,text in case.get('shared',{}).items():
+        path=shared/'tldw_chatbook'/leaf
+        path.parent.mkdir(parents=True,exist_ok=True,mode=0o700);path.write_text(text);path.chmod(0o600)
+    for label,(folder,leaf,text) in case.get('target_files',{}).items():
+        write(folder,leaf,text)
+print(json.dumps({'root':str(root),'made':made,'folders':{k:str(v) for k,v in folders.items()}}))
 '''
 
 def produce(role):
@@ -279,9 +397,11 @@ def reviewed(service,start,retry):
     assert result['state']=='succeeded',dict(result)
     return result
 
-def located(root,made):
-    folders={'data':root,'config':source.parent}
-    return {label:folders[folder]/leaf for label,(folder,leaf) in made.items()}
+def located(folders,made):
+    return {label:Path(folders[folder])/leaf for label,(folder,leaf) in made.items()}
+
+def snapshot(folder):
+    return {p.name:p.read_bytes() for p in folder.iterdir()} if folder.exists() else None
 
 def present(paths):
     return {label for label,path in paths.items() if path.exists()}
@@ -298,21 +418,24 @@ def board_only_in_wal(paths,stage):
             assert not db.execute("SELECT name FROM kanban_boards WHERE uuid='post-restore-board'").fetchall(),(label,stage)
 
 shared=Path.home().parent.parent/'source'/'home'
+shared_pets=(Path(os.environ['APPDATA']) if os.name=='nt' else Path.home()/'.config')/'tldw_chatbook'
 service=RecoveryService(Path.home()/'recovery-control')
 try:
     if role=='source':
         made=produce('source')['made']
-        preview=service.preview_backup((source,),options={'data_groups':groups})
+        preview=service.preview_backup((source,),options=backup_options)
         assert preview.complete,[(row.owner,row.status,row.logical_id) for row in preview.items if row.status in {'missing_required','unsupported','unavailable'}]
-        succeeded(service,service.start_backup((source,),preview.scope_digest,Path.home()/'created.tldw-backup.zip',options={'data_groups':groups},password=None))
+        succeeded(service,service.start_backup((source,),preview.scope_digest,Path.home()/'created.tldw-backup.zip',options=backup_options,password=None))
         (Path.home()/'created.json').write_text(json.dumps(made))
     else:
         produced=produce('target')
-        root=Path(produced['root'])
+        folders=produced['folders']
         made=json.loads((shared/'created.json').read_text())
         made.update(produced['made'])
-        paths=located(root,made)
+        paths=located(folders,made)
         assert not present(paths),sorted(present(paths))
+        own={label:(Path(folders[folder])/leaf,text) for label,(folder,leaf,text) in case.get('target_files',{}).items()}
+        shared_before=snapshot(shared_pets)
         inspection=service.start_inspection(shared/'created.tldw-backup.zip',password=None)
         succeeded(service,inspection)
         profile=service.summary(inspection)['profile_ids'][0]
@@ -327,6 +450,30 @@ try:
             lambda issues:service.start_restore(inspection,plan(issues),rollback_password=b'rollback-test-password'))
         operation=restored['result']['journal_operation_id']
         assert present(paths)==set(paths),sorted(set(paths)-present(paths))
+        for label,(folder,leaf,text) in case['files'].items():
+            # The pets restore with the source's bytes.
+            if folder=='pets':assert paths[label].read_text()==text,label
+        retired=[label for label in case.get('retired',()) if own[label][0].exists()]
+        assert not retired,'restore kept '+repr(retired)
+        assert snapshot(shared_pets)==shared_before,'restore changed the old shared pet folder'
+        if 'pets_after_restore' in case:
+            assert produce('start')['pets']==case['pets_after_restore']
+            assert snapshot(shared_pets)==shared_before,'pet start changed the old shared pet folder'
+        if case.get('extract'):
+            # Manual extraction of the backup's pet rows (TASK-42000 AC#3).
+            from tldw_chatbook.Backup_Recovery import archive_reader
+            document=archive_reader.verify_sealed(service.inspection(inspection))
+            pets={row.logical_id:row for row in document.files if row.owner_id=='tamagotchi.config'}
+            assert len(pets)==2,sorted(pets)
+            group_ids=tuple(group.group_id for group in document.dependency_groups if set(group.members)&set(pets))
+            reviewed_extraction=service.wait(service.start_extraction_preview(inspection,group_ids=group_ids,destination=Path.home()/'extracted'))
+            assert reviewed_extraction['state']=='succeeded',dict(reviewed_extraction)
+            succeeded(service,service.start_extraction(inspection,reviewed_extraction['result']['plan']))
+            report=json.loads((Path.home()/'extracted'/'inert-mapping.json').read_text())
+            rows={row['archive_relative_path']:row for row in report['files'] if row['owner_id']=='tamagotchi.config'}
+            assert set(rows)=={leaf for folder,leaf,_ in case['files'].values()},sorted(rows)
+            for folder,leaf,text in case['files'].values():
+                assert (Path.home()/'extracted'/rows[leaf]['output']).read_text()==text,leaf
         for label in case.get('wal',()):
             writer=("import os,sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('PRAGMA journal_mode=WAL');"
                 "c.execute('PRAGMA wal_autocheckpoint=0');c.execute(sys.argv[2],('post-restore-board','Post-restore board','2026-11-18T00:00:00Z','2026-11-18T00:00:00Z'));c.commit();os._exit(0)")
@@ -362,6 +509,9 @@ try:
             rolled=reviewed(service,later,later)
             kept=present(paths)
             assert not kept,'rollback kept created files: '+repr(sorted(kept))
+            for label in case.get('retired',()):
+                assert own[label][0].read_text()==own[label][1],'rollback did not bring back '+label
+            assert snapshot(shared_pets)==shared_before,'rollback changed the old shared pet folder'
             sidecars=[str(path)+suffix for path in paths.values() for suffix in ('-wal','-shm') if Path(str(path)+suffix).exists()]
             assert not sidecars,sidecars
             if case.get('wal'):

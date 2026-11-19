@@ -236,10 +236,11 @@ class AppFooterStatus(Widget):
         storage = None  # falls back to MemoryStorage inside the widget
         try:
             # ConfigFileStorage, specifically: `Widgets/Tamagotchi/recovery.py`
-            # registers ITS path (`~/.config/tldw_chatbook/tamagotchi_pets.json`
-            # plus that file's dated backups) as the `tamagotchi.config` backup
-            # owner. Any other adapter writes somewhere backup/recovery has no
-            # locator for, so the pet's state would not be captured.
+            # registers ITS path (`tamagotchi_pets.json` beside the profile's
+            # config.toml, plus that file's dated backups) as the
+            # `tamagotchi.config` backup owner (TASK-42000). Any other adapter
+            # writes somewhere backup/recovery has no locator for, so the
+            # pet's state would not be captured.
             from .Tamagotchi.tamagotchi_storage import ConfigFileStorage
 
             storage = ConfigFileStorage()

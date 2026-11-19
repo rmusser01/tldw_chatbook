@@ -105,6 +105,11 @@ For custom tokenizers, the default tokenizer directory may already exist only if
 it is empty, owned by you, and private. An isolated restore refuses an occupied
 tokenizer destination.
 
+Pet settings (the optional footer pet) belong to **Settings** and restore into the
+new profile's configuration folder, beside its `config.toml`. Each restored profile
+gets its own pets, including from an older backup taken while every profile shared
+one pet folder.
+
 An isolated restore retains included credentials in an encrypted recovery copy;
 they do not need a destination slot. The restored configuration is sanitized, and
 credentials still require the applicable local setup before use.
@@ -137,7 +142,15 @@ settings determine the destinations and remain unchanged. If Settings is selecte
 restore also checks that unselected data remains reachable at its current paths.
 
 An empty selected data source replaces its current contents with that empty state;
-the safety copy retains the removed data. If source and target locations cannot
+the safety copy retains the removed data.
+
+Pet settings are part of **Settings** and live in each profile's configuration
+folder, beside `config.toml`, so Replace treats them like the profile's other
+settings files. A backup's pets replace the profile's pets, and a backup from a
+profile without pets removes them. An older backup taken while every profile
+shared one pet folder restores its pets into this profile. The old shared folder
+(`~/.config/tldw_chatbook`, or `%APPDATA%\tldw_chatbook` on Windows) is never
+changed or removed. If source and target locations cannot
 be matched safely, replacement refuses. Restore into a separate profile to recover
 that selection without guessing which existing files to remove.
 

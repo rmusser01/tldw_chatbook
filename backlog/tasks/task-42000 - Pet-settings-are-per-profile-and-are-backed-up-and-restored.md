@@ -1,10 +1,10 @@
 ---
 id: TASK-42000
 title: "Pet settings are per-profile and are backed up and restored"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 15:58
-updated_date: 2026-11-19 16:13
+updated_date: 2026-11-19 17:23
 labels:
 - backup
 - settings
@@ -29,12 +29,12 @@ Coordinator's call on the upgrade path (engineering, stated to the owner): a pro
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each profile keeps its own pet settings: a change made under one profile is not seen by another profile on the same device
-- [ ] #2 A backup captures the profile's pet settings, and a Replace restore puts them back into that profile; pet settings never make a restore fail
-- [ ] #3 Isolated restore, Manual extraction and a later rollback treat the pet files like the profile's other settings files
-- [ ] #4 On upgrade, a profile with no pet settings of its own starts from a copy of the old shared files; the shared files are never changed or deleted
-- [ ] #5 TASK-41719's restore cases (pet folder missing, present, backup with only a dated copy) succeed with the pets restored, each red before the change
-- [ ] #6 The User Guide and Docs/Backup-and-Recovery.md describe per-profile pets
+- [x] #1 Each profile keeps its own pet settings: a change made under one profile is not seen by another profile on the same device
+- [x] #2 A backup captures the profile's pet settings, and a Replace restore puts them back into that profile; pet settings never make a restore fail
+- [x] #3 Isolated restore, Manual extraction and a later rollback treat the pet files like the profile's other settings files
+- [x] #4 On upgrade, a profile with no pet settings of its own starts from a copy of the old shared files; the shared files are never changed or deleted
+- [x] #5 TASK-41719's restore cases (pet folder missing, present, backup with only a dated copy) succeed with the pets restored, each red before the change
+- [x] #6 The User Guide and Docs/Backup-and-Recovery.md describe per-profile pets
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -113,3 +113,97 @@ Coordinator's call on the upgrade path (engineering, stated to the owner): a pro
 - D5. Old multi-profile backups: each profile's alias restores into its own folder (the `restore_plan` carve-out). [Carve-out. The alternative is to refuse those pet rows by name.]
 - D6. Crafted archives whose pet file shares a root with files from another folder are refused by name (`owner_relocation_unverified:<owner>`). This is the one place pets can still fail a restore, and the writer never produces that shape. [Refuse.]
 - D7. `test_profile_pet_roundtrip.py` (isolated restore, AC#1, AC#4) runs on no lane. Adding it to the Backup_Recovery owner suites step needs a `derived-artifacts.yml` edit. [Coordinator's call.]
+
+**Coordinator's decisions (2026-11-19):** D2–D7 accepted as planned. D1 was changed to "seed once": the copy from the shared folder happens at most once per profile, and a durable per-profile marker records it.
+
+## Implementation Notes
+
+**Summary.** Pets live beside the profile's config, in `tamagotchi_pets.json`, its dated copies and a `tamagotchi_pets.seeded` marker, so backup, Replace, isolated restore, Manual extraction and a later rollback treat them like the profile's other settings files. The archive rows are unchanged, so older backups restore into the profile. The first time the pet runs in a profile with no pet files and no marker, it copies the old shared file once; the shared folder is only ever read. Two restore-path bugs that pets exposed are fixed where every caller goes through them.
+
+**Approach (files).**
+- `Widgets/Tamagotchi/tamagotchi_storage.py`:
+  - `ConfigFileStorage()` takes its path from `config._get_effective_config_path().parent`. `path_validation.validate_path` refuses a pet file that resolves outside that folder.
+  - `JSONStorage.__init__` calls a `_prepare(operation)` hook inside its existing writing scope.
+  - `ConfigFileStorage._prepare` seeds once. When the profile has no current file, no dated copy (the scope's `observed_files`) and no marker, it copies the old shared current file (D3). The read follows no link, is capped at 16 MiB and needs a JSON object; anything else is "nothing to copy" with a warning. The copy is one atomic `_write_data`; a failed write raises. The marker is then published from the scope's temporary with `raw.replace`.
+  - A read error raises before anything is written, so the footer falls back to an in-memory pet and the next start tries again.
+- `Backup_Recovery/raw_participants.py`: the pet write scope also admits `tamagotchi_pets.seeded`.
+- `Backup_Recovery/settings_file_participants.py`: the installed pet path is the profile's config folder.
+- `Widgets/Tamagotchi/recovery.py`:
+  - `discover` returns the current file (`unused` when absent, with its config dependency), each dated copy and the marker (`…:seeded`, only when present), and nothing else from the config folder.
+  - `_restore_path(..., config_target)` keeps every structural check and maps to `config_target.parent`.
+- `Backup_Recovery/staging.py` passes the target config.
+- `Backup_Recovery/later_rollback.py`: `tamagotchi.config` joins `_CREATED_FILE_OWNERS` and `_CREATED_OWNER_CLASSES`.
+- `Backup_Recovery/restore_plan.py`: `_PER_PROFILE_ALIAS_OWNERS` exempts only `tamagotchi.config` alias rows from `shared_scope_expansion_required` and `shared_target_split` (D5).
+- `Backup_Recovery/portable_relocation.py`: `_pet_destination` and the pet-only `AppData/Roaming` creation are deleted.
+- `Backup_Recovery/detached_layout.py`: the profile's own pet files are imported; old roaming ones only when the profile has none, otherwise declared and reported ("Old shared pet files were not imported; this profile has its own.").
+- **Retired-root fixes.** Capture enrolls each config-folder file outside `_CONFIG_CAPTURE_LEAVES` as its own registered root. After a Replace retired such a file (pets under D4), the next start failed: first `FileNotFoundError` in `config_participants.verified_user_data_directory`, then `storage_admission_unavailable` from `storage_admission._contains_owned_path` (`resolve(strict=True)`). Both now treat a missing registered root as containing nothing.
+- Comments: `AppFooterStatus.py`, `Config_Files/default_config.toml`.
+
+**D1: the seed-once marker, and why.** The marker is `tamagotchi_pets.seeded` beside the pet file. The pet owner owns it: it is discovered, captured and restored as `profile:<id>:tamagotchi.config:seeded`, the raw pet scope writes it, and the inventory never shows it as unowned or unsupported.
+- Existing per-profile places were rejected:
+  - `config.toml` and `ui_state.toml` are replaced by a Settings Replace, so a backup without the flag would clear it, and the next start would copy the shared pets again.
+  - Device-local stores and the recovery control records are another domain, and a restore does not carry them.
+- Discovery lists the marker only when it exists, so a backup never records it as absent. A Replace therefore never retires a target's marker, and a backup that holds one restores it.
+- So a profile that has taken its copy keeps the marker through any Replace, including one that removes all its pets (`pets-none` below), and is never seeded again. A profile that never ran the pet takes its one copy on first run.
+
+**Acceptance criteria (evidence).**
+- **AC#1:** `test_profile_pet_roundtrip.py::test_each_profile_keeps_its_own_pets_through_backup_and_isolated_restore`. Beta never sees the pet alpha saved, and each restored profile reads only its own pets.
+- **AC#2:** `test_created_owner_rollback.py` cases `[pets-missing]`, `[pets-present]`, `[pets-dated-only]`, `[pets-none]` and `[pets-ungrouped]`: a cross-profile Replace, then a later rollback. The pets are in the target profile's config folder after the restore, with the source's text. "Pets never fail a restore" holds except for crafted co-rooted archives, which are refused by name (D6).
+- **AC#3:**
+  - Isolated restore: the roundtrip test; each profile's pets sit beside its restored config, and fresh `ConfigFileStorage` reads return them.
+  - Manual extraction: `[pets-missing]` extracts the Settings group, and the report and outputs hold both pet rows with the source bytes.
+  - Later rollback: every created pet file is retired, and `[pets-dated-only]` and `[pets-none]` bring the target's own file back.
+  - Portable: `test_detached_layout.py` pet tests.
+- **AC#4:**
+  - Upgrade copy: `test_operational_owners.py::test_pet_store_copies_the_old_shared_pets_once`, `test_pet_store_never_copies_into_a_profile_with_pet_files[current|dated|marker]`, `test_a_failed_pet_copy_writes_nothing_and_the_next_start_retries[unreadable|publication]` and `test_pet_store_follows_no_link_out_of_place`, plus the roundtrip seeds.
+  - Shared files never change: every test that has an old shared folder checks its bytes, and the unit and roundtrip tests also check its inode and mtime. The harness checks after the restore, after the pet start and after the rollback.
+- **AC#5:** `[pets-missing]`, `[pets-present]` and `[pets-dated-only]`, each red at base (below). The ungrouped coordinator point is `[pets-ungrouped]`.
+- **AC#6:** `Docs/User_Guide/settings.md` (new "The footer pet" section under Advanced Config, the only place the pet is turned on) and `Docs/Backup-and-Recovery.md` (Replace and isolated-restore sections). Also updated: `Docs/Development/Textual-Tamagotchis.md` and `Docs/Architecture/backup-recovery.md`.
+
+**Red at base.** Base is c176f553b3 plus this task's test changes, with `tldw_chatbook/` checked out to base (`git diff > patch`, `git checkout`, run, `git apply` in one command; `-n 4`, load 19-30).
+- `test_operational_owners`:
+  - The discovery, copy-once, `never_copies[*]` and `follows_no_link` tests fail on their path assertions: the store and the owner still point at `~/.config/tldw_chatbook`.
+  - `failed_copy[*]` fails with `DID NOT RAISE OSError`.
+  - The retired-root test fails with `assert FileNotFoundError(...) is False`.
+- `test_restore_plan::test_only_pet_aliases_…[one|both-tamagotchi.config]` fails with `assert 'shared_scope_expansion_required' is None` and `'shared_target_split' is None`.
+- `test_profile_pet_roundtrip.py`:
+  - The staging and co-rooted-with-config tests fail on their assertions (base refuses with `owner_relocation_unverified:tamagotchi.config` or `:config`, or derives `~/.config/tldw_chatbook`).
+  - The integration test's seed child fails `assert store.filepath==selector.parent/'tamagotchi_pets.json'`.
+  - The changed `rejects_unrecognized_payload_mapping[*]` fails with `TypeError` (the new `_restore_path` argument).
+- `test_detached_layout`:
+  - `[profile]` and `[both]` fail `AssertionError: detached_unknown_content`.
+  - The portable relocation child fails with `isolated_destination_parent_overlaps_control`.
+- `test_inventory_unused_owners[pets_absent|pets_link]` and `test_settings_file_participant_lifetimes[pet]` fail on their path assertions.
+- Harness cases, with a temporary `recovery_service.issue_code` wrapper to name the code behind `backup_operation_failed`:
+  - `[pets-missing]`, `[pets-present]`, `[pets-dated-only]` and `[pets-ungrouped]` fail with `replacement_destination_parent_required`.
+  - `[pets-none]` fails with `preserved_group_inventory_invalid`: base's pet owner refuses the marker as an unknown file in its folder.
+- On the new pet code, without the two retired-root fixes, `[pets-none]` failed at the pet start after the restore, first with `FileNotFoundError` in `verified_user_data_directory` and, with that fixed, with `storage_admission_unavailable`. A temporary probe showed the `resolve(strict=True)` frame on the retired `tamagotchi_pets.json` root.
+
+**Invariants, red under temporary source edits** (all reverted; `-n 4`):
+- `ui.state` added to `_PER_PROFILE_ALIAS_OWNERS`: `test_only_pet_aliases_…[one|both-ui.state]` (`assert None == 'shared_scope_expansion_required'` and `'shared_target_split'`).
+- The marker's logical-ID check dropped: `rejects_…[marker_id]` (`DID NOT RAISE`).
+- Pet rows skipped in `_config_targets` (the withdrawn exclusion's shape): the wrong-folder staging cases, and `test_co_rooted_pet_and_data_file_refuse_by_name[data-*]` and `[config-True]`. `[config-False]` stays green under that edit, because the co-rooted personas file refuses by its own check.
+- The roaming fallback removed from `_pet_members`: `test_portable_pets_…[roaming]` (`assert {} == {...}`).
+
+**Green (final code).**
+- In-process unit and alias runs: 46 passed. Detached pet tests: 5 passed (75 s).
+- All ten `test_created_owner_rollback.py` cases are green, the five pet cases among them: see batch 2 below.
+- `test_profile_pet_roundtrip.py`, serial with the owner-suites step's flags (`-p no:xdist --timeout=300 --tb=short`): 30 passed in 90.1 s; the integration test took 88.6 s at load 15-18. Charge about 1.5 min to the lane.
+
+**Covering runs** (`-n 4` unless noted).
+- Batch 1, at load 14-19: 652 passed, 2 failed, 1 skipped (410 s). It covered `test_operational_owners`, `test_restore_plan`, `test_inventory_unused_owners`, `test_settings_file_participant_lifetimes`, `test_later_rollback`, `test_later_created_destinations`, `test_config_file_retirement`, `test_retirement_only_rollback`, `test_portable_relocation`, `test_config_sibling_capture`, `test_capture_root_order`, `test_bound_config_companions`, six `test_config_companion_*` files, `test_admission_evidence_reuse`, `test_effective_admission_roots`, `test_admission_path_resolution`, `test_guarded_raw_evidence_reuse`, `test_sqlite_inside_config_scope` and `Tests/Widgets/test_tamagotchi*.py`.
+  - The two failures, `test_settings_file_participant_lifetimes.py::test_runtime_serialization_is_inside_admitted_source` and `::test_writeback_failure_does_not_wedge_the_operation_file_list`, fail the same way at base with the same command (3 failed at base, the third being this task's `[pet]` red). They are not this change.
+- Batch 2 (load 11-16, 852 s): 174 passed and 2 failed, over the whole of `test_created_owner_rollback.py` (10 cases), `test_detached_layout.py`, `test_profile_pet_roundtrip.py`, `test_isolated_restore.py`, `test_capture_service.py`, `test_inert_extraction.py` and `test_restore_data_groups.py`.
+  - The two failures were `[databases]` and `[tools]`. This task's new "restored with the source's text" check also ran on their `config.history` files, whose restored text legitimately differs. The check now covers only the pet files.
+  - After that: `[databases]`, `[tools]`, `[pets-missing]` and `[pets-present]`, 4 passed (152 s, load 22).
+- `Tests/CI`: 1811 passed, 2 skipped.
+- Serially: `Tests/Architecture/test_backup_owner_inventory.py`, `test_module_size_ratchet.py`, `test_screen_size_ratchet.py` and `test_recovery_entrypoints.py`. The census test failed until `backlog/docs/backup-recovery-owner-inventory.md` gained the two new producer rows (`ConfigFileStorage._prepare` write, `_read_shared_pets` open) and the updated `tamagotchi.config` row. After that: 75 passed in that file, and the others passed, 340 in the first run minus that one.
+- No size-ratchet row lists a touched module.
+- `ruff check`: no new findings in any changed file (per-file counts equal at base and now).
+- Preflight: the diagnostic inventory drift is the one added `logger.warning("Old shared pet file not copied: not a readable pet file")`, which interpolates nothing. It was reviewed with `--statements` and written with `--write`.
+
+**Lane (D7).** `Tests/Backup_Recovery/test_profile_pet_roundtrip.py` is added to the Backup_Recovery owner-suites step (push to dev) in `.github/workflows/derived-artifacts.yml`, after the created-owner rollback file. It is also in the `BACKUP_OWNER_SUITE_TARGETS` pin in `Tests/CI/test_ci_queue_pressure_contract.py`. The file was renamed from `test_shared_home_pet_roundtrip.py`. Its old base red (`missing_required` for `research.local`, from a custom research path nothing created) is fixed in the seed.
+
+**Not verified here:**
+- Windows: the `%APPDATA%` old shared path, and `host_environment` without the AppData creation. The portable relocation test now runs on macOS and passed.
+- A real multi-profile older backup end to end: the alias carve-out is pinned at planner level with a crafted manifest.

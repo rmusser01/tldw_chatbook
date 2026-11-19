@@ -3,7 +3,6 @@
 import errno
 import sys
 from datetime import datetime
-from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -64,21 +63,19 @@ def binding(source):
         )
     cls = _class("Widgets.Tamagotchi.tamagotchi_storage", "JSONStorage")
     if cls is not None and isinstance(source, cls):
+        from ..config import _get_effective_config_path
+
         installed_cls = _class(
             "Widgets.Tamagotchi.tamagotchi_storage", "ConfigFileStorage"
         )
-        root = (
-            Path(os.environ.get("APPDATA", "~"))
-            if os.name == "nt"
-            else Path("~/.config")
-        )
         selected = lexical_path(source.filepath)
+        # TASK-42000: the profile's own pet file, beside its config.
         return (
             "tamagotchi.config",
             selected,
             type(source) is installed_cls
             and selected
-            == lexical_path(root / "tldw_chatbook" / "tamagotchi_pets.json"),
+            == lexical_path(_get_effective_config_path().parent / "tamagotchi_pets.json"),
         )
     cls = _class("runtime_policy.source_state", "RuntimeSourceStateStore")
     if cls is not None and isinstance(source, cls):

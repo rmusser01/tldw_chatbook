@@ -2043,6 +2043,22 @@ restart. Any newer edits remain unsaved; copy them before restarting. If the
 saved file could not be read back, Save stays blocked until **Revert Raw TOML**
 reloads it; copy any newer edits before reverting too.
 
+#### The footer pet
+
+The optional footer pet is turned on only here, with `enabled = true` in the
+`[tamagotchi]` table (`name` and `personality` are optional). Each profile keeps
+its own pets in `tamagotchi_pets.json` beside its `config.toml`, with dated
+copies of earlier states, so a change under one profile is not seen by another.
+Two profiles whose configuration files share one folder share their pets too.
+The pets are backed up and restored with **Settings**.
+
+Pets used to live in one folder that every profile shared
+(`~/.config/tldw_chatbook`, or `%APPDATA%\tldw_chatbook` on Windows). The first
+time the pet runs in a profile that has no pet files of its own, it copies that
+shared file once and records the copy in `tamagotchi_pets.seeded` beside it.
+Pets you remove later, or that a restore removes, are not copied back. The
+shared folder is only read; it is never changed or removed.
+
 ### Domain Defaults — Image Gen
 
 Drafted, but with its **own Save and Revert buttons** at the bottom of the panel

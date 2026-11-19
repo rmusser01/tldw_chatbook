@@ -372,7 +372,11 @@ def verified_user_data_directory(source):
     for root in state.companion_roots:
         if root == state.selected:
             continue
-        info = os.stat(root, follow_symlinks=False)
+        try:
+            info = os.stat(root, follow_symlinks=False)
+        except FileNotFoundError:
+            # A file a Replace retired since it was enrolled (TASK-42000).
+            continue
         if (
             root.parent == selected and (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))
             or stat.S_ISDIR(info.st_mode) and (root == selected or root in selected.parents)

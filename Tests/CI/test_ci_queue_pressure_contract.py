@@ -746,6 +746,7 @@ BACKUP_OWNER_SUITE_TARGETS = (
     "Tests/Backup_Recovery/test_builtin_later_snapshot.py",
     "Tests/Backup_Recovery/test_created_persona_subtree_rollback.py",
     "Tests/Backup_Recovery/test_created_owner_rollback.py",  # TASK-41521
+    "Tests/Backup_Recovery/test_profile_pet_roundtrip.py",  # TASK-42000
     "Tests/Backup_Recovery/test_complete_roundtrip.py",
     "Tests/Backup_Recovery/test_later_rollback_credential_ui.py",
     "Tests/Backup_Recovery/test_restore_plan.py",

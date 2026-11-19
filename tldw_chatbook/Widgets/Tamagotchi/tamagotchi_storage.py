@@ -5,8 +5,11 @@ Provides multiple storage backends for saving tamagotchi state with recovery sup
 """
 
 from abc import ABC, abstractmethod
+import errno
 import json
+import os
 import sqlite3
+import stat
 from pathlib import Path
 from typing import Dict, Any, Optional
 import logging
@@ -211,10 +214,12 @@ class JSONStorage(StorageAdapter):
         with raw.scope(self, "pet", writing=True) as operation:
             raw.mkdirs(operation)
             self.max_backups = max_backups
+            self._prepare(operation)
 
-            # Initialize file if it doesn't exist
-            if not self.filepath.exists():
-                self._write_data({})
+    def _prepare(self, operation) -> None:
+        """Create the store file when it is missing (inside the init scope)."""
+        if not self.filepath.exists():
+            self._write_data({})
 
     @pet_operation
     def _read_data(self) -> Dict[str, Dict[str, Any]]:
@@ -580,29 +585,90 @@ class SQLiteStorage(StorageAdapter):
             return {}
 
 
+#: Owner limit of the pet files (``tamagotchi.config``); a larger old file is
+#: not copied.
+_SHARED_PETS_LIMIT = 16 * 1024**2
+
+
+def _shared_pets_path() -> Path:
+    """The one pet file every profile shared before TASK-42000. Read only."""
+    base = Path(os.environ.get("APPDATA", "~")) if os.name == "nt" else Path("~/.config")
+    return base.expanduser() / "tldw_chatbook" / "tamagotchi_pets.json"
+
+
+def _read_shared_pets() -> Dict[str, Any]:
+    """Return the old shared pets, or ``{}`` when there is nothing to copy.
+
+    A link is never followed; a link, a non-file, an oversized file or bytes
+    that are not a JSON object count as nothing to copy.
+
+    Raises:
+        OSError: The file exists but could not be read. Nothing has been
+            written, so the next start tries again.
+    """
+    path = _shared_pets_path()
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return {}
+    except OSError as error:
+        if error.errno != errno.ELOOP:
+            raise
+        fd = None
+    data = b""
+    if fd is not None:
+        try:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                with open(fd, "rb", closefd=False) as stream:
+                    data = stream.read(_SHARED_PETS_LIMIT + 1)
+        finally:
+            os.close(fd)
+    try:
+        pets = json.loads(data) if 0 < len(data) <= _SHARED_PETS_LIMIT else None
+    except ValueError:
+        pets = None
+    if not isinstance(pets, dict):
+        logger.warning("Old shared pet file not copied: not a readable pet file")
+        return {}
+    return pets
+
+
 class ConfigFileStorage(JSONStorage):
+    """The footer pet's store, in the profile's config folder (TASK-42000).
+
+    ``tamagotchi_pets.json`` and its dated copies sit beside the profile's
+    ``config.toml``, where the ``tamagotchi.config`` backup owner finds them.
+    The first time it runs in a profile, the store copies the old shared pet
+    file once, and only when the profile has no pet files of its own. The
+    ``tamagotchi_pets.seeded`` marker beside them records that this happened,
+    so pets a restore or the user removed later never come back from it.
     """
-    Storage adapter that uses the application's config directory.
 
-    Automatically determines the appropriate config location based on OS.
-    """
+    def __init__(self):
+        from tldw_chatbook import config
+        from tldw_chatbook.Utils.path_validation import validate_path
 
-    def __init__(self, app_name: str = "tldw_chatbook"):
-        """
-        Initialize config file storage.
-
-        Args:
-            app_name: Application name for config directory
-        """
-        import os
-
-        # Determine config directory based on OS
-        if os.name == "nt":  # Windows
-            config_dir = Path(os.environ.get("APPDATA", "~")) / app_name
-        else:  # Unix-like (Linux, macOS)
-            config_dir = Path("~/.config") / app_name
-
-        config_dir = config_dir.expanduser()
-        filepath = config_dir / "tamagotchi_pets.json"
-
+        folder = config._get_effective_config_path().parent
+        filepath = folder / "tamagotchi_pets.json"
+        # A link must not lead the pet file outside the profile's folder.
+        validate_path(filepath, folder)
         super().__init__(str(filepath))
+
+    def _prepare(self, operation) -> None:
+        """Copy the old shared pets once, then record that with the marker."""
+        marker = self.filepath.with_suffix(".seeded")
+        if marker.exists():
+            return super()._prepare(operation)
+        state = raw.check(operation)
+        if not self.filepath.exists():
+            # A dated copy is the profile's own: it already has pet files.
+            pets = {} if state.observed_files else _read_shared_pets()
+            if not self._write_data(pets):
+                raise OSError(errno.EIO, "pet file was not written")
+        temporary = state.temporary
+        try:
+            with raw.file(operation, temporary, "w") as stream:
+                stream.write("{}\n")
+            raw.replace(operation, temporary, marker)
+        finally:
+            raw.remove_temporary(operation, temporary)

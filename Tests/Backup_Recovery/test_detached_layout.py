@@ -672,56 +672,58 @@ def test_absent_default_store_with_residual_state_is_never_unused(tmp_path, suff
     assert not (tmp_path / "work.tldw-backup.zip").exists()
 
 
-def _persisted_portable_pets(source):
-    import os
-    import subprocess
-    import sys
+_PORTABLE_PETS = (
+    "tamagotchi_pets.json",
+    "tamagotchi_pets.backup_20260101_121314.json",
+)
 
-    home = source / "home"
-    env = {
-        **os.environ,
-        "HOME": str(home),
-        "USERPROFILE": str(home),
-        "APPDATA": str(home / "AppData" / "Roaming"),
-        "TLDW_CONFIG_PATH": str(home / ".config" / "tldw_cli" / "config.toml"),
-    }
-    code = """
-from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
-store=ConfigFileStorage()
-assert store.save('portable',{'name':'Nebula','happiness':72,'hunger':31,'energy':84,'health':93,'age':4})
-assert store.save('portable',{'name':'Nebula','happiness':81,'hunger':31,'energy':84,'health':93,'age':4})
-assert store.load('portable')['happiness']==81
-"""
-    seed = subprocess.run(
-        [sys.executable, "-c", code],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
+
+def _portable_pets(source, where):
+    """Pet files as a current copy (beside the config) or an older copy (the
+    installed Windows roaming folder) holds them (TASK-42000)."""
+    folder = (
+        source / "home" / ".config" / "tldw_cli"
+        if where == "profile"
+        else source / "home" / "AppData" / "Roaming" / "tldw_chatbook"
     )
-    assert seed.returncode == 0, seed.stderr[-5000:]
-    pets = home / "AppData" / "Roaming" / "tldw_chatbook"
-    before = {p.name: p.read_bytes() for p in pets.iterdir()}
-    assert "tamagotchi_pets.json" in before
-    assert any(".backup_" in name for name in before)
-    return pets, before
+    folder.mkdir(parents=True, exist_ok=True)
+    files = {
+        name: json.dumps({"portable": {"name": "Nebula " + where, "age": index}}).encode()
+        for index, name in enumerate(_PORTABLE_PETS)
+    }
+    if where == "profile":
+        files["tamagotchi_pets.seeded"] = b"{}\n"
+    for name, data in files.items():
+        (folder / name).write_bytes(data)
+    return folder, files
 
 
-@pytest.mark.parametrize("unknown", [False, True])
-def test_installed_roaming_pet_and_backup_are_confined(tmp_path, unknown):
-    import os
-
-    if os.name != "nt":
-        pytest.skip("Windows portable installed pet location")
+@pytest.mark.parametrize("layout", ["profile", "roaming", "both", "roaming-unknown"])
+def test_portable_pets_import_from_the_profile_or_an_older_roaming_copy(
+    tmp_path, layout
+):
+    """TASK-42000: a portable copy's own pet files are imported; an older
+    copy's roaming pet files are imported only when the profile has none, and
+    unknown roaming files still refuse."""
     source, _root, _old = _base_profile(tmp_path)
-    pets, before = _persisted_portable_pets(source)
-    if unknown:
-        (pets / "unknown-durable.json").write_text("{}")
-        with pytest.raises(ValueError, match="detached_unknown_content"):
-            _layout().produce_detached_archive(source, tmp_path / "work", Event())
-    else:
+    captured = {}
+    if layout in ("profile", "both"):
+        _, captured = _portable_pets(source, "profile")
+    if layout != "profile":
+        roaming, files = _portable_pets(source, "roaming")
+        if layout != "both":
+            captured = files
+    if layout == "roaming-unknown":
+        (roaming / "unknown-durable.json").write_text("{}")
+    before = {p: p.read_bytes() for p in source.rglob("*") if p.is_file()}
+    try:
         result = _layout().produce_detached_archive(source, tmp_path / "work", Event())
+    except ValueError as error:
+        result = str(error)
+    if layout == "roaming-unknown":
+        assert result == "detached_unknown_content"
+    else:
+        assert not isinstance(result, str), result
         with zipfile.ZipFile(result.archive) as archive:
             manifest = json.loads(archive.read("manifest.json"))
             rows = [
@@ -731,17 +733,20 @@ def test_installed_roaming_pet_and_backup_are_confined(tmp_path, unknown):
             ]
             assert {
                 row["relative_path"]: archive.read(row["payload"]) for row in rows
-            } == before
-    assert all((pets / name).read_bytes() == data for name, data in before.items())
+            } == captured
+        assert (
+            "Old shared pet files were not imported; this profile has its own."
+            in result.review_lines
+        ) == (layout == "both")
+    assert {p: p.read_bytes() for p in source.rglob("*") if p.is_file()} == before
 
 
 def test_portable_pet_fresh_selection_and_repeat_move(tmp_path):
-    import os
+    """An older portable copy's roaming pets survive relocation and repeat
+    moves, now restored beside the relocated profile's config (TASK-42000)."""
     import subprocess
     import sys
 
-    if os.name != "nt":
-        pytest.skip("Windows portable installed pet location")
     bundle = tmp_path / "first bundle \u00fc"
     bundle.mkdir()
     # Owner discovery retains native custody for its process lifetime. Seed in
@@ -749,9 +754,9 @@ def test_portable_pet_fresh_selection_and_repeat_move(tmp_path):
     seed_code = """
 import sys
 from pathlib import Path
-from Tests.Backup_Recovery.test_detached_layout import _base_profile,_persisted_portable_pets
+from Tests.Backup_Recovery.test_detached_layout import _base_profile,_portable_pets
 source,_,_=_base_profile(Path(sys.argv[1]))
-_persisted_portable_pets(source)
+_portable_pets(source,'roaming')
 """
     seeded = subprocess.run(
         [sys.executable, "-c", seed_code, str(bundle)],
@@ -806,10 +811,12 @@ os.environ['APPDATA']=sys.argv[3]
 select_profile(selected.profile_id,control)
 from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
 store=ConfigFileStorage()
-parent=control.parent/'home/AppData/Roaming/tldw_chatbook'
-assert store.filepath==parent/'tamagotchi_pets.json',str(store.filepath)
-assert {p.name:p.read_bytes().hex() for p in parent.iterdir()}==expected
-assert store.load('portable')['happiness']==81
+parent=store.filepath.parent
+# TASK-42000: an older copy's roaming pets restore beside the profile's config.
+assert parent.is_relative_to(control.parent/'profiles'),str(store.filepath)
+assert {p.name:p.read_bytes().hex() for p in parent.iterdir() if p.name.startswith('tamagotchi_pets') and p.suffix=='.json'}==expected
+assert store.load('portable')['name']=='Nebula roaming'
+assert not (control.parent/'home'/'AppData'/'Roaming'/'tldw_chatbook').exists()
 assert not Path(sys.argv[3]).exists()
 print('FRESH_PRIVATE_PET_READ',flush=True)
 """
