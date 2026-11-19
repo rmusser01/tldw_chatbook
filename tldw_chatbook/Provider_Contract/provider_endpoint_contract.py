@@ -95,6 +95,15 @@ _CLOUD_BASE_KEYS = frozenset(
     for key, record in RECORDS_BY_KEY.items()
     if record.classification == "cloud" and not record.engine_driven
 )
+#: TASK-41704: Cohere's and DeepSeek's documented bases are bare hosts, and
+#: their adapters append the whole route (``/v2/chat``, ``/chat/completions``),
+#: so a bare host is their base, not ``<host>/v1``.
+_BARE_HOST_CLOUD_KEYS = frozenset(
+    key
+    for key in _CLOUD_BASE_KEYS
+    if RECORDS_BY_KEY[key].default_base_url
+    and not urlsplit(RECORDS_BY_KEY[key].default_base_url).path.strip("/")
+)
 
 
 #: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
@@ -318,6 +327,11 @@ def _resolve_provider_endpoint(
     segments = tuple(segment for segment in path.split("/") if segment)
     if any(segment in {".", ".."} for segment in segments):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
+    if provider_key == "qwencloud" and segments[-1:] == ("responses",):
+        # TASK-41722: QwenCloud's adapter strips its own /responses from a
+        # pasted endpoint (normalize_qwencloud_base_url), so this reads the
+        # base before it too; Console refused what the adapter sent.
+        segments = segments[:-1]
     if _names_a_native_route(provider_key, segments):
         return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
 
@@ -338,8 +352,15 @@ def _resolve_provider_endpoint(
     if native:
         # Only from a plain root: an API suffix before the route is ambiguous.
         suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
-    if suffix is None and (
-        provider_key == "custom_hosted" or provider_key in _CLOUD_BASE_KEYS
+    cloud = provider_key in _CLOUD_BASE_KEYS
+    if (suffix is None and (provider_key == "custom_hosted" or cloud)) or (
+        # TASK-41704: nor is a cloud path with no v1 an origin to append /v1
+        # to (Google's own .../v1beta was saved as .../v1beta/v1); and a
+        # route there is refused (TASK-41727: .../responses was accepted).
+        cloud
+        and suffix is not None
+        and suffix[1] == "origin"
+        and (segments or provider_key in _BARE_HOST_CLOUD_KEYS)
     ):
         # TASK-40300, owner decision 2026-11-13: an OpenAI-compatible custom
         # endpoint's path is its API base even when its v1 is not the last
@@ -351,7 +372,13 @@ def _resolve_provider_endpoint(
         if _names_a_route(segments):
             return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
         return _engine_preset_resolution(
-            CUSTOM_HOSTED, provider_key, scheme, netloc, canonical_host, segments
+            CUSTOM_HOSTED,
+            provider_key,
+            scheme,
+            netloc,
+            canonical_host,
+            segments,
+            bare_host_base=provider_key in _BARE_HOST_CLOUD_KEYS,
         )
     if suffix is None:
         return _invalid_resolution(
@@ -463,6 +490,8 @@ def _engine_preset_resolution(
     netloc: str,
     host: str,
     segments: tuple[str, ...],
+    *,
+    bare_host_base: bool = False,
 ) -> ProviderEndpointResolution:
     """Resolve an engine preset's endpoint around its own API base.
 
@@ -482,6 +511,8 @@ def _engine_preset_resolution(
         netloc: Normalized network location.
         host: Canonical host name.
         segments: Canonical, validated path segments.
+        bare_host_base: A bare host is the base itself (TASK-41704: Cohere,
+            DeepSeek).
 
     Returns:
         The resolution whose chat URL is ``<base>/chat/completions``.
@@ -496,14 +527,16 @@ def _engine_preset_resolution(
     if not segments:
         form = "origin"
         default = urlsplit(preset.default_base_url or "")
-        if preset.base_url_suffix:
+        if bare_host_base:
+            base_path = ""
+        elif preset.base_url_suffix:
             base_path = preset.base_url_suffix
         elif default.hostname == host and default.path:
             base_path = default.path
         else:
             base_path = "/v1"
         segments = tuple(segment for segment in base_path.split("/") if segment)
-    base = urlunsplit((scheme, netloc, f"/{'/'.join(segments)}", "", ""))
+    base = urlunsplit((scheme, netloc, "/".join(("", *segments)), "", ""))
     chat_url = f"{base}/chat/completions"
     models_url = f"{base}/models"
     return ProviderEndpointResolution(

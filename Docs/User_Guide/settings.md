@@ -399,12 +399,20 @@ default is `https://api.anthropic.com/v1`, so its gateway base ends in
 that names a request route, such as `…/openai/responses`, is refused, and so is
 a provider's own route pasted into its Endpoint: Anthropic's `/v1/messages`,
 Cohere's `/v2/chat` or Google's `…:generateContent` ("Endpoint path names a
-request route; enter the API base."). One known gap: **s** adds
-`/v1` to an address whose path has no `v1`, so Google's own
-`https://generativelanguage.googleapis.com/v1beta` is saved as `…/v1beta/v1`;
-until that is fixed, set such an address as `api_base_url` in the config file,
-and change that provider's model or key there too, because saving its card in
-Settings writes the address again, with `/v1` added.
+request route; enter the API base."), with or without a `v1` before the route:
+`https://api.openai.com/responses` is refused too. An address whose path has
+no `v1` is also saved as typed: Google's own
+`https://generativelanguage.googleapis.com/v1beta`, a gateway's
+`…/gemini/v1beta`, and Cohere's and DeepSeek's bare hosts
+(`https://api.cohere.com`, `https://api.deepseek.com`); another provider's
+bare host still gets `/v1`. An address an earlier version saved with `/v1`
+added (such as `…/v1beta/v1`) stays as it is: enter the provider's address
+again and save. QwenCloud's Endpoint may be a pasted Responses endpoint
+(`…/compatible-mode/v1/responses`): the Console, **s** and its chats all read
+it as the base before `/responses`, which is what **s** saves. When **s**
+refuses an endpoint, the save result and the Endpoint row's help give the
+reason, such as "Endpoint URL must include a valid host and port." or the
+route refusal above, and the row gives it as you type.
 
 MLX-LM is reached at `http://<host>:<port>/v1`, built from
 `[api_settings.local_mlx_lm]` `host` and `port` (127.0.0.1 and 8080 when

@@ -274,6 +274,58 @@ async def test_the_endpoint_row_refuses_a_koboldcpp_root_as_it_is_typed(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_the_provider_card_names_the_contracts_reason_for_a_refused_endpoint(
+    request,
+) -> None:
+    """TASK-41726: the Endpoint row's help checked only KoboldCpp's and
+    MLX-LM's rules, and **s** answered every endpoint the endpoint contract
+    refuses with "Provider settings are invalid; review the endpoint and
+    model." Both now give the contract's reason, for a route and for a host,
+    and nothing is written."""
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+    )
+
+    host = DestinationHarness(_build_test_app(), "settings")
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        screen = _active_destination_screen(host)
+        screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
+        provider = screen.query_one("#settings-provider-value", Select)
+        provider.value = "openai"
+        screen.handle_provider_value_changed(Select.Changed(provider, "openai"))
+        await pilot.pause()
+        saved_before = load_cli_config_and_ensure_existence(force_reload=True)
+        url_before = saved_before["api_settings"]["openai"].get("api_base_url")
+
+        def row_help() -> str:
+            return _static_text(screen.query_one("#settings-provider-endpoint-help"))
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        for typed, reason in (
+            ("https://api.openai.com/v1/responses", ENDPOINT_ROUTE_REFUSAL),
+            ("http://127.1:8000/v1", "Endpoint URL must include a valid host and port."),
+        ):
+            endpoint.focus()
+            await pilot.pause()
+            await pilot.press("end", *["backspace"] * len(endpoint.value))
+            await pilot.press(*typed)
+            await pilot.pause()
+            assert endpoint.value == typed
+            assert row_help() == reason, typed
+
+            screen.query_one("#settings-model-value", Input).value = "gpt-test"
+            assert await _save_provider_card(screen, pilot) == reason, typed
+            assert row_help() == reason, typed
+
+    saved = load_cli_config_and_ensure_existence(force_reload=True)
+    assert saved["api_settings"]["openai"].get("api_base_url") == url_before
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_a_stored_koboldcpp_chat_route_refuses_only_saves_that_write_it(
     request,
 ) -> None:

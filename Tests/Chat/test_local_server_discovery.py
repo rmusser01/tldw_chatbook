@@ -4634,6 +4634,10 @@ def test_a_gateway_path_keeps_every_host_and_shape_refusal():
 
     for provider in sorted({case.split("-")[0] for case in _GATEWAY_POSTS}):
         routes = () if provider == "zai" else _GATEWAY_ROUTE_SHAPES
+        if provider == "qwencloud":
+            # TASK-41722, rewritten on purpose: QwenCloud's adapter strips its
+            # own /responses and sends, so the contract reads the base too.
+            routes = tuple(route for route in routes if not route.endswith("/responses"))
         native = _NATIVE_ROUTE_SHAPES.get(provider, ())
         for endpoint in _GATEWAY_REFUSED_SHAPES:
             assert endpoint_refusal(provider, endpoint), (provider, endpoint)
@@ -4643,6 +4647,218 @@ def test_a_gateway_path_keeps_every_host_and_shape_refusal():
                 provider,
                 endpoint,
             )
+
+
+# --- TASK-41704/41727/41722: cloud bases whose path has no v1 -----------------
+
+#: Per cloud dispatch case: a base whose path has no ``v1`` (the provider's own
+#: documented base, or a gateway's), and where the adapter posts once Settings
+#: has saved it.
+_NO_V1_BASES = {
+    "google-api_base_url": (
+        (
+            "https://generativelanguage.googleapis.com/v1beta",
+            "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+        ),
+        (
+            "https://litellm.corp/gemini/v1beta",
+            "https://litellm.corp/gemini/v1beta/models/m:generateContent",
+        ),
+    ),
+    "cohere-api_base_url": (
+        ("https://api.cohere.com", "https://api.cohere.com/v2/chat"),
+        ("https://litellm.corp/cohere", "https://litellm.corp/cohere/v2/chat"),
+    ),
+    "deepseek-api_base_url": (
+        ("https://api.deepseek.com", "https://api.deepseek.com/chat/completions"),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("dispatch", "table", "key", "extra", "case"),
+    [
+        (*entry, case)
+        for entry, case in zip(_CLOUD_OWN_ENDPOINTS, _CLOUD_IDS, strict=True)
+        if case in _NO_V1_BASES
+    ],
+    ids=[case for case in _CLOUD_IDS if case in _NO_V1_BASES],
+)
+def test_a_cloud_base_without_v1_saves_unchanged_and_posts_there(
+    dispatch, table, key, extra, case, monkeypatch
+):
+    """TASK-41704: the contract read a cloud path with no ``v1`` as an origin
+    and appended ``/v1``, so **s** saved Google's own ``.../v1beta`` as
+    ``.../v1beta/v1`` and Cohere's ``https://api.cohere.com`` as ``.../v1``,
+    which their adapters then posted under (404s). Each saves as typed, and
+    the adapter posts to its own route on it."""
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+
+    for base, posted in _NO_V1_BASES[case]:
+        saved = persisted_endpoint_for_key(dispatch, "api_base_url", base)
+        assert saved == base, (case, saved)
+        sent = _cloud_world(monkeypatch, _cloud_config(table, key, extra, saved))
+
+        try:
+            _dispatch(dispatch)
+        except Exception as exc:  # the stub answers 400
+            caught = exc
+        else:
+            caught = None
+
+        assert sent == [posted], (base, repr(caught))
+
+
+#: What a Settings save wrote for those bases before TASK-41704, and the
+#: project-instruction notice key each kept (computed at c176f553b3 through
+#: Console's send resolution, for ``_PROJECT_LOCATOR``).
+_PROJECT_LOCATOR = "workspace:/task-41704"
+_SAVED_BEFORE_41704 = {
+    ("google", "https://generativelanguage.googleapis.com/v1beta/v1"): (
+        "a9aee8f3cf550c375c096be738be98d94d5857072fb05590ed475913e4d741a8"
+    ),
+    ("google", "https://litellm.corp/gemini/v1beta/v1"): (
+        "0ba4ad55e40e1ea4510cd519117ed3b83c8ea015b717976e9e995d9c26cf9830"
+    ),
+    ("cohere", "https://api.cohere.com/v1"): (
+        "962153f594d0bcd32fddc89d16df8d32c917f31489708e70dd665bf92c8fa1c6"
+    ),
+    ("deepseek", "https://api.deepseek.com/v1"): (
+        "57cfa746dfc0f95736da7066d73a5aa0511aec799ebbd44e11f055938eb2eb96"
+    ),
+}
+
+
+@pytest.mark.asyncio
+async def test_a_project_instruction_key_saved_before_the_v1_fix_still_resolves():
+    """TASK-41704 AC#2: the fix changes how a cloud path without ``v1`` reads,
+    not a value an earlier version saved with ``/v1`` added. Console still
+    sends to that value as stored, so its project-instruction consent key is
+    the one the user gave consent under, and a save that leaves the Endpoint
+    alone writes it back unchanged."""
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+
+    locator = fingerprint_canonical_locator(_PROJECT_LOCATOR)
+    for (provider, stored), notice_key in _SAVED_BEFORE_41704.items():
+        table = {"api_key": "not-a-real-key-0000", "model": "m", "api_base_url": stored}
+        config = {"api_settings": {provider: table}}
+        seen: list[str] = []
+
+        resolution = await _resolve_endpoint_send(
+            ConsoleSessionSettings(provider=provider, model="m"), config, False, seen
+        )
+
+        assert resolution.ready is True, (stored, resolution.visible_copy)
+        assert project_instruction_notice_key(
+            locator, resolution.execution_key, resolution.base_url
+        ) == notice_key, stored
+        assert resolution.base_url == stored, stored
+        assert seen == [f"adapter:{stored}"], stored
+        assert persisted_endpoint_for_key(provider, "api_base_url", stored) == stored
+
+
+#: TASK-41727: per cloud dispatch case, a base that ends in a request route
+#: with no ``v1`` before it. Z.ai's preset reading takes any path as its base
+#: (TASK-34100.6), and QwenCloud strips its own ``/responses`` (TASK-41722).
+_NO_V1_ROUTES = {
+    "openai-api_base_url": "https://api.openai.com/responses",
+    "anthropic-api_base_url": "https://api.anthropic.com/responses",
+    "cohere-api_base_url": "https://api.cohere.com/embeddings",
+    "google-api_base_url": "https://litellm.corp/gemini/chat",
+    "huggingface-api_base_url": "https://api-inference.huggingface.co/responses",
+    "huggingface-router_base_url": "https://router.huggingface.co/responses",
+    "groq-api_base_url": "https://api.groq.com/openai/responses",
+    "openrouter-api_base_url": "https://openrouter.ai/api/embeddings",
+    "deepseek-api_base_url": "https://api.deepseek.com/completions",
+    "mistral-api_base_url": "https://api.mistral.ai/embeddings",
+    "mistralai-api_base_url": "https://api.mistral.ai/embeddings",
+    # Moonshot's own resolver refuses ``/responses`` first, with its own copy.
+    "moonshot-api_base_url": "https://api.moonshot.ai/embeddings",
+    "qwencloud-api_base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/embeddings",
+}
+
+
+@pytest.mark.parametrize(
+    ("dispatch", "table", "key", "extra", "case"),
+    [
+        (*entry, case)
+        for entry, case in zip(_CLOUD_OWN_ENDPOINTS, _CLOUD_IDS, strict=True)
+        if case in _NO_V1_ROUTES
+    ],
+    ids=[case for case in _CLOUD_IDS if case in _NO_V1_ROUTES],
+)
+def test_a_cloud_base_ending_in_a_route_without_v1_is_refused(
+    dispatch, table, key, extra, case, monkeypatch
+):
+    """TASK-41727: the contract read a cloud path with no ``v1`` as an origin,
+    so ``https://api.openai.com/responses`` was accepted and the adapter
+    posted ``.../responses/chat/completions``. It is refused with the route
+    refusal, everywhere, and nothing is sent."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+        endpoint_refusal,
+    )
+
+    base = _NO_V1_ROUTES[case]
+    assert endpoint_refusal(dispatch, base) == ENDPOINT_ROUTE_REFUSAL, base
+    sent = _cloud_world(monkeypatch, _cloud_config(table, key, extra, base))
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        _dispatch(dispatch)
+
+    assert sent == []
+    name, _provider = _CLOUD_REFUSAL_NAMES[dispatch]
+    assert str(caught.value) == f"{name} API URL: {ENDPOINT_ROUTE_REFUSAL}"
+
+
+_QWENCLOUD_PASTED = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses"
+_QWENCLOUD_BASE = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+
+
+@pytest.mark.asyncio
+async def test_console_and_the_qwencloud_adapter_agree_on_a_pasted_responses_endpoint(
+    monkeypatch,
+):
+    """TASK-41722: the QwenCloud adapter strips its own ``/responses`` from a
+    pasted endpoint and sends (``test_qwencloud.py``), while Console's
+    readiness read the raw value as a route and refused it ("Invalid URL").
+    Both accept it now, and send to the same base; Settings saves that base."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+    )
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+
+    for source in ("config", "session"):
+        table = {"api_key": "not-a-real-key-0000", "model": "m"}
+        settings = ConsoleSessionSettings(
+            provider="qwencloud", model="m", base_url=_QWENCLOUD_PASTED
+        )
+        if source == "config":
+            table["api_base_url"] = _QWENCLOUD_PASTED
+            settings = ConsoleSessionSettings(provider="qwencloud", model="m")
+        config = {"api_settings": {"qwencloud": table}}
+        seen: list[str] = []
+
+        readiness = build_console_settings_readiness(settings, app_config=config, environ={})
+        resolution = await _resolve_endpoint_send(settings, config, source == "session", seen)
+
+        assert readiness.label != "Invalid URL", (source, readiness)
+        assert resolution.ready is True, (source, resolution.visible_copy)
+        assert seen == [f"adapter:{_QWENCLOUD_BASE}"], source
+
+    sent = _cloud_world(
+        monkeypatch,
+        _cloud_config(("api_settings", "qwencloud"), "api_base_url", {}, _QWENCLOUD_PASTED),
+    )
+    from tldw_chatbook.Provider_Contract import ChatBadRequestError
+
+    with pytest.raises(ChatBadRequestError):  # the stub answers 400
+        _dispatch("qwencloud")
+    assert sent == [f"{_QWENCLOUD_BASE}/responses"]
+    assert persisted_endpoint_for_key("qwencloud", "api_base_url", _QWENCLOUD_PASTED) == (
+        _QWENCLOUD_BASE
+    )
 
 
 def test_the_shared_local_transport_keeps_its_recovery_wrapper():
