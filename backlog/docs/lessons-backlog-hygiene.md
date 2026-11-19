@@ -10,9 +10,15 @@ known, expensive to rediscover. Every entry states the incident that produced it
 - "Reviewing or undoing a turn's changed files";
 - "Queued progress from sub-agents", which 827b622638 added (`report_to_supervisor`, **Agent → Progress: N queued**, **Discard selected**). The feature still ships (`Agents/fleet_message_tools.py`).
 
-The sweep only saw the leftover stamps that named the lost section; a review of the fix found the third loss. The `comm` command below, run at 1f1fdba3b4, prints 16 removed headings and these three still absent.
+The sweep only saw the leftover stamps that named the lost section; a review of the fix found the third loss. Run at b6f1d45fcf, the first `comm` command below prints the 16 headings the squash removed, and the second prints these three.
 
-**What to do.** Before writing a "missing" section, run `git log -S "<a phrase it would contain>" -- <page>`. A hit means the section existed. Restore its text and re-check every sentence against current code; do not write the section from scratch, and do not paste it back unchecked. When the deleting commit is a squash or rebase, diff the page's headings across it, because the same commit may have taken sibling sections:
+**What to do.** Before writing a "missing" section, run `git log -S "<a phrase it would contain>" -- <page>`. A hit means the section existed. Restore its text and re-check every sentence against current code; do not write the section from scratch, and do not paste it back unchecked. When the deleting commit is a squash or rebase, the same commit may have taken sibling sections. Diff the page's headings across that commit to see everything it removed:
+
+```
+comm -23 <(git show <sha>^:<page> | grep '^#' | sort -u) <(git show <sha>:<page> | grep '^#' | sort -u)
+```
+
+Then compare against today's page to see which of those headings are still missing:
 
 ```
 comm -23 <(git show <sha>^:<page> | grep '^#' | sort -u) <(grep '^#' <page> | sort -u)

@@ -3,7 +3,7 @@ id: TASK-41526
 title: "User Guide pages lack Media select mode, the Prompts and Skills Import row, slow Rendered view, Change Review dialog and Tool Packs"
 status: Done
 assignee: ['@claude']
-updated_date: 2026-11-19 16:10
+updated_date: 2026-11-19 16:40
 created_date: 2026-11-17 05:27
 labels:
 - follow-up
@@ -75,7 +75,7 @@ Lesson: added to `backlog/docs/lessons-backlog-hygiene.md`. A "no page covers X"
 
 **Fix round 1 (review r17dc-rev1, five Minor findings).**
 - The Media bullet now names Analyze. It reads "○ Analyze" with nothing checked, and with no analysis provider it stays off with its own reason line (code cited above).
-- The lesson's heading count is now 16, not 15, and it names the third lost section. Its `comm` command, re-run at 1f1fdba3b4, prints 16 removed headings and three still absent.
+- The lesson's heading count is now 16, not 15, and it names the third lost section. Fix round 2 (review r17dc-rev2) made the lesson show both `comm` forms. Run at b6f1d45fcf, the across-the-squash form (`<sha>^` against `<sha>`) prints 16 headings, and the form against today's page (`<sha>^` against the working file) prints the three still missing.
 - `settings.md`'s Tool Profiles intro notes that Deny is shown as **Off** in Permissions mode.
 - `mcp.md`'s Tool policy profile paragraph now sits after the precedence paragraph, so the matrix introduction runs straight into the states list.
 - The settings/rag.md history fix is in TASK-41527.
