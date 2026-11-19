@@ -54,6 +54,39 @@ def db(tmp_path) -> AgentRunsDB:
 # AgentService uses real config readers around its simulated provider. Keep
 # their collection-bound private profile; DB-only tests retain per-test paths.
 @pytest.mark.bootstrap_profile
+def test_terminal_status_checks_do_not_read_the_step_history(db, monkeypatch):
+    run_id = db.create_run(conversation_id="c", agent_kind="primary")
+    db.append_steps(run_id, [{"index": i, "kind": "model"} for i in range(64)])
+    service = _service(db)
+    service._ensure_owner_seq_at_least(run_id, 64)
+    hydrate = db._batch_hydrate_steps
+    reads = []
+
+    def observe(*args):
+        reads.append(1)
+        return hydrate(*args)
+
+    monkeypatch.setattr(db, "_batch_hydrate_steps", observe)
+    write = db.set_terminal_with_step
+    writes = []
+
+    def finish_then_disconnect(*args, **kwargs):
+        assert write(*args, **kwargs)
+        writes.append(1)
+        raise RuntimeError("test failure after a durable terminal update")
+
+    monkeypatch.setattr(db, "set_terminal_with_step", finish_then_disconnect)
+    for _ in range(2):
+        assert not service._set_terminal_status(
+            run_id, "done", result="done", parent_event_id=f"agent-run:{run_id}",
+        )
+
+    assert reads == [] and writes == [1]
+    run = db.get_run(run_id)
+    assert run["status"] == "done" and len(run["steps"]) == 65
+
+
+@pytest.mark.bootstrap_profile
 def test_first_step_is_durable_before_run_finalization(db: AgentRunsDB) -> None:
     observed = []
 

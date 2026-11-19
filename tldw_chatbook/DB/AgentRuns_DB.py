@@ -2267,14 +2267,17 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
 
         stamp = _now_iso()
         conflicts: list[int] = []
+        insert = "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) VALUES (?, ?, ?, ?)"
         with self.transaction() as conn:
             exists = conn.execute(
                 "SELECT 1 FROM agent_runs WHERE id = ?", (run_id,)
             ).fetchone()
             if exists is None:
                 raise KeyError(f"Unknown run id: {run_id}")
+            batch_inserts = None
             for chunk in batched(prepared, _IN_CLAUSE_CHUNK):
                 durable = None
+                missing = []
                 if len(chunk) > 1:
                     placeholders = ",".join("?" for _ in chunk)
                     rows = conn.execute(
@@ -2283,6 +2286,15 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                         (run_id, *chunk),
                     )
                     durable = {row["seq"]: row for row in rows}
+                    if len(durable) < len(chunk) and batch_inserts is None:
+                        # Stock rows are independent. A main or TEMP trigger may
+                        # write a later index, invalidating this chunk's snapshot.
+                        batch_inserts = conn.execute(
+                            "SELECT 1 FROM main.sqlite_schema WHERE type='trigger' "
+                            "AND tbl_name='agent_run_steps' COLLATE NOCASE "
+                            "UNION ALL SELECT 1 FROM temp.sqlite_schema WHERE type='trigger' "
+                            "AND tbl_name='agent_run_steps' COLLATE NOCASE LIMIT 1"
+                        ).fetchone() is None
                 for index in chunk:
                     canonical = prepared[index]
                     if durable is None:
@@ -2293,6 +2305,8 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     else:
                         existing = durable.get(index)
                     if existing is not None:
+                        if existing["payload"] == canonical:
+                            continue
                         try:
                             stored = json.dumps(
                                 json.loads(existing["payload"]),
@@ -2305,13 +2319,14 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                         if stored != canonical:
                             conflicts.append(index)
                         continue
-                    conn.execute(
-                        "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) "
-                        "VALUES (?, ?, ?, ?)",
-                        (run_id, index, canonical, stamp),
-                    )
-                    # An insert trigger can change a later row in this chunk.
-                    durable = None
+                    parameters = (run_id, index, canonical, stamp)
+                    if batch_inserts and durable is not None:
+                        missing.append(parameters)
+                    else:
+                        conn.execute(insert, parameters)
+                        durable = None
+                if missing:
+                    conn.executemany(insert, missing)
         if conflicts:
             indices = ", ".join(str(index) for index in conflicts)
             raise AgentStepConflictError(

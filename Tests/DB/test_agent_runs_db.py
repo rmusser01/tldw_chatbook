@@ -1,5 +1,6 @@
 """AgentRunsDB against a real on-disk SQLite file."""
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -78,12 +79,14 @@ def test_terminal_step_retry_batches_durable_rows(db):
     assert db.get_run(run_id)["steps"] == [payload for _, payload in steps]
 
 
-def test_terminal_step_recovery_observes_trigger_writes_in_input_order(db):
+@pytest.mark.parametrize("temporary", [False, True])
+def test_terminal_step_recovery_observes_trigger_writes_in_input_order(db, temporary):
     run_id = db.create_run(conversation_id="retry", agent_kind="primary")
     db.append_steps(run_id, [{"index": 0}, {"index": 1}])
     with db.transaction() as connection:
         connection.execute(
-            """CREATE TRIGGER change_next_step AFTER INSERT ON agent_run_steps
+            ("CREATE TEMP TRIGGER" if temporary else "CREATE TRIGGER")
+            + """ change_next_step AFTER INSERT ON main.agent_run_steps
                WHEN NEW.seq = 2 BEGIN
                    UPDATE agent_run_steps SET payload = '[]'
                    WHERE run_id = NEW.run_id AND seq = 1;
@@ -98,6 +101,57 @@ def test_terminal_step_recovery_observes_trigger_writes_in_input_order(db):
             "SELECT seq FROM agent_run_steps WHERE run_id = ? ORDER BY seq", (run_id,)
         ).fetchall()
     assert [row["seq"] for row in rows] == [0, 1, 2, 3]
+
+
+def test_terminal_step_recovery_skips_canonical_rows_and_batches_missing_indices(db, monkeypatch):
+    from types import SimpleNamespace
+    from tldw_chatbook.DB import AgentRuns_DB
+
+    run_id = db.create_run(conversation_id="terminal", agent_kind="primary")
+    steps = [(index, {"index": index, "kind": "model"}) for index in range(8)]
+    legacy = '{"kind": "model", "index": 1}'
+    damaged = "broken JSON"
+    divergent = '{"index":7,"kind":"other"}'
+    db.insert_steps_at_indices(run_id, [steps[0], steps[4]])
+    with db.transaction() as connection:
+        connection.executemany(
+            "INSERT INTO agent_run_steps (run_id, seq, payload, created_at) VALUES (?, ?, ?, ?)",
+            [(run_id, index, text, "old") for index, text in [(1, legacy), (3, damaged), (7, divergent)]],
+        )
+
+    parsed, encoded, batches = [], [], []
+    def loads(text):
+        parsed.append(text)
+        return json.loads(text)
+
+    def dumps(value, **kwargs):
+        encoded.append(value)
+        return json.dumps(value, **kwargs)
+
+    transaction = db.transaction
+    @contextmanager
+    def recorded_transaction():
+        with transaction() as connection:
+            def insert_many(sql, parameters):
+                batches.append([row[1] for row in parameters])
+                return connection.executemany(sql, parameters)
+
+            yield SimpleNamespace(execute=connection.execute, executemany=insert_many)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AgentRuns_DB, "_IN_CLAUSE_CHUNK", 4)
+        patch.setattr(AgentRuns_DB, "json", SimpleNamespace(loads=loads, dumps=dumps))
+        patch.setattr(db, "transaction", recorded_transaction)
+        with pytest.raises(AgentStepConflictError, match="durable indices: 3, 7$"):
+            db.insert_steps_at_indices(run_id, steps)
+    assert parsed == [legacy, damaged, divergent]
+    assert len(encoded) == len(steps) + 2
+    assert batches == [[2], [5, 6]]
+    with db.connection() as connection:
+        rows = connection.execute("SELECT seq, payload FROM agent_run_steps WHERE run_id = ? ORDER BY seq", (run_id,))
+        stored = dict(rows.fetchall())
+    assert list(stored) == list(range(8))
+    assert (stored[1], stored[3], stored[7]) == (legacy, damaged, divergent)
 
 
 def test_set_status_and_result(db):

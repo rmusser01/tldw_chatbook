@@ -4321,7 +4321,7 @@ class AgentService:
     ) -> bool:
         """Atomically persist terminal state + observation, retrying once."""
         try:
-            if self.db.get_run(run_id)["status"] in TERMINAL_RUN_STATUSES:
+            if self.db.get_run_metadata(run_id)["status"] in TERMINAL_RUN_STATUSES:
                 if budget_tokens is not None:
                     self.db.set_status(run_id, status, budget_tokens=budget_tokens)
                 return False
@@ -4407,7 +4407,7 @@ class AgentService:
                     _safe_exception_type(exc),
                 )
                 try:
-                    if self.db.get_run(run_id)["status"] in TERMINAL_RUN_STATUSES:
+                    if self.db.get_run_metadata(run_id)["status"] in TERMINAL_RUN_STATUSES:
                         if budget_tokens is not None:
                             self.db.set_status(
                                 run_id, status, budget_tokens=budget_tokens
