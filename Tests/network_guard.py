@@ -243,7 +243,17 @@ def describe_blocked_attempts(
         for (call, address), thread in zip(attempts, padded)
     )
     main = threading.main_thread().name
-    foreign = sorted({name for name in threads if name != main})
+    # `asyncio_N` is the event loop's default executor, where `loop.getaddrinfo`
+    # runs, almost always for the current test's own coroutine (TASK-41708).
+    executor = sorted({name for name in threads if name.startswith("asyncio_")})
+    foreign = sorted(
+        {name for name in threads if name != main and name not in executor}
+    )
+    if executor:
+        detail += (
+            f" ({', '.join(executor)}: the event loop's executor, where "
+            "loop.getaddrinfo runs; usually this test's own lookup)"
+        )
     if not foreign:
         return detail
     return (

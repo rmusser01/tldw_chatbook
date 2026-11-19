@@ -509,6 +509,16 @@ def test_a_main_thread_attempt_is_not_blamed_on_an_earlier_test() -> None:
     assert "EARLIER test" not in message
 
 
+def test_an_executor_thread_lookup_is_not_blamed_on_an_earlier_test() -> None:
+    """``loop.getaddrinfo`` runs on the loop's executor, ``asyncio_N`` (TASK-41708)."""
+    message = network_guard.describe_blocked_attempts(
+        (("socket.getaddrinfo", "example.test:None"),), ("asyncio_0",)
+    )
+    assert "asyncio_0" in message
+    assert "event loop's executor" in message
+    assert "EARLIER test" not in message
+
+
 def test_draining_the_attempts_also_clears_their_thread_names() -> None:
     """The two records must never drift out of alignment across tests."""
     with pytest.raises(network_guard.BlockedNetworkAccess):
@@ -624,3 +634,18 @@ def test_local_and_numeric_lookups_and_opted_in_tests_reach_the_resolver(
 
     assert reached == [*local, *numeric_remote, "example.test"]
     assert network_guard.blocked_attempts() == ()
+
+
+@pytest.mark.loopback_network
+def test_loopback_only_mode_refuses_a_remote_name_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached = _record_resolver(monkeypatch)
+    assert network_guard.is_loopback_only() is True
+
+    socket.getaddrinfo("localhost", 80)
+    with pytest.raises(network_guard.BlockedDnsLookup):
+        socket.getaddrinfo("remote.example.test", 443)
+
+    assert reached == ["localhost"]
+    assert _drain_expecting() == (("socket.getaddrinfo", "remote.example.test:443"),)

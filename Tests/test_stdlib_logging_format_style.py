@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import pathlib
 import re
+import string
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1] / "tldw_chatbook"
 _LOG_METHODS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
@@ -197,7 +198,7 @@ def _is_loguru_receiver(receiver: ast.expr, names: frozenset[str]) -> bool:
 
 
 def _percent_message(call: ast.Call) -> str | None:
-    """Return the message of a `%`-style log call that passes arguments."""
+    """Return the message of a `%`-style call whose `{}` fields miss an argument."""
     func = call.func
     if not isinstance(func, ast.Attribute):
         return None
@@ -207,10 +208,17 @@ def _percent_message(call: ast.Call) -> str | None:
     message = call.args[index]
     if not (isinstance(message, ast.Constant) and isinstance(message.value, str)):
         return None
-    if len(call.args) == index + 1 and not call.keywords:
-        return None
     text = message.value
-    return text if "{" not in text and _PERCENT_PLACEHOLDER.search(text) else None
+    arguments = len(call.args) - index - 1
+    if not arguments or not _PERCENT_PLACEHOLDER.search(text):
+        return None
+    try:
+        parsed = string.Formatter().parse(text)
+        fields = sum(1 for _, name, _, _ in parsed if name is not None)
+    except ValueError:
+        fields = 0  # not a valid str.format template at all
+    # str.format drops positional arguments beyond its fields (TASK-41714).
+    return text if fields < arguments else None
 
 
 def _calls_with_loguru_names(tree: ast.AST) -> list[tuple[ast.Call, frozenset[str]]]:
@@ -271,6 +279,19 @@ def test_the_loguru_scan_finds_a_planted_percent_style_call(tmp_path):
         (12, "dropped: %r"),
         (13, "dropped: %s"),
     ]
+
+
+def test_the_loguru_scan_flags_a_mixed_brace_and_percent_call(tmp_path):
+    """A `{}` does not excuse a `%s` whose argument str.format drops."""
+    planted = tmp_path / "mixed.py"
+    planted.write_text(
+        "from loguru import logger\n"
+        'logger.info("{} rows to %s", 3, "path")\n'
+        'logger.info("{}% done", 50)\n'
+        'logger.info("{} rows to {}", 3, "path")\n'
+    )
+
+    assert _percent_style_loguru_calls(planted) == [(2, "{} rows to %s")]
 
 
 def test_no_loguru_call_uses_percent_style_with_arguments():
