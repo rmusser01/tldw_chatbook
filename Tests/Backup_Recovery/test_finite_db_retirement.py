@@ -717,8 +717,9 @@ def _bare_offloads(tree, allowed):
     "module,functions,allowed,minimum",
     [
         ("tldw_chatbook.Chat.scope_picker_listers", None, (), 5),
-        # rerank_results loads and runs a model; it touches no store.
-        ("tldw_chatbook.RAG_Search.pipeline_functions_simple", None, ("rerank_results",), 7),
+        # rerank_results loads and runs a model; it touches no store. Each FTS
+        # leg is one offload since the pre-merge review (one native open).
+        ("tldw_chatbook.RAG_Search.pipeline_functions_simple", None, ("rerank_results",), 4),
         (
             "tldw_chatbook.UI.Screens.chat_screen",
             (
@@ -730,10 +731,14 @@ def _bare_offloads(tree, allowed):
             (),
             6,
         ),
-        # The picker's opener reads, and Save/Clear write, the saved scope.
+        # The picker's opener reads, and Save/Clear write then read back, the
+        # saved scope.
         (
             "tldw_chatbook.UI.Console_Modules.retrieval",
-            ("_read_console_retrieval_scope", "_write_console_retrieval_scope"),
+            (
+                "_read_console_retrieval_scope",
+                "_write_and_read_back_console_retrieval_scope",
+            ),
             (),
             2,
         ),
@@ -797,9 +802,10 @@ async def test_console_retrieval_scope_read_and_write_retire_their_worker_connec
             )
             assert scope is None
         else:
-            await ConsoleRetrievalController._write_console_retrieval_scope(
+            scope = await ConsoleRetrievalController._write_and_read_back_console_retrieval_scope(
                 db, conversation, None
             )
+            assert scope is None
 
         assert not worker_leases(db), f"the scope {operation} kept its worker connection"
         assert _local_pause_drains(), "a backup's local pause could not drain"
@@ -935,3 +941,128 @@ def test_final_close_still_checkpoints_and_truncates_the_wal(tmp_path, local_roo
     finally:
         other_release.set()
         thread.join(10)
+
+
+def _count_native_opens(monkeypatch):
+    """Count real native opens per store on worker threads (not the loop's)."""
+    from tldw_chatbook.DB import ChaChaNotes_DB, Client_Media_DB_v2
+
+    opens = {"chachanotes": 0, "media": 0}
+    loop_thread = threading.current_thread()
+    for module, key in ((ChaChaNotes_DB, "chachanotes"), (Client_Media_DB_v2, "media")):
+        original = module.connect_private_sqlite
+
+        def counting(*args, _original=original, _key=key, **kwargs):
+            if threading.current_thread() is not loop_thread:
+                opens[_key] += 1
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(module, "connect_private_sqlite", counting)
+    return opens
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "leg,expected",
+    [
+        ("search_media_fts5", {"chachanotes": 0, "media": 1}),
+        ("search_conversations_fts5", {"chachanotes": 1, "media": 0}),
+        ("search_notes_fts5", {"chachanotes": 1, "media": 0}),
+    ],
+)
+async def test_console_rag_search_legs_open_each_store_once(
+    tmp_path, local_root, monkeypatch, leg, expected
+):
+    """Each RAG leg runs its store reads in one finite worker: one native open.
+
+    Pre-merge review (2026-11-13), Important 1: once each offload retired its
+    connection, the media leg's three reads opened the store three times and
+    the conversations leg's two reads twice, ~45-50 ms of open per read.
+    """
+    from tldw_chatbook.RAG_Search import pipeline_functions_simple as legs
+
+    db, media = _console_stores(tmp_path)
+    db.add_note("Alpha", "hello world")
+    conversation = db.add_conversation({"title": "hello"})
+    db.add_message({"conversation_id": conversation, "sender": "user", "content": "hello world"})
+    media.add_media_with_keywords(
+        title="hello", media_type="document", content="hello world", keywords=["k"]
+    )
+    db.close_connection()
+    media.close_connection()
+    app = SimpleNamespace(chachanotes_db=db, media_db=media)
+    opens = _count_native_opens(monkeypatch)
+    try:
+        if leg == "search_media_fts5":
+            results = await legs.search_media_fts5(app, "hello", keyword_filter=["k"])
+        else:
+            results = await getattr(legs, leg)(app, "hello")
+
+        assert results, f"{leg} found nothing; the reads under test did not run"
+        if leg == "search_media_fts5":
+            assert results[0].metadata["keywords"] == ["k"]
+            assert "hello world" in results[0].content
+        if leg == "search_conversations_fts5":
+            assert "user: hello world" in results[0].content
+        assert opens == expected
+        assert not worker_leases(db) + worker_leases(media)
+        assert _local_pause_drains(), "a backup's local pause could not drain"
+    finally:
+        db.close_connection()
+        media.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_console_scope_save_writes_and_reads_back_in_one_open(
+    tmp_path, local_root, monkeypatch
+):
+    """Scope Save's write and its read-back share one finite worker and one open."""
+    from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
+    from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+
+    db = CharactersRAGDB(tmp_path / "notes.db", "test")
+    conversation = db.add_conversation({"title": "Scoped"})
+    db.close_connection()
+    scope = RagScope(
+        items=(ScopeItem("note", "n-1"),), updated_at="2026-11-13T00:00:00+00:00"
+    )
+    notices, published = [], []
+
+    async def refreshed(session):
+        return None
+
+    helpers = {
+        name: getattr(ConsoleRetrievalController, name)
+        for name in (
+            "_write_console_retrieval_scope",
+            "_read_console_retrieval_scope",
+            "_write_and_read_back_console_retrieval_scope",
+        )
+        if hasattr(ConsoleRetrievalController, name)
+    }
+    controller = SimpleNamespace(
+        app_instance=SimpleNamespace(
+            chachanotes_db=db, notify=lambda *args, **kwargs: notices.append(args)
+        ),
+        _console_retrieval_scope_cache={},
+        _refresh_console_effective_scope_and_sync=refreshed,
+        **helpers,
+    )
+    store = SimpleNamespace(
+        set_session_rag_scope=lambda session_id, value: published.append(value)
+    )
+    session = SimpleNamespace(id="session", persisted_conversation_id=conversation)
+    opens = _count_native_opens(monkeypatch)
+    try:
+        await ConsoleRetrievalController._apply_console_retrieval_scope_save_transition(
+            controller, store, session, scope
+        )
+
+        assert notices == []
+        assert controller._console_retrieval_scope_cache == {conversation: scope}
+        assert published == [scope]
+        assert opens == {"chachanotes": 1, "media": 0}
+        assert not worker_leases(db)
+        assert _local_pause_drains(), "a backup's local pause could not drain"
+    finally:
+        db.close_connection()

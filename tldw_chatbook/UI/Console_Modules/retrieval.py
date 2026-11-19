@@ -317,16 +317,22 @@ class ConsoleRetrievalController:
         )
 
     @staticmethod
-    async def _write_console_retrieval_scope(
+    async def _write_and_read_back_console_retrieval_scope(
         db: Any, conversation_id: str, scope: RagScope | None
-    ) -> None:
-        """Write a stored scope off-loop except for thread-local memory DBs."""
-        if getattr(db, "is_memory_db", False):
+    ) -> RagScope | None:
+        """Write a stored scope, then read it back, in one worker (one open).
+
+        Off-loop except for thread-local memory DBs. A write error propagates
+        before the read-back runs; ``read_conversation_scope`` never raises.
+        """
+
+        def write_then_read() -> RagScope | None:
             write_conversation_scope(db, conversation_id, scope)
-            return
-        await asyncio.to_thread(
-            run_finite_local_worker, write_conversation_scope, db, conversation_id, scope
-        )
+            return read_conversation_scope(db, conversation_id)
+
+        if getattr(db, "is_memory_db", False):
+            return write_then_read()
+        return await asyncio.to_thread(run_finite_local_worker, write_then_read)
 
     def _console_scope_picker_listers(self) -> tuple[Any, Any, Any]:
         """Build the real media, notes, and keyword listers."""
@@ -370,7 +376,9 @@ class ConsoleRetrievalController:
             from ...DB.ChaChaNotes_DB import ConflictError
 
             try:
-                await self._write_console_retrieval_scope(db, conversation_id, scope)
+                after = await self._write_and_read_back_console_retrieval_scope(
+                    db, conversation_id, scope
+                )
             except ConflictError:
                 logger.opt(exception=True).warning(
                     "Retrieval scope write conflict for conversation {}",
@@ -402,7 +410,6 @@ class ConsoleRetrievalController:
                     severity="error",
                 )
                 return
-            after = await self._read_console_retrieval_scope(db, conversation_id)
             if scope is not None and after is None:
                 self.app_instance.notify(
                     "Couldn't save scope: conversation metadata is corrupted.",
