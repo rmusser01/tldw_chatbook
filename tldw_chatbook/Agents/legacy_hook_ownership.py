@@ -8,7 +8,7 @@ from threading import Condition, Lock, RLock
 
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
-from .activation import _guard, execution
+from .activation import _guard, execution, sources_changed
 from .execution_capacity import CapacityRefused, WorkOrigin, current_execution_owner
 
 from .run_hooks import _prompt_handoff
@@ -202,7 +202,7 @@ class _EventSource:
         )
 
     def check(self):
-        if not self.current_memory() or _guard.captured_sources(None) != self.sources:
+        if not self.current_memory() or sources_changed(self.sources):
             raise RuntimeError("native hook source changed")
 
     def admit(self, targets):

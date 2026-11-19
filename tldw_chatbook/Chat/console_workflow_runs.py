@@ -117,7 +117,11 @@ async def _accept_remaining_workflow_phase(
     """
     import asyncio
 
-    from tldw_chatbook.Agents.activation import captured_sources, execution
+    from tldw_chatbook.Agents.activation import (
+        captured_sources,
+        execution,
+        sources_changed,
+    )
     from tldw_chatbook.Agents.execution_capacity import CapacityRefused, WorkOrigin
     from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
     from tldw_chatbook.Agents.workflow_models import WorkflowDecision
@@ -238,7 +242,7 @@ async def _accept_remaining_workflow_phase(
                 owned_goal_storage(service),
             ):
                 current()
-                if captured_sources(bridge) != sources:
+                if sources_changed(sources, bridge):
                     raise AutomaticWorkRefused("workflow_native_source_changed")
                 with activity.prelaunch(
                     footprint=WorktreeFootprint(opaque=True)
@@ -387,7 +391,7 @@ async def _accept_remaining_workflow_phase(
                     core_operation(database),
                 ):
                     originals()
-                    if captured_sources(bridge) != sources:
+                    if sources_changed(sources, bridge):
                         raise AutomaticWorkRefused("workflow_native_source_changed")
                     if not binding.guard(False):
                         raise AutomaticWorkRefused("workflow_task_binding_changed")
@@ -888,7 +892,11 @@ class ConsoleWorkflowCoordinator:
         """Sequence the same native read and its host return without another task."""
         import asyncio
 
-        from tldw_chatbook.Agents.activation import captured_sources, worker_guard
+        from tldw_chatbook.Agents.activation import (
+            captured_sources,
+            sources_changed,
+            worker_guard,
+        )
         from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
         from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
 
@@ -944,7 +952,7 @@ class ConsoleWorkflowCoordinator:
                 or database is not bridge.runs_db
                 or service.persistence is not persistence
                 or persistence.workspace_registry is not registry
-                or captured_sources(bridge) != sources
+                or sources_changed(sources, bridge)
                 or self._metadata_cells.get(cell) is not future
                 or cell.disposed is not future
                 or cell.issuing is not issuing
@@ -2220,7 +2228,11 @@ class ConsoleWorkflowCoordinator:
         """Track the original control's complete worker and reader return."""
         import asyncio
 
-        from tldw_chatbook.Agents.activation import captured_sources, worker_guard
+        from tldw_chatbook.Agents.activation import (
+            captured_sources,
+            sources_changed,
+            worker_guard,
+        )
         from tldw_chatbook.Agents.goal_storage_lifetime import owned_goal_storage
 
         from . import console_preparation_reads as native
@@ -2260,7 +2272,7 @@ class ConsoleWorkflowCoordinator:
                 or self._runs.get(run.workflow_id) is not run
                 or run.phase is not phase
                 or run.control_return is not control_return
-                or captured_sources(bridge) != sources
+                or sources_changed(sources, bridge)
             ):
                 raise PermissionError("workflow original control source changed")
             phase._check_owner()

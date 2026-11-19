@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from tldw_chatbook.app_services import read_mcp_service
-from tldw_chatbook.Agents.activation import captured_sources, execution
+from tldw_chatbook.Agents.activation import captured_sources, execution, sources_changed
 from tldw_chatbook.Agents.execution_capacity import (
     CapacityRefused,
     WorkOrigin,
@@ -174,7 +174,7 @@ class _Preparation:
 
     def check(self, service):
         self.check_memory(service)
-        if captured_sources(None) != self.sources:
+        if sources_changed(self.sources):
             raise RuntimeError("Plugin hook activation source changed.")
 
     def admit(self):

@@ -125,7 +125,7 @@ class OriginalSourceChanged(RuntimeError):
     """An original agent storage source no longer matches its capture."""
 
 
-def sources_changed(captured: tuple) -> bool:
+def sources_changed(captured: tuple, service: object = None) -> bool:
     """Whether this task's admitted sources differ from ``captured``.
 
     Compared as a set: nesting order depends on which execution was entered
@@ -134,8 +134,14 @@ def sources_changed(captured: tuple) -> bool:
     or path, an added source or a removed source is a change. Duplicates
     collapse: admitting the same (owner, path) twice names one source, so a
     repeated admission cannot change what is reachable.
+
+    Args:
+        captured: The ``(owner, path)`` tuple an earlier ``captured_sources``
+            returned.
+        service: The service the capture observed when this task holds no
+            admission (as for ``captured_sources``).
     """
-    return set(_guard.captured_sources(None)) != set(captured)
+    return set(_guard.captured_sources(service)) != set(captured)
 
 
 def execution(service=None, *, sources=()):
