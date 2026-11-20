@@ -846,6 +846,11 @@ jobs:
     # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-30): moved from admission lane 1, whose worst case with B2b's cases was 32.3-32.7 of 35 min
     # (the item list's mounted file, Tests/UI/test_roleplay_item_list_app.py).
     # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-31): a third admission lane, because on PR #3334's run 41169081459 lane 2 with these suites hit its 35-min cap at 99% (about 17 CI-min for 211 mounted tests, ~485 s serial locally). One more runner per PR (ADR-103 note, 2026-10-31).
+    # TASK-33620.15.61 puts two mounted Console MCP catalog files (bootstrap_profile,
+    # 22 tests) at the head of the step, ahead of the Roleplay suites. Tests/conftest.py
+    # runs a GC pass after every Tests/UI test, and behind the Roleplay heap their
+    # teardown grew from 2.4 s to 51 s a file. First, they took 69 s and the step
+    # 582 s; last, 162 s and 650 s (pytest 9, load 4-7).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission-2, and its own pytest process and bootstrap
@@ -1774,6 +1779,9 @@ jobs:
       # the companion record-evidence file with its bootstrap digest pin),
       # sandboxed, follow the config participant lifetimes; timings in the
       # task's notes.
+      # TASK-33620.15.61's four sandboxed Console MCP catalog files (30 tests,
+      # about 18.5 s in this step) join the sandboxed block after the Skills
+      # recovery controls file.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
