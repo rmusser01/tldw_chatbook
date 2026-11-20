@@ -4,7 +4,7 @@ title: "Containers other than Library canvases drop a queued button press when t
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 18:23
+updated_date: 2026-11-20 18:41
 labels:
 - follow-up
 - ui
@@ -100,3 +100,7 @@ Files: `tldw_chatbook/__init__.py`, `tldw_chatbook/Widgets/Library/library_canva
 - **Hints.** `keep_queued_presses(container: "Widget")`, with a `TYPE_CHECKING` import in the package `__init__`.
 - **Size.** `speech_tts_settings_panel.py` went 6108 -> 6110; its module-size row is raised by 2, with a dated comment.
 - **Runs** (all through the wrapper). The lane file: 17 of 17 at `-n 4`. Size, code-identity, fold-guard and support-surface ratchets, serial: 321 passed. The covering set again (the first round's files, plus `test_model_external_view.py`) at `-n 4`: head 77 failed and 633 passed, base `d85e90bc9e` 77 failed and 622 passed (load 10-14). 71 of the head failures are the local `RecoveryRequired` trap. The two sides differ only by one node each in the flaky `test_console_workspace_context_rail.py`. The head-only node, `test_console_f1_tolerates_missing_tree_context_snapshot`, failed 2 of 3 at head and 2 of 4 at base, each time with the same `KeyError: 'workspace-1'`. `test_model_external_view.py`, `test_settings_speech_tts_panel.py` and `test_settings_speculative_voice_panel.py` against base fail the same nodes (125 of them `RecoveryRequired`), apart from `test_speech_save_and_revert_clicks_work_while_a_field_is_focused`. That node hits a timing `OutOfBounds` click on both sides: 10 of 11 passed at head and 10 of 11 at base. Boot budget: 33 passed and the same base-red `test_boot_worker_and_thread_starts_stay_within_the_allowlist`; the module counts are unchanged.
+
+**Review r18lib-rev2 fix (2026-11-20).** The locked wrapper took `self.lock` before checking attachment. Native `Widget.recompose` returns at once for a detached or pruning widget (`if not self.is_attached or self._pruning: return`, the first lines of Textual 8.2.8's method) and never takes the lock, so skipping native there is equivalent. The wrapper now returns first in that case, and only then takes the lock and re-checks.
+- **Pilot.** `test_a_removed_container_recompose_never_waits_for_its_lock` has the probe's shape. A child's queued callback awaits `container.recompose()` after `container.remove()`, while another task holds `container.lock` and awaits that child through `remove_children()`. The remover must finish within 3 s. With the rev2 wrapper it was red 3 of 3 (`TimeoutError`); with the fix it passes 3 of 3, about 1.2 s each.
+- **Runs.** The lane file: 18 of 18 in each of 5 runs at `-n 4` (load 7-8). Ratchets, serial: 321 passed. The settings-region, tray-guard, tray-read, canvas-scoped-sync, `Tests/Widgets/Library` and external-view files: 276 passed, 2 failed; both failures are the local `RecoveryRequired` trap and fail at base too. Preflight passes.

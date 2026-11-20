@@ -557,6 +557,10 @@ def _install_recompose_press_keeper() -> None:
 
     @wraps(native)
     async def recompose(self: "Widget") -> None:
+        # As native does, a detached or pruning widget returns before the lock:
+        # its holder may be awaiting the task that called this (review rev2).
+        if not self.is_attached or self._pruning:
+            return
         # Under the lock (re-entrant per task) a concurrent batch or recompose
         # cannot mount buttons between the keeper and the removal.
         async with self.lock:

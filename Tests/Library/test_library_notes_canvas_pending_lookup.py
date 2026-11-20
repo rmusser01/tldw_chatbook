@@ -568,6 +568,50 @@ async def test_every_recompose_route_keeps_a_press_queued_below_a_removed_child(
         assert screen.query_one("#opener") is not opener, "nothing recomposed"
 
 
+class _RemovedApp(App):
+    def compose(self) -> ComposeResult:
+        yield _Container(id="container")
+
+
+@pytest.mark.asyncio
+async def test_a_removed_container_recompose_never_waits_for_its_lock():
+    """TASK-42014 review r18lib-rev2: like native ``Widget.recompose``, the
+    keeper's wrapper returns at once for a removed container, before the lock.
+
+    A child's handler recomposes its container after the container's
+    ``remove()``, while another task holds the container's lock and awaits
+    that child (``remove_children``). Taking the lock first would wait on a
+    task that is waiting on this child, so the removal would never end.
+    """
+    app = _RemovedApp()
+    async with app.run_test(size=(40, 8)) as pilot:
+        await pilot.pause()
+        container = app.query_one("#container")
+        child = container.query_one("#toolbar")
+        held = asyncio.Event()
+        go = asyncio.Event()
+
+        async def hold() -> None:
+            held.set()
+            await go.wait()
+
+        async def recompose_the_container() -> None:
+            await container.recompose()
+
+        async def remove_children_under_the_lock() -> None:
+            async with container.lock:
+                await container.remove_children()
+
+        child.call_later(hold)
+        await asyncio.wait_for(held.wait(), timeout=5)
+        child.call_later(recompose_the_container)  # runs once ``hold`` ends
+        container.remove()
+        remover = asyncio.ensure_future(remove_children_under_the_lock())
+        await asyncio.sleep(0)  # the remover takes the lock
+        go.set()
+        await asyncio.wait_for(remover, timeout=3)
+
+
 class _ExternalSources:
     def __init__(self, directory: Path) -> None:
         self._directory = directory
