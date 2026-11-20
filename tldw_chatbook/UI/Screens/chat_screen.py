@@ -7610,7 +7610,7 @@ class ChatScreen(BaseAppScreen):
             )
         except Exception:
             logger.exception(
-                "Unable to resolve Console runtime-discovered models for provider=%s model=%s",
+                "Unable to resolve Console runtime-discovered models for provider={} model={}",
                 provider_key,
                 current_model,
             )

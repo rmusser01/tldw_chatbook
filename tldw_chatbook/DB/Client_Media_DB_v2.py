@@ -3280,12 +3280,12 @@ class MediaDatabase:
                         ).fetchall()
                     ]
         except Exception as error:
-            logger.error("Media search failed (error_type=%s).", type(error).__name__)
+            logger.error("Media search failed (error_type={}).", type(error).__name__)
             raise DatabaseError("Media search failed.") from None
 
         if library_summary:
             logger.info(
-                "Media search completed (mode=%s, limit=%s, offset=%s, sort=%s, summary=true).",
+                "Media search completed (mode={}, limit={}, offset={}, sort={}, summary=true).",
                 "fts" if fts_search_active else "browse",
                 results_per_page,
                 resolved_offset,
@@ -3293,7 +3293,7 @@ class MediaDatabase:
             )
         else:
             logger.info(
-                "Media search completed (mode=%s, limit=%s, offset=%s, result_count=%s, total=%s, sort=%s).",
+                "Media search completed (mode={}, limit={}, offset={}, result_count={}, total={}, sort={}).",
                 "fts" if fts_search_active else "browse",
                 results_per_page,
                 resolved_offset,
@@ -7211,7 +7211,7 @@ class MediaDatabase:
                     row["type"] for row in cursor.fetchall() if row["type"].strip()
                 ]
             logger.info(
-                "Distinct media types loaded (result_count=%s, include_deleted=%s, include_trash=%s).",
+                "Distinct media types loaded (result_count={}, include_deleted={}, include_trash={}).",
                 len(results),
                 include_deleted,
                 include_trash,
@@ -7219,7 +7219,7 @@ class MediaDatabase:
             return results
         except Exception as error:
             logger.error(
-                "Distinct media types failed (error_type=%s).", type(error).__name__
+                "Distinct media types failed (error_type={}).", type(error).__name__
             )
             raise DatabaseError("Failed to fetch distinct media types.") from None
 

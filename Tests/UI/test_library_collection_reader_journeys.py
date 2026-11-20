@@ -481,7 +481,7 @@ async def test_rail_press_recomposes_library_once_and_loads_captures_in_place(
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile  # the Library harness's profile (TASK-39141)
 async def test_collections_actions_repaint_their_panes_without_a_library_recompose(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, unresolved_egress_dns  # TASK-41708: the capture's fetch
 ):
     """TASK-41126: an action repaints the reader panes, not the Library screen.
 

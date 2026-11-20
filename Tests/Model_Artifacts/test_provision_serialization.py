@@ -358,7 +358,7 @@ async def test_provision_holds_session_lease_across_phase_stub(tmp_path, monkeyp
 
 @pytest.mark.asyncio
 async def test_provision_releases_session_lease_when_cancelled_during_acquire(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, unresolved_egress_dns  # TASK-41708: example.test
 ):
     """Cancelling provision() while the session lease is still being
     acquired in its worker thread must not leak the OS-backed flock.
@@ -467,7 +467,9 @@ async def test_provision_releases_session_lease_when_cancelled_during_acquire(
 
 
 @pytest.mark.asyncio
-async def test_provision_not_yet_installed_reaches_fetch_phase(tmp_path):
+async def test_provision_not_yet_installed_reaches_fetch_phase(
+    tmp_path, unresolved_egress_dns
+):
     """A not-yet-installed artifact really does reach the fetch phase.
 
     Regression guard for the extension point itself (lessons-testing-
@@ -475,8 +477,10 @@ async def test_provision_not_yet_installed_reaches_fetch_phase(tmp_path):
     plumbing). Originally asserted the Task 6 stub's ``NotImplementedError``;
     Task 7 replaced that stub with a real implementation, so reaching it now
     means a genuine network attempt against the placeholder ``source_url``
-    (an RFC 2606 ``.test`` domain, guaranteed to never resolve) -- which the
-    egress policy's DNS-failure path rejects, wrapped as ``TransferError``.
+    (an RFC 2606 ``.test`` domain, which never resolves; the
+    ``unresolved_egress_dns`` fixture answers it that way without a lookup,
+    TASK-41708) -- which the egress policy's DNS-failure path rejects,
+    wrapped as ``TransferError``.
     Consent is granted via ``grant_consent`` (the network-free
     ``_aggregate_closure(...).grant()`` path) rather than the real
     ``preflight()`` to keep this test's OWN setup network-free --

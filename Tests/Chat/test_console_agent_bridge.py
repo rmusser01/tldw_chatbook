@@ -12258,9 +12258,10 @@ def test_same_provider_child_clears_parent_only_sampling_values():
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("family", ["llama_cpp", "openai_compatible"])
-def test_routed_adapter_real_gateway_keeps_saved_url_after_registry_edit(monkeypatch, family):
+def test_routed_adapter_real_gateway_keeps_saved_url_after_registry_edit(
+    monkeypatch, family, unresolved_egress_dns  # TASK-41708: "saved-server"
+):
     import httpx
-
     requests = []
     def handler(request):
         requests.append(str(request.url))

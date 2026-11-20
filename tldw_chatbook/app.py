@@ -1250,7 +1250,7 @@ class TldwCli(
             )
         except Exception as _instance_lock_exc:
             logger.debug(
-                "Instance lock acquisition failed unexpectedly (%s)",
+                "Instance lock acquisition failed unexpectedly ({})",
                 type(_instance_lock_exc).__name__,
             )
             self._instance_lock_status = InstanceLockStatus(acquired=True)
@@ -4340,7 +4340,7 @@ class TldwCli(
             except Exception as exc:
                 logger.warning(
                     "Initial navigation context application failed "
-                    "(route=%s, exception_category=%s).",
+                    "(route={}, exception_category={}).",
                     initial_tab,
                     type(exc).__name__,
                 )
@@ -4371,7 +4371,7 @@ class TldwCli(
             self._maybe_warn_config_schema_conflict()
         except Exception as e:
             logger.error(
-                "Config load failure warning failed (error_type=%s)",
+                "Config load failure warning failed (error_type={})",
                 type(e).__name__,
             )
 

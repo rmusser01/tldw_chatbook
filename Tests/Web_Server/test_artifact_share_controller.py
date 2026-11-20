@@ -40,13 +40,35 @@ def isolated_share_root(tmp_path, monkeypatch):
     return root
 
 
-def test_compute_display_urls_loopback_and_lan():
-    assert compute_display_urls("127.0.0.1", 8000) == ["http://127.0.0.1:8000"]
-    lan = compute_display_urls("0.0.0.0", 8000)
-    assert lan[0] == "http://127.0.0.1:8000"
-    import re
+@pytest.fixture
+def fixed_lan_address(monkeypatch):
+    """Resolve this machine's name to a fixed LAN address, without a lookup.
 
-    assert re.fullmatch(r"http://\d{1,3}(\.\d{1,3}){3}:8000", lan[1])
+    TASK-41708: ``_primary_route_ip`` resolved the real hostname (an mDNS
+    ``.local`` query on macOS), which the network guard now refuses.
+    """
+    import socket
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "share-host.test")
+    guarded = socket.getaddrinfo
+
+    def resolve(host, port, *args, **kwargs):
+        if host != "share-host.test":
+            return guarded(host, port, *args, **kwargs)
+        return [
+            (socket.AF_INET, socket.SOCK_DGRAM, 0, "", ("127.0.1.1", 0)),
+            (socket.AF_INET, socket.SOCK_DGRAM, 0, "", ("192.168.7.23", 0)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+
+
+def test_compute_display_urls_loopback_and_lan(fixed_lan_address):
+    assert compute_display_urls("127.0.0.1", 8000) == ["http://127.0.0.1:8000"]
+    assert compute_display_urls("0.0.0.0", 8000) == [
+        "http://127.0.0.1:8000",
+        "http://192.168.7.23:8000",
+    ]
 
 
 def test_start_and_stop_share_lifecycle(tmp_path, isolated_share_root):
@@ -159,7 +181,7 @@ def test_start_share_rejects_partial_credentials_for_non_loopback(
 
 
 def test_start_share_non_loopback_with_credentials_starts(
-    tmp_path, isolated_share_root, monkeypatch
+    tmp_path, isolated_share_root, monkeypatch, fixed_lan_address
 ):
     import json
 

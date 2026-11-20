@@ -61,7 +61,7 @@ async def prepare_after_activation(
     except Exception as exc:
         logger.warning(
             "Sync v2 profile preparation failed "
-            "(mode=local_first_sync, exception_category=%s).",
+            "(mode=local_first_sync, exception_category={}).",
             type(exc).__name__,
         )
         message = "Server activated, but Sync v2 setup could not be completed."

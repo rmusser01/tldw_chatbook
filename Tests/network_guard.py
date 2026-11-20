@@ -21,6 +21,10 @@ Design
   to BLOCKED, so collection, module import, fixture setup/teardown and any
   worker thread that outlives a test are all covered — not just the window a
   function-scoped fixture happens to span.
+* ``socket.getaddrinfo`` is guarded too (TASK-41708): a blocked connect still
+  let the DNS lookup before it leave the machine. Only ``None``, empty,
+  ``localhost`` and numeric IP literals resolve without opting in, since none
+  of them makes a DNS query.
 * Only ``AF_INET``/``AF_INET6`` egress is blocked. ``AF_UNIX`` is local IPC
   (system libraries use it) and is not what this guard is about.
 * The raised error subclasses ``OSError`` so that client libraries treat it as
@@ -51,6 +55,7 @@ unrestricted opt-in.
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 import threading
 from collections.abc import Sequence
@@ -58,6 +63,7 @@ from enum import Enum
 from typing import Any
 
 __all__ = [
+    "BlockedDnsLookup",
     "BlockedNetworkAccess",
     "NetworkMode",
     "blocked_attempts",
@@ -81,6 +87,14 @@ class BlockedNetworkAccess(OSError):
     translate an ``OSError`` from ``connect()`` into their own connection
     error, so a guarded test exercises the same code path it would take
     against a dead port rather than an unrelated crash.
+    """
+
+
+class BlockedDnsLookup(BlockedNetworkAccess, socket.gaierror):
+    """Raised when a test resolves a non-local name without opting in.
+
+    Also a ``socket.gaierror``, so a caller takes the path it takes when a name
+    does not resolve.
     """
 
 
@@ -132,10 +146,13 @@ _real_connect_ex = socket.socket.connect_ex
 _real_create_connection = socket.create_connection
 _real_sendto = socket.socket.sendto
 _real_socketpair = socket.socketpair
+_real_getaddrinfo = socket.getaddrinfo
 
 _socketpair_state = threading.local()
 
 _INET_FAMILIES = frozenset({socket.AF_INET, socket.AF_INET6})
+#: How ThreadPoolExecutor names its workers: `<thread_name_prefix>_<n>`.
+_POOL_WORKER = re.compile(r".+_\d+")
 _IPV4_LOOPBACK_NETWORK = ipaddress.ip_network("127.0.0.0/8")
 _IPV6_LOOPBACK_ADDRESS = ipaddress.IPv6Address("::1")
 
@@ -229,7 +246,19 @@ def describe_blocked_attempts(
         for (call, address), thread in zip(attempts, padded)
     )
     main = threading.main_thread().name
-    foreign = sorted({name for name in threads if name != main})
+    # ThreadPoolExecutor names its workers `<prefix>_N`: `asyncio_N` (the event
+    # loop's executor, where `loop.getaddrinfo` runs) and every product pool
+    # (`deep-search-dns-guard_N`, ...). Code under test submitted the lookup, but
+    # a module-level pool outlives tests and can still be running an earlier
+    # test's work (TASK-41708).
+    pool = sorted({name for name in threads if _POOL_WORKER.fullmatch(name)})
+    foreign = sorted({name for name in threads if name != main and name not in pool})
+    if pool:
+        detail += (
+            f" ({', '.join(pool)}: a thread-pool worker; the lookup was submitted "
+            "by code under test, and a pool that outlives tests may carry an "
+            "earlier test's work)"
+        )
     if not foreign:
         return detail
     return (
@@ -261,12 +290,17 @@ def _describe(address: Any) -> str:
     return repr(address)
 
 
-def _deny(call: str, address: Any) -> BlockedNetworkAccess:
+def _deny(
+    call: str,
+    address: Any,
+    error: type[BlockedNetworkAccess] = BlockedNetworkAccess,
+) -> BlockedNetworkAccess:
     """Record a blocked attempt and build the error to raise.
 
     Args:
         call: Name of the socket API that was intercepted.
         address: The address the caller tried to reach.
+        error: The exception class to build.
 
     Returns:
         The ``BlockedNetworkAccess`` the caller should raise.
@@ -275,7 +309,7 @@ def _deny(call: str, address: Any) -> BlockedNetworkAccess:
     with _blocked_attempt_lock:
         _blocked_attempts.append((call, described))
         _blocked_attempt_threads.append(threading.current_thread().name)
-    return BlockedNetworkAccess(
+    return error(
         f"network access blocked in tests: {call}({described}). "
         "Tests must not touch a live endpoint — stub the client seam, use "
         "@pytest.mark.loopback_network for an owned numeric loopback listener, "
@@ -373,6 +407,28 @@ def _guarded_create_connection(address: Any, *args: Any, **kwargs: Any):
     return _real_create_connection(address, *args, **kwargs)
 
 
+def _is_local_name(host: Any) -> bool:
+    """Return whether resolving ``host`` makes no DNS query."""
+    if isinstance(host, (bytes, bytearray)):
+        host = host.decode("ascii", "replace")
+    if host is None or not isinstance(host, str):
+        return True  # passive lookup, or a type the real call rejects itself
+    name = host.rstrip(".").lower()
+    if name in ("", "localhost"):
+        return True
+    try:
+        ipaddress.ip_address(name)  # an IPv6 scope id (`fe80::1%lo0`) parses too
+    except ValueError:
+        return False
+    return True
+
+
+def _guarded_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any):
+    if _mode is not NetworkMode.ALLOW_ALL and not _is_local_name(host):
+        raise _deny("socket.getaddrinfo", (host, port), BlockedDnsLookup)
+    return _real_getaddrinfo(host, port, *args, **kwargs)
+
+
 def install() -> None:
     """Patch the socket egress points. Idempotent."""
     global _installed
@@ -383,4 +439,5 @@ def install() -> None:
     socket.socket.sendto = _guarded_sendto  # type: ignore[method-assign]
     socket.create_connection = _guarded_create_connection  # type: ignore[assignment]
     socket.socketpair = _guarded_socketpair  # type: ignore[assignment]
+    socket.getaddrinfo = _guarded_getaddrinfo  # type: ignore[assignment]
     _installed = True

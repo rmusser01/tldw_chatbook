@@ -114,7 +114,12 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
 
 
 # Real config/TLS/app consumers retain their collection-selected private profile.
-pytestmark = pytest.mark.bootstrap_profile
+# TASK-41708: the context-window probe's egress check resolved custom endpoint
+# hosts (`owner-custom.example.test`, `api.example.com`, ...) for real.
+pytestmark = [
+    pytest.mark.bootstrap_profile,
+    pytest.mark.usefixtures("unresolved_egress_dns"),
+]
 
 
 async def _settle_gateway_metadata(gateway):

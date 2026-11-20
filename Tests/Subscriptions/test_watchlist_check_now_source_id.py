@@ -33,7 +33,7 @@ async def _maybe(value):
 
 
 @pytest.fixture
-def services(tmp_path):
+def services(tmp_path, unresolved_egress_dns):  # TASK-41708: the run fetches its feed
     db_path = tmp_path / "subs.db"
     local = LocalWatchlistsService(
         db_factory=lambda: SubscriptionsDB(str(db_path), "test")

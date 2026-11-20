@@ -305,15 +305,14 @@ def compute_display_urls(bind: str, port: int) -> list[str]:
 
 
 def _primary_route_ip() -> str | None:
-    """Best-effort LAN address for display URLs; never raises, sends nothing.
+    """Best-effort LAN address for display URLs; never raises.
 
-    Hostname resolution is tried first because it needs no socket egress at
-    all; the UDP route probe (which picks the default-route interface without
-    sending a packet) stays as the fallback for hosts whose name maps only to
-    loopback. Resolution order matters under the test suite's network guard
-    (Tests/network_guard.py): a UDP connect to a non-loopback target is
-    blocked and recorded even when swallowed here, which would fail the
-    loopback-marked tests at teardown.
+    Resolves this machine's own name first (on macOS a ``.local`` name, which
+    may query mDNS); the UDP route probe (which picks the default-route
+    interface without sending a packet) stays as the fallback for hosts whose
+    name maps only to loopback. Tests stub the resolver: the suite's network
+    guard (Tests/network_guard.py) refuses the lookup and blocks the UDP
+    connect, and records both even when swallowed here (TASK-41708).
     """
     try:
         for info in socket.getaddrinfo(

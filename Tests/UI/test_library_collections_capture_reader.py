@@ -558,7 +558,9 @@ async def test_real_library_route_mounts_contextual_three_pane_reader_and_both_g
         assert live_shell().work.is_mounted and live_shell().work.display
 
 
-async def test_real_library_route_quick_capture_persists_and_selects_capture() -> None:
+async def test_real_library_route_quick_capture_persists_and_selects_capture(
+    unresolved_egress_dns,  # TASK-41708: the capture's fetch resolves its URL
+) -> None:
     app = _build_test_app()
     host = LibraryHarness(app)
     scope = app.collections_capture_scope_service
@@ -942,9 +944,9 @@ async def test_legacy_recovery_inspector_and_export_reach_every_page(
         )
 
 
-async def test_quick_capture_hostile_fields_are_rejected_and_valid_still_saves() -> (
-    None
-):
+async def test_quick_capture_hostile_fields_are_rejected_and_valid_still_saves(
+    unresolved_egress_dns,  # TASK-41708: the capture's fetch resolves its URL
+) -> None:
     """TASK-31205: title/tags/note flow through the shared input-validation
     seam (the URL already did). Each hostile field rejects the save with a
     status message and preserves the draft; a fully valid form still saves.

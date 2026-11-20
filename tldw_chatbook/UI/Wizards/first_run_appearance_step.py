@@ -176,7 +176,7 @@ class AppearanceStep(SetupStep):
                 self._preview_original = str(self.app.theme)
             self.app.theme = theme_name
         except Exception:
-            logger.debug("Theme preview failed for %s", theme_name, exc_info=True)
+            logger.debug("Theme preview failed for {}", theme_name, exc_info=True)
 
     def revert_preview(self) -> None:
         """Restore the pre-preview theme (no-op when nothing was previewed)."""

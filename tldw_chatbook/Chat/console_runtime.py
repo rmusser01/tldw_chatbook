@@ -6923,7 +6923,7 @@ def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:
         # diagnosis. `test_task_15743_final_rebase_diagnostics_are_metadata_
         # only` pins this shape.
         logger.warning(
-            "Console runtime: could not write the app's %s attribute; the "
+            "Console runtime: could not write the app's {} attribute; the "
             "runtime stays detached and future Console visits will each "
             "build their own.",
             CONSOLE_RUNTIME_ATTR,
@@ -6935,14 +6935,14 @@ def _attach(app: Any, runtime: ConsoleRuntime | None) -> None:
         attached = getattr(app, CONSOLE_RUNTIME_ATTR, None)
     except Exception:  # noqa: BLE001 - never raise from the post-check
         logger.opt(exception=True).warning(
-            "Console runtime: could not read back the app's %s attribute "
+            "Console runtime: could not read back the app's {} attribute "
             "to confirm the attach.",
             CONSOLE_RUNTIME_ATTR,
         )
         return
     if attached is not runtime:
         logger.warning(
-            "Console runtime: the app's %s attribute is not the runtime "
+            "Console runtime: the app's {} attribute is not the runtime "
             "just attached (a property or validator rewrote it); future "
             "Console visits will each build their own.",
             CONSOLE_RUNTIME_ATTR,

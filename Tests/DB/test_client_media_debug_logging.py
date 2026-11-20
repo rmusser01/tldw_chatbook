@@ -82,7 +82,8 @@ class TestConvertedSitesStillLogUnderDebug:
         assert total == 1
         assert len(results) == 1
         captured = loguru_output.getvalue() + stdlib_output.getvalue()
-        assert "Media search completed" in captured
+        # TASK-41714: loguru formats with {}, so a %s template dropped these.
+        assert "Media search completed (mode=fts, limit=20, offset=0, sort=" in captured
         for private_value in (
             query_sentinel,
             title_sentinel,
@@ -112,7 +113,7 @@ class TestConvertedSitesStillLogUnderDebug:
             root_logger.removeHandler(stdlib_handler)
             root_logger.setLevel(previous_level)
         captured = loguru_output.getvalue() + stdlib_output.getvalue()
-        assert "Media search failed" in captured
+        assert "Media search failed (error_type=OperationalError)." in captured
         for private_value in (
             query_sentinel,
             raw_error_sentinel,

@@ -135,6 +135,7 @@ async def main():
             await runtime.resume()
         await app._shutdown_app_owned_lifecycles()
         await app.tts_service.close()
+        await app.tts_service.wait_closed()
         for participant in tuple(__import__('tldw_chatbook.Backup_Recovery.participants', fromlist=['_installed_repositories'])._installed_repositories):
             repository = participant.repository()
             if repository is not None:
@@ -211,6 +212,7 @@ async def main():
         assert not worker.is_alive()
         await app._shutdown_app_owned_lifecycles()
         await app.tts_service.close()
+        await app.tts_service.wait_closed()
         for participant in tuple(participants._installed_repositories):
             repository = participant.repository()
             if repository is not None:
@@ -288,6 +290,7 @@ async def main():
   assert not worker.is_alive()
   await app._shutdown_app_owned_lifecycles()
   await app.tts_service.close()
+  await app.tts_service.wait_closed()
   for participant in tuple(participants._installed_repositories):
    repository=participant.repository()
    if repository is not None:

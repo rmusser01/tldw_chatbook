@@ -177,7 +177,7 @@ class NavigationMixin:
                 screen.remove()
         except Exception:
             logger.debug(
-                "Could not dispose stale reusable screen (route=%s).",
+                "Could not dispose stale reusable screen (route={}).",
                 current_tab_value,
             )
         return None
@@ -207,7 +207,7 @@ class NavigationMixin:
         except Exception:
             logger.warning(
                 "Could not install reusable screen; falling back to "
-                "per-visit construction (route=%s).",
+                "per-visit construction (route={}).",
                 current_tab_value,
             )
             return
@@ -418,7 +418,7 @@ class NavigationMixin:
             overlay = stack[-1]
             logger.info(
                 "Dismissing pushed screen before navigating "
-                "(route=%s, screen=%s, awaited=%s).",
+                "(route={}, screen={}, awaited={}).",
                 screen_name,
                 type(overlay).__name__,
                 self._navigation_overlay_awaiter_pending(overlay),
@@ -430,7 +430,7 @@ class NavigationMixin:
             except Exception as exc:
                 logger.warning(
                     "Pushed screen refused to dismiss before navigation "
-                    "(route=%s, screen=%s, exception_category=%s).",
+                    "(route={}, screen={}, exception_category={}).",
                     screen_name,
                     type(overlay).__name__,
                     type(exc).__name__,
@@ -440,14 +440,14 @@ class NavigationMixin:
             if stack and stack[-1] is overlay:
                 logger.warning(
                     "Pushed screen stayed on the stack after dismissal "
-                    "(route=%s, screen=%s).",
+                    "(route={}, screen={}).",
                     screen_name,
                     type(overlay).__name__,
                 )
                 return False
         logger.warning(
-            "Screen stack did not reduce to its content screen within %s "
-            "dismissals (route=%s).",
+            "Screen stack did not reduce to its content screen within {} "
+            "dismissals (route={}).",
             self._MAX_NAVIGATION_OVERLAY_DISMISSALS,
             screen_name,
         )
@@ -487,7 +487,7 @@ class NavigationMixin:
             for screen in self._screen_stack
         ):
             logger.info(
-                "Ignoring navigation to %s: a first-run setup gate is active "
+                "Ignoring navigation to {}: a first-run setup gate is active "
                 "and must be completed or explicitly cancelled first.",
                 requested_screen,
             )
@@ -560,7 +560,7 @@ class NavigationMixin:
                 # confirm. Abandoning the wait does not abandon the save --
                 # the note-save worker is a separate task and keeps running.
                 logger.warning(
-                    "Screen flush timed out after %ss; staying put (route=%s).",
+                    "Screen flush timed out after {}s; staying put (route={}).",
                     self.NAVIGATION_FLUSH_TIMEOUT_SECONDS,
                     screen_name,
                 )
@@ -580,7 +580,7 @@ class NavigationMixin:
                 # The outgoing instance may be the only place pending edits
                 # still exist, so a failed flush must abort the transition.
                 logger.warning(
-                    "Screen flush failed (route=%s, exception_category=%s).",
+                    "Screen flush failed (route={}, exception_category={}).",
                     screen_name,
                     type(exc).__name__,
                 )
@@ -629,7 +629,7 @@ class NavigationMixin:
                 # proceed and tear down live work the user was never asked
                 # about -- fail closed, same as the flush veto above.
                 logger.warning(
-                    "Screen navigation confirm failed (route=%s, exception_category=%s).",
+                    "Screen navigation confirm failed (route={}, exception_category={}).",
                     screen_name,
                     type(exc).__name__,
                 )
@@ -716,13 +716,13 @@ class NavigationMixin:
             exc = task.exception()
             if exc is not None:
                 logger.warning(
-                    "Retained screen flush failed (route=%s, exception_category=%s).",
+                    "Retained screen flush failed (route={}, exception_category={}).",
                     screen_name,
                     type(exc).__name__,
                 )
             else:
                 logger.info(
-                    "Retained screen flush completed (route=%s).",
+                    "Retained screen flush completed (route={}).",
                     screen_name,
                 )
 
@@ -923,17 +923,17 @@ class NavigationMixin:
                                 runtime_identity,
                             )
                     logger.debug(
-                        "Saved screen snapshot for canonical route: %s",
+                        "Saved screen snapshot for canonical route: {}",
                         outgoing_key,
                     )
                 else:
                     logger.warning(
-                        "Screen snapshot save skipped (route=%s, reason=non_mapping).",
+                        "Screen snapshot save skipped (route={}, reason=non_mapping).",
                         outgoing_key,
                     )
             except Exception as exc:
                 logger.warning(
-                    "Screen snapshot save failed (route=%s, exception_category=%s).",
+                    "Screen snapshot save failed (route={}, exception_category={}).",
                     outgoing_key,
                     type(exc).__name__,
                 )
@@ -987,7 +987,7 @@ class NavigationMixin:
                 # consumers beyond restore).
                 logger.debug(
                     "Reusing installed screen instance for canonical "
-                    "route: %s",
+                    "route: {}",
                     current_tab_value,
                 )
             else:
@@ -1000,14 +1000,14 @@ class NavigationMixin:
                     try:
                         restore_state(restored_state)
                         logger.debug(
-                            "Restored screen snapshot for canonical route: %s",
+                            "Restored screen snapshot for canonical route: {}",
                             current_tab_value,
                         )
                     except Exception as exc:
                         self.screen_state_store.discard(current_tab_value)
                         logger.warning(
                             "Screen snapshot restore failed "
-                            "(route=%s, exception_category=%s).",
+                            "(route={}, exception_category={}).",
                             current_tab_value,
                             type(exc).__name__,
                         )
@@ -1048,7 +1048,7 @@ class NavigationMixin:
                     except Exception as exc:
                         logger.warning(
                             "Navigation context application failed "
-                            "(route=%s, exception_category=%s).",
+                            "(route={}, exception_category={}).",
                             current_tab_value,
                             type(exc).__name__,
                         )
@@ -1074,7 +1074,7 @@ class NavigationMixin:
                 if not await self._dismiss_navigation_overlays(screen_name):
                     logger.warning(
                         "Aborting navigation: a pushed screen would not leave "
-                        "the stack (route=%s).",
+                        "the stack (route={}).",
                         screen_name,
                     )
                     self._notify_navigation_failure(screen_name)
@@ -1091,7 +1091,7 @@ class NavigationMixin:
                         message.commit_target_ownership()
                         logger.warning(
                             "Screen switch raised after target ownership "
-                            "(route=%s, exception_category=%s).",
+                            "(route={}, exception_category={}).",
                             screen_name,
                             type(exc).__name__,
                         )
@@ -1120,7 +1120,7 @@ class NavigationMixin:
                     if message.target_ownership_committed:
                         logger.warning(
                             "Screen mount reported after target ownership "
-                            "(route=%s, exception_category=%s).",
+                            "(route={}, exception_category={}).",
                             screen_name,
                             type(exc).__name__,
                         )
@@ -1137,7 +1137,7 @@ class NavigationMixin:
                     message.commit_target_ownership()
                 if not message.target_ownership_committed:
                     logger.error(
-                        "Screen switch returned without target stack ownership (route=%s).",
+                        "Screen switch returned without target stack ownership (route={}).",
                         screen_name,
                     )
                     self._notify_navigation_failure(screen_name)
@@ -1180,7 +1180,7 @@ class NavigationMixin:
                 except Exception as exc:
                     logger.warning(
                         "Post-switch bookkeeping failed after target ownership "
-                        "(route=%s, exception_category=%s).",
+                        "(route={}, exception_category={}).",
                         screen_name,
                         type(exc).__name__,
                     )

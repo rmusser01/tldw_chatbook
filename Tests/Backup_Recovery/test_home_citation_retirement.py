@@ -343,6 +343,6 @@ def _run(
                 primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
         raise
     stdout = log.read_text(encoding="utf-8", errors="replace")
-    stderr = ""
-    assert returncode == 0, stderr[-6000:] + stdout[-1000:]
+    # stderr is merged into the log, so the whole tail comes from it (TASK-41717).
+    assert returncode == 0, stdout[-7000:]
     assert "retired and reopened" in stdout

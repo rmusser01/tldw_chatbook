@@ -987,7 +987,7 @@ class LocalMediaChunkToolService:
                 " duplicate it as a custom spec first."
             ) from exc
         except ChunkingTemplateError as exc:
-            logger.error("chunk-spec save failed: %s", exc)
+            logger.error("chunk-spec save failed (error_type={})", type(exc).__name__)
             raise LibraryToolError(
                 ERROR_STORAGE_ERROR,
                 "The local chunk-spec store could not complete the save.",

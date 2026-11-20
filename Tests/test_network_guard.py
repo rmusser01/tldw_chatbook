@@ -11,6 +11,7 @@ explicit opt-in works.
 
 from __future__ import annotations
 
+import _socket
 import socket
 import sys
 import threading
@@ -508,6 +509,20 @@ def test_a_main_thread_attempt_is_not_blamed_on_an_earlier_test() -> None:
     assert "EARLIER test" not in message
 
 
+@pytest.mark.parametrize(
+    "worker", ["asyncio_0", "deep-search-dns-guard_2", "ThreadPoolExecutor-3_1"]
+)
+def test_a_thread_pool_lookup_is_not_blamed_on_an_earlier_test(worker) -> None:
+    """``loop.getaddrinfo`` and product pools resolve on ``<prefix>_N`` workers (TASK-41708)."""
+    message = network_guard.describe_blocked_attempts(
+        (("socket.getaddrinfo", "example.test:None"),), (worker,)
+    )
+    assert worker in message
+    assert "thread-pool worker" in message
+    assert "may carry an earlier test's work" in message
+    assert "EARLIER test" not in message
+
+
 def test_draining_the_attempts_also_clears_their_thread_names() -> None:
     """The two records must never drift out of alignment across tests."""
     with pytest.raises(network_guard.BlockedNetworkAccess):
@@ -579,3 +594,62 @@ def test_concurrent_denials_keep_each_attempt_with_its_own_thread_name(
     provenance = dict(zip((address for _call, address in attempts), threads))
     assert provenance["192.0.2.8:80"] == main_name
     assert provenance["192.0.2.9:443"] == "guard-provenance-race"
+
+
+# --- DNS lookups (TASK-41708) ------------------------------------------------
+#
+# A blocked connect still let the lookup before it out: three sensitive-logging
+# tests resolved `api.openai.test`, `pinned.example.test` and `api.openai.com`
+# for real before their connect was refused. Each test below swaps the C
+# resolver for a recorder, so no run of it, guarded or not, reaches a real one.
+
+
+def _record_resolver(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    reached: list[object] = []
+    monkeypatch.setattr(
+        _socket, "getaddrinfo", lambda host, *_a, **_k: reached.append(host) or []
+    )
+    return reached
+
+
+def test_a_dns_lookup_of_a_remote_name_is_refused_before_the_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached = _record_resolver(monkeypatch)
+
+    with pytest.raises(socket.gaierror) as excinfo:
+        socket.getaddrinfo("api.openai.test", 443)
+
+    assert isinstance(excinfo.value, network_guard.BlockedNetworkAccess)
+    assert reached == []
+    assert _drain_expecting() == (("socket.getaddrinfo", "api.openai.test:443"),)
+
+
+def test_local_and_numeric_lookups_and_opted_in_tests_reach_the_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached = _record_resolver(monkeypatch)
+    local = (None, "", "localhost", "LocalHost.", b"localhost", "127.0.0.1", "::1")
+    numeric_remote = ("192.0.2.1", "2001:db8::1", "fe80::1%lo0")
+    for host in local + numeric_remote:
+        socket.getaddrinfo(host, 80)
+    network_guard.set_mode(network_guard.NetworkMode.ALLOW_ALL)
+    socket.getaddrinfo("example.test", 80)
+
+    assert reached == [*local, *numeric_remote, "example.test"]
+    assert network_guard.blocked_attempts() == ()
+
+
+@pytest.mark.loopback_network
+def test_loopback_only_mode_refuses_a_remote_name_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached = _record_resolver(monkeypatch)
+    assert network_guard.is_loopback_only() is True
+
+    socket.getaddrinfo("localhost", 80)
+    with pytest.raises(network_guard.BlockedDnsLookup):
+        socket.getaddrinfo("remote.example.test", 443)
+
+    assert reached == ["localhost"]
+    assert _drain_expecting() == (("socket.getaddrinfo", "remote.example.test:443"),)

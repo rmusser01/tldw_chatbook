@@ -199,30 +199,35 @@ async def test_an_unexpected_exception_in_the_fetch_path_logs_above_debug():
             ),
             level="DEBUG",
         )
+        raised = []
         try:
 
-            async def boom(**kwargs):
+            # The local backend's seam (`_check_now_source` goes through the
+            # operation coordinator), so the check fails before any fetch.
+            async def boom(*args, **kwargs):
+                raised.append(args)
                 raise ValueError("invalid literal for int() with base 10")
 
-            screen._controller.check_now = boom
+            app.watchlists_operation_coordinator.accept_checks = boom
             pane.select_source_by_id(str(pane.sources[0]["id"]))
             await pilot.pause(0.2)
             records.clear()
             pane.query_one("#sources-check-now-button", Button).press()
             for _ in range(60):
                 await pilot.pause()
-                if any("check" in message.lower() for _, message in records):
+                if any("Check now failed" in message for _, message in records):
                     break
         finally:
             logger.remove(sink_id)
 
+    assert raised, "the stub must be the seam the screen called"
     check_records = [
         (level, message)
         for level, message in records
-        if "invalid literal" in message or "check" in message.lower()
+        if "Check now failed with category" in message
     ]
-    assert check_records, "the failure must be logged at all"
-    assert any(
+    assert check_records, f"the failure must be logged at all. Got: {records!r}"
+    assert all(
         level in ("WARNING", "ERROR", "CRITICAL") for level, _ in check_records
     ), (
         "an unexpected exception in the fetch path must log at warning or "
