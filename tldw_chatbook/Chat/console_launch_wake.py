@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from contextlib import closing
+from contextlib import closing, suppress
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,20 @@ __all__ = [
 LAUNCH_WAKE_TASK_NAME = "deferred_launch_wake"
 
 
+def _launch_source(app: Any) -> tuple[Any, str | Path | None]:
+    db = getattr(app, "chachanotes_db", None)
+    return db, getattr(db, "db_path", None)
+
+
+def _launch_is_closing(app: Any) -> bool:
+    with suppress(AttributeError):
+        if app._exit:
+            return True
+    with suppress(AttributeError):
+        return bool(app._shutting_down)
+    return False
+
+
 def pending_conversations_at_launch(app: Any) -> tuple[str, ...]:
     """Discover pending native survivor identities without creating a database.
 
@@ -58,8 +72,8 @@ def pending_conversations_at_launch(app: Any) -> tuple[str, ...]:
     """
     if not autowake_enabled():
         return ()
-    db = getattr(app, "chachanotes_db", None)
-    return _read_pending_launch_conversations(getattr(db, "db_path", None))
+    _, db_path = _launch_source(app)
+    return _read_pending_launch_conversations(db_path)
 
 
 def _read_pending_launch_conversations(db_path: str | Path | None) -> tuple[str, ...]:
@@ -277,23 +291,18 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str] = ()) -> int:
     Returns:
         How many conversations were hydrated for delivery.
     """
-    if getattr(app, "_exit", False) or not autowake_enabled():
+    if _launch_is_closing(app) or not autowake_enabled():
         return 0
     from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import await_finite_read
 
-    db = getattr(app, "chachanotes_db", None)
-    db_path = getattr(db, "db_path", None)
+    db, db_path = _launch_source(app)
     pending = await await_finite_read(
         asyncio.to_thread(_read_pending_launch_conversations, db_path)
     )
-    if (
-        not pending
-        or getattr(app, "_exit", False)
-        or getattr(app, "_shutting_down", False)
-        or getattr(app, "chachanotes_db", None) is not db
-        or getattr(db, "db_path", None) != db_path
-        or not autowake_enabled()
-    ):
+    if not pending or _launch_is_closing(app):
+        return 0
+    current_db, current_path = _launch_source(app)
+    if current_db is not db or current_path != db_path or not autowake_enabled():
         return 0
     controller = _ensure_launch_runtime(app)
     if controller is None:

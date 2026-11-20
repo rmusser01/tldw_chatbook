@@ -2570,39 +2570,30 @@ class NotesScopeService:
         return await self.server_service.delete_note_link(edge_id, **preconditions)
 
 
-_NATIVE_LIST_NOTES = NotesScopeService.list_notes
-_NATIVE_COUNT_NOTES = NotesScopeService.count_notes
-
-
 def library_notes_snapshot_reader(
-    list_notes: Any, count_notes: Any, profile_db: Any
+    owner: Any, app: Any
 ) -> Callable[..., dict[str, Any]] | None:
     """Return a combined reader for the stock file-backed local Notes route."""
-    owner = getattr(list_notes, "__self__", None)
     if (
         type(owner) is not NotesScopeService
-        or getattr(list_notes, "__func__", None) is not _NATIVE_LIST_NOTES
-        or getattr(count_notes, "__self__", None) is not owner
-        or getattr(count_notes, "__func__", None) is not _NATIVE_COUNT_NOTES
+        or not {"list_notes", "count_notes"}.isdisjoint(vars(owner))
     ):
         return None
 
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-    from tldw_chatbook.Notes.Notes_Library import (
-        _NATIVE_SNAPSHOT_METHODS,
-        NotesInteropService,
-    )
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 
+    try:
+        profile_db = app.chachanotes_db
+    except AttributeError:
+        return None
     service = owner.local_notes_service
     if (
         type(profile_db) is not CharactersRAGDB
         or profile_db.is_memory_db
         or type(service) is not NotesInteropService
         or service.unified_db_template is not profile_db
-        or any(
-            getattr(getattr(service, name, None), "__func__", None) is not method
-            for name, method in _NATIVE_SNAPSHOT_METHODS
-        )
+        or not {"_get_db", "list_notes", "count_notes"}.isdisjoint(vars(service))
     ):
         return None
 

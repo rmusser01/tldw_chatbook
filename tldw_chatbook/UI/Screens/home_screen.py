@@ -625,9 +625,7 @@ class HomeScreen(BaseAppScreen):
 
         count_notes = getattr(notes_service, "count_notes", None)
         list_notes = getattr(notes_service, "list_notes", None)
-        native_notes = library_notes_snapshot_reader(
-            list_notes, count_notes, getattr(self.app_instance, "chachanotes_db", None)
-        )
+        native_notes = library_notes_snapshot_reader(notes_service, self.app_instance)
         note_scope = {"scope": "local_note", "user_id": notes_user_id}
         notes_result = None
         if native_notes is not None:

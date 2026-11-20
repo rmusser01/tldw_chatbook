@@ -2397,11 +2397,6 @@ class NotesInteropService:
 from types import FunctionType as _LibraryFunction
 
 _NATIVE_ORDINARY_LIBRARY_CLASS = NotesInteropService
-_NATIVE_SNAPSHOT_METHODS = (
-    ("_get_db", NotesInteropService._get_db),
-    ("list_notes", NotesInteropService.list_notes),
-    ("count_notes", NotesInteropService.count_notes),
-)
 _NATIVE_ORDINARY_LIBRARY_METHODS = tuple(
     (name, value)
     for name, value in vars(NotesInteropService).items()

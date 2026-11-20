@@ -18997,7 +18997,7 @@ async def test_library_shell_notes_rail_badge_degrades_without_count_seam():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "outcome", ["ready", "count-failed", "denied", "other-profile"]
+    "outcome", ["ready", "count-failed", "denied", "other-profile", "custom-count"]
 )
 async def test_native_library_notes_snapshot_reuses_one_worker_connection(
     tmp_path, monkeypatch, outcome
@@ -19042,6 +19042,9 @@ async def test_native_library_notes_snapshot_reuses_one_worker_connection(
         server_service=None,
         policy_enforcer=SimpleNamespace(require_allowed=require_allowed),
     )
+    custom_count = Mock(return_value=7)
+    if outcome == "custom-count":
+        monkeypatch.setattr(app.notes_scope_service, "count_notes", custom_count)
     app.media_reading_scope_service = StaticLibraryMediaScopeService([])
     app.chat_conversation_scope_service = StaticLibraryConversationScopeService([])
     monkeypatch.setitem(library_screen_module.LIBRARY_SOURCE_PAGE_SIZES, "notes", 1)
@@ -19072,10 +19075,16 @@ async def test_native_library_notes_snapshot_reuses_one_worker_connection(
         else:
             assert error is None
             assert records["notes"] == expected_page
-            assert counts["notes"] == (1 if outcome == "count-failed" else 2)
+            assert counts["notes"] == {"count-failed": 1, "custom-count": 7}.get(
+                outcome, 2
+            )
+            if outcome == "custom-count":
+                custom_count.assert_called_once()
             assert total_known["notes"] is (outcome != "count-failed")
             assert len(opens) == (2 if outcome == "other-profile" else 1)
-            assert bool(local_notes._db_instances) is (outcome == "other-profile")
+            assert bool(local_notes._db_instances) is (
+                outcome in {"other-profile", "custom-count"}
+            )
         with storage_admission._lock:
             assert not any(
                 lease.resource_path == profile_db.db_path

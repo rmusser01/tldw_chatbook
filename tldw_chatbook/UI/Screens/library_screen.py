@@ -13045,9 +13045,7 @@ class LibraryScreen(BaseAppScreen):
         count_notes = getattr(notes_service, "count_notes", None)
         from tldw_chatbook.Notes.notes_scope_service import library_notes_snapshot_reader
 
-        native_notes = library_notes_snapshot_reader(
-            list_notes, count_notes, getattr(self.app_instance, "chachanotes_db", None)
-        )
+        native_notes = library_notes_snapshot_reader(notes_service, self.app_instance)
         if native_notes is not None:
             list_notes = native_notes
             count_notes = None
