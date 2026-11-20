@@ -21,6 +21,12 @@
 
 **What to do.** In a stand-in that a worker awaits, record what it was given and assert after the run, on the test's own stack; an assertion inside the stand-in can only fail as a missing effect downstream.
 
+## `pytest --version` imports the app through `Tests/conftest.py`, so it needs the test wrapper too (round 18, 2026-11-20)
+
+**Incident.** In round 18 the providers implementer ran `pytest --version` outside the scratch-profile wrapper. In this repo that is not just a version check: `pyproject.toml` sets `testpaths = ["Tests"]`, so pytest loads `Tests/conftest.py` while parsing its options, before it handles `--version`. Through the wrapper at d85e90bc9e, `pytest.main(["--version"])` left `Tests.conftest` and 105 `tldw_chatbook` modules imported. The real profile was not touched only because `Tests/conftest.py` points `HOME`, `XDG_*` and `TLDW_CONFIG_PATH` at a `tldw_test_config_*` temporary root before its first `tldw_chatbook` import (line 181). That root then stays in `$TMPDIR`: `--version` never reaches the `pytest_sessionfinish` that removes it (TASK-42145).
+
+**What to do.** Treat every pytest invocation in this repo, `--version`, `--help` and `--collect-only` included, as a process that imports `tldw_chatbook`, and run it through the wrapper. To check the pytest version without the app, use `python -c "import pytest; print(pytest.__version__)"`.
+
 ## A test's `monkeypatch.setattr` lives until after every autouse teardown, so a patched builtin breaks them (TASK-42028, 2026-11-20)
 
 **Incident.** Two tests in `test_console_first_send_import_cycles.py` replaced `builtins.__import__` with a one-argument fake through `monkeypatch.setattr` (since e75333c318, 2026-11-02) and passed until TASK-41507 put `test_console_launch_wake.py` (which imports helpers from `test_console_fleet_wake_wiring.py`) in their UI shard; then all six ended in teardown ERRORs (`import_module() takes 1 positional argument but 5 were given`). `--setup-plan` shows why: an autouse fixture (`_console_gateway_http_client_is_offline`) requests `monkeypatch` first, so the test shares that instance and its undo runs after every other autouse teardown. `drain_test_app_user_data_dirs` tears down earlier and, only when the wiring module is loaded, runs `from Tests.conftest import ...` under the fake. That module was loaded by an import from another file, not by a test of its own in the shard.
