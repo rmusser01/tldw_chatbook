@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import copy
 from dataclasses import fields
 import gc
 import inspect
@@ -425,6 +426,38 @@ async def test_viewless_first_send_is_saved_through_a_wrapped_config_writer(
     await asyncio.wait_for(asyncio.shield(runtime._first_send_task), 5)
 
     assert calls == [{"console.onboarding": {"first_send_completed": True}}]
+    saved = tomllib.loads(Path(config._get_effective_config_path()).read_text())
+    assert saved["console"]["onboarding"]["first_send_completed"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "console_value", ["corrupt", {"onboarding": "corrupt"}], ids=["console", "onboarding"]
+)
+async def test_first_send_repairs_a_corrupt_onboarding_value_and_still_saves(
+    console_value,
+) -> None:
+    """TASK-42015: a non-dict ``console`` or ``onboarding`` value is replaced,
+    and the flag is still set and saved, not silently skipped. The deleted
+    ``ChatScreen._record_console_first_send`` test pinned this on a path no
+    production code called."""
+    import tomllib
+
+    from tldw_chatbook import config
+
+    app = type("App", (), {})()
+    # A copy: the repair edits it in place, and the parameter outlives a rerun.
+    app.app_config = {"console": copy.deepcopy(console_value)}
+    runtime = ConsoleRuntime(app)
+    app.console_runtime = runtime
+
+    await runtime._record_successful_first_send(
+        (config.current_config_identity(), app.app_config, None, None)
+    )
+
+    assert runtime._first_send_task is not None, "the first-send save was skipped"
+    await asyncio.wait_for(asyncio.shield(runtime._first_send_task), 5)
+    assert app.app_config["console"]["onboarding"]["first_send_completed"] is True
     saved = tomllib.loads(Path(config._get_effective_config_path()).read_text())
     assert saved["console"]["onboarding"]["first_send_completed"] is True
 
