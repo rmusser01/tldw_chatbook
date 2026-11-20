@@ -46,11 +46,13 @@ def test_literal_dependency_loggers_remain_in_the_diagnostic_inventory(
 
 
 REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
+    "tldw_chatbook/Agents/agent_native_execution.py": {
+        "on_child_settled consumer raised": ("type(exc).__name__",),
+    },
     "tldw_chatbook/Agents/agent_service.py": {
         "autowake_enabled is not boolean; using default": (),
         "child_max_wall_seconds is not numeric": (),
         "child_max_wall_seconds is not finite": (),
-        "on_child_settled consumer raised": ("type(exc).__name__",),
         "subagents_outlive_turn is not boolean": (),
         "sub-agents are outliving their turn": ("len(survivors)",),
     },
@@ -102,6 +104,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "type(exc).__name__",
         ),
         "Failed to persist Console roleplay identity context": ("type(exc).__name__",),
+    },
+    "tldw_chatbook/Chat/console_store_first_persistence.py": {
         "Failed to flush Console roleplay context on first persist": (),
     },
     "tldw_chatbook/Chat/console_agent_bridge.py": {
