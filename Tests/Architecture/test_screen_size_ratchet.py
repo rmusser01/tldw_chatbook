@@ -1903,7 +1903,14 @@ _LIBRARY_INIT_LAMBDAS = 354
 #: the 3 that reached Media bodies TASK-36952.3 moved now name
 #: `LibraryMediaController`. Same owner decision: expand limits, don't
 #: contort code.
-_LIBRARY_UNBOUND_TEST_CALLS = 539
+#: 2026-11-19, PR #3423 rebase-8 review m-2: 539 -> 541 (+2 in
+#: test_library_ctrl_s_refusals). The two unpinned N-6 analysis-guard resets
+#: that live in screen bodies (`_select_library_rail_row_after_source_
+#: admission`, `_open_library_item_by_id`) are pinned by calling those real
+#: bodies over a fake; the three controller-owned resets name
+#: `LibraryMediaController`. Same owner decision: expand limits, don't
+#: contort code.
+_LIBRARY_UNBOUND_TEST_CALLS = 541
 
 
 def _library_init_lambdas() -> int:
