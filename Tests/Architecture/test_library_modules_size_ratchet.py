@@ -1062,7 +1062,9 @@ _BUDGETS: dict[str, int] = {
     # own +64; same owner decision: expand limits, don't contort code).
     # 2026-11-06, rebased onto dev 2684e5453f: 5068 -> 5132 (polish-1b's
     # own +64; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5132,
+    # 2026-11-20, rebased onto dev d85e90bc9e: 5069 -> 5133 (polish-1b's
+    # own +64; same owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py": 5133,
     # 2026-09-03, wave-3 task 3 (combined search+RAG controller PR, series
     # 2/3): born-governed by the glob above -- new file, pinned at its
     # exact measured line count on landing (42 moved methods + the

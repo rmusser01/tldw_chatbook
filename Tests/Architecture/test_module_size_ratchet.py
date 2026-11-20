@@ -243,7 +243,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-12, rebased onto dev 4b90eb860b: 3704 -> 3715 (dev measures
     # 3697; polish-1b's own +18; same owner decision: expand limits,
     # don't contort code).
-    "tldw_chatbook/app_service_wiring.py": 3715,
+    # 2026-11-20, rebased onto dev d85e90bc9e: 3704 -> 3693 (dev measures
+    # 3675; polish-1b's own +18; same owner decision: expand limits,
+    # don't contort code).
+    "tldw_chatbook/app_service_wiring.py": 3693,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved

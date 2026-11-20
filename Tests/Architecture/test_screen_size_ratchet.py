@@ -1688,7 +1688,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Task 9 lines in the Media bodies and ``_save_library_media_edit_
     #: from_form`` moved with them to the media controller; same owner
     #: decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33527, 1314),
+    #: 2026-11-20, rebased onto dev d85e90bc9e: 32828 -> 33532 lines,
+    #: 1288 -> 1314 methods (polish-1b's own +704 lines, +26 methods; same
+    #: owner decision: expand limits, don't contort code).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33532, 1314),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
@@ -1910,6 +1913,12 @@ _LIBRARY_INIT_LAMBDAS = 354
 #: bodies over a fake; the three controller-owned resets name
 #: `LibraryMediaController`. Same owner decision: expand limits, don't
 #: contort code.
+#: 2026-11-20, polish-1b (PR #3423) rebased onto dev d85e90bc9e: 511 -> 541
+#: (measured; dev measures 511, its pin). polish-1b's own +30 is unchanged,
+#: in 5 files: test_library_ctrl_s_refusals 13, test_library_notes_riders_
+#: trash +8, test_library_honesty_accessibility +4, test_library_skills_
+#: canvas +4, test_library_notes_deferred_visit_reload 1. Same owner
+#: decision: expand limits, don't contort code.
 _LIBRARY_UNBOUND_TEST_CALLS = 541
 
 
