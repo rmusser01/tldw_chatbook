@@ -1147,6 +1147,11 @@ async def read_run_catalog_fingerprint(service, profiles: tuple = ()) -> tuple:
     reuse decision that follows in the same loop turn sees what it saw when
     the whole check ran on the loop.
 
+    Live sends take this worker read: since the ordinary tree captures a
+    send's MCP definitions before run start (064d5cb014), every second and
+    later send on a stock profile can reuse its kept composition, so its run
+    start fingerprints here first (TASK-33620.15.66).
+
     Custom readers (a plugin or test double) and uninstalled stores keep the
     loop route: each store read in its own loop turn (TASK-33620.15.5). Both
     routes yield first: a Console provider entry reads the response rules'
