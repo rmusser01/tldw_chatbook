@@ -1,10 +1,10 @@
 ---
 id: TASK-23149
 title: Library focus tests stub a focus path production no longer takes
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-28'
-updated_date: '2026-11-19 15:20'
+updated_date: '2026-11-20 03:10'
 labels:
   - tests
   - library
@@ -25,11 +25,9 @@ is not a focus grab at all. The assertion is simply over-broad — production is
 
 ## Acceptance Criteria
 
-- [ ] #1 `test_focus_library_list_entry_prefers_still_checked_row_in_select_mode` passes: its fake row
-  carries every attribute the focus path reads (`focusable`, `is_attached`, `has_class`, and any
-  further one the run shows), and focus is asserted by the widget `set_focus` targets, not by a
-  `.focus()` stub that production no longer calls
-- [ ] #2 `test_focus_library_list_entry_checked_row_preference_is_media_only` passes on the same terms
+- [x] #1 `test_focus_library_list_entry_prefers_still_checked_row_in_select_mode` passes, and focus is
+  asserted by the widget `set_focus` targets, not by a `.focus()` call that production no longer makes
+- [x] #2 `test_focus_library_list_entry_checked_row_preference_is_media_only` passes on the same terms
 
 ## Evidence
 
@@ -68,3 +66,6 @@ Old criteria, for the record: (1) the fake row carries `focusable` and `has_clas
 asserted by the widget `set_focus` targets; (3) the two compose tests filter captured callbacks to
 focus callbacks only. (3) is met as above; (1) and (2) are carried into the new #1 and #2.
 
+**2026-11-20 (round 17): Done through TASK-41715.** Both nodes were red since 91e0a16cd9 (2026-08-21) and 04e29673a2 (2026-08-27), which routed entry focus through `set_focus`; 29a03afb5a (2026-10-24) only changed the error to `BaseAppScreen.set_focus`'s `is_attached` read. TASK-41715's review round 2 (fu/r17-libshut) makes both stub `screen.set_focus = lambda target, **_kwargs: target.focus()`, as the gated sibling `..._falls_back_to_first_row_outside_active_selection` does, so each asserts the row production hands to `set_focus`. Both are on the UI PR gate.
+
+AC#1 and AC#2 were reworded on this date. As filed, they asked that the fake row carry every attribute the focus path reads. A fake cannot take the real path: once it has `is_attached`, Textual's `Screen.set_focus` assigns the `focused` reactive and calls `post_message`, and never calls the fake's `focus()`. TASK-41715's review probed this on Textual 8.2.8. The outcome the criteria were after, an assertion on the widget `set_focus` targets, is kept.
