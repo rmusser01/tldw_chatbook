@@ -1044,6 +1044,14 @@ per-link range reads and the replacement rows' lineage trigger. It is paid once,
 by the send after the rewrite. Ordinary sends, which the 10 ms reservation gate
 measures, take no new work.
 
+Dispatch binding re-measured 2026-11-20 (TASK-40578; thread CPU, load1 4 to 7). The
+lineage trigger, not the range reads, is most of a chain's cost. That trigger walks the
+node chain toward the segment root once per replacement row. At 1,999 rows (8 links)
+binding takes 36 ms, of which the two validation passes are 18% and the trigger about
+64%. At the 256-link cap (65,536 stored rows) binding takes about 38 s, so it holds
+the write lock for that long. The validation passes are 0.6% of that and the trigger
+99%; TASK-42130 tracks the trigger cost.
+
 ### Amendment 2026-11-17 (owner decision, TASK-41310): a spawned child's calls have their own segment
 
 Decision 3 of ADR-092 captures surviving fleet calls, but this ledger had no
