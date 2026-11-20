@@ -790,7 +790,9 @@ TEMPLATE_SAMPLE_ENDPOINT_KEYS: tuple[str, ...] = (
 
 #: The endpoint and model each placeholder section shipped with before the
 #: ``template_sample`` marker existed: identical in all 484 revisions of the
-#: template on dev (TASK-34100.2 pass 3, re-scanned in review round 1). Every
+#: template on dev (TASK-34100.2 pass 3, re-scanned in review round 1). Dev's
+#: TASK-41145 later replaced MLX-LM's ``api_url`` with ``host``/``port``, its
+#: identity (below), so its old ``api_url`` here does not matter. Every
 #: profile created before the marker carries these tables without the key, so
 #: they are recognised by these frozen values, never by today's template
 #: (review round 1, R1-3: a later template edit must not turn an old profile's
