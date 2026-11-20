@@ -132,7 +132,8 @@ restores. Portable import lists the dated copies as excluded too
 (`detached_layout`). A portable
 copy made before pets were per-profile keeps them in the roaming
 `tldw_chatbook` folder; detached import takes those only when the profile has
-no pet files of its own, and reports them as not imported otherwise. Other
+neither its own pet file nor its marker (a dated copy alone does not count, and
+stays behind), and reports them as not imported otherwise. Other
 files under that roaming folder remain unsupported durable content. After
 committed profile validation, both fresh selection and launch derive portable
 home/roaming selectors from the attempt, ignoring inherited APPDATA.
