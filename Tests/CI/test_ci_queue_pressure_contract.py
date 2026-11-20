@@ -718,6 +718,16 @@ RECOVERED_SUITES_TARGETS = (
     # 14 tests; TASK-41516 moved them here from pr-fast-lane (TASK-41123's
     # node alone is 21 s in CI, the file 78 s).
     "Tests/Backup_Recovery/test_skills_recovery_controls.py",
+    # TASK-33620.15.61: the Console's MCP catalog reuse key and its refusals,
+    # the store fingerprints, the run-start anchor and the off-loop fingerprint
+    # check (TASK-33620.15.1, TASK-33620.15.38), on no PR lane before.
+    # Sandboxed, 30 tests, 18.5 s in this step at load 5-7 (the step 715 s);
+    # pr-fast-lane, their siblings' home, has no minutes left. The two mounted
+    # files are bootstrap_profile and run in ADMISSION_3_TARGETS.
+    "Tests/Chat/test_console_run_start_reuse_key.py",
+    "Tests/MCP/test_catalog_fingerprint.py",
+    "Tests/Chat/test_console_run_start_anchor.py",
+    "Tests/MCP/test_run_catalog_fingerprint_off_loop.py",
     # TASK-39142: bootstrap_profile since TASK-38111. TASK-39049's keyword-leg
     # pool retirement file runs beside its four siblings.
     "Tests/Prompt_Management/test_prompt_improvement_service.py",
@@ -1142,6 +1152,13 @@ ADMISSION_3_TARGETS = (
     # TASK-42144 bounded that cache, so the order no longer matters for
     # teardown cost; it stays as measured.
     "Tests/Skills/test_skills_import.py",
+    # TASK-33620.15.61: the mounted Console MCP catalog reuse and anchor files
+    # (TASK-33620.15.1, TASK-33620.15.38; bootstrap_profile, 11 tests each),
+    # on no PR lane before. Ahead of the Roleplay files for the same reason:
+    # before them they took 69 s and the step 582 s; after them, 162 s (their
+    # teardown 2.4 s -> 51 s a file) and the step 650 s (load 4-7, pytest 9).
+    "Tests/UI/test_console_mcp_catalog_reuse.py",
+    "Tests/UI/test_console_mcp_catalog_anchor.py",
     # Roleplay frame B2b (TASK-33910.4, owner decision D7, 2026-10-26): the
     # one Import picker, mounted on real stores (bootstrap_profile; 44 cases,
     # about 95 s serial).
