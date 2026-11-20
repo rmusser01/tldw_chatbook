@@ -536,7 +536,9 @@ def test_aggregate_multi_chunk_synthesizes_from_chunk_summaries(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_relevance_scrape_failure_keeps_result_with_fallback(monkeypatch):
+async def test_relevance_scrape_failure_keeps_result_with_fallback(
+    monkeypatch, unresolved_egress_dns  # TASK-41708: the egress check resolves kept.example
+):
     monkeypatch.setattr(
         WebSearch_APIs,
         "chat_api_call",
