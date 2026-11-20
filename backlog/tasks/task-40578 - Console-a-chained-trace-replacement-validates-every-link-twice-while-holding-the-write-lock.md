@@ -3,11 +3,11 @@ id: TASK-40578
 title: >-
   Console: a chained trace replacement validates every link twice while holding
   the write lock
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-12 23:24'
-updated_date: '2026-11-20 17:55'
+updated_date: '2026-11-20 18:12'
 labels:
   - console
   - trace
@@ -29,10 +29,6 @@ The chained trace replacement (TASK-38298, ADR-337 amendment 2026-11-06) is writ
 - [x] #2 If the duplicate validation is removed or narrowed, every link is still validated once inside the binding transaction, and the tests that pin per-link revalidation stay green
 - [x] #3 The measurements and the decision are recorded in the task notes
 <!-- AC:END -->
-
-## Identity
-
-Filed 2026-11-12 from the PR #3515 review (finding F4). A sweep of every ref's task paths and every worktree found a maximum of 40546, so this task takes 40578.
 
 ## Implementation Plan
 
@@ -83,4 +79,10 @@ cProfile agrees. At the cap, 37.77 s of a 38.24 s bind was in the 257 `append_su
 AC#2 is ticked as conditional, not triggered: no validation was removed, and the per-link revalidation pins stay green (`test_dispatch_binding_revalidates_every_link` and TASK-40577's binding tests).
 
 No product code changed for this task. Its commit holds these notes, the follow-up task file, and the ADR-337 paragraph "Dispatch binding re-measured 2026-11-20". A later commit adds the opt-in probe (`Tests/Benchmarks/test_console_trace_chain_binding.py`, see TASK-42130) and amends that ADR's 2026-11-12 cost sentence.
+
+Merge evidence (2026-11-20): measured first; the duplicate validation is 0.29% of a 256-link bind and 9% (3.2 ms) at 2,000 rows, so it stays as the replacement writer's own guard. The cost is the replacement lineage trigger (links x stored depth), filed as TASK-42130 (high) with a realistic-size curve; the probe is kept as Tests/Benchmarks/test_console_trace_chain_binding.py (opt-in).
 <!-- SECTION:NOTES:END -->
+
+## Identity
+
+Filed 2026-11-12 from the PR #3515 review (finding F4). A sweep of every ref's task paths and every worktree found a maximum of 40546, so this task takes 40578.

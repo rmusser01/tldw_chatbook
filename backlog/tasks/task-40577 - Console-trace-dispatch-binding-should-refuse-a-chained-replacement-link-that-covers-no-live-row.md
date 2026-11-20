@@ -3,11 +3,11 @@ id: TASK-40577
 title: >-
   Console: trace dispatch binding should refuse a chained-replacement link that
   covers no live row
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-11-12 23:16'
-updated_date: '2026-11-20 16:56'
+updated_date: '2026-11-20 18:12'
 labels:
   - console
   - trace
@@ -28,10 +28,6 @@ The chained trace replacement (TASK-38298, ADR-337 amendment 2026-11-06) is reva
 - [x] #2 A test pins the refusal and is red without the check
 - [x] #3 Chains the planner builds and single replacements still bind and read back unchanged
 <!-- AC:END -->
-
-## Identity
-
-Filed 2026-11-12 from the PR #3515 review (finding F3). The backlog CLI offered TASK-40334, which another branch already holds; a sweep of every ref's task paths and every worktree found a maximum of 40546, so this task takes 40577.
 
 ## Implementation Plan
 
@@ -99,4 +95,10 @@ None of them reaches a chained replacement.
 The docstring and the ADR now say the new head and every later head would not read back, and that after a restart no send could plan; heads recorded before the chain still read.
 
 Not verified in the running app. The planner never builds such a link, so no UI path reaches the check, and launching the TUI would use the owner's real profile.
+
+Merge evidence (2026-11-20): independent review verified 24 planner-built chain shapes (Compact at 257-769 rows, Edit-first, single-row first/final links, successive chains, a single replacement) all bind and read back; the new refusal runs before any write; red on origin/dev (DID NOT RAISE), green on the head; review mutations caught, including the end-row case added after review. Chained-replacement file 13 passed, planner 4 passed.
 <!-- SECTION:NOTES:END -->
+
+## Identity
+
+Filed 2026-11-12 from the PR #3515 review (finding F3). The backlog CLI offered TASK-40334, which another branch already holds; a sweep of every ref's task paths and every worktree found a maximum of 40546, so this task takes 40577.
