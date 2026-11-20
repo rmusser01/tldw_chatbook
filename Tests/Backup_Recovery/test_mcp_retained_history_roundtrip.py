@@ -41,6 +41,9 @@ from tldw_chatbook.MCP.unified_control_models import ConfiguredServerTarget,Unif
 async def main():
  app=TldwCli()
  try:
+  # This fixture explicitly selects a Research path; initialize its lazy store
+  # (TASK-42010: absent, the capture preview stopped at missing_required).
+  assert app.local_research_service.list_sessions()==[]
   targets=app.unified_mcp_target_store;context_store=app.unified_mcp_context_store
   existing=targets.list_targets();assert existing and any(target.is_default for target in existing)
   defaults=[target.to_dict() for target in existing]
