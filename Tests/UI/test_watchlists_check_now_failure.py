@@ -35,6 +35,10 @@ from Tests.UI.full_app_destination_context import (
 from tldw_chatbook.UI.Watchlists_Modules.sources_pane import SourcesPane
 from tldw_chatbook.UI.Watchlists_Modules.watchlist_tree import TreeScope
 
+# TASK-41708: the seeded feed names a real host, and the screen's egress check
+# resolved summitroute.com for real.
+pytestmark = pytest.mark.usefixtures("unresolved_egress_dns")
+
 
 class Notified:
     """Capture what the app told the user, since the toast itself is transient."""
