@@ -258,6 +258,7 @@ class _ResumableScreen(_Screen):
         # be saved behind the user's back) and whether another screen still
         # covers this one (a chained dialog).
         self._library_selected_row_id = row
+        self.is_attached = True  # TASK-41715: read before the stack
         self.app = SimpleNamespace(screen=object() if covered else self)
         self._notes_state.view = view
         self._notes_state.selected_note_id = selected

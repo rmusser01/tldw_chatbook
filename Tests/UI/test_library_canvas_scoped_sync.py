@@ -423,6 +423,7 @@ def _library_skills_status_screen(status_line: SimpleNamespace) -> SimpleNamespa
     """
     screen = SimpleNamespace(
         is_mounted=True,
+        is_attached=True,
         _library_selected_row_id=library_screen_module.LIBRARY_ROW_BROWSE_SKILLS,
         _library_skills_import_status="",
         _library_skills_import_in_flight=False,
@@ -449,6 +450,7 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
     prompt_line = SimpleNamespace(update=Mock())
     prompt_screen = SimpleNamespace(
         is_mounted=True,
+        is_attached=True,
         _library_selected_row_id=library_screen_module.LIBRARY_ROW_BROWSE_PROMPTS,
         _prompts_state=SimpleNamespace(
             mutation_in_flight=False,

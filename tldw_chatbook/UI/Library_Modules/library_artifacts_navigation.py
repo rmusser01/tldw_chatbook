@@ -96,6 +96,7 @@ class LibraryArtifactsNavigation:
             not self._eligible
             or self._retry_pending
             or not screen.is_mounted
+            or not screen.is_attached  # TASK-41715: the stack may be empty
             or screen.app.screen is not screen
         ):
             return

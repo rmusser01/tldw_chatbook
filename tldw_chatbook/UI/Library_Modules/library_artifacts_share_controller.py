@@ -86,6 +86,7 @@ class LibraryArtifactsShareController:
             not self._disposed
             and not self._suspended
             and self.screen.is_mounted
+            and self.screen.is_attached  # TASK-41715: the stack may be empty
             and self.screen.app.screen is self.screen
         )
 

@@ -223,7 +223,8 @@ def resume_library_note_autosave(screen: LibraryScreen) -> bool:
     state = screen._notes_state
     snapshot = screen._library_note_session.snapshot
     if (
-        screen.app.screen is not screen
+        not screen.is_attached  # TASK-41715: the stack may be empty
+        or screen.app.screen is not screen
         or screen._library_selected_row_id not in _NOTES_EDITOR_ROWS
         or state.view != "editor"
         or snapshot is None

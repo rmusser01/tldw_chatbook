@@ -1529,7 +1529,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: records the control a click or Tab focused: 38280 -> 38312 lines, 1380
     #: methods.
     #: 2026-11-18, fix round 2 on the round-16 stack (the unreachable emergency-Tab record removed): measured 32823 lines, 1288 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32823, 1288),
+    #: 2026-11-19, TASK-41715 (review r17ls-rev1): five late completions read
+    #: ``is_attached`` on its own line before ``app.screen``: 32823 -> 32828
+    #: lines, 1288 methods.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32828, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

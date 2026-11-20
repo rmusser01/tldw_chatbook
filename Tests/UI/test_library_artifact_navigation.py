@@ -49,6 +49,7 @@ def navigation():
         _artifacts_controller=controller,
         _library_selected_row_id="artifacts-chatbooks",
         is_mounted=True,
+        is_attached=True,
         applied=[],
     )
     screen.app = SimpleNamespace(screen=screen)

@@ -50,6 +50,7 @@ def test_cached_library_drops_obsolete_authority_repair_once(tmp_path):
     warnings = []
     screen = SimpleNamespace(
         is_mounted=True,
+        is_attached=True,
         app_instance=SimpleNamespace(chachanotes_db=database),
         _notify=lambda message, severity: warnings.append((message, severity)),
     )

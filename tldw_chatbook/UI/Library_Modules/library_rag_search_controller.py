@@ -1824,15 +1824,14 @@ class LibraryRagSearchController:
         ):
             for widget in list(self.query(f"#{widget_id}")):
                 await widget.remove()
-        anchor = "#library-rag-query-quiet-line"
-        for child in library_rag_query_status_children(panel_state):
-            if child.id in {
-                "library-rag-query-quiet-line",
-                "library-rag-retrieval-notice",
-            }:
-                continue
-            await query_controls.mount(child, after=anchor)
-            anchor = f"#{child.id}"
+        kept = {"library-rag-query-quiet-line", "library-rag-retrieval-notice"}
+        callouts = [
+            child
+            for child in library_rag_query_status_children(panel_state)
+            if child.id not in kept
+        ]
+        if callouts and query_controls.is_attached:  # TASK-41711: the exit fence
+            await query_controls.mount(*callouts, after="#library-rag-query-quiet-line")
 
     async def _refresh_library_rag_answer_widgets(
         self,
@@ -1886,8 +1885,9 @@ class LibraryRagSearchController:
             return
         for widget in list(self.query("#library-rag-answer")):
             await widget.remove()
-        for child in library_rag_answer_children(panel_state):
-            await panel.mount(child, before="#library-rag-results")
+        children = library_rag_answer_children(panel_state)
+        if children and panel.is_attached:  # TASK-41711: the exit fence
+            await panel.mount(*children, before="#library-rag-results")
         self._library_rag_answer_render_key = render_key
 
     async def _refresh_library_rag_history_widget(
@@ -1961,8 +1961,8 @@ class LibraryRagSearchController:
                 return
             for child in list(contents.children):
                 await child.remove()
-            for row in library_rag_history_children(panel_state):
-                await contents.mount(row)
+            if contents.is_attached:  # TASK-41711: the exit fence
+                await contents.mount(*library_rag_history_children(panel_state))
 
     async def _refresh_library_rag_results_widgets(
         self,
@@ -2008,8 +2008,8 @@ class LibraryRagSearchController:
             if child.id in LIBRARY_RAG_RESULTS_STATIC_WIDGET_IDS:
                 continue
             await child.remove()
-        for child in library_rag_results_body_children(panel_state):
-            await results_container.mount(child)
+        if results_container.is_attached:  # TASK-41711: the exit fence
+            await results_container.mount(*library_rag_results_body_children(panel_state))
         if focused_card_id is not None:
             try:
                 self.query_one(f"#{focused_card_id}").focus()

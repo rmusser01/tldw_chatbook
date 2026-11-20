@@ -656,6 +656,10 @@ class _QueueHost(PostRecomposeCallback, _Recomposable):
 
     is_attached = True
 
+    def walk_children(self, *args, **kwargs) -> list:
+        # TASK-41703: the recompose seam walks the old children's buttons.
+        return []
+
 
 @pytest.mark.asyncio
 async def test_a_stuck_pending_callback_does_not_suppress_later_defaults():

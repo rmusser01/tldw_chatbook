@@ -23044,6 +23044,7 @@ class LibraryScreen(BaseAppScreen):
         """Whether this screen's Skills Import row is the one on screen."""
         return (
             self.is_mounted
+            and self.is_attached  # TASK-41715: the stack may be empty
             and self.app.screen is self
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
         )
@@ -23073,6 +23074,7 @@ class LibraryScreen(BaseAppScreen):
             self._end_library_structural_wait(WAIT_OWNER_SKILL_IMPORT)
         if (
             self.is_mounted
+            and self.is_attached  # TASK-41715: the stack may be empty
             and self.app.screen is self
             and self._library_selected_row_id == LIBRARY_ROW_BROWSE_SKILLS
         ):
@@ -23098,6 +23100,7 @@ class LibraryScreen(BaseAppScreen):
         snapshot = self._library_skill_import_coordinator.snapshot
         if (
             not self.is_mounted
+            or not self.is_attached  # TASK-41715: the stack may be empty
             or self.app.screen is not self
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_SKILLS
             or not snapshot.candidates
@@ -24601,6 +24604,7 @@ class LibraryScreen(BaseAppScreen):
         if (
             self._prompts_state.mutation_in_flight
             or not self.is_mounted
+            or not self.is_attached  # TASK-41715: the stack may be empty
             or self.app.screen is not self
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
         ):
@@ -24798,6 +24802,7 @@ class LibraryScreen(BaseAppScreen):
 
         if (
             not self.is_mounted
+            or not self.is_attached  # TASK-41715: the stack may be empty
             or self.app.screen is not self
             or self._library_selected_row_id != LIBRARY_ROW_BROWSE_PROMPTS
         ):
