@@ -280,10 +280,12 @@ def host_port_refusal(provider: object, endpoint: str) -> str:
 
 
 def typed_endpoint_refusal(provider: object, endpoint: str) -> str:
-    """What Save refuses beyond the contract, for an endpoint as typed.
+    """What Save refuses, for an endpoint as typed.
 
-    KoboldCpp's native-route rule (TASK-38964), then MLX-LM's host-and-port
-    rule (TASK-41145).
+    KoboldCpp's native-route rule (TASK-38964), MLX-LM's host-and-port rule
+    (TASK-41145), then the endpoint contract's own reason (TASK-41726: the
+    Settings card said "Provider settings are invalid" for a refused route or
+    host). A blank endpoint is never refused here.
 
     Args:
         provider: The provider key.
@@ -292,10 +294,15 @@ def typed_endpoint_refusal(provider: object, endpoint: str) -> str:
     Returns:
         The refusal copy, or "".
     """
-    from ..Provider_Contract.provider_endpoint_contract import koboldcpp_route_refusal
+    from ..Provider_Contract.provider_endpoint_contract import (
+        endpoint_refusal,
+        koboldcpp_route_refusal,
+    )
 
-    return koboldcpp_route_refusal(provider, endpoint) or host_port_refusal(
-        provider, endpoint
+    return (
+        koboldcpp_route_refusal(provider, endpoint)
+        or host_port_refusal(provider, endpoint)
+        or (endpoint_refusal(provider, endpoint) if str(endpoint or "").strip() else "")
     )
 
 
@@ -1707,7 +1714,8 @@ def _api_base_from_chat_url(chat_url: str | None) -> str | None:
     segments = parsed.path.split("/")
     if len(segments) < 3 or segments[-2:] != ["chat", "completions"]:
         return None
-    base_path = "/".join(segments[:-2]) or "/"
+    # A bare host stays bare (TASK-41704: Cohere's ``https://api.cohere.com``).
+    base_path = "/".join(segments[:-2])
     return urlunsplit((parsed.scheme, parsed.netloc, base_path, "", ""))
 
 

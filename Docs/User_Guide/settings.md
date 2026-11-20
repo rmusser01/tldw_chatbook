@@ -399,12 +399,24 @@ default is `https://api.anthropic.com/v1`, so its gateway base ends in
 that names a request route, such as `…/openai/responses`, is refused, and so is
 a provider's own route pasted into its Endpoint: Anthropic's `/v1/messages`,
 Cohere's `/v2/chat` or Google's `…:generateContent` ("Endpoint path names a
-request route; enter the API base."). One known gap: **s** adds
-`/v1` to an address whose path has no `v1`, so Google's own
-`https://generativelanguage.googleapis.com/v1beta` is saved as `…/v1beta/v1`;
-until that is fixed, set such an address as `api_base_url` in the config file,
-and change that provider's model or key there too, because saving its card in
-Settings writes the address again, with `/v1` added.
+request route; enter the API base."), with or without a `v1` before the route:
+`https://api.openai.com/responses` is refused too. A provider's own
+documented address is saved as typed even when its path has no `v1`
+(Google's `https://generativelanguage.googleapis.com/v1beta`, Cohere's
+`https://api.cohere.com`, DeepSeek's `https://api.deepseek.com`), and so is a
+gateway's (`…/gemini/v1beta`). On the provider's own host, the bare host or
+the start of its documented path is completed to that path: Groq's
+`https://api.groq.com` or `https://api.groq.com/openai` is saved as
+`…/openai/v1`, and Google's `https://generativelanguage.googleapis.com` as
+`…/v1beta`. On any other host a bare address gets `/v1`, except under Cohere,
+whose adapter adds its own `/v2/chat`. An address an earlier version saved with `/v1`
+added (such as `…/v1beta/v1`) stays as it is: enter the provider's address
+again and save. QwenCloud's Endpoint may be a pasted Responses endpoint
+(`…/compatible-mode/v1/responses`): the Console, **s** and its chats all read
+it as the base before `/responses`, which is what **s** saves. When **s**
+refuses an endpoint, the save result and the Endpoint row's help give the
+reason, such as "Endpoint URL must include a valid host and port." or the
+route refusal above, and the row gives it as you type.
 
 MLX-LM is reached at `http://<host>:<port>/v1`, built from
 `[api_settings.local_mlx_lm]` `host` and `port` (127.0.0.1 and 8080 when
