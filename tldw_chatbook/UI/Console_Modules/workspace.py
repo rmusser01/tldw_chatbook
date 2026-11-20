@@ -7700,7 +7700,10 @@ class ConsoleWorkspaceController:
             and view_key is not None
             and memo[0] == view_key
             and memo[1][0] == current_conversation
-            and all(now is then for now, then in zip(inputs[1:], memo[1][1:]))
+            and len(memo[1]) == len(inputs)
+            and all(
+                now is then for now, then in zip(inputs[1:], memo[1][1:], strict=True)
+            )
         ):
             state = memo[2]
             view.renew_stale_requests()  # As the builder's own stale reads would.
