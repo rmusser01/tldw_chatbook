@@ -173,7 +173,8 @@ verbatim).
 
 - **"Select"** switches the list into select mode: every row gains a **☑/☐**
   checkbox, and a strip appears showing "N selected", "Select all N shown",
-  "Clear", and "Export selected" (Media also adds "Delete selected" — see
+  "Clear", and an export action: "Export selected" in Conversations,
+  "Export" in Media, which also adds "Review", "Analyze" and "Delete" (see
   below). The button relabels to **"Done"** to exit; entering or leaving
   select mode clears the selection, and leaving with items still checked
   shows a quiet "Selection discarded (N items)" notice so exiting is never a
@@ -184,16 +185,17 @@ verbatim).
   row below the other select-mode actions rather than sharing a browse-mode
   slot such as "sort:".
 - **Disabled actions announce themselves.** While nothing is checked,
-  "Export selected"/"Delete selected" read **"○ Export selected"** /
-  **"○ Delete selected"** — the leading **○** is the Library's disabled
-  marker (the same marker every gated Library action carries — see
+  Conversations' "Export selected" reads **"○ Export selected"** and Media's
+  bulk actions read **"○ Export"**, **"○ Delete"** and so on — the leading
+  **○** is the Library's disabled marker (the same marker every gated
+  Library action carries — see
   [State glyphs](../library.md#state-glyphs)), so the state never
   depends on colour alone — and their tooltips say what to do ("Select one
   or more items…"). The same goes for **"○ Select"** when the list is
   empty ("Nothing here to select yet."). Checking the first row flips the
   labels back in place — the word itself does not move: an enabled
-  select-mode action reserves the marker's own two cells, so "Export
-  selected" starts in the same column whether or not the "○" is showing.
+  select-mode action reserves the marker's own two cells, so "Export"
+  starts in the same column whether or not the "○" is showing.
   You can see that on Media, Conversations and Prompts. Notes reserves the
   same width, but its select-mode row overflows the notes pane at every
   width today, so "Clear" and "Export selected" are off-screen there until
@@ -245,12 +247,13 @@ item in one run, in list order, on its own row under Clear/Export/Review:
   them and pressing Analyze again.
 
 - **"Export…"** (hidden while selecting) exports the whole current scope —
-  for Media that means the current type filter — and **"Export selected"**
+  for Media that means the current type filter — and the select-mode
+  export (**"Export"** in Media, **"Export selected"** in Conversations)
   exports just the checked rows. Both open the same "Export bundle (.zip)"
   form, covered in [import & export](import-and-export.md).
 
-**Media's "Delete selected"** (Media only — Conversations has no delete;
-see its own row below) is a second bulk action next to "Export selected".
+**Media's "Delete"** (Media only — Conversations has no delete; see its
+own row below) sits on a row of its own, below the other bulk actions.
 Pressing it swaps the strip for a confirmation naming the count — "Delete N
 selected items? You can undo right away, or restore later from Trash." —
 with "Delete" / "Cancel", the same in-place armed-button pattern
@@ -496,7 +499,7 @@ still spans the pane.
 | "Use in Console" | Stages this item as context for your next Console message, linking it to the active workspace on the way if it is not a member yet — the same one-press link that notes and conversations do. A receipt under the toolbar says which workspace by name ("Linked to Local Default · staged in Console", or "Already linked to …" when it was a member already) with an **Undo link** beside it that removes the membership a press in this reader session added (a link made by Search ▸ evidence ▸ `u` has no Undo there; remove it from the workspace's own sources). An Undo pressed after the active workspace changed says so instead of removing anything. The receipt stands only while that workspace is the active one; after a switch it is withheld and the next press links into the new workspace. `c` does the same from the keyboard. If the link itself fails, nothing is staged and the message names the workspace and the next step; a raw workspace id is never shown. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
 | "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line, never off the fold. The button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
-| "Move to trash" | Two-step, title-specific confirmation: the armed copy reads "Move "team-handbook" to Trash? You can undo right away, or restore later from Trash.", naming the item the Reader shows. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. The rail's "Media N" count drops at once, as it does for "Delete selected". |
+| "Move to trash" | Two-step, title-specific confirmation: the armed copy reads "Move "team-handbook" to Trash? You can undo right away, or restore later from Trash.", naming the item the Reader shows. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. The rail's "Media N" count drops at once, as it does for the bulk "Delete". |
 
 Read later, Edit metadata › Save, Move to trash and Use in Console all act on
 the item the Reader shows, whichever row the Items list has highlighted. That
@@ -518,7 +521,7 @@ them one by one, with your place and progress saved between visits.
 
 - **Create** — **Review these** on the media list pins the whole filtered
   result (in the current sort order, capped at 500 items with a notice when
-  trimmed); in Select mode, **Review selected** pins just the checked items in
+  trimmed); in Select mode, **Review** pins just the checked items in
   list order and leaves Select mode. Creating a set activates it and opens its
   first item in the Reader. If another set was mid-walk, a notice names it and
   its progress ("Paused 'Read later' at 1 of 2 · 0 reviewed. Resume from
@@ -677,7 +680,8 @@ an archived conversation, with confirmation where required.
 
 ### Export selected items as a bundle
 1. Click "Select", check the rows you want ("Select all N shown" grabs the
-   whole visible list), then "Export selected".
+   whole visible list), then "Export" (Media) or "Export selected"
+   (Conversations).
 2. The "Export bundle (.zip)" form opens — name, destination, and options
    are covered in [import & export](import-and-export.md).
 
@@ -691,7 +695,7 @@ an archived conversation, with confirmation where required.
 
 ### Delete selected media items
 1. In **Media**, click "Select", check the rows you want to remove.
-2. Click "Delete selected" — the strip becomes "Delete N selected items? You
+2. Click "Delete" — the strip becomes "Delete N selected items? You
    can undo right away, or restore later from Trash." with "Delete" /
    "Cancel". The sentence wraps inside the Items pane at every width,
    including its narrowest.
@@ -727,7 +731,7 @@ the form and says so ("Unsaved analysis — Save or Discard changes first." /
 reads `esc save or discard first` instead of `esc close`. Save keeps the
 text; the form's Cancel reads **Discard changes** and is the one way to drop
 it while keeping the item (Ctrl+Q's "Discard and quit" and deleting the item
-from the Items list -- Select ▸ Delete selected -- drop it too, each after its
+from the Items list -- Select ▸ Delete -- drop it too, each after its
 own question). Switching Reader tabs keeps what
 you typed, and "‹ Back", another Items row (clicked, or reached with
 Up/Down), a rail row, Export…, a review set, Use in Console, Move to trash

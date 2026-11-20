@@ -22,9 +22,10 @@ then either:
 
 Scoped exports also arrive here on their own: use **"Export…"** in the Media,
 Conversations, or Prompts panels — or **"Export"**, bare, in Notes, which is
-the one canvas spelled without the ellipsis — (or **"Export selected"** where
-a list offers it). Each opens the same Export bundle (.zip) form, pre-limited to that
-content (see [Media & Conversations](media-and-conversations.md)).
+the one canvas spelled without the ellipsis — (or the select-mode
+**"Export selected"**, spelled **"Export"** in Media). Each opens the same
+Export bundle (.zip) form, pre-limited to that content
+(see [Media & Conversations](media-and-conversations.md)).
 
 In server mode the **Export** rail row is disabled, with the tooltip
 "Export packages local content only."
