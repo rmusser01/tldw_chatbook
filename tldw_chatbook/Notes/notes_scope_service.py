@@ -85,6 +85,38 @@ _NOTE_FOLDER_CAPABILITY_MESSAGES = {
     ),
 }
 
+#: TASK-34000.29 (N-29, 8b): Delete forever's refusals, said where the user
+#: pressed it. A note a sync folder still holds is refused, not warned about
+#: (ruling T8b-c): its file stays on disk, and purging the note under a live
+#: binding would leave lasting sync planning against a note that is gone.
+#: The sentence names no way out because this release has none (review R0,
+#: I-3): Disconnect is blocked (``NotesSyncRuntimeOwner.disconnect_root``),
+#: Manage sync folders says "Retarget/Disconnect unavailable", and a
+#: deletion review's "Disconnect item" is painted disabled.
+PURGE_REFUSED_SYNC_BOUND = (
+    "This note is kept in sync with a folder, so it can't be deleted forever here."
+)
+PURGE_REFUSED_SYNC_UNKNOWN = (
+    "Couldn't check whether a sync folder holds this note — nothing was deleted."
+)
+PURGE_REFUSED_NOT_DELETED = (
+    "This note is no longer in Recently deleted — nothing was deleted."
+)
+
+
+class NotePurgeRefusedError(RuntimeError):
+    """Delete forever was refused; nothing was written.
+
+    Args:
+        reason_code: ``sync_bound``, ``sync_unknown`` or ``not_deleted``.
+        user_message: The sentence the Library shows for it.
+    """
+
+    def __init__(self, *, reason_code: str, user_message: str) -> None:
+        super().__init__(user_message)
+        self.reason_code = reason_code
+        self.user_message = user_message
+
 
 class NotesScopeService:
     """Route screen-facing note actions to the correct backing service."""
@@ -128,8 +160,18 @@ class NotesScopeService:
         return self.sync_scope_service
 
     def _organization_profile_scope(
-        self, explicit: Optional[Mapping[str, Any]]
+        self,
+        explicit: Optional[Mapping[str, Any]],
+        *,
+        resolved_profile: Any = None,
     ) -> dict[str, Any] | None:
+        if resolved_profile is not None:
+            # TASK-34000.116: resolved once, before the caller's transactions
+            # (``resolve_local_note_keyword_profile``); nothing is read here.
+            if explicit is not None:
+                raise ValueError("Pass a Sync v2 profile or a resolved one, not both.")
+            scope = resolved_profile.scope
+            return None if scope is None else dict(scope)
         if self.organization_sync_service is None:
             return self._sync_v2_profile_scope(explicit)
         normalized = (
@@ -1103,18 +1145,25 @@ class NotesScopeService:
         keywords: Optional[Sequence[str]],
         sync_v2_profile: Optional[Mapping[str, Any]] = None,
         cursor: Any = None,
+        resolved_profile: Any = None,
     ) -> list[str]:
         normalized_keywords = self._normalize_keywords(keywords)
-        profile_scope = self._organization_profile_scope(sync_v2_profile)
+        profile_scope = self._organization_profile_scope(
+            sync_v2_profile, resolved_profile=resolved_profile
+        )
         if self.organization_sync_service is not None and profile_scope is not None:
             notes_db_getter = getattr(self.local_notes_service, "notes_db", None)
             notes_db = notes_db_getter(user_id) if callable(notes_db_getter) else None
+            resolved: dict[str, Any] = {}
+            if resolved_profile is not None:
+                resolved["resolved_profile"] = resolved_profile
             result = self.organization_sync_service.sync_subject_keywords(
                 subject_type="note",
                 subject_id=str(note_id),
                 keywords=normalized_keywords,
                 notes_db=notes_db,
                 cursor=cursor,
+                **resolved,
                 **profile_scope,
             )
             if result is not None:
@@ -1160,6 +1209,130 @@ class NotesScopeService:
             service.unlink_note_from_keyword(user_id, note_id, existing_keyword_id)
 
         return normalized_keywords
+
+    def change_local_note_keyword(
+        self,
+        *,
+        user_id: Optional[str],
+        note_id: Any,
+        keyword: str,
+        remove: bool = False,
+        cursor: Any = None,
+        resolved_profile: Any = None,
+    ) -> bool:
+        """Add or remove ONE keyword on one local note, keeping the rest.
+
+        PR #3423 review I-2: the Library's bulk Add/Remove keyword wrote
+        plain database links, so on a Sync v2 device the change never left
+        it. This applies the note's current keyword set plus or minus
+        ``keyword`` through ``_sync_local_note_keywords`` -- the editor's
+        own keyword save -- so the change passes the same policy gate and,
+        on a ready Sync v2 profile, records the same organization intents (a
+        ``notes.keyword`` resource for a new keyword, a
+        ``notes.keyword_link`` intent per link).
+
+        Synchronous: it joins the caller's Notes transaction
+        (``note_transaction``) through ``cursor``, on the caller's thread.
+        Matching ignores case, as the keyword field does.
+
+        Args:
+            user_id: Local Notes user identity.
+            note_id: The note to change.
+            keyword: The one keyword to add or remove.
+            remove: Remove ``keyword`` instead of adding it.
+            cursor: The open Notes transaction's cursor, when there is one.
+            resolved_profile: A ``resolve_local_note_keyword_profile``
+                result (TASK-34000.116): the Sync v2 profile is then taken
+                from it, with no ``SyncStateRepository`` read. Omitted, it is
+                resolved here, as the editor's save resolves it.
+
+        Returns:
+            ``True`` when the note's keywords changed; ``False`` when it
+            already had (or never had) the keyword.
+
+        Raises:
+            PolicyDeniedError: If runtime policy refuses local note updates.
+            ValueError: If ``user_id`` or ``keyword`` is missing, or a Sync
+                v2 profile's Notes organization group is not ready.
+        """
+        self._enforce_policy(self._note_action_id(ScopeType.LOCAL_NOTE, "update"))
+        local_user_id = self._require_user_id(user_id)
+        text = str(keyword or "").strip()
+        if not text:
+            raise ValueError("A keyword is required.")
+        key = text.casefold()
+        rows = self.local_notes_service.get_keywords_for_note(
+            local_user_id, str(note_id)
+        )
+        current = [
+            str(row.get("keyword") or "").strip()
+            for row in rows or ()
+            if isinstance(row, Mapping) and str(row.get("keyword") or "").strip()
+        ]
+        has_keyword = any(existing.casefold() == key for existing in current)
+        if remove and not has_keyword:
+            return False
+        if not remove and has_keyword:
+            return False
+        self._sync_local_note_keywords(
+            user_id=local_user_id,
+            note_id=note_id,
+            keywords=(
+                [existing for existing in current if existing.casefold() != key]
+                if remove
+                else [*current, text]
+            ),
+            cursor=cursor,
+            resolved_profile=resolved_profile,
+        )
+        return True
+
+    def resolve_local_note_keyword_profile(self, *, user_id: Optional[str]) -> Any:
+        """Resolve the Sync v2 profile once for a run of keyword changes.
+
+        TASK-34000.116 (PR #3423 re-review N-1): the Library's bulk Add or
+        Remove keyword calls this before its per-note write transactions,
+        outside all of them, and passes the result to every
+        ``change_local_note_keyword`` as ``resolved_profile``. Each note then
+        makes no ``SyncStateRepository`` read while it holds the ChaChaNotes
+        write lock; before, each paid four (about 0.12 s), so the lock was
+        held for nearly the whole run.
+
+        The group's readiness is checked here once, so a group that is not
+        ready refuses the whole run before any note is written. Each change
+        still checks it again inside its own transaction, from the Notes
+        database's checkpoint row (no profile read), so a group that stops
+        being ready part-way refuses the notes after that point.
+
+        Args:
+            user_id: Local Notes user identity.
+
+        Returns:
+            The resolution to pass back, or ``None`` when no Notes
+            organization sync is wired (a change then reads no profile).
+
+        Raises:
+            ValueError: If ``user_id`` is missing, more than one local-first
+                profile needs explicit routing, or the Notes organization
+                group is not ready.
+        """
+        organization = self.organization_sync_service
+        if organization is None:
+            return None
+        local_user_id = self._require_user_id(user_id)
+        resolved = organization.resolve_profile()
+        if resolved.profile is not None:
+            notes_db_getter = getattr(self.local_notes_service, "notes_db", None)
+            notes_db = (
+                notes_db_getter(local_user_id) if callable(notes_db_getter) else None
+            )
+            owner = (
+                organization.for_notes_db(notes_db)
+                if notes_db is not None
+                else organization
+            )
+            owner.require_ready(resolved)
+        return resolved
 
     @staticmethod
     def _note_id(note: Mapping[str, Any]) -> str:
@@ -1803,6 +1976,197 @@ class NotesScopeService:
             entity_version=entity_version,
         )
         return record
+
+    async def purge_note(
+        self,
+        *,
+        scope: ScopeType | str,
+        note_id: Any,
+        version: int | None,
+        user_id: Optional[str] = None,
+        sync_runtime: Any = None,
+    ) -> bool:
+        """Delete one note in Recently deleted for good (TASK-34000.29 8b).
+
+        The owner ruled "yes with confimration" (2026-10-29); the Library's
+        confirm comes first. Local only, under the same policy authority as
+        a delete. Lasting sync is asked HERE, at purge time, whether a sync
+        folder still holds the note -- never from the row the Trash painted
+        (ruling T8b-c) -- and a check it cannot answer refuses (fail closed).
+        The purge itself is ``CharactersRAGDB.hard_delete_note``, off the
+        event loop; the note's semantic-index projection is then removed
+        from every store on this device, also off the loop and whatever the
+        indexing switch says (``remove_purged_note_projection``).
+
+        Args:
+            scope: Note scope; only ``local_note`` is supported.
+            note_id: The deleted note to purge.
+            version: The tombstone version the user confirmed (``None``
+                skips the check).
+            user_id: Local Notes user identity.
+            sync_runtime: The lasting-sync runtime (``None``: no lasting sync
+                in this app, so no folder can hold the note).
+
+        Returns:
+            ``True`` when the note was purged; ``False`` when it was already
+            gone.
+
+        Raises:
+            ValueError: If the scope is not local or ``user_id`` is missing.
+            NotePurgeRefusedError: If a sync folder holds the note, lasting
+                sync cannot say, or the note is live.
+            ConflictError: If the tombstone changed since it was shown.
+        """
+        normalized_scope = self._normalize_scope(scope)
+        if normalized_scope != ScopeType.LOCAL_NOTE:
+            raise ValueError("Delete forever is supported for local notes only.")
+        self._enforce_policy(self._note_action_id(normalized_scope, "delete"))
+        local_user_id = self._require_user_id(user_id)
+        key = str(note_id)
+        if sync_runtime is not None:
+            try:
+                bound = await sync_runtime.note_sync_bound(key)
+            except Exception as error:
+                raise NotePurgeRefusedError(
+                    reason_code="sync_unknown",
+                    user_message=PURGE_REFUSED_SYNC_UNKNOWN,
+                ) from error
+            if bound:
+                raise NotePurgeRefusedError(
+                    reason_code="sync_bound", user_message=PURGE_REFUSED_SYNC_BOUND
+                )
+        from tldw_chatbook.DB.ChaChaNotes_DB import NoteNotInTrashError
+
+        try:
+            purged = bool(
+                await self._run_folder_repository(
+                    self.local_notes_service.hard_delete_note,
+                    local_user_id,
+                    key,
+                    version,
+                )
+            )
+        except NoteNotInTrashError as error:
+            raise NotePurgeRefusedError(
+                reason_code="not_deleted", user_message=PURGE_REFUSED_NOT_DELETED
+            ) from error
+        if purged:
+            await self._discard_purged_note_sync_history(key)
+            # Function-level so this module never imports RAG at load time.
+            # ``ingestion_indexing`` itself is light (the Library screen
+            # already imports it); the removal loads the heavy RAG modules
+            # only on a device with the embeddings deps, in this worker.
+            from tldw_chatbook.RAG_Search import ingestion_indexing
+
+            await self._run_folder_repository(
+                ingestion_indexing.remove_purged_note_projection, key
+            )
+        return purged
+
+    async def _discard_purged_note_sync_history(self, note_id: str) -> None:
+        """Drop a purged note's queued Sync v2 upserts (review R0, m-2).
+
+        Its delete envelope stays, so a pending server-side delete still
+        propagates; no queued upsert pushes the note's title or text after
+        the purge (``SyncStateRepository.discard_sync_v2_note_history``).
+        With no Sync v2 producer there is no outbox on this device to touch.
+        The purge has already committed, so a failure is logged, not raised.
+        """
+        producer = self.sync_v2_notes_producer
+        if producer is None:
+            return
+        try:
+            # Resolved here, on the loop: a deferred producer wires the Notes
+            # Sync services on first use, as every other caller of it does.
+            repository = getattr(producer, "state_repository", None)
+            discard = getattr(repository, "discard_sync_v2_note_history", None)
+            if callable(discard):
+                await self._run_folder_repository(discard, note_id)
+        except Exception as error:  # noqa: BLE001 - the purge already committed
+            logger.warning(
+                "Dropping a purged note's queued sync upserts failed: {}",
+                type(error).__name__,
+            )
+
+    async def deleted_notes_purge_scope(
+        self,
+        note_ids: Sequence[str],
+        *,
+        sync_runtime: Any = None,
+        sync_state: Any = None,
+    ) -> dict[str, tuple[bool, bool]]:
+        """What Delete forever would leave elsewhere, per note on a Trash page.
+
+        TASK-34000.29 (review R0, m-9): the confirm says so only where it is
+        known cheaply, in the page read that is already off the event loop --
+        a disconnected sync folder still has the note's file
+        (``notes_with_kept_files``), or a sync server accepted a copy
+        (``sync_v2_note_ids_on_server``, asked only while a Sync v2 profile
+        is active, so a local-only device never opens its sync store). A
+        fact that cannot be read adds no clause; the guide states both cases
+        for every note.
+
+        Args:
+            note_ids: The page's deleted note ids.
+            sync_runtime: The lasting-sync runtime, or ``None``.
+            sync_state: The Sync v2 state repository, or ``None``.
+
+        Returns:
+            ``{note_id: (kept_file, server_copy)}`` for the notes with either.
+        """
+        ids = [str(note_id) for note_id in note_ids if note_id]
+        if not ids:
+            return {}
+        kept: set[str] = set()
+        ask = getattr(sync_runtime, "notes_with_kept_files", None)
+        if callable(ask):
+            try:
+                kept = set(await ask(ids))
+            except Exception:  # noqa: BLE001 - no clause; the guide says it
+                kept = set()
+        on_server: set[str] = set()
+        read = getattr(sync_state, "sync_v2_note_ids_on_server", None)
+        if self.sync_v2_notes_producer is not None and callable(read):
+            try:
+                on_server = set(await self._run_folder_repository(read, ids))
+            except Exception:  # noqa: BLE001 - no clause; the guide says it
+                on_server = set()
+        return {
+            note_id: (note_id in kept, note_id in on_server)
+            for note_id in ids
+            if note_id in kept or note_id in on_server
+        }
+
+    async def live_local_note_ids(
+        self, note_ids: Sequence[str], *, user_id: Optional[str] = None
+    ) -> set[str]:
+        """Return which of ``note_ids`` are live local notes (TASK-34000.29, I-1).
+
+        Library semantic search asks this once per result page and drops any
+        note hit outside the answer: a note deleted for good, or one in
+        Recently deleted. One query, off the event loop.
+
+        Args:
+            note_ids: Candidate note ids from one result page.
+            user_id: Local Notes user identity.
+
+        Returns:
+            The ids whose note exists and is not deleted.
+
+        Raises:
+            ValueError: If ``user_id`` is missing.
+            CharactersRAGDBError: If the database cannot answer.
+        """
+        self._enforce_policy(self._note_action_id(ScopeType.LOCAL_NOTE, "list"))
+        local_user_id = self._require_user_id(user_id)
+        ids = [str(note_id) for note_id in note_ids]
+        if not ids:
+            return set()
+        return set(
+            await self._run_folder_repository(
+                self.local_notes_service.live_note_ids, local_user_id, ids
+            )
+        )
 
     def _enqueue_local_note_upsert(
         self,

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
+from tldw_chatbook.Library.library_shell_state import back_cue_label
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictComparison,
     ConflictHistoryRow,
@@ -657,6 +658,12 @@ class LastingSyncWriteReceipt:
         return "LastingSyncWriteReceipt(<private>)"
 
 
+#: TASK-34000.40 fix round 1 (review R0 I-1, M-1): the back control's words
+#: when it returns to Manage sync folders. The Notes controller stamps it; the
+#: canvas reads it to drop the receipt's second door to the same place.
+LASTING_SYNC_BACK_TO_ROOTS_LABEL = back_cue_label("Sync folders")
+
+
 @dataclass(frozen=True, slots=True)
 class LibraryNotesLastingSyncSnapshot:
     """Complete immutable input for the two lasting-sync canvases."""
@@ -676,10 +683,22 @@ class LibraryNotesLastingSyncSnapshot:
     root_page_count: int = 1
     conflict_focus_binding_id: str | None = None
     write_receipts: tuple[LastingSyncWriteReceipt, ...] = ()
+    back_label: str = back_cue_label("Notes")
+    """TASK-34000.40 N-34: what the add-from-files canvas's back control says.
+    It names where the control returns to -- "‹ Sync folders" for a review
+    opened from Manage sync folders, else "‹ Notes". Fixed copy, set by the
+    Notes controller from the route it entered by."""
 
     def __post_init__(self) -> None:
         if self.phase not in _PHASES:
             raise ValueError("unknown lasting-sync phase")
+        if (
+            type(self.back_label) is not str
+            or not self.back_label
+            or len(self.back_label) > 40
+            or "\n" in self.back_label
+        ):
+            raise ValueError("back_label must be a short single-line label")
         if type(self.write_receipts) is not tuple or any(
             type(receipt) is not LastingSyncWriteReceipt
             for receipt in self.write_receipts

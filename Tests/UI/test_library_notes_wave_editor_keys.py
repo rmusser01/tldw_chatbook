@@ -333,9 +333,14 @@ async def test_refused_escape_notifies_why_and_what_to_do():
         assert screen._notes_state.view == "editor", (
             "Escape exited the editor despite the validation veto"
         )
+        # TASK-34000.29 (N-25): the toast repeats the veto's own reason, and
+        # names "Discard new note" only while that control is on screen --
+        # this note is an existing one, so it is not.
         screen.app_instance.notify.assert_called_once_with(
-            "Can't leave yet — fix the title or press Discard new note.",
+            "Can't leave yet — Title begins or ends with whitespace — "
+            "remove it to save.",
             severity="warning",
+            markup=False,
         )
 
 
@@ -378,6 +383,7 @@ async def test_back_button_notifies_on_a_non_validation_veto_kind():
             "Can't leave yet — this note changed elsewhere; "
             "choose Overwrite or Reload.",
             severity="warning",
+            markup=False,  # TASK-34000.29: the toast may carry a field's text
         )
 
 
@@ -385,8 +391,10 @@ async def test_back_button_notifies_on_a_non_validation_veto_kind():
     ("kind", "expected"),
     [
         (
+            # TASK-34000.29 (N-25): the fallback for a veto with no reason;
+            # ``_library_note_exit_veto_toast`` repeats the reason otherwise.
             "VALIDATION_VETO",
-            "Can't leave yet — fix the title or press Discard new note.",
+            "Can't leave yet — fix the field named in the status line.",
         ),
         (
             "FAILED",
@@ -424,6 +432,47 @@ def test_exit_veto_message_covers_every_non_permitted_outcome_kind(kind, expecte
         _library_note_editor_exit_veto_message(getattr(NoteFlushOutcomeKind, kind))
         == expected
     )
+
+
+_KEYWORD_VETO = "Keywords contain a case-insensitive duplicate — remove one to save."
+
+
+@pytest.mark.parametrize(
+    ("message", "discard_visible", "expected"),
+    [
+        (
+            _KEYWORD_VETO,
+            False,
+            f"Can't leave yet — {_KEYWORD_VETO}",
+        ),
+        (
+            _KEYWORD_VETO,
+            True,
+            f"Can't leave yet — {_KEYWORD_VETO} Or press Discard new note.",
+        ),
+        (
+            "  ",
+            True,
+            "Can't leave yet — fix the field named in the status line.",
+        ),
+    ],
+)
+def test_exit_veto_toast_repeats_the_reason_and_names_discard_only_when_shown(
+    message, discard_visible, expected
+):
+    """TASK-34000.29 (N-25): a keyword veto never blames the title; the
+    Discard tail follows the control; a veto with no reason falls back."""
+    from tldw_chatbook.Library.library_notes_session import (
+        NoteFlushOutcome,
+        NoteFlushOutcomeKind,
+    )
+    from tldw_chatbook.UI.Screens.library_screen import _library_note_exit_veto_toast
+
+    outcome = NoteFlushOutcome(NoteFlushOutcomeKind.VALIDATION_VETO, message)
+    toast = _library_note_exit_veto_toast(outcome, discard_visible=discard_visible)
+
+    assert toast == expected
+    assert "title" not in toast.lower()
 
 
 @pytest.mark.asyncio

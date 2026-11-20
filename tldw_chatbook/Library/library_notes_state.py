@@ -9,6 +9,12 @@ from typing import Any, Literal, Mapping, Sequence
 
 from rich.cells import get_character_cell_size
 
+from tldw_chatbook.Library.library_pager_state import (
+    LibraryPagerDisplay,
+    LibraryPagerLayout,
+    library_pager_layout,
+    simple_library_pager_display,
+)
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
@@ -361,6 +367,11 @@ class LibraryNotesOperationState:
             Next: try again." or, when there is no note to refuse, "No note
             is open. Next: open a note, then try again."). Rendered verbatim
             in place of the generic "{action} failed — …" line when set.
+        origin_control: TASK-34000.29 (N-12) -- the ``#``-less id of the
+            control that had focus when the operation began. That control
+            stays enabled while the operation runs; disabling it moved focus
+            on to the next enabled stop (Delete, in Info). Focus is put back
+            here once the operation ends. Empty when nothing had focus.
     """
 
     kind: Literal["import", "export", "copy", "console"]
@@ -370,6 +381,7 @@ class LibraryNotesOperationState:
     completion_next_action: str = ""
     failure_next_action: str = "try again"
     failure_line: str = ""
+    origin_control: str = ""
 
     @property
     def running(self) -> bool:
@@ -419,7 +431,29 @@ class LibraryNoteDeleteReceipt:
 #: Rows the Trash view loads at once. Bounded for the same reason the folder
 #: tree's page is: a library with thousands of tombstones must not build one
 #: unbounded list, and the view's job is recovering what was just lost.
+#: TASK-34000.29 (N-29): it is a PAGE now, not a cap -- the view pages through
+#: every tombstone with the exact total (``LibraryNotesTrashState.pager``).
 LIBRARY_NOTES_TRASH_PAGE_SIZE = 20
+
+
+def library_notes_trash_last_page(
+    total: int, page_size: int = LIBRARY_NOTES_TRASH_PAGE_SIZE
+) -> int:
+    """The last page that holds a row of ``total`` tombstones (at least 1).
+
+    The one clamp both the read (``_load_library_notes_trash``) and the
+    display state use, so a Restore that empties the last page lands on the
+    page before it rather than on an empty one numbered past the end.
+
+    Args:
+        total: Exact number of soft-deleted notes.
+        page_size: Rows per page.
+
+    Returns:
+        The 1-based number of the last page.
+    """
+    size = max(int(page_size), 1)
+    return max(1, (max(int(total), 0) + size - 1) // size)
 
 
 @dataclass(frozen=True)
@@ -434,12 +468,18 @@ class LibraryNotesTrashRow:
             seam the delete receipt's Undo uses.
         age_label: Relative age of the deletion (e.g. ``"5m"``), or ``""``
             when the record carries no timestamp.
+        kept_file: A disconnected sync folder still holds the note's file,
+            which Delete forever leaves on disk (review R0, m-9).
+        server_copy: Sync v2 already put a copy on the server, which Delete
+            forever does not remove (review R0, m-9).
     """
 
     note_id: str
     title: str
     version: int
     age_label: str = ""
+    kept_file: bool = False
+    server_copy: bool = False
 
 
 @dataclass(frozen=True)
@@ -450,17 +490,66 @@ class LibraryNotesTrashState:
         rows: The loaded page of soft-deleted notes, newest deletion first.
         total: Exact number of soft-deleted notes, read with the same page
             -- the count the "Recently deleted (N)" row names.
+        page: The 1-based page ``rows`` is (TASK-34000.29, N-29).
+        page_size: Rows per page.
+        loading: Page 1 is being read over a snapshot of another page
+            (reopening the view, review R0 m-7): the view says so instead
+            of painting the old page or claiming the Trash is empty.
+        retry_page: The page a failed read asked for, or ``0`` when the
+            last read succeeded (review R1 N-2): the view keeps what it
+            painted, says the read failed, and offers Retry for that page.
+        notice: Why the last Delete forever did nothing (another Notes
+            change held the interlock), painted under the view's purpose
+            until that change finishes (review R0, m-5); ``""`` for none.
     """
 
     rows: tuple[LibraryNotesTrashRow, ...] = ()
     total: int = 0
+    page: int = 1
+    page_size: int = LIBRARY_NOTES_TRASH_PAGE_SIZE
+    loading: bool = False
+    retry_page: int = 0
+    notice: str = ""
+
+    @property
+    def failed(self) -> bool:
+        """Whether the last read failed (the failure line and Retry show)."""
+        return self.retry_page > 0
+
+    @property
+    def pager(self) -> LibraryPagerDisplay:
+        """The view's pager, built the way the Media Trash pager is.
+
+        ``"1–20 of 37"`` and ``"Page 1 of 2"``, with Previous/Next disabled at
+        their boundary; ``single_page`` once every tombstone fits one page,
+        which ``library_pager_layout`` turns into the range alone.
+        """
+        pages = library_notes_trash_last_page(self.total, self.page_size)
+        first = (self.page - 1) * self.page_size + 1
+        last = (self.page - 1) * self.page_size + len(self.rows)
+        # Review R0 m-8: one row is "21 of 21", not the range "21–21 of 21".
+        span = f"{first}–{last}" if last > first else f"{first}"
+        return simple_library_pager_display(
+            range_copy=f"{span} of {self.total}" if self.rows else f"0 of {self.total}",
+            page=self.page,
+            total_pages=pages,
+            has_previous=self.page > 1,
+            has_next=self.page < pages,
+        )
+
+    @property
+    def pager_layout(self) -> LibraryPagerLayout:
+        """``library_pager_layout``'s one-page rule over :attr:`pager`."""
+        return library_pager_layout(self.pager)
 
 
 def build_library_notes_trash_state(
     records: Sequence[Mapping[str, Any]] | None,
     *,
     total: int | None = None,
+    page: int = 1,
     now: datetime | None = None,
+    purge_scope: Mapping[str, tuple[bool, bool]] | None = None,
 ) -> LibraryNotesTrashState:
     """Project one repository page of soft-deleted notes into display state.
 
@@ -470,12 +559,18 @@ def build_library_notes_trash_state(
     Args:
         records: The repository's ``items`` for the page, already ordered.
         total: Exact soft-deleted total; defaults to the rendered row count.
+        page: The 1-based page ``records`` is; clamped to the last page the
+            total has (ruling T8-d: a page is never numbered past the end).
         now: Reference time for the relative-age labels.
+        purge_scope: Per note id, ``(kept_file, server_copy)`` -- what Delete
+            forever would leave elsewhere, as the page read found it
+            (review R0, m-9); a note it does not name leaves nothing.
 
     Returns:
         The Trash view's display state.
     """
     reference_now = now if now is not None else datetime.now(timezone.utc)
+    scope = purge_scope or {}
     rows = tuple(
         LibraryNotesTrashRow(
             note_id=_text(record.get("id")),
@@ -486,12 +581,17 @@ def build_library_notes_trash_state(
                 if _updated_raw(record)
                 else ""
             ),
+            kept_file=bool(scope.get(_text(record.get("id")), (False, False))[0]),
+            server_copy=bool(scope.get(_text(record.get("id")), (False, False))[1]),
         )
         for record in (records or ())
         if isinstance(record, Mapping) and _text(record.get("id"))
     )
+    exact_total = len(rows) if total is None else max(int(total), 0)
     return LibraryNotesTrashState(
-        rows=rows, total=len(rows) if total is None else max(int(total), 0)
+        rows=rows,
+        total=exact_total,
+        page=min(max(int(page), 1), library_notes_trash_last_page(exact_total)),
     )
 
 
@@ -523,6 +623,9 @@ class LibraryNotesListState:
         sync_attention: Whether any lasting-sync folder is held for attention
             (TASK-34000.2). The list's idle status says so instead of "Ready".
         notice_refresh_offered: The folder-conflict notice offers Refresh.
+        select_actions_visible: Whether the select strip's Actions… chooser
+            (Move to folder / Add keyword / Remove keyword) is open
+            (TASK-34000.29 N-14).
     """
 
     rows: tuple[LibraryNotesListRow, ...]
@@ -541,6 +644,7 @@ class LibraryNotesListState:
     note_open: bool = False
     sync_attention: bool = False
     notice_refresh_offered: bool = False
+    select_actions_visible: bool = False
 
 
 @dataclass(frozen=True)
