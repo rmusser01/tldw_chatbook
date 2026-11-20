@@ -1045,7 +1045,8 @@ not enable automatic routing or establish savings by themselves.
 
 ### Change review — reviewing a turn's file changes
 
-When an agent turn edits files, the transcript shows a **turn file card**
+When an agent turn edits files in a workspace with Change Review enabled
+(**Settings ▸ Workspaces**), the transcript shows a **turn file card**
 directly under that turn instead of a plain summary line: a header with the
 counts ("✎ Edited 3 files  +92 −468"), an **expand/collapse-all** toggle,
 **Undo All** and **Review** buttons, then one row per changed file. Press
@@ -1116,12 +1117,12 @@ it from the stored snapshot.
 **`[console] turn_file_cards`** in `config.toml` (default `true`) is a pure
 presentation kill switch: set it to `false` to fall back to the original
 plain-text marker row (`` ✎ Edited N files  +A −D — review with `v` ``,
-byte-identical to the pre-card behavior) — no card, no note UI, no Review
-button, no expand-all. `v` and the inspector's Review changes action work
-identically either way. Turning the switch off does **not** lose any
-feedback you already queued: notes created while the card was on still
-auto-attach and deliver on your next agent send, disclosure row included,
-exactly as if the switch had stayed on.
+byte-identical to the pre-card behavior) — no card, no note UI, no Undo
+All, no Review button, no expand-all. `v` and the inspector's Review changes
+action work identically either way. Turning the switch off does **not**
+lose any feedback you already queued: notes created while the card was on
+still auto-attach and deliver on your next agent send, disclosure row
+included, exactly as if the switch had stayed on.
 
 The "✎ A sub-agent edited N files after this turn" row (see [Parallel
 sub-agents](#parallel-sub-agents-the-fleet) below) renders a card too, and
@@ -1142,21 +1143,21 @@ disabled until the card's file rows have loaded. It opens the same
 confirmation the Review screen uses, "Undo all N files from this turn?",
 with **Revert** and **Cancel**. If a file changed after the turn, the
 confirmation lists it under "⚠ Changed since this turn (reverting
-overwrites that work)". Cancel leaves your files as they are and makes
-Undo All available again. While the undo is in progress the button reads
-**Undoing…**; a complete undo relabels it **Undone** and keeps the rows and
-**Review**. If some files could not be reverted, a notice counts them and
-names the first five, and the button returns to **Undo All** so you can try
-again.
+overwrites that work)". From your press until the undo finishes, is
+refused or is cancelled, the button reads **Undoing…**. Cancel leaves your
+files as they are and makes Undo All available again; a complete undo
+relabels the button **Undone** and keeps the rows and **Review**. If some
+files could not be reverted, a notice counts them and names the first five,
+and the button returns to **Undo All** so you can try again.
 
-Undo All refuses while a run is active on the turn's workspace, when change
-tracking failed for the turn, and when files change while the confirmation
-is open (open **Review** and try again). A turn can also hold two change
-windows for the same workspace, for example the turn's own and a sub-agent's
-that kept editing after the turn. The card cannot order those safely, so it
-opens **Review** instead, where you revert files one labeled window at a
-time. A turn that changed files in several workspaces is undone in one step;
-file names in the confirmation and notices then start with the workspace
+Undo All refuses while a run is active in any of the turn's folders, when
+change tracking failed for any of them, and when files change while the
+confirmation is open (open **Review** and try again). A turn can also hold
+two change windows for the same folder, for example the turn's own and a
+sub-agent's that kept editing after the turn. The card cannot order those
+safely, so it opens **Review** instead, where you revert files one labeled
+window at a time. A turn that changed files in several folders is undone in
+one step; file names in the confirmation and notices then start with the
 folder's name, or its full path when two folders share a name.
 
 #### Leaving feedback on a diff line or the whole file
