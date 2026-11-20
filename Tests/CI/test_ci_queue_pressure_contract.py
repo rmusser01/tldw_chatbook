@@ -1064,6 +1064,11 @@ ADMISSION_2_TARGETS = (
 #: Roleplay suites, split out of ``pr-fast-lane-admission-2`` when lane 2 with
 #: them hit its 35-min cap at 99% on PR #3334's run 41169081459.
 ADMISSION_3_TARGETS = (
+    # TASK-42073: the Library Skills import file (module bootstrap_profile,
+    # 49 tests), on no lane before. First, because after the theme node every
+    # test's per-test gc.collect() walks ~10.6M cached parsed-CSS objects.
+    # First, 88 s of the step's 780 s locally (serial, load 17-21); last, 497 s.
+    "Tests/Skills/test_skills_import.py",
     # Roleplay frame B2b (TASK-33910.4, owner decision D7, 2026-10-26): the
     # one Import picker, mounted on real stores (bootstrap_profile; 44 cases,
     # about 95 s serial).
@@ -1075,9 +1080,6 @@ ADMISSION_3_TARGETS = (
     # typed text painted at AA on every measurable theme (bootstrap_profile;
     # 89 themes in one app, about 45 s).
     "Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme",
-    # TASK-42073: the Library Skills import file (module bootstrap_profile,
-    # 49 tests, 54-58 s serially), on no lane before.
-    "Tests/Skills/test_skills_import.py",
 )
 
 #: Follow-ups burn-down lanes (owner decision 2026-11-18, "New job"): the

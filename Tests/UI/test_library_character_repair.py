@@ -162,8 +162,9 @@ async def test_repair_continuation_reaches_every_candidate_and_restarts_after_mu
             dialog = LibraryCharacterRepairDialog(controller, context)
             await app.push_screen(dialog)
             await pilot.pause()
-            # TASK-42073: candidates load in a thread worker; one pause can
-            # return while it is still RUNNING (`assert 0 == 20`).
+            # TASK-42073: candidates load in an async worker that awaits
+            # `asyncio.to_thread`; one pause can return while it is still
+            # RUNNING (`assert 0 == 20`).
             await app.workers.wait_for_complete()
             assert len(controller.candidates) == 20
             seen = {item.key.character_id for item in controller.candidates}
@@ -343,6 +344,7 @@ async def test_candidate_change_revokes_armed_repair_in_real_dialog(
         assert str(apply.label) == "Confirm repair"
         assert service.request is None
         apply.press()
+        await pilot.pause()  # let the press start the CAS worker first
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert service.request is not None
@@ -553,6 +555,7 @@ async def test_cas_exception_restores_retry_controls() -> None:
         apply.press()
         await pilot.pause()
         apply.press()
+        await pilot.pause()  # let the press start the CAS worker first
         await dialog.workers.wait_for_complete()
         await pilot.pause()
 

@@ -154,6 +154,10 @@ async def _run_skills_import_via_ui(
     task-291 closed the residual stale-text false-pass: the success copy now
     carries the imported skill's NAME, so callers assert the name-specific
     line and a stale success from the previous import can never satisfy it.
+
+    TASK-42073: the first change can be the in-flight line
+    ("Inspecting/importing…"), so only a change painted after the import
+    left flight counts as the outcome.
     """
     status_widgets = list(screen.query("#library-skills-import-status"))
     assert status_widgets, "Skills import status did not mount"
@@ -168,7 +172,10 @@ async def _run_skills_import_via_ui(
         status_widgets = list(screen.query("#library-skills-import-status"))
         if status_widgets:
             status_text = str(status_widgets[0].renderable)
-            if status_text != previous:
+            if (
+                status_text not in (previous, "Inspecting/importing…")
+                and not screen._library_skills_import_in_flight
+            ):
                 return status_text
         await pilot.pause(0.02)
     return status_text
