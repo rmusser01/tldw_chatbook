@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import os
 import sys
 import threading
+import time
 from functools import partial
 from types import MethodType, SimpleNamespace
 
@@ -727,8 +729,31 @@ def _turn_switch_on(case):
 
 
 def _put_bytes_back(case):
+    """Rewrite the same bytes until the file's ``st_ctime_ns`` has moved.
+
+    The tests set ``SETTLE_NS`` to 0, so on a file system with a coarse clock
+    one rewrite could keep the stamp; the case rewrites (bounded) until the
+    stamp the proof compares has changed, and skips if it never does.
+    """
     path = case.permissions.path
-    path.write_bytes(path.read_bytes())
+    data = path.read_bytes()
+    before = os.stat(path, follow_symlinks=False).st_ctime_ns
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        path.write_bytes(data)
+        if os.stat(path, follow_symlinks=False).st_ctime_ns != before:
+            return
+        time.sleep(0.02)
+    pytest.skip("st_ctime_ns did not move within 5 s of rewrites on this file system")
+
+
+def _publish_config(case):
+    """A real config save: the store's installed identity names the config."""
+    from tldw_chatbook import config
+
+    before = config.current_config_identity()
+    assert config.save_settings_to_cli_config(fresh_profile_gates())
+    assert config.current_config_identity() != before
 
 
 def _write_admission_state(case):
@@ -751,8 +776,15 @@ def _select_another_store(case):
         (_put_bytes_back, LIGHT),
         (_write_admission_state, LIGHT),
         (_select_another_store, LIGHT),
+        (_publish_config, LIGHT),
     ],
-    ids=["switch-on", "bytes-put-back", "admission-write", "another-store"],
+    ids=[
+        "switch-on",
+        "bytes-put-back",
+        "admission-write",
+        "another-store",
+        "config-publication",
+    ],
 )
 async def test_a_change_the_proof_covers_sends_the_next_preview_to_a_real_read(
     preview_case, run_start_tools, change, expected
@@ -761,7 +793,9 @@ async def test_a_change_the_proof_covers_sends_the_next_preview_to_a_real_read(
 
     A write to the permission file changes its stamp, the bytes put back
     included (``st_ctime_ns`` moves); an admission or activation write moves
-    the admission epoch; another store over the same file is another source.
+    the admission epoch; another store over the same file is another source;
+    a config publication changes the store's installed identity (it names the
+    config) without moving the epoch.
     The next preview reads through the hop again and answers what the store
     now says. (Negative controls in the task notes: dropping the stamp, epoch
     or source comparison from the proof turns its case red.)
@@ -814,3 +848,95 @@ async def test_a_switch_read_that_raises_answers_closed_and_proves_nothing(
     second, surface = await _counted_preflight(case)
     assert second.calls == 1, "a failed switch read was kept"
     assert surface == LIGHT
+
+
+@contextlib.contextmanager
+def _refusing_state(case, state):
+    """Hold one in-process state in which a real switch read is refused."""
+    permission = case.service._permission_store
+    if state == "producer-paused":
+        case.service._producer_lifetime.close()
+        try:
+            yield
+        finally:
+            case.service._producer_lifetime.resume()
+    elif state == "storage-paused":
+        pause = storage_admission._begin_local_pause()
+        try:
+            yield
+        finally:
+            pause.resume()
+    elif state == "admission-closed":
+        participant = raw_participants._raw_participant(permission)
+        participant.close_admission()
+        try:
+            yield
+        finally:
+            participant.resume()
+    else:
+        # An earlier write of this store that could not retire its native
+        # resources: every later scope over its selected file is refused until
+        # the process retires them (here: the injected record is removed).
+        from tldw_chatbook.Backup_Recovery import mcp_source_participants
+
+        selected = mcp_source_participants.binding(permission)[1]
+        token = object()
+        record = raw_participants._State(
+            permission,
+            None,
+            selected,
+            (),
+            (),
+            True,
+            "mcp",
+            os.getpid(),
+            threading.current_thread(),
+            None,
+            uncertain=True,
+        )
+        with storage_admission._lock:
+            raw_participants._states[token] = record
+        try:
+            with pytest.raises(RecoveryRequired, match="raw_resources_not_retired"):
+                permission.get_kill_switch()
+            yield
+        finally:
+            with storage_admission._lock:
+                raw_participants._states.pop(token, None)
+
+
+async def _outcome(case):
+    """The preflight's tools, or the refusal it raised."""
+    try:
+        await _preflight(case)
+    except _Captured:
+        return {row["function"]["name"] for row in case.prepared.pop()[1]}
+    except RecoveryRequired as refused:
+        return f"refused: {refused}"
+    raise AssertionError("the preflight neither planned nor refused")
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["producer-paused", "storage-paused", "admission-closed", "unretired-write"],
+)
+async def test_a_kept_switch_read_never_answers_where_a_real_read_is_refused(
+    preview_case, run_start_tools, state
+):
+    """In-process states that refuse a real read also refuse the kept one.
+
+    Paused MCP producers, a local storage pause, the store's participant
+    admission closed, or an unretired uncertain write of the same file: none
+    moves the file's stamp or the admission epoch, and a real read is refused
+    there (answered as engaged). The kept read must answer exactly what the
+    hop route answers in the same state, computed here with nothing kept.
+    """
+    case = preview_case
+    first, surface = await _counted_preflight(case)
+    assert first.calls == 1 and surface == LIGHT
+    with _refusing_state(case, state):
+        kept = await _outcome(case)
+        run_start_tools.forget()
+        read = await _outcome(case)
+    assert read != LIGHT, "precondition: a real read is refused in this state"
+    assert kept == read, "a kept switch read answered where a real read is refused"
