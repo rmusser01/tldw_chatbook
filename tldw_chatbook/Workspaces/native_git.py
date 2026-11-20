@@ -204,7 +204,9 @@ def qualified_git_command(
                 "--get-regexp",
                 r"^(filter\..*\.(clean|process|smudge)|remote\..*\.promisor|extensions\.partialclone)$",
             ],
-            env,
+            # Under a UTF-8 locale the regex matches no name holding invalid
+            # UTF-8, so such a driver or remote would pass unrefused.
+            {**env, "LC_ALL": "C"},
             binary=True,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -241,13 +243,15 @@ def qualified_git_command(
             env, {name[len(b"filter.") : name.rindex(b".")] for name in names}
         )
     if args[0] == "diff":
-        # A dirty-submodule check runs `git status` inside the submodule, whose
-        # own config this qualification never reads.
+        # Git would otherwise start Git inside a submodule, under config this
+        # qualification never reads: `git status` for a dirty check, or a
+        # `diff.submodule=diff` child diff that drops --no-ext-diff/--no-textconv.
         args = (
             "diff",
             "--no-ext-diff",
             "--no-textconv",
             "--ignore-submodules=dirty",
+            "--submodule=short",
             *args[1:],
         )
     elif args[0] == "show":

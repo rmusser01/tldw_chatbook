@@ -404,8 +404,8 @@ Editing capacity settings on disk alone is observed at the next ordinary native
 admission; no settings poller was added. Native Git qualification requires >=2.36,
 refuses promisor/partial-clone remotes, and refuses a configured external filter
 only when a reachable path selects it (TASK-42101), all before helper-capable entry.
-Every configured filter driver is also emptied for the command, and `diff` skips
-dirty submodules, so no filter program runs.
+Every configured filter driver is also emptied for the command, and `diff` never
+starts Git inside a submodule, so no filter or external diff program runs.
 It also suppresses hooks,
 signing, fsmonitor, automatic GC/maintenance and external diff/textconv per command.
 Global ignores and old history/restore semantics remain intact. Source mismatch
