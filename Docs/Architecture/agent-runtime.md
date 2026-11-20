@@ -526,7 +526,13 @@ original in-process run authorization or worktree owner.
 A grant starts at the bounded SQLite operation and ends after commit or rollback,
 restoration of the previous synchronous policy and retirement of the original
 operation. An independently owned pre-existing handle may remain idle. A new
-handle must close on its acquiring thread. An unconfirmed COMMIT, ROLLBACK,
+handle must close on its acquiring thread, with one exception. Inside an owned
+database call (`run_owned_db_call`, or Console trace settlement's
+`operation_owned_connection`), a counted operation on the same thread refuses
+that inner close. The grant then verifies that the transaction ended and that
+the lease, schema and synchronous policy were restored, and leaves the idle
+handle open. The enclosing owner closes it when the call ends. ChaChaNotes
+grants follow the same rule. An unconfirmed COMMIT, ROLLBACK,
 policy change or native retirement retains the guard while the process lives.
 Windows releases the file guard when the process exits. Provider calls, user
 approval, streaming, tools and review waits run outside these grants.

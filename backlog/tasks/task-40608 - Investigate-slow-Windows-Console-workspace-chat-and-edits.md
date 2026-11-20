@@ -253,6 +253,28 @@ Both original journeys and shutdown passed in the resulting diagnostic.
 Adjusted times were 27.5362 s for README and 34.7203 s for approved edit.
 [Windows measurement](../../Docs/Development/task-40608-recovery/windows-journey-timings.md#first-completed-diagnostic-with-the-default-windows-runtime-and-shared-writer)
 
+The three-pair run on `854bac2021` stopped after its first candidate turn. README
+waited 30 minutes for the project-instruction disclosure. CI's mount job failed 11
+tests from `20a11155c3` onward with `profile_writer_local_transaction_active`.
+The cause was grant retirement inside an owned database call. `run_owned_db_call`
+(ledger recovery) and trace settlement's `operation_owned_connection` hold a
+counted operation, so `core_closing` refuses the grant's close of its fresh
+handle. The AgentRuns grant then reported "local grant connection still live".
+The ChaChaNotes grant's strict close raised `notes_connection_retirement_refused`.
+Both grants kept their file guard for the life of the process, and the writer
+refused every later write to that file. A grant inside an owned call now verifies
+that the transaction ended and the lease, schema and synchronous policy were
+restored, then leaves the idle handle to the owner, which closes it on exit.
+Regression tests drive ledger recovery and trace settlement through the owned
+call. With the fix disabled, both fail with the production errors. The CI mount
+list then passed 635 of 636 locally. The selected-Enter Send test missed its
+10-second turn limit only while the full 25-minute list was loading the machine,
+and it passed alone and in the focused rerun. One untimed original journey passed
+with shutdown verified: README 24.5092 s and approved edit 25.2077 s, adjusted.
+An earlier run with the same code failed at workspace setup: zero folder
+bindings after an unhandled `ConsoleChannelLost` in `_publish_resumed_source`.
+That failure is unexplained. AC5 and AC6 remain open.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

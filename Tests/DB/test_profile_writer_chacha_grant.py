@@ -139,6 +139,51 @@ async def test_original_credential_settlement_fences_other_note_writers_and_keep
         db.close_connection()
 
 
+@private_profile_test
+@pytest.mark.asyncio
+async def test_owned_call_trace_settlement_leaves_its_handle_to_the_owner(request, monkeypatch):
+    """The Console settles traces inside a counted owned call that refuses inner closes.
+
+    The grant must still retire, hand its idle fresh handle to the owned call
+    (which closes it on exit), and leave later Notes writes on the same file
+    accepted by the profile writer.
+    """
+    from Tests.Chat.test_console_trace_settlement import _call, _request
+    from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+    from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
+    from tldw_chatbook.Chat.console_trace_settlement import ConsoleTraceSettlementCoordinator
+    from tldw_chatbook.DB import profile_writer_grant
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+    from tldw_chatbook.DB.profile_writer_chacha_grant import ChaChaTransactionGrant
+    from tldw_chatbook.config import get_chachanotes_db_path
+
+    db = CharactersRAGDB(get_chachanotes_db_path(), "owned-trace-grant")
+    repository = ConsoleTraceRepository()
+    coordinator = ConsoleTraceSettlementCoordinator(repository, sanitizer=CredentialSanitizer(known_credentials=("local",)))
+    retired = []
+    retire = ChaChaTransactionGrant.retire
+
+    def observe(grant, connection):
+        retire(grant, connection)
+        retired.append((connection, grant.retired, grant.owner_retains))
+
+    try:
+        _, _, call_id = _call(db, repository)
+        db.close_connection()
+        monkeypatch.setattr(ChaChaTransactionGrant, "retire", observe)
+        settled = await run_owned_db_call(db, coordinator.settle, db, _request(call_id))
+        assert settled.call_id == call_id
+        assert [(state, kept) for _, state, kept in retired] == [(True, True)]
+        assert not profile_writer_grant._uncertain
+        assert not db._connection_quiescence.is_registered(retired[0][0])
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            retired[0][0].execute("SELECT 1")  # The owned call closed it on exit.
+        assert await run_owned_db_call(db, db.add_note, "After settlement", "Body", "owned-grant-note") == "owned-grant-note"
+    finally:
+        db.close_connection()
+
+
 @pytest.mark.parametrize("borrowed", (False, True), ids=("fresh", "borrowed"))
 @private_profile_test
 @pytest.mark.asyncio

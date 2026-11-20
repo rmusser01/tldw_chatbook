@@ -319,6 +319,8 @@ class _Grant:
         self.conn = self.resource = self.synchronous = None
         self.artifacts = self.schema = None
         self.ambiguous = self.retired = False
+        # Set by retire() when an enclosing owned call keeps the idle fresh handle.
+        self.owner_retains = False
         with storage._lock:
             self.original_scopes = self._scopes(storage)
             self.original_connections = self._connections(storage)
@@ -393,8 +395,31 @@ class _Grant:
         """Retain process custody after an unproved commit, rollback or restore."""
         self.ambiguous = True
 
+    def _owner_closes_later(self):
+        """Whether an enclosing owned call, not this grant, must close the fresh handle.
+
+        ``core_closing`` refuses to close a handle while a counted operation on
+        its thread uses the repository. ``run_owned_db_call`` holds one around
+        every callback. The grant's operation scopes equal ``original_scopes``
+        at retirement, so a non-empty set means the grant's close would be
+        refused. The outermost ``operation_owned_connection`` closes the handle
+        opened during its operation when that operation ends.
+        """
+        from . import base_db
+
+        return bool(self.original_scopes) and id(self.database) in getattr(
+            base_db._OPERATION_OWNERS, "ids", ()
+        )
+
     def retire(self, connection):
-        """Verify the original transaction and all introduced resources retired."""
+        """Verify the original transaction and all introduced resources retired.
+
+        A fresh handle is closed here unless an enclosing owned call keeps it
+        (see ``_owner_closes_later``). That idle handle then stays with its owner,
+        like a borrowed one, and ``owner_retains`` is set. The transaction,
+        lease, schema and synchronous policy are verified either way before the
+        file is released.
+        """
         from tldw_chatbook.Backup_Recovery import storage_admission as storage
         if (self.ambiguous or self.retired or self.conn is None or self.conn is not connection
             or self.thread is not threading.current_thread()):
@@ -403,6 +428,7 @@ class _Grant:
         with storage._lock:
             if self._scopes(storage) != self.original_scopes:
                 raise writer.ProfileWriterOutcomeUnknown("local transaction scope still active")
+        owned = False
         try:
             active = sqlite3.Connection.in_transaction.__get__(connection)
         except sqlite3.ProgrammingError:
@@ -415,8 +441,17 @@ class _Grant:
                 if cursor.fetchone()[0] != self.synchronous:
                     raise writer.ProfileWriterOutcomeUnknown("SQLite policy did not retire")
             if self.prior is None:
-                self.close(self.database)
-        if self.prior is None:
+                if self._owner_closes_later():
+                    owned = True
+                else:
+                    self.close(self.database)
+        if owned:
+            # _connection() above proved the handle is still this thread's cache.
+            with storage._lock:
+                if (self.resource not in storage._live_leases
+                        or self.participant.connections.get(connection) is not self.resource):
+                    raise writer.ProfileWriterOutcomeUnknown("owned grant lease changed")
+        elif self.prior is None:
             try:
                 sqlite3.Connection.in_transaction.__get__(connection)
             except sqlite3.ProgrammingError:
@@ -426,9 +461,11 @@ class _Grant:
             with storage._lock:
                 if self.resource in storage._live_leases or connection in self.participant.connections:
                     raise writer.ProfileWriterOutcomeUnknown("local grant lease still live")
+        expected = self.original_connections | ({self.resource} if owned else set())
         with storage._lock:
-            if self._connections(storage) != self.original_connections:
+            if self._connections(storage) != expected:
                 raise writer.ProfileWriterOutcomeUnknown("local grant connection leases did not retire")
+        self.owner_retains = owned
         self.retired = True
 
 

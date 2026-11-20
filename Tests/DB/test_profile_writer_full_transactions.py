@@ -63,6 +63,50 @@ def test_goal_checkpoint_retires_its_exact_granted_connection(monkeypatch, borro
         profile_writer.drain_profile_writer(profile)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows transaction grant")
+def test_owned_db_call_grant_leaves_its_handle_to_the_enclosing_owner(monkeypatch):
+    """Production ledger calls run inside run_owned_db_call's counted operation.
+
+    That operation refuses an inner close of the grant's fresh handle. The grant
+    must still retire once its transaction ended, leave the idle handle to the
+    owner that closes it, and keep later writer commands on the same file working.
+    """
+    import asyncio
+
+    from tldw_chatbook import config
+    from tldw_chatbook.DB import profile_writer, profile_writer_grant
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+    retired = []
+    original_retire = profile_writer_grant._Grant.retire
+
+    def retire(grant, conn):
+        original_retire(grant, conn)
+        retired.append((conn, grant.retired, conn.in_transaction))
+
+    monkeypatch.setattr(profile_writer_grant._Grant, "retire", retire)
+    profile = config.get_user_data_dir()
+    db = AgentRunsDB(profile / "agent_runs.db", reconcile_on_init=False)
+    try:
+        db.close()
+        recovered = asyncio.run(
+            run_owned_db_call(db, db.automatic_work.recover, current_owner_id="owned-runtime")
+        )
+        assert recovered == 0
+        assert [(state, active) for _, state, active in retired] == [(True, False)]
+        assert not profile_writer_grant._uncertain
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            retired[0][0].execute("SELECT 1")  # The owned call retired it on exit.
+        run_id = asyncio.run(
+            run_owned_db_call(db, db.create_run, conversation_id="owned-call", agent_kind="primary")
+        )
+        assert db.get_run(run_id) is not None
+    finally:
+        db.close()
+        profile_writer.drain_profile_writer(profile)
+
+
 @pytest.mark.parametrize("failed_step", ["commit", "rollback", "restore"])
 def test_unknown_native_full_transaction_outcome_is_marked_after_the_effect(failed_step):
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB

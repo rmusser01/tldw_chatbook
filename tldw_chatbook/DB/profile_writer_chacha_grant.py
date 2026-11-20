@@ -44,8 +44,10 @@ class ChaChaTransactionGrant(_Grant):
         if self.database.managed_transaction_depth():
             raise ProfileWriterOutcomeUnknown("local Notes transaction remains managed")
         super().retire(connection)
-        if self.prior is None and (self.connection(self.database) is not None
-                                   or self.database._connection_quiescence.is_registered(connection)):
+        # An enclosing owned call that keeps the idle handle also keeps its registration.
+        if self.prior is None and not self.owner_retains and (
+                self.connection(self.database) is not None
+                or self.database._connection_quiescence.is_registered(connection)):
             self.retired = False
             raise ProfileWriterOutcomeUnknown("local Notes connection remains registered")
 
