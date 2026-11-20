@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-11-17 05:27
-updated_date: 2026-11-19 14:56
+updated_date: 2026-11-19 16:47
 labels:
 - follow-up
 - tests
@@ -29,7 +29,7 @@ Also: `Tests/Chat/test_fleet_wake_retry.py` is named by no PR lane; TASK-41138 o
 <!-- AC:BEGIN -->
 - [ ] #1 The node runs on a lane that is not the serial pr-fast-lane, with before and after fast-lane times recorded
 - [x] #2 The node is still run by at least one PR lane
-- [ ] #3 `Tests/Chat/test_fleet_wake_retry.py` runs on a PR lane, with its time recorded
+- [x] #3 `Tests/Chat/test_fleet_wake_retry.py` runs on a PR lane, with its time recorded
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -38,6 +38,7 @@ Also: `Tests/Chat/test_fleet_wake_retry.py` is named by no PR lane; TASK-41138 o
 2. Move `Tests/Backup_Recovery/test_skills_recovery_controls.py` (with the TASK-41123 node) from pr-fast-lane into the recovered-suites job's sandboxed block, and lane `Tests/Chat/test_fleet_wake_retry.py` there beside the other private-profile fleet-wake nodes.
 3. Update FAST_LANE_TARGETS and RECOVERED_SUITES_TARGETS.
 4. Time both files under the recovered-suites step's flags, and record the fast lane's time before and after.
+5. (Round 17) Fix the storage-lease leak that makes `Tests/Chat/test_fleet_wake_retry.py` fail under the lane's `--storage-lease-guard` before laning it, then re-apply steps 2-3.
 
 ## Implementation Notes
 
@@ -59,6 +60,18 @@ The whole file moves, not only the node. The recovered-suites contract refuses a
 
 Both stayed red until TASK-41521's branch added those lines. After the 2026-11-18 rebase onto ffdf0c5472 they pass: `Tests/CI` gives 1746 passed, 1 skipped (`-n 4`).
 
-**Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.
+**Files.** `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`, and (round 17) `Tests/Chat/test_fleet_wake_retry.py`.
 
 **Held, 2026-11-19 (round-16 coordinator).** Both lane changes are taken out of this branch: the skills recovery controls file stays in pr-fast-lane, and `test_fleet_wake_retry.py` gets no lane yet. Each change added to the recovered-suites job, which on dev d34c16fa8c, after #3533, hits its 20-minute timeout at about 99%. `test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job` pins that timeout and the lane's single serial job as an owner decision (2026-11-06). The arch-review session (tldw-chatbook-2e) is putting the options to the owner: shard the lane, raise the bound, or move nodes out. The measurements and the change described above stand ready. Once the owner decides, they land on whichever lane the decision names. AC#3 is unticked again, and AC#2 still holds, because the file stays in pr-fast-lane.
+
+**Round 17: the leak that kept `test_fleet_wake_retry.py` off the lane.** On dev d34c16fa8c and on this branch's base 1424040c71, the file failed 3 of 3 under the recovered-suites flags (`-p no:xdist --storage-lease-guard --timeout=180`). Each test passed its body, then errored at teardown with "left 1 new live storage lease(s) open: ['SQLite …/runs.db on thread MainThread']".
+- Owner of the lease: the test itself. `_controller_rig` (in `Tests/Chat/test_console_fleet_wake.py`) opens an `AgentRunsDB` on `runs.db`, and the three tests' `finally` closed only `chacha`. The leak is as old as the file (TASK-41138); no product code holds the lease.
+- Why it passed at 9ac26e3136: the private-profile child did not get the guard. f0f6b98b58 (in #3533) made `Tests/private_profile.py` forward `--storage-lease-guard` to the child. fae4cc767f (also #3533) then closed the same lease in the three laned fleet-wake nodes with `_close_controller_rig`, but missed this file, which was on no lane. At the base, without `--storage-lease-guard`, the file passes 3 of 3.
+- Fix (test only; the guard is unchanged): each `finally` now calls `await _close_controller_rig(chacha, db, controller)`. That helper shuts the controller down, joins its wake delivery tasks, and closes both databases. It replaces `controller._disposed = True` plus `chacha.close()`.
+- Evidence, lane flags, load 29-35: red at the base, 3 failed (25.4 s). Green after: 3 passed (22.0 s serial), and 3 passed again at `-n 4`.
+- Other laned tests that leak the same way: none. Every private-profile node on a guarded step passed under the guard at the base: the six in `test_console_automatic_library_preparation.py`, the three recovered-suites fleet-wake nodes, and `test_closeout_single_app_route_cycle` (12 passed, 93.7 s serial). So did pr-fast-lane's four fleet-wake nodes (4 passed at `-n 4`).
+
+**Round 17: the moves are re-applied.** The owner decided on 2026-11-19 to raise the recovered-suites job's timeout from 20 to 30 minutes. #3637 makes that change and is not on this branch's base, so this branch leaves the `timeout-minutes` line alone. The lane changes held on 2026-11-19 are back, exactly as described under **Change** above: the workflow lines and their step note, plus `FAST_LANE_TARGETS` and `RECOVERED_SUITES_TARGETS`. They are in their own commit, which the coordinator lands only after #3637 is on dev.
+- Both files under this step's flags (`-p no:xdist --storage-lease-guard --timeout=180 --tb=short`), at load 18-21: 17 passed in 119.5 s. The skills file's slowest case took 26.4 s. The three retry tests took 5.3-6.6 s each.
+- `Tests/CI` at `-n 4`: 1811 passed, 2 skipped.
+- AC#3 is met again: the retry file is on recovered-suites, with its time above. AC#2 still holds. AC#1 stays unticked, and the task stays In Progress, until the coordinator reads the measured fast-lane time from this branch's PR run.

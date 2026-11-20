@@ -12,6 +12,7 @@ import contextvars
 import pytest
 
 from Tests.Chat.test_console_fleet_wake import (
+    _close_controller_rig,
     _controller_rig,
     _drain,
     _settle,
@@ -57,8 +58,7 @@ async def test_refused_wake_backs_off_then_recovers_without_an_external_poke(tmp
         assert len(gateway.payloads) == 1
         assert db.get_run(run_id).get("wake_delivered_at")
     finally:
-        controller._disposed = True
-        chacha.close()
+        await _close_controller_rig(chacha, db, controller)
 
 
 @pytest.mark.asyncio
@@ -108,8 +108,7 @@ async def test_refused_first_conversation_does_not_starve_a_ready_second(tmp_pat
             lambda: not wake.has_pending(second.id), seconds=_SETTLE_SECONDS
         )
     finally:
-        controller._disposed = True
-        chacha.close()
+        await _close_controller_rig(chacha, db, controller)
 
 
 @pytest.mark.asyncio
@@ -139,5 +138,4 @@ async def test_disposed_controller_does_not_retry_a_refused_wake(tmp_path, reque
         await asyncio.sleep(1.1)
         assert len(calls) == before
     finally:
-        controller._disposed = True
-        chacha.close()
+        await _close_controller_rig(chacha, db, controller)
