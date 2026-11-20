@@ -424,6 +424,110 @@ def test_dispatch_binding_revalidates_every_link(chat_factory):
     }
 
 
+def test_dispatch_binding_refuses_a_link_that_covers_no_live_row(
+    chat_factory, monkeypatch
+):
+    """TASK-40577: a link over dead sequences only is refused before any write.
+
+    An earlier edit left sequences 1..130 dead. The reader folds each link
+    over the live rows in its range, so a link holding none would commit and
+    then fail every later read of the new head
+    (``surface_replacement_target_inactive``). The planner never builds such
+    a link; a defective grouping stands in for one here. Preparation runs the
+    same check, so it is skipped while the send is prepared, to show that
+    dispatch binding refuses the plan by itself. The send is then refused
+    with nothing written, and the chat's next send records normally.
+    """
+
+    from Tests.Chat.test_console_trace_service import SurfaceReplacementPlan
+    from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
+
+    chat = chat_factory()
+    rows = chat.chain(140)
+    first = chat.record(rows)
+    edit = chat.add(rows[0], "edited", "assistant")
+    surface = [rows[0], edit, *rows[131:]]
+    chat.record(
+        surface,
+        replacement=SurfaceReplacementPlan(
+            predecessor_head_id=first.surface_head_id,
+            start_node_id=first.appended_nodes[1].node_id,
+            end_node_id=first.appended_nodes[130].node_id,
+            start_sequence=1,
+            end_sequence=130,
+            replacement_index=1,
+        ),
+    )
+    later = chat.chain(120, parent=rows[-1], start=140)
+    recorded = [*surface, *later]
+    third = chat.record(recorded, append_from=len(surface))
+    chat.remember(later[-3])
+    current = chat.add(later[-1], "after compaction")
+    incoming = [later[-2], later[-1], current]
+
+    real_links = trace_service_module._replacement_links
+    defective = [(0, 0), (1, 130), (131, 255), (256, 260)]
+
+    def defective_links(sequences):
+        assert real_links(sequences) == [(0, 255), (256, 260)]
+        return defective
+
+    real_persist = ConsoleTraceService.persist_request
+    real_validate = ConsoleTraceService._validate_replacement_range
+    opened: list[int] = []
+    refusals: list[tuple[str, int]] = []
+
+    def persist_request(self, cursor, **kwargs):
+        opened.append(cursor.connection.total_changes)
+        return real_persist(self, cursor, **kwargs)
+
+    def validate(self, cursor, **kwargs):
+        try:
+            return real_validate(self, cursor, **kwargs)
+        except ValueError as exc:
+            # Rows changed in the binding transaction before the refusal.
+            refusals.append((str(exc), cursor.connection.total_changes - opened[-1]))
+            raise
+
+    with monkeypatch.context() as patch:
+        patch.setattr(trace_service_module, "_replacement_links", defective_links)
+        with monkeypatch.context() as preparation:
+            preparation.setattr(
+                ConsoleTraceService,
+                "_validate_replacement_range",
+                lambda *_args, **_kwargs: None,
+            )
+            admission, bind, reserved, _sent = _prepare_send(
+                chat, incoming, current, service=chat.recorder
+            )
+        assert _ranges(admission) == defective
+        patch.setattr(ConsoleTraceService, "persist_request", persist_request)
+        patch.setattr(ConsoleTraceService, "_validate_replacement_range", validate)
+        before = _counts(chat)
+
+        with pytest.raises(TraceCallPersistenceError) as refused:
+            bind()
+
+        assert refused.value.outcome == "rolled_back"
+        assert refusals == [("replacement_chain_link_inactive", 0)]
+        assert _counts(chat) == before
+        with chat.db.transaction() as cursor:
+            call = chat.repository.get_call(cursor, reserved.call_id)
+        assert call.state is TraceCallState.RESERVED
+        assert call.surface_node_id is None
+        assert _keys(chat, third.surface_head_id) == _revisions(recorded)
+        # Preparation, which runs the same check, refuses the plan too.
+        with pytest.raises(ValueError, match="^replacement_chain_link_inactive$"):
+            _prepare_send(chat, incoming, current, service=chat.recorder)
+
+    admission, call, sent = _send(chat, incoming, current, service=chat.recorder)
+
+    assert _ranges(admission) == [(0, 255), (256, 260)]
+    assert _exported(chat, current) == sent == [row.value for row in incoming]
+    assert _keys(chat, call.surface_node_id) == _revisions(incoming)
+    _assert_warm_matches_cold(chat, chat.recorder, call.surface_node_id)
+
+
 def test_a_committed_chain_reconciles_to_the_dispatched_call(
     chat_factory, monkeypatch
 ):
