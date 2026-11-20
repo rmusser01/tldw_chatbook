@@ -4,7 +4,7 @@ title: "A Cohere base saved with /v1 posts to /v1/v2/chat"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 15:58
+updated_date: 2026-11-20 17:26
 labels:
 - follow-up
 - providers
@@ -39,3 +39,5 @@ Fixed by TASK-42002's rule in the endpoint contract (`_V1_APPENDED_PATHS`, `_rea
 **Test:** `Tests/Chat/test_local_server_discovery.py::test_a_base_saved_with_v1_appended_saves_its_documented_base[cohere]` (and one node per other shape). The save writes the documented base, and the adapter, given that value, posts its own route under it. Red with d85e90bc9e's contract: 5 of 5 (`'https://api.cohere.com/v1' == 'https://api.cohere.com'`, and so on); green after.
 
 Files: see TASK-42002 (same commit).
+
+**Review r18-rev1:** a shape followed by a pasted tail (`https://api.cohere.com/v1/models` or `/v1/chat/completions`; the same for Google, Groq and OpenRouter, and QwenCloud's `/responses` or `/chat/completions`) still saved the broken shape. The contract now reads the shape as a prefix plus a dropped tail (see TASK-42002); 10 new rows in `test_a_base_saved_with_v1_appended_saves_its_documented_base`, red at the previous commit, green after.

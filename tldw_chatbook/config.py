@@ -3978,26 +3978,16 @@ def _migrate_v1_appended_provider_bases(config: Dict[str, Any]) -> Dict[str, Any
     """Migration 2 (TASK-42002, owner decision 2026-11-19 "Migrate on load").
 
     Rewrites an ``api_base_url`` an earlier Settings saved with ``/v1``
-    appended (Google ``.../v1beta/v1``) to the documented base, by the endpoint
-    contract's rule (the save's too); those configs' project-instruction keys
-    change once. ADR-097: the contract is imported only for a value on a
-    provider's own host that is not its default.
+    appended (Google ``.../v1beta/v1``), a pasted tail included, to the base a
+    save writes for it, by the endpoint contract's rule; those configs'
+    project-instruction keys change once. The contract is already in the boot
+    import set (ADR-097).
     """
-    from urllib.parse import urlsplit
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import v1_appended_documented_base
 
     api_settings = config.get("api_settings")
     for provider, table in (api_settings.items() if isinstance(api_settings, dict) else ()):
         value = table.get("api_base_url") if isinstance(table, dict) else None
-        default = getattr(RECORDS_BY_KEY.get(provider), "default_base_url", None)
-        if not (isinstance(value, str) and default) or value.strip().rstrip("/") == default:
-            continue
-        try:
-            if urlsplit(value.strip()).hostname != urlsplit(default).hostname:
-                continue
-        except ValueError:
-            continue
-        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import v1_appended_documented_base
-
         if (documented := v1_appended_documented_base(provider, value)) is not None:
             table["api_base_url"] = documented
             logger.info("Config migration: api_settings.{}.api_base_url had /v1 appended "
@@ -4056,6 +4046,15 @@ def migrate_config_forward(
 #: mangled by a downgrade migration); this signal lets ``app.py`` surface a
 #: loud, user-visible warning, mirroring ``ConfigLoadFailure``.
 _CONFIG_SCHEMA_CONFLICT: Optional[str] = None
+#: Review r18-rev1: config path -> the file stamp a load found nothing to persist
+#: at (current, newer, or only the version stamp to change), so the boot's
+#: ``migrate_config_file_if_needed`` takes no lock and reads no file for it.
+_CONFIG_MIGRATION_SETTLED: Dict[Path, Optional[tuple[int, int]]] = {}
+
+
+def _changed_beyond_stamp(raw: Mapping[str, Any], migrated: Mapping[str, Any]) -> bool:
+    """Whether a migration changed more than the version stamp (TASK-42002)."""
+    return {**migrated, CONFIG_SCHEMA_VERSION_KEY: None} != {**raw, CONFIG_SCHEMA_VERSION_KEY: None}
 
 
 def get_config_schema_conflict() -> Optional[str]:
@@ -4068,8 +4067,9 @@ def _has_pending_config_migration(from_version: int) -> bool:
 
     A bare version stamp (no function in range) is NOT worth a full-file
     rewrite -- it would strip the user's hand-written comments -- so the stamp
-    rides the next natural save instead. Only an actual content transform
-    forces the persist path.
+    alone is never persisted: such a file keeps its version, and each load
+    re-runs the in-memory migrations (cheap). Only an actual content
+    transform forces the persist path.
     """
     return any(
         _CONFIG_MIGRATIONS.get(v) is not None
@@ -4085,11 +4085,16 @@ def migrate_config_file_if_needed() -> Optional[Path]:
     atomically rewrite the migrated result. A failed migration raises before
     any write, leaving the original file untouched. Returns the backup path
     when a migration was written, else ``None`` (no file, already current,
-    bare stamp only, or a newer-than-supported version).
+    bare stamp only, or a newer-than-supported version). When the load found
+    nothing to persist for the file as it still is, it returns before the lock
+    and any read (review r18-rev1: ~35 ms on every launch otherwise).
     """
     if not _CONFIG_MIGRATIONS:
         return None  # no real migration exists yet -- free no-op
     config_path = _get_effective_config_path()
+    settled = _CONFIG_MIGRATION_SETTLED.get(config_path)
+    if settled is not None and settled == _current_config_file_stamp(config_path):
+        return None
     with _config_write_lock(config_path):
         current_serialized = _try_read_cli_config_serialized_unlocked(config_path)
         if current_serialized is None:
@@ -4107,7 +4112,7 @@ def migrate_config_file_if_needed() -> Optional[Path]:
         migrated, changed, conflict = migrate_config_forward(raw)
         if conflict is not None or not changed:
             return None
-        if {**migrated, CONFIG_SCHEMA_VERSION_KEY: None} == {**raw, CONFIG_SCHEMA_VERSION_KEY: None}:
+        if not _changed_beyond_stamp(raw, migrated):
             return None  # TASK-42002: only the stamp changed (see _has_pending_config_migration)
         backup_path = _write_serialized_config_artifact_unlocked(
             _advanced_backup_path(config_path),
@@ -4243,6 +4248,7 @@ def _load_cli_config_bootstrap_unlocked(
     # Start with the programmatic defaults defined in CONFIG_TOML_CONTENT
     loaded_config = copy.deepcopy(DEFAULT_CONFIG_FROM_TOML)
     bootstrap_succeeded = False
+    migration_settled = True  # a created file carries the current version
     application_directory = application_owned_config_directory(config_path)
     if application_directory is not None:
         directory_result = secure_private_directory(
@@ -4260,9 +4266,11 @@ def _load_cli_config_bootstrap_unlocked(
         # an unversioned file must be seen as the baseline (0), not inherit the
         # default's current version and skip its migrations. A newer-than-code
         # version is served untouched with a recorded conflict warning.
+        raw_from_file = user_config_from_file
         user_config_from_file, _schema_changed, _schema_conflict = (
             migrate_config_forward(user_config_from_file)
         )
+        migration_settled = not _changed_beyond_stamp(raw_from_file, user_config_from_file)
         from tldw_chatbook.Utils.reasoning_config import (
             migrate_legacy_reasoning_history,
         )
@@ -4352,6 +4360,7 @@ def _load_cli_config_bootstrap_unlocked(
         # TASK-26038: stamp the file we just loaded so a later external edit
         # is detected, and reset the throttle so the next read re-checks.
         _CONFIG_FILE_STAMP = _current_config_file_stamp(config_path)
+        _CONFIG_MIGRATION_SETTLED[config_path] = _CONFIG_FILE_STAMP if migration_settled else None
         _CONFIG_STAT_CHECKED_MONOTONIC = time.monotonic()
         # A later successful load (e.g. the user or the app repaired the
         # file) retires any previously recorded parse failure.

@@ -489,11 +489,23 @@ def _read_v1_appended_path(
     provider_key: str, host: str, segments: tuple[str, ...]
 ) -> tuple[str, ...]:
     """The documented path for a ``_V1_APPENDED_PATHS`` shape on the provider's
-    own host; any other path unchanged (TASK-42002)."""
-    if _V1_APPENDED_PATHS.get(provider_key) != segments:
+    own host; any other path unchanged (TASK-42002).
+
+    The shape may be followed by a tail the reading drops (a pasted
+    ``/chat/completions`` or ``/models``, and QwenCloud's ``/responses``);
+    the tail is kept after the documented path so the usual reading (or
+    TASK-42021's QwenCloud ``/models`` refusal) still applies (review r18-rev1).
+    """
+    shape = _V1_APPENDED_PATHS.get(provider_key)
+    if shape is None or segments[: len(shape)] != shape:
+        return segments
+    tail = segments[len(shape) :]
+    if tail not in {(), ("chat", "completions"), ("models",)} and (
+        provider_key != "qwencloud" or tail != ("responses",)
+    ):
         return segments
     documented = _documented_own_path(provider_key, host)
-    return segments if documented is None else documented
+    return segments if documented is None else documented + tail
 
 
 def v1_appended_documented_base(provider: object, value: object) -> str | None:
@@ -507,9 +519,10 @@ def v1_appended_documented_base(provider: object, value: object) -> str | None:
         value: A saved ``api_base_url``.
 
     Returns:
-        The documented base on the value's own scheme and host, or None for
-        any other value, including one the contract refuses (user info, a
-        query or a fragment never reach the result).
+        The base a save writes for the value (the documented base on its own
+        scheme and host, any pasted tail dropped), or None for any other
+        value, including one the contract refuses (user info, a query or a
+        fragment never reach the result).
     """
     key = normalize_provider_key_for_contract(provider)
     if key not in _V1_APPENDED_PATHS or type(value) is not str:
@@ -523,7 +536,11 @@ def v1_appended_documented_base(provider: object, value: object) -> str | None:
     if host is None or _read_v1_appended_path(key, host, segments) == segments:
         return None
     resolution = resolve_provider_endpoint(key, value)
-    return None if resolution.errors else resolution.normalized_input
+    if resolution.errors or resolution.chat_url is None:
+        return None
+    # As the save writes an api_base_url (provider_setup_persistence's
+    # _api_base_from_chat_url), so load and save agree on a pasted tail.
+    return resolution.chat_url.removesuffix("/chat/completions")
 
 
 def _names_a_native_route(provider_key: str, segments: tuple[str, ...]) -> bool:

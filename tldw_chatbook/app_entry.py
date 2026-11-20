@@ -397,7 +397,8 @@ def _run_module_main() -> None:
         )
 
     # TASK-26040: persist any pending forward config migration once at boot.
-    # A no-op (no lock, no file read) until a real migration is registered.
+    # No lock and no file read unless the load above found a migration that
+    # changes more than the version stamp (review r18-rev1).
     try:
         from tldw_chatbook.config import migrate_config_file_if_needed
         migrate_config_file_if_needed()

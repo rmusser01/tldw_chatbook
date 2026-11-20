@@ -4854,15 +4854,28 @@ _V1_APPENDED = {
 }
 
 
-@pytest.mark.parametrize("provider", sorted(_V1_APPENDED))
-def test_a_base_saved_with_v1_appended_saves_its_documented_base(provider, monkeypatch):
+#: Review r18-rev1: a shape followed by a tail the reading drops still saved
+#: the broken shape (Cohere ``/v1/models`` as ``/v1``, posted to ``/v1/v2/chat``).
+_V1_APPENDED_TAILS = {
+    provider: ("/responses" if provider == "qwencloud" else "/models", "/chat/completions")
+    for provider in _V1_APPENDED
+}
+
+
+@pytest.mark.parametrize(
+    ("provider", "tail"),
+    [(provider, tail) for provider in sorted(_V1_APPENDED) for tail in ("", *_V1_APPENDED_TAILS[provider])],
+)
+def test_a_base_saved_with_v1_appended_saves_its_documented_base(provider, tail, monkeypatch):
     """TASK-42019 (and TASK-42002's rule for a save): typing Cohere's
     ``https://api.cohere.com/v1`` saved ``/v1`` and the adapter posted
-    ``/v1/v2/chat``. Each shape TASK-42002 migrates saves as the documented
-    base, and the adapter posts its own route under it."""
+    ``/v1/v2/chat``. Each shape TASK-42002 migrates, with or without a pasted
+    tail, saves as the documented base, and the adapter posts its own route
+    under it."""
     from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
 
     typed, documented, posted = _V1_APPENDED[provider]
+    typed += tail
     assert persisted_endpoint_for_key(provider, "api_base_url", typed) == documented
     sent = _cloud_world(monkeypatch, _cloud_config(("api_settings", provider), "api_base_url", {}, documented))
 
@@ -4882,6 +4895,13 @@ def test_a_base_saved_with_v1_appended_saves_its_documented_base(provider, monke
 #: preset base, DeepSeek's ``/v1``, and own-host shapes the contract refuses.
 _V1_APPENDED_LOAD_ROWS = {
     **{f"{provider}-v1-appended": (provider, "api_base_url", row[0], row[1]) for provider, row in _V1_APPENDED.items()},
+    # Review r18-rev1: a stored shape plus a pasted tail is rewritten to what a
+    # save writes; QwenCloud's ``/v1/models`` is refused by both, so kept.
+    **{
+        f"{provider}-v1-appended{tail.replace('/', '-')}": (provider, "api_base_url", row[0] + tail, row[1])
+        for provider, row in _V1_APPENDED.items()
+        for tail in _V1_APPENDED_TAILS[provider]
+    },
     **{
         case: (provider, key, value, value)
         for case, (provider, key, value) in {
@@ -4895,6 +4915,7 @@ _V1_APPENDED_LOAD_ROWS = {
             "preset-own-host-v1": ("fireworks", "api_base_url", "https://api.fireworks.ai/v1"),
             "cohere-query": ("cohere", "api_base_url", "https://api.cohere.com/v1?key=secret-42002"),
             "openrouter-user-info": ("openrouter", "api_base_url", "https://u:secret-42002@openrouter.ai/v1"),
+            "qwencloud-v1-models": ("qwencloud", "api_base_url", "https://dashscope-intl.aliyuncs.com/v1/models"),
         }.items()
     },
 }
@@ -4940,6 +4961,36 @@ def test_config_load_migrates_a_base_saved_with_v1_appended_once(case, tmp_path,
     assert first is not None and second is None
     assert tomllib.loads(path.read_text(encoding="utf-8"))["api_settings"][provider][key] == expected
     assert rewrites and all(expected in line for line in rewrites)
+
+
+@pytest.mark.parametrize("version", [2, 1])
+def test_the_boot_migration_step_takes_no_lock_for_a_config_with_nothing_to_rewrite(
+    version, tmp_path, monkeypatch
+):
+    """Review r18-rev1: with migration 2 registered, the boot's
+    ``migrate_config_file_if_needed`` took the config write lock and parsed
+    the whole file on every launch (~35 ms under load), and a v1 config with
+    nothing to rewrite is never stamped, so it paid that forever. The load
+    records that it found nothing beyond the stamp; the boot step then takes
+    no lock and reads no file."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        toml.dumps(
+            {"config_schema_version": version, "api_settings": {"openai": {"api_base_url": "https://api.openai.com/v1"}}}
+        ),
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+    config_mod = select_config_source(monkeypatch, path)
+    config_mod.load_cli_config_and_ensure_existence(force_reload=True)
+
+    def no_lock(*_args, **_kwargs):
+        raise AssertionError("took the config write lock")
+
+    monkeypatch.setattr(config_mod, "_config_write_lock", no_lock)
+
+    assert config_mod.migrate_config_file_if_needed() is None
+    assert path.read_bytes() == original
 
 
 #: TASK-41727: per cloud dispatch case, a base that ends in a request route
@@ -5098,6 +5149,8 @@ async def test_console_and_the_qwencloud_adapter_agree_on_a_pasted_responses_end
         (f"{_QWENCLOUD_BASE}/models", True),
         (f"{_QWENCLOUD_BASE}/models/", True),
         (f"{_QWENCLOUD_BASE}/responses/models", True),
+        # Review r18-rev1: the /v1-appended shape plus /models is still refused.
+        ("https://dashscope-intl.aliyuncs.com/v1/models", True),
         ("https://dashscope-intl.aliyuncs.com/models", True),
         ("https://gw.example.com/qwen/v1/models", True),
         (_QWENCLOUD_BASE, False),
@@ -5742,6 +5795,34 @@ def test_a_still_encrypted_slot_key_keeps_the_legacy_key_out(
     assert [line for line in wire if "legacy-key-0000" in line or "enc:" in line] == []
     if provider != "huggingface":
         assert sent == []
+
+
+@pytest.mark.parametrize(("provider", "toml_key", "env_var"), _bridged_providers())
+def test_an_env_key_still_outranks_a_still_encrypted_slot_key(
+    provider, toml_key, env_var, tmp_path, monkeypatch
+):
+    """Review r18-rev1: TASK-42007 stops at a ciphertext slot only after the
+    variable, as readiness's resolver does: with the variable set, readiness
+    is Ready from it and the legacy ``<provider>_api`` dict holds its key,
+    never the legacy one (Google has no legacy dict)."""
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    monkeypatch.setenv(env_var, "env-key-0000")
+    slot_key = _ciphertext("slot-key-0000")
+    path = tmp_path / "config.toml"
+    path.write_text(
+        toml.dumps(
+            {"API": {toml_key: "legacy-key-0000"}, "api_settings": {provider: {"api_key": slot_key}}}
+        ),
+        encoding="utf-8",
+    )
+    settings = select_config_source(monkeypatch, path).load_settings(force_reload=True)
+    readiness = get_provider_readiness(provider, settings)
+
+    assert (readiness.ready, readiness.api_key_source) == (True, f"env:{env_var}")
+    assert settings["api_settings"][provider]["api_key"] == slot_key
+    if provider != "google":
+        assert settings[f"{provider}_api"]["api_key"] == "env-key-0000"
 
 
 def test_a_legacy_only_custom_2_key_reads_the_same_in_readiness_and_every_send(

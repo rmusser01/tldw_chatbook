@@ -4,7 +4,7 @@ title: "Migrate provider base URLs that an earlier version saved with /v1 wrongl
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 15:58
+updated_date: 2026-11-20 17:26
 labels:
 - follow-up
 - providers
@@ -54,7 +54,7 @@ One rule, owned by the endpoint contract, serves the load migration and every sa
 
 Nothing else is rewritten: OpenAI's `/v1`, Google's `/v1`, DeepSeek's `/v1`, gateway and foreign hosts (QwenCloud's China host included), presets and custom endpoints.
 
-**Load and save once.** `config.py` registers `_migrate_v1_appended_provider_bases` as config migration 2 in the existing TASK-26040 framework (`_CURRENT_CONFIG_SCHEMA_VERSION` 1 -> 2; the template's stamp is 2 too). Every load runs it in memory, and the boot step `migrate_config_file_if_needed` (app_entry) persists it once, with the framework's backup. The migration reads only `api_settings.<key>.api_base_url`, which the five adapters read. It imports the contract only for a value on a provider's own host that is not the registry default (ADR-097: no import for an ordinary config). It logs the provider and the new documented base. A value the contract refuses is never rewritten, so no credentials or query reach the log.
+**Load and save once.** `config.py` registers `_migrate_v1_appended_provider_bases` as config migration 2 in the existing TASK-26040 framework (`_CURRENT_CONFIG_SCHEMA_VERSION` 1 -> 2; the template's stamp is 2 too). Every load runs it in memory, and the boot step `migrate_config_file_if_needed` (app_entry) persists it once, with the framework's backup. The migration reads only `api_settings.<key>.api_base_url`, which the five adapters read. It hands every `api_base_url` to the contract (already in the boot import set; review r18-rev1 dropped the host pre-filter). It logs the provider and the new documented base. A value the contract refuses is never rewritten, so no credentials or query reach the log.
 - Decision: `migrate_config_file_if_needed` now rewrites the file only when a migration changed content, not for the stamp alone. Without that, registering any migration would rewrite every existing config once at boot, which strips its comments and makes a backup. The framework's own rule already said a bare stamp is not worth a rewrite.
 - Known gap (pre-existing, framework-wide): `_install_bootstrap_cache_from_raw` and `_atomic_config_values_from_raw` do not run migrations. If the boot persist never ran, the in-memory view after a settings write is the unmigrated raw file until the next full load. Listed as a follow-up.
 - Rewritten on purpose: `test_a_project_instruction_key_saved_before_the_v1_fix_still_resolves` (TASK-41704 AC#2) now expects a save of Google's and Cohere's own-host values to write the documented base. The owner's decision changes their keys once. Its gateway and DeepSeek rows are unchanged. The template's sha pin in `Tests/test_config_load_settings_table_guard.py` was re-pinned for the stamp.
@@ -69,3 +69,11 @@ Nothing else is rewritten: OpenAI's `/v1`, Google's `/v1`, DeepSeek's `/v1`, gat
 **Docs:** `Docs/User_Guide/settings.md` (the paragraph that said such values stay) and `Docs/Architecture/llm-providers.md` ("it is not rewritten") now describe the migration.
 
 Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/config.py`, `tldw_chatbook/Config_Files/default_config.toml`, `Tests/Chat/test_local_server_discovery.py`, `Tests/test_config_load_settings_table_guard.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Docs/User_Guide/settings.md`, `Docs/Architecture/llm-providers.md`.
+
+**Review r18-rev1 fixes:**
+- Boot cost: the boot step took the config write lock and parsed the whole file on every launch (~35 ms under load), and a v1 file with nothing to rewrite is never stamped, so it paid that forever. The load now records, per config path, the file stamp at which migration found nothing beyond the version stamp to persist (`_CONFIG_MIGRATION_SETTLED`, shared `_changed_beyond_stamp`); `migrate_config_file_if_needed` returns before the lock while the file still has that stamp, and keeps the re-read under the lock for a real write (a file changed since the load, or never loaded, takes the old path). Measured after: 0.0055 ms per call for a v2 config. The `_has_pending_config_migration` docstring ("rides the next natural save") and the app_entry comment are corrected.
+  - Test: `test_the_boot_migration_step_takes_no_lock_for_a_config_with_nothing_to_rewrite` (v2 and a v1 no-change control; `_config_write_lock` patched to raise). Red 2/2 at the previous commit (`AssertionError: took the config write lock`), green after.
+- Shape plus a pasted tail: `_read_v1_appended_path` matches the shape as a prefix followed by a tail the reading drops (none, `chat/completions`, `models`, and `responses` for QwenCloud) and returns the documented path plus that tail, so QwenCloud's `/v1/models` still reaches TASK-42021's `/models` refusal. Decision: the load migration rewrites a stored shape plus tail too, to exactly what a save writes (`v1_appended_documented_base` now returns the save's base, `chat_url` minus `/chat/completions`); QwenCloud's `/v1/models` is refused by both and kept.
+  - Tests: 10 new save rows in `test_a_base_saved_with_v1_appended_saves_its_documented_base` and 10 new load rows (plus a `qwencloud-v1-models` control) in `test_config_load_migrates_a_base_saved_with_v1_appended_once`; 20 red at the previous commit (the save or load kept `.../v1` plus the tail), green after.
+- `_migrate_v1_appended_provider_bases` drops its default-equality and raw-hostname pre-filter; the contract decides alone. Boot budget re-run: boot-import count unchanged (687/688).
+- `config.py` 8875 -> 8884 (+9), dated ratchet comment. Docs: `Docs/Architecture/llm-providers.md` and `Docs/User_Guide/settings.md`.

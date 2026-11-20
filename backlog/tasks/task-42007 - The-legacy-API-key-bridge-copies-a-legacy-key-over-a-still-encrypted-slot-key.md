@@ -4,7 +4,7 @@ title: "The legacy API key bridge copies a legacy key over a still-encrypted slo
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 16:21
+updated_date: 2026-11-20 17:26
 labels:
 - follow-up
 - providers
@@ -42,3 +42,5 @@ Found by TASK-41709 (round 17). For the nine bridged providers, `config._normali
 - `config.py` grew 4 lines; `Tests/Architecture/test_module_size_ratchet.py` 8871 -> 8875 with a dated comment.
 - Docs: `Docs/User_Guide/settings.md` (the nine legacy keys paragraph).
 - Files: `tldw_chatbook/config.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Docs/User_Guide/settings.md`.
+
+**Review r18-rev1:** a loader-level row for an environment key beside a ciphertext slot and a legacy key: `test_an_env_key_still_outranks_a_still_encrypted_slot_key` (9 nodes, one per bridged provider) asserts readiness is Ready via `env:<VAR>`, the slot keeps its ciphertext, and `<provider>_api.api_key` is the environment key (Google has no legacy dict). An invariant the fix keeps; negative control (the encrypted check moved before the variable): 8 of 9 red (`assert None == 'env-key-0000'`; Google, with no dict, stays green), restored after.
