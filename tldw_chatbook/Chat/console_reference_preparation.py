@@ -112,10 +112,9 @@ class ReferenceAuthority:
         self.cwd = self.cwd_chain.canonical_root
         self.executable = shutil.which("git")
         self.executable_identity = self._executable_identity()
-        self.environment = {
-            k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")
-        }
-        self.environment["GIT_TERMINAL_PROMPT"] = "0"
+        from tldw_chatbook.Workspaces.native_git import scrubbed_git_environment
+
+        self.environment = scrubbed_git_environment()
         self.context = resolve_sensitive_context()
         self.exclusions = roots_api.current_folder_binding_exclusions(
             _selection=self.selection

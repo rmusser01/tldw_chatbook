@@ -2575,8 +2575,14 @@ class _FleetSurvivorGateway:
         parent_side_effect_on_call: int = 0,
         child_scripts=None,
         second_gate: "threading.Event | None" = None,
+        parent_joins_children_on_call: int = 0,
     ):
         self._parent = list(parent_scripts)
+        # On this parent call, wait for every fleet child thread to finish
+        # first: "the child finished inside its turn" is then a fact, not a
+        # race against a slow runner (TASK-42071).
+        self._parent_joins_children_on_call = parent_joins_children_on_call
+        self.unjoined_children: list[str] = []
         self._child = list(child_scripts or [["child answer"]])
         self._gate = gate
         self._second_gate = second_gate
@@ -2623,6 +2629,16 @@ class _FleetSurvivorGateway:
                 self._parent_side_effect is not None
                 and self.parent_calls == self._parent_side_effect_on_call
             )
+            join = self.parent_calls == self._parent_joins_children_on_call
+        if join:
+            await asyncio.get_running_loop().run_in_executor(None, _join_fleet_threads)
+            # The join times out silently; record a child that never finished
+            # so the test says so instead of failing on a survivor row.
+            self.unjoined_children = [
+                t.name
+                for t in threading.enumerate()
+                if t.name.startswith("fleet-") and t.is_alive()
+            ]
         if fire:
             self._parent_side_effect()
         for chunk in chunks:
@@ -3760,11 +3776,13 @@ def test_a_child_that_finishes_inside_its_turn_opens_no_survivor_window(
             ["turn 1 final"],
         ],
         gate=gate,
+        parent_joins_children_on_call=3,
         child_side_effect=lambda: (root / "by_the_child.txt").write_text("x\n"),
     )
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
     run_id, outcome = _run(bridge, session, aid, root)
     _join_fleet_threads()
+    assert not gateway.unjoined_children, gateway.unjoined_children
     assert outcome.status == "done"
 
     rows = db.change_snapshots_for_run(run_id)
@@ -3788,11 +3806,13 @@ def test_a_turn_without_a_foreign_survivor_is_not_stamped_concurrent(
             ["turn 1 final"],
         ],
         gate=gate,
+        parent_joins_children_on_call=3,
         child_side_effect=lambda: (root / "by_the_child.txt").write_text("x\n"),
     )
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
     run_id, _ = _run(bridge, session, aid, root)
     _join_fleet_threads()
+    assert not gateway.unjoined_children, gateway.unjoined_children
 
     assert [r["kind"] for r in db.change_snapshots_for_run(run_id)] == ["turn"]
     assert not [m for m in _tool_rows(store, session) if "earlier turn" in m.content]

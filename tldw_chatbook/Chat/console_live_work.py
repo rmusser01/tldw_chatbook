@@ -405,12 +405,12 @@ class ConsoleLiveWorkSourceReadinessState:
             rag_classes = connected
         else:
             rag_label = "Unavailable"
-            # Kept to one line deliberately. These rows render at a 39-column
-            # content width, and every other row in the card fits: "RAG:
-            # Unavailable - " already spends 19, so the recovery has 20. At
-            # "Install embeddings extras." the row wrapped and took the card's
-            # measured demand from 21 to 22, which moves the live-work swap
-            # geometry the bounded section is pinned against.
+            # Kept short deliberately: the card's measured demand moves the
+            # live-work swap geometry the bounded section is pinned against.
+            # The rows now render at 36 columns with the Inspector open at
+            # 235x52, so this 38-column row wraps to two lines there; the card
+            # (18 rows) still fits the live-work section's 20-row cap
+            # (TASK-42071).
             rag_recovery = "Install embeddings."
             rag_classes = unavailable
 

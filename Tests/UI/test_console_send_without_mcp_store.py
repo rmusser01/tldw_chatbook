@@ -498,7 +498,9 @@ async def test_live_work_mcp_row_names_the_unbound_store_reason(
 
 
 @pytest.mark.asyncio
-async def test_unbound_live_work_mcp_row_fits_the_section_at_full_screen(tmp_path):
+async def test_unbound_live_work_mcp_row_fits_the_section_at_full_screen(
+    tmp_path, monkeypatch
+):
     """TASK-41631: the reason wraps the MCP row, and the card stays in its cap.
 
     Measured with the Inspector open: the row's content is 36 columns at
@@ -506,6 +508,12 @@ async def test_unbound_live_work_mcp_row_fits_the_section_at_full_screen(tmp_pat
     lines, and the card 17, 18 and 19 rows (bound: 16, 17, 18). All stay
     within the live-work section's 20-row cap, so no "more" hint appears.
     """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    # The measured heights below assume "RAG: Ready" (one line). Without the
+    # embeddings extras (the CI UI lane) the RAG row wraps to two lines and the
+    # card measures 18, so pin the extras rather than the runner's installs.
+    monkeypatch.setattr(ChatScreen, "_console_rag_extras_available", lambda self: True)
     app = _build_console_send_test_app(user_data_dir=tmp_path)
     host = ConsoleHarness(app)
 
