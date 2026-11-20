@@ -26,6 +26,10 @@ cache in place with no write at all for ``d`` to miss. They are collected
 only by the child
 (``-o python_functions=probe_*``); the regular run collects just the ``test_``
 function that launches it.
+
+TASK-42018 adds ``probe_g``/``probe_h`` for the shared ChaChaNotes database's
+unseen Console receipts. Their launcher is in a file a PR lane runs,
+``Tests/UI/test_console_send_without_mcp_store.py``.
 """
 
 from __future__ import annotations
@@ -154,6 +158,84 @@ def probe_f_sees_the_config_after_a_teardown_that_raised() -> None:
     assert _bootstrap_config_path().read_bytes() == stash.read_bytes()
     rail_state = config.load_settings().get("console", {}).get("rail_state", {})
     assert _RAIL_KEY not in rail_state
+
+
+_RECEIPT_CHAT = "task-42018-chat"
+_RECEIPT_ID = "42018000-0000-4000-8000-000000000000"
+
+
+def _open_marks():
+    """The shared bootstrap ChaChaNotes database and its local-marks service."""
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.conversation_local_marks_service import (
+        ConversationLocalMarksService,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(config.get_chachanotes_db_path(), "task-42018")
+    return db, ConversationLocalMarksService(db)
+
+
+@pytest.mark.bootstrap_profile
+def probe_g_leaves_an_unseen_console_receipt() -> None:
+    """What a mounted send that closes before its reply renders leaves behind
+    (TASK-42018), beside a star that is not a receipt."""
+    db, marks = _open_marks()
+    try:
+        now = marks._now()
+        with db.transaction() as cursor:
+            marks.set_console_terminal_with_cursor(
+                cursor, _RECEIPT_CHAT, _RECEIPT_ID, "complete",
+                created_at=now, updated_at=now,
+            )
+        marks.star_conversation(_RECEIPT_CHAT)
+        assert marks.list_console_unseen_marks() == ((_RECEIPT_CHAT, _RECEIPT_ID),)
+        assert marks.console_terminal_outcome(_RECEIPT_CHAT, _RECEIPT_ID) == "complete"
+    finally:
+        db.close()
+    Path(os.environ[_STASH_ENV]).with_suffix(".receipt-planted").write_text("ran")
+
+
+@pytest.mark.bootstrap_profile
+def probe_h_sees_no_unseen_console_receipt() -> None:
+    """The next app would announce nothing; the database's other rows stay."""
+    marker = Path(os.environ[_STASH_ENV]).with_suffix(".receipt-planted")
+    assert marker.is_file(), "the receipt probe must run first in this process"
+
+    db, marks = _open_marks()
+    try:
+        assert marks.list_console_unseen_marks() == ()
+        with db.transaction() as cursor:
+            outcomes = cursor.execute(
+                "SELECT mark_type FROM conversation_local_marks WHERE mark_type LIKE ?",
+                (marks.CONSOLE_TERMINAL_OUTCOME_PREFIX + "%",),
+            ).fetchall()
+        assert [row[0] for row in outcomes] == []
+        assert marks.is_starred(_RECEIPT_CHAT)
+    finally:
+        db.close()
+
+
+_NOT_A_DATABASE = b"\0" * 4096
+
+
+@pytest.mark.bootstrap_profile
+def probe_i_leaves_a_file_that_is_not_a_database() -> None:
+    """What ``test_details_recomputes_db_sizes_on_open``
+    (Tests/UI/test_library_shell.py) leaves at the shared ChaChaNotes path."""
+    from tldw_chatbook import config
+
+    path = config.get_chachanotes_db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(_NOT_A_DATABASE)
+
+
+@pytest.mark.bootstrap_profile
+def probe_j_runs_after_a_file_that_is_not_a_database() -> None:
+    """The receipt clear skipped that file: no teardown error, bytes untouched."""
+    from tldw_chatbook import config
+
+    assert config.get_chachanotes_db_path().read_bytes() == _NOT_A_DATABASE
 
 
 def _run_probes(tmp_path: Path, selection: str) -> subprocess.CompletedProcess:

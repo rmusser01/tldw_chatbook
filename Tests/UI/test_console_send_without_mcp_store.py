@@ -20,6 +20,9 @@ TASK-41900: the ordinary send also runs with the agent runtime on (the
 Console default). Unbound, the turn's native sources refused it with
 `mcp_source_not_installed`; a bound store keeps its source proofs.
 TASK-42016: so do the draft-snapshot sends.
+
+TASK-42018: the launcher for the probes that show an unseen receipt never
+reaches the next bootstrap-profile test lives here, in a laned file.
 """
 
 from __future__ import annotations
@@ -554,3 +557,22 @@ async def test_unbound_live_work_mcp_row_fits_the_section_at_full_screen(tmp_pat
     assert card_rows == demand == 17
     assert demand <= cap == 20
     assert hint_shown is False
+
+
+def test_an_unseen_console_receipt_never_reaches_the_next_bootstrap_test(tmp_path):
+    """TASK-42018: the shared database's unseen receipts are cleared between
+    bootstrap-profile tests, as their config is (``Tests/conftest.py``), and
+    a file at that path that is not a database is left alone, with no
+    teardown error for that test or the next.
+
+    Runs TASK-36478's child pytest process, so each planting probe and the
+    reading probe after it share one process in file order.
+    """
+    from Tests.test_bootstrap_profile_config_reset import _run_probes
+
+    result = _run_probes(tmp_path, "probe_g or probe_h or probe_i or probe_j")
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output[-6000:]
+    assert "4 passed" in output, output[-6000:]
+    assert "error" not in output.strip().splitlines()[-1], output[-6000:]

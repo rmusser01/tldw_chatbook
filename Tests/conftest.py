@@ -1425,6 +1425,54 @@ def _restore_bootstrap_profile_config(
             config_module._invalidate_config_caches()
 
 
+def _clear_bootstrap_console_receipts() -> None:
+    """Delete the Console receipts a bootstrap-profile test left unseen.
+
+    TASK-42018. The same tests also share one ChaChaNotes database. A mounted
+    send that closed before its reply rendered left its receipt unseen there,
+    and the next test's app announced it ("A Console turn completed while
+    hidden."). Only the rows ``acknowledge_console_unseen`` deletes go (the
+    unseen marks and their outcome companions); chats stay. The database is
+    found from HOME, not through config, so nothing is read or created.
+    """
+    from tldw_chatbook.Backup_Recovery import profile_paths
+
+    leaf = profile_paths.database_leaf("chachanotes_db_path")
+    for path in profile_paths.selected_default_base_data_dir().glob(f"*/{leaf}"):
+        from tldw_chatbook.Chat.conversation_local_marks_service import (
+            ConversationLocalMarksService as marks,
+        )
+
+        # Skip any file this cannot clear, quietly: a teardown error here would
+        # repeat on every later bootstrap-profile test. That covers a file
+        # that is not SQLite, empty or not (test_library_shell's db-size test
+        # writes zeros here), unreadable, read-only, malformed, or without the
+        # table yet. mode=rw: a file deleted meanwhile is never created.
+        try:
+            with path.open("rb") as handle:
+                if handle.read(16) != b"SQLite format 3\x00":
+                    continue
+            connection = sqlite3.connect(
+                f"{path.absolute().as_uri()}?mode=rw", uri=True, timeout=30
+            )
+        except (OSError, sqlite3.DatabaseError):
+            continue
+        try:
+            with connection:
+                connection.execute(
+                    "DELETE FROM conversation_local_marks"
+                    " WHERE mark_type LIKE ? OR mark_type LIKE ?",
+                    (
+                        marks.CONSOLE_UNSEEN_PREFIX + "%",
+                        marks.CONSOLE_TERMINAL_OUTCOME_PREFIX + "%",
+                    ),
+                )
+        except sqlite3.DatabaseError:
+            pass
+        finally:
+            connection.close()
+
+
 def _shutdown_prompts_interop_if_loaded():
     """Reset the prompt singleton without importing its module into every test."""
     prompts_interop = sys.modules.get("tldw_chatbook.Prompt_Management.Prompts_Interop")
@@ -2037,9 +2085,12 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
         # Even when a step above raises: otherwise this test's config writes
         # reach every later bootstrap-profile test (PR #3254's review).
         if reset_bootstrap_config:
-            _restore_bootstrap_profile_config(
-                config, bootstrap_config_path, bootstrap_config_before
-            )
+            try:
+                _restore_bootstrap_profile_config(
+                    config, bootstrap_config_path, bootstrap_config_before
+                )
+            finally:
+                _clear_bootstrap_console_receipts()
         if not keep_bootstrap_profile:
             _release_profile_startups(test_data_dir)
 
