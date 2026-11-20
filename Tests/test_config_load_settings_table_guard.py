@@ -700,7 +700,8 @@ def test_propagation_follows_imports_not_names():
 # TASK-39147: pin the seven commented native workflow settings.
 # TASK-41145 (owner decision 2026-11-16): MLX-LM ships host and port, not an
 # unused api_url.
-_TEMPLATE_SHA256 = "3d4886ffbc173e93045fc448b48bdfa503eeee51992e3972e01570d5a9b62283"
+# TASK-42000: document the per-profile pet state and one-time legacy copy.
+_TEMPLATE_SHA256 = "d3d07d80153cc7f4f7ec81bb26a3b0706057c9bd9294b91f0f4cbd330c764df3"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
