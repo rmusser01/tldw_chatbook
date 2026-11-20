@@ -120,7 +120,12 @@ def _send(chat, rows, current, *, service):
     admission, bind, _reserved, sent = _prepare_send(
         chat, rows, current, service=service
     )
-    call = bind()
+    return admission, _settle(chat, bind()), sent
+
+
+def _settle(chat, call):
+    """Complete a bound call, as the response does, and advance the head."""
+
     with chat.db.transaction() as cursor:
         for state in (TraceCallState.RESPONSE_STARTED, TraceCallState.COMPLETE):
             chat.repository.advance_call_state(
@@ -138,7 +143,7 @@ def _send(chat, rows, current, *, service):
             call_id=call.call_id,
         )
     chat.head = call.surface_node_id
-    return admission, call, sent
+    return call
 
 
 def _keys(chat, head_id):
@@ -526,6 +531,58 @@ def test_dispatch_binding_refuses_a_link_that_covers_no_live_row(
     assert _exported(chat, current) == sent == [row.value for row in incoming]
     assert _keys(chat, call.surface_node_id) == _revisions(incoming)
     _assert_warm_matches_cold(chat, chat.recorder, call.surface_node_id)
+
+
+def test_dispatch_binding_accepts_a_final_link_holding_only_its_end_row(
+    chat_factory, monkeypatch
+):
+    """TASK-40577 review: the live-row check counts the range's last row.
+
+    An edit replaced 12..267, so the live rows are 0..11 and the edit at 268.
+    The planner's links are (0, 11) and (268, 268): the second link's only
+    live row is the replaced range's end sequence. Preparation's copy of the
+    check is skipped, so dispatch binding's own check is the one that must
+    accept the chain, and the send must read back exactly.
+    """
+
+    from Tests.Chat.test_console_trace_service import SurfaceReplacementPlan
+
+    chat = chat_factory()
+    rows = chat.chain(268)
+    first = chat.record(rows)
+    edit = chat.add(rows[11], "edited", "user")
+    surface = [*rows[:12], edit]
+    chat.record(
+        surface,
+        replacement=SurfaceReplacementPlan(
+            predecessor_head_id=first.surface_head_id,
+            start_node_id=first.appended_nodes[12].node_id,
+            end_node_id=first.appended_nodes[267].node_id,
+            start_sequence=12,
+            end_sequence=267,
+            replacement_index=12,
+        ),
+    )
+    chat.remember(rows[10])
+    current = chat.add(edit, "after compaction")
+    incoming = [rows[11], edit, current]
+    with monkeypatch.context() as preparation:
+        preparation.setattr(
+            ConsoleTraceService,
+            "_validate_replacement_range",
+            lambda *_args, **_kwargs: None,
+        )
+        admission, bind, _reserved, sent = _prepare_send(
+            chat, incoming, current, service=chat.recorder
+        )
+    assert _ranges(admission) == [(0, 11), (268, 268)]
+
+    call = _settle(chat, bind())
+
+    assert _exported(chat, current) == sent == [row.value for row in incoming]
+    assert _keys(chat, call.surface_node_id) == _revisions(incoming)
+    _assert_warm_matches_cold(chat, chat.recorder, call.surface_node_id)
+    assert _keys(chat, first.surface_head_id) == _revisions(rows)
 
 
 def test_a_committed_chain_reconciles_to_the_dispatched_call(

@@ -1021,9 +1021,10 @@ by stored sequence and refuses more than `MAX_SURFACE_REPLACEMENT_CHAIN_LINKS`
 links on the replacement range; only a rewritten tail may have them. The writer
 validates every link's range, that no live row lies between links, and that each
 link holds at least one live row (TASK-40577: the reader refuses a link with none,
-so committing one would break every later read of the segment), in preparation
-and again in the dispatch-binding transaction, then writes the placeholders, their
-links and the final link in that transaction. Placeholder
+so committing one would leave the new head and every later head unreadable, and,
+after a restart, every later send unable to plan; heads recorded before it still
+read), in preparation and again in the dispatch-binding transaction, then writes
+the placeholders, their links and the final link in that transaction. Placeholder
 sequences precede the new rows, and the warm projection checkpoint records them
 in its lineage as the cold reader does.
 
