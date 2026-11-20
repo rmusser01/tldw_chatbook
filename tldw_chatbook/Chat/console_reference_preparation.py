@@ -110,7 +110,10 @@ class ReferenceAuthority:
         self.launch_cwd = roots_api.get_launch_cwd()
         self.cwd_chain = capture_directory_chain(Path(self.launch_cwd))
         self.cwd = self.cwd_chain.canonical_root
-        self.executable = shutil.which("git")
+        found = shutil.which("git")
+        # Absolute: reference Git runs at the repo top, which an agent can write
+        # to, so a relative PATH entry must not resolve inside it (TASK-42101).
+        self.executable = os.path.abspath(found) if found else None
         self.executable_identity = self._executable_identity()
         from tldw_chatbook.Workspaces.native_git import scrubbed_git_environment
 
