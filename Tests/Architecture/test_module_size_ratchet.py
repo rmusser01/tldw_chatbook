@@ -1119,9 +1119,16 @@ _BUDGETS: dict[str, int] = {
     # TASK-36534, 2026-11-03: size waiver (owner rule: a fix over a size ratchet
     # raises the row with a dated comment); 6973 -> 7009, settings_revision_held
     # and the convergence span it reads. Exact measurement.
-    "tldw_chatbook/UI/Console_Modules/session.py": 7009,
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +3, the store's @declare_store backup-participant declaration (wrapped) and import.
+    # TASK-33621.59 review, 2026-11-06: size waiver (owner rule: a fix over a
+    # size ratchet raises the row by exactly the branch's growth, dated):
+    # 7009 -> 7014. A card action whose Stop won over its failed save settles
+    # like the card's Cancel, so the turn and attachments return to the draft.
+    # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7014 -> 7008.
+    # 2026-11-12: re-measured after rebasing onto dev 26b2e677dd (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7009 -> 7008.
+    # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7008 -> 7012.
+    "tldw_chatbook/UI/Console_Modules/session.py": 7012,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6996,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
@@ -1151,7 +1158,17 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-19, TASK-41903 (owner rule: raise by the change's own lines):
     # 7083 -> 7087 (+4) -- a goal iteration builds the cold skill trust
     # before its synchronous capture.
-    "tldw_chatbook/Chat/console_runtime.py": 7087,
+    # TASK-33621.59, 2026-11-06 (restacked 2026-11-12 onto dev 4b90eb860b):
+    # +9 -- a refused turn whose Stop won over a failed save carries its
+    # restored draft revision, and its attachments return to the draft. The
+    # refusal itself moved to console_received_dispatch.py on dev; dev's row
+    # already covers the growth.
+    # 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7043 -> 7037.
+    # 2026-11-13: re-measured after rebasing onto dev 531acb8cdc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7037 -> 7052.
+    # 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7067 -> 7076.
+    # 2026-11-15: re-measured after rebasing onto dev cc6006fcf5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7078 -> 7087.
+    # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7087 -> 7096.
+    "tldw_chatbook/Chat/console_runtime.py": 7096,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
