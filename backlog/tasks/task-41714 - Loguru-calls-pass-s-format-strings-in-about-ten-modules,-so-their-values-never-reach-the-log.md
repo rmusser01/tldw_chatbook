@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 06:57
-updated_date: 2026-11-19 15:43
+updated_date: 2026-11-20 09:50
 labels:
 - follow-up
 - logging
@@ -45,3 +45,4 @@ Found by TASK-41500 and its review (round 16), widened by the filing review. Log
 - **Pre-existing, not this task:** `test_client_media_debug_logging.py::test_closed_connection_reopens_without_private_diagnostics` (expects "Media database connection was closed; reopening.", which no longer exists in `tldw_chatbook/DB`; red with base `Client_Media_DB_v2.py` too).
 - Files: the 13 modules in the diff, `Docs/security/production-diagnostic-inventory.json`, `Tests/test_stdlib_logging_format_style.py`, `Tests/DB/test_client_media_debug_logging.py`, `Tests/Chat/test_chat_functions.py`, `Tests/UI/test_console_session_settings.py`.
 - Checks: `./scripts/preflight.sh` passed (wrapper); `ruff check --select F` on the changed files passed; module, screen and Library size ratchets passed (serial; 2 failures in that run were the diagnostic inventory, since regenerated, and the base-red metadata-only rows above).
+- **Review r17lg-rev1 minor 3.** The scan skipped any message containing `{`, so `logger.info("{} rows to %s", n, path)` escaped it. `_percent_message` now flags a `%`-placeholder message whose `str.format` fields are fewer than its positional arguments (`"{}% done", 50` still passes). `test_the_loguru_scan_flags_a_mixed_brace_and_percent_call` was red before (`[] == [(2, '{} rows to %s')]`); the package scan still finds no offender; the file passes 8 of 8.
