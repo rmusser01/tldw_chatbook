@@ -209,17 +209,18 @@ def _percent_message(call: ast.Call) -> str | None:
     if not (isinstance(message, ast.Constant) and isinstance(message.value, str)):
         return None
     text = message.value
-    arguments = len(call.args) - index - 1 + len(call.keywords)
-    if not arguments or not _PERCENT_PLACEHOLDER.search(text):
+    positional = len(call.args) - index - 1
+    if not (positional or call.keywords) or not _PERCENT_PLACEHOLDER.search(text):
         return None
     try:
         parsed = string.Formatter().parse(text)
         fields = sum(1 for _, name, _, _ in parsed if name is not None)
     except ValueError:
         fields = 0  # not a valid str.format template at all
-    # str.format drops arguments beyond its fields; keywords count, since a
-    # `%s` reaches no keyword either (TASK-41714).
-    return text if fields < arguments else None
+    # str.format drops positional arguments beyond its fields. Loguru binds
+    # keywords no field names to `extra`, so keywords only count when the
+    # message has no field at all: then a `%s` was meant for them (TASK-41714).
+    return text if positional > fields or not fields else None
 
 
 def _calls_with_loguru_names(tree: ast.AST) -> list[tuple[ast.Call, frozenset[str]]]:
@@ -306,6 +307,18 @@ def test_the_loguru_scan_flags_keyword_only_percent_calls(tmp_path):
     )
 
     assert _percent_style_loguru_calls(planted) == [(2, "x %s"), (3, "Failed: %s")]
+
+
+def test_the_loguru_scan_spares_unused_keywords_beside_brace_fields(tmp_path):
+    """Loguru binds keywords no field names to `extra`; a literal `%` is text."""
+    planted = tmp_path / "extra.py"
+    planted.write_text(
+        "from loguru import logger\n"
+        'logger.info("50% of {}", 3, user="u")\n'
+        'logger.info("{} at 5% rate", 3, extra=1)\n'
+    )
+
+    assert _percent_style_loguru_calls(planted) == []
 
 
 def test_no_loguru_call_uses_percent_style_with_arguments():
