@@ -31,6 +31,12 @@ from tldw_chatbook.DB.private_sqlite_protocol import (
     is_tts_authority_refusal,
 )
 
+#: TASK-33620.15.55: macOS has no vfork launch, so a ``close_fds=True`` helper is
+#: forked with the GIL held for the whole fork of this process. ``close_fds=False``
+#: selects ``posix_spawn`` there instead. Linux keeps ``fork_exec``, whose vfork
+#: launch releases the GIL; Windows launches no helper.
+_SPAWN_WITHOUT_FORK = sys.platform == "darwin"
+
 _LEASE_KINDS = {
     "prepare": "transient",
     "pin_source": "transient",
@@ -363,6 +369,13 @@ class HelperLease:
             # ambient override. Capture before exec, including delayed startup.
             environment = os.environ.copy()
             environment["_TLDW_PRIVATE_SQLITE_PARENT_PID"] = str(os.getpid())
+            # TASK-33620.15.55: on macOS, launch through posix_spawn, not fork
+            # (see _SPAWN_WITHOUT_FORK): every other Python thread, the UI loop
+            # included, stalled for each fork, and a Console send launches 25-55
+            # helpers. Descriptor isolation is unchanged: Python creates
+            # descriptors non-inheritable (PEP 446), the spawn maps the pipes
+            # below onto 0-2, and the entry closes anything else it inherited
+            # before it reads its request.
             lease._child = subprocess.Popen(
                 [
                     sys.executable,
@@ -377,7 +390,7 @@ class HelperLease:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                close_fds=True,
+                close_fds=not _SPAWN_WITHOUT_FORK,
                 bufsize=0,
                 env=environment,
             )

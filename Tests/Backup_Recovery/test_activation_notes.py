@@ -59,8 +59,11 @@ from tldw_chatbook.DB import private_sqlite_process
 helper = str(Path(private_sqlite_process.__file__).with_name('private_sqlite_helper_entry.py').resolve())
 
 def process_sentry(event, args):
-    if event == 'subprocess.Popen' and args[1] == [sys.executable, '-I', '-S', helper]:
-        assert args[3]['_TLDW_PRIVATE_SQLITE_PARENT_PID'] == str(os.getpid())
+    # On macOS the helper is spawned (TASK-33620.15.55): its one launch also
+    # raises os.posix_spawn, whose environment is the third argument.
+    if event in ('subprocess.Popen', 'os.posix_spawn') and args[1] == [sys.executable, '-I', '-S', helper]:
+        environment = args[3] if event == 'subprocess.Popen' else args[2]
+        assert environment['_TLDW_PRIVATE_SQLITE_PARENT_PID'] == str(os.getpid())
         return
     if event in ('subprocess.Popen', 'os.posix_spawn', 'os.system'):
         events.append(event)

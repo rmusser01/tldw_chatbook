@@ -194,6 +194,50 @@ is authorized by this static-scope decision. The alternative of wholesale
 legacy lint/format cleanup is deferred to avoid unrelated churn in this
 security-sensitive correction.
 
+## TASK-33620.15.55 — launch helpers through posix_spawn (2026-11-20, pending owner review)
+
+Helpers were launched with `subprocess.Popen(..., close_fds=True)`. On macOS that
+child is forked, and CPython holds the GIL for the whole `fork()` of the parent;
+it releases it only around `vfork()`, which is Linux-only. A Console send opens
+25-55 worker-thread connections between Enter and the provider call, each with a
+fresh helper, so every other Python thread, the UI loop included, stalled for
+each fork. Live at load1 109-122, 8 of 8 UI-loop transaction entries of 10 ms or
+more overlapped a helper launch on another thread, against 11% of random 10 ms
+intervals. In a 600 MB process at low load, a forked launch took 6.5 ms (median)
+and stalled the main thread for 5 ms or more 285 times in 286 launches; a
+`posix_spawn` launch took 0.38 ms and stalled it for 1 ms or more 0 times in 336.
+
+On macOS the launcher now passes `close_fds=False`, which is what selects
+`subprocess`'s `posix_spawn` path (`os.posix_spawn` also holds the GIL, but for
+the spawn syscall only, not a copy of the parent). Linux keeps `close_fds=True`:
+its `fork_exec` launches through vfork and already releases the GIL. The helper's
+descriptor set is unchanged:
+
+- Python creates every descriptor non-inheritable (PEP 446) and SQLite opens its
+  database, WAL and shared-memory files close-on-exec (checked on the shipped
+  runtime), so the parent's database, pipe and lock descriptors close at exec as
+  before.
+- The spawn maps the helper's own pipes onto 0-2 exactly as the fork did.
+- `private_sqlite_helper_entry` closes every descriptor above 2 that it did
+  inherit (only a descriptor some native library left inheritable) as its first
+  action, before it reads its request or opens anything. The helper therefore
+  works with exactly the three pipes a `close_fds=True` fork gave it. Such a
+  descriptor exists in the helper only during interpreter startup.
+- A helper that closes an inherited descriptor of a database cannot drop this
+  process's POSIX locks: those locks belong to the parent's pid.
+
+Measured live and paired against origin/dev, helper launches went from a median
+10.5-12 ms to 1.4 ms at load1 105-150. Enter to the provider call on later sends
+fell by a median of 881 ms at load1 70 or higher (95% CI -1314 to -469 ms) and
+by 93 ms at low load (95% CI -187 to -66 ms).
+
+Nothing else changes: the fixed entry, `-I -S`, the parent-pid check, IPC,
+deadlines, capacity, reaping and every refusal. Windows prepares in-process and
+launches no helper. `Tests/DB/test_private_sqlite_helper_launch.py` pins the macOS
+launch path (no `fork_exec`) and the startup close of an inherited descriptor;
+both fail on the earlier code. The owner decides whether this inherited-descriptor posture
+(PEP 446 plus the helper's own close, instead of the fork's close) is acceptable.
+
 ## Links
 
 - [Task15 static qualification evidence](../../Docs/superpowers/reviews/2026-09-08-sqlite-no-new-static-debt.md)
