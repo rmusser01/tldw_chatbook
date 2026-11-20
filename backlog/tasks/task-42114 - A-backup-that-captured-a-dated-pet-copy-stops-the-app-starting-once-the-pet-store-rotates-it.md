@@ -4,7 +4,7 @@ title: "A backup that captured a dated pet copy stops the app starting once the 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 17:50
-updated_date: 2026-11-20 21:37
+updated_date: 2026-11-20 22:22
 labels:
 - follow-up
 - backup
@@ -21,7 +21,17 @@ dependencies: []
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Found by the review of TASK-42022 (round 18). This startup blocker is already on dev.
+Found by the review of TASK-42022 (round 18).
+
+**Exposure:**
+- **dev, since TASK-42000:** the dated copies sit beside `config.toml`.
+- **main (`28391c524c`), likely since TASK-32628 (2026-09-16), confirmed by reading its code and not by running it.** There the pet files live in the shared `~/.config/tldw_chatbook` folder:
+  - `Widgets/Tamagotchi/recovery.py:85-87` lists each dated copy in that folder as `included`;
+  - `capture_service._capture_names` (lines 154-155) registers every captured file no registered root covers as a root of its own, and nothing registers that folder;
+  - `tamagotchi_storage._cleanup_old_backups` deletes the old copies;
+  - `Admission._tokens` resolves each root strictly.
+
+Either way, the exposure needs the footer pet to be enabled (it is off by default) and a backup taken while a dated copy existed.
 
 A plain backup's `_capture_names` (`capture_service.py:243`) registers each captured config-folder file as its own `backup.source.<sha>` root, dated pet copies included. The pet store's rotation (`_cleanup_old_backups`, `max_backups=3`) later deletes that copy. From then on, every admission raises `FileNotFoundError` in `Admission._groups` → `_tokens` → `root.resolve(strict=True)`. `config.py` runs `admit_startup()` at import, so the app refuses to start.
 

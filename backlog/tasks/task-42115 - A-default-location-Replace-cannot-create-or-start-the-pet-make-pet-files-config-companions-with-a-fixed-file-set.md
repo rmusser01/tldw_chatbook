@@ -4,7 +4,7 @@ title: "A default-location Replace cannot create or start the pet: make pet file
 status: To Do
 assignee: []
 created_date: 2026-11-20 18:48
-updated_date: 2026-11-20 21:37
+updated_date: 2026-11-20 22:22
 labels:
 - follow-up
 - backup
@@ -30,6 +30,8 @@ Until then, the failure is fail-safe, and `test_created_owner_rollback.py::test_
 - a Replace that retires the profile's pet file refuses at activation (`activation_profile_outside_maintenance`) and rolls back.
 
 In both cases nothing is created, the profile keeps its pets, and the app starts.
+
+**Still exposed until AC#6 lands:** an install whose registry already holds a dated pet copy as a root of its own stays exposed. On dev that means a backup taken since TASK-42000; on main, by reading its code (TASK-42114), a backup since TASK-32628. Once the pet store rotates that copy away, every admission refuses and the app does not start. TASK-42114 stops new registrations but cannot remove old ones. An untested workaround: recreate an empty file, mode 0600, at the missing path.
 
 **2026-11-20, coordinator decision after review rev2:** deleted-file-root tolerance needs one design across all root consumers, the recovery journal included. The attempt is parked on `fu/r18-deleted-roots-wip` (tip `ee6d0ac966`, not pushed) and moves here, with TASK-42113's step A (`_bind_activation`, `bootstrap._binding`). It recorded each regular-file root with its folder's inode and let a deleted file root hold nothing, then scope its own exact path.
 
