@@ -304,6 +304,42 @@ def test_the_sample_endpoint_keys_are_the_ones_a_send_reads() -> None:
     )
 
 
+# --- Dev's TASK-41145 legacy Custom 2 bridge meets the marker ---
+
+LEGACY_CUSTOM_2_ENDPOINT = "http://gpu-box.lan:5000/v1/chat/completions"
+
+
+@private_profile_test
+def test_a_bridged_legacy_custom_2_endpoint_is_the_users_despite_the_marker(
+    request: pytest.FixtureRequest, monkeypatch
+) -> None:
+    """A profile that set only the legacy ``[API] custom_openai2_api_ip`` has
+    no ``[api_settings.custom_2]`` table, so the slot inherits the template's
+    ``template_sample = true``, and dev's bridge
+    (``keep_legacy_custom_2_endpoint``) puts the legacy endpoint in its
+    ``api_url``. The marker alone says "sample", which would hide the user's
+    server under NOT RUNNING; only the values check (the endpoint a send
+    would use is not the sample's) makes it the user's. Pinned so a reader
+    that looks only at the marker fails here."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        provider_holds_template_sample_values,
+    )
+
+    settings = _load_settings_from(
+        monkeypatch,
+        f'[API]\ncustom_openai2_api_ip = "{LEGACY_CUSTOM_2_ENDPOINT}"\n',
+    )
+    slot = settings["api_settings"]["custom_2"]
+
+    # Anti-vacuity: the merge kept the template's marker and bridged the
+    # legacy endpoint, so this is the marker-plus-legacy-key combination.
+    assert slot["template_sample"] is True
+    assert slot["api_url"] == LEGACY_CUSTOM_2_ENDPOINT
+    assert provider_is_template_sample(settings, "custom_2") is True
+    # The values check is what makes it the user's provider.
+    assert provider_holds_template_sample_values(settings, "custom_2") is False
+
+
 # --- Review v5r2 G2C-R3-3: MLX-LM is pointed at a server by host and port ---
 
 #: Edits to the shipped MLX-LM table, and whether they make it the user's.
