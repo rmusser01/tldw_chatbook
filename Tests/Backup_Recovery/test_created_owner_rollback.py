@@ -237,6 +237,8 @@ _CASES.update(
         },
         # A Replace from a backup with no pets retires the target's pets, and
         # the next start must not copy the old shared pets back (seed once).
+        # The retired file's root stays bound and storage still works
+        # (TASK-42022).
         "pets-none": {
             "groups": _PET_GROUPS,
             "stores": (),
@@ -319,8 +321,22 @@ for module in ('sounddevice','pyaudio'):sys.modules[module]=None
 case=json.loads(os.environ['CREATED_CASE'])
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
 if sys.argv[1]=='start':
+    # TASK-42022: storage access after the restore, as a fresh app start
+    # makes it: admission of the pet path, containment over the profile's
+    # declared roots, and the pet store's own read.
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage,_contains_capture_path,_contains_owned_path
     from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
-    print(json.dumps({'pets':sorted(ConfigFileStorage().list_pets())}))
+    roots=next(row['roots'] for row in bootstrap._records(bootstrap.default_bootstrap_root())[1] if row['selector']==str(selector))
+    pets=selector.parent/'tamagotchi_pets.json'
+    # Before the store recreates a retired pet file.
+    absent=[root for root in roots if not os.path.lexists(root)]
+    # The config folder sorts first, so the any() below stops there; check
+    # the retired root itself: an absent root holds nothing (TASK-42000).
+    for root in absent:assert _contains_owned_path(Path(root),pets) is False,absent
+    contained=_contains_capture_path(tuple(map(Path,roots)),pets)
+    with acquire_storage(pets):pass
+    print(json.dumps({'pets':sorted(ConfigFileStorage().list_pets()),'absent_roots':absent,'contained':contained}))
     raise SystemExit(0)
 from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
 from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
@@ -457,7 +473,13 @@ try:
         assert not retired,'restore kept '+repr(retired)
         assert snapshot(shared_pets)==shared_before,'restore changed the old shared pet folder'
         if 'pets_after_restore' in case:
-            assert produce('start')['pets']==case['pets_after_restore']
+            started=produce('start')
+            assert started['pets']==case['pets_after_restore']
+            # TASK-42022: the retired pet file keeps its root in the profile
+            # binding (the registry keeps root history by design), and the
+            # profile's storage still admits, contains and reads.
+            assert [Path(root) for root in started['absent_roots']]==[own[label][0] for label in case['retired']],started
+            assert started['contained'] is True,started
             assert snapshot(shared_pets)==shared_before,'pet start changed the old shared pet folder'
         if case.get('extract'):
             # Manual extraction of the backup's pet rows (TASK-42000 AC#3).
