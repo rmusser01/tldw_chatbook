@@ -1753,7 +1753,8 @@ def test_recovered_suites_lane_is_one_serial_guarded_minimal_python_312_job() ->
     assert job["needs"] == ["preflight"]
     assert job["if"] == LANES
     assert job["runs-on"] == PR_TEST_RUNNER
-    assert job["timeout-minutes"] == 20
+    # Owner decision (2026-11-19): raised from 20 (runs took 16.5-19 min of pytest).
+    assert job["timeout-minutes"] == 30
     assert "strategy" not in job
     assert len(job["steps"]) == 4
     setup = next(

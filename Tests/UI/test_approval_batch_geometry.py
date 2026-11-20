@@ -11,6 +11,7 @@ from Tests.UI.test_console_mcp_approval import (
     _build_ready_production_console_app,
     _sample_calls,
     _show_production_approval_batch,
+    _until_actionable,
 )
 
 
@@ -33,6 +34,10 @@ async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_
     app = _build_ready_production_console_app()
     async with app.run_test(size=(200, 40)) as pilot:
         card = await _show_production_approval_batch(app, pilot, _sample_calls())
+        # The card keeps every decision disabled until the round's facts have
+        # mounted and laid out (`_defer_decisions`); on a slow runner one pause
+        # is not enough, so wait for that gate before asserting the actions.
+        await _until_actionable(card, pilot)
         rows = list(card.query(".approval-row"))
         assert len(rows) == 2
 
