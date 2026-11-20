@@ -193,6 +193,19 @@ _ISSUE_MESSAGES = {
         "The before-replacement copy needs these preserved files to recover your current data."
     ),
     "admission_timeout": "The application could not pause background work in time. Review the recovery status, let active work finish, then retry.",
+    "capture_source_outside_scope": (
+        "The backup stopped: a configuration or data file it selected is outside "
+        "the storage Chatbook registered for this backup, so it could not be "
+        "copied. To move your data now, carry config.toml and the data folder by "
+        "hand, as the User Guide's \"Setting up another machine\" describes."
+    ),
+    "registered_storage_missing": (
+        "The location shown above no longer exists, but Chatbook registered it "
+        "for its storage (backups and restores register the folders they use). "
+        "Backups, replacing stored data, later rollbacks and the next start "
+        "stop until it is back. If it was a folder, create it again (an empty "
+        "folder is enough), then review and try again."
+    ),
     "restore_setup_parent_required": "Choose an existing private Files needing setup directory outside profile and recovery storage. Restored files will remain inactive there.",
     "isolated_destination_parent_overlaps_control": "Choose a folder beneath a separate private restore directory, outside recovery control storage.",
     "private_destination_parent_required": "Choose a restore folder beneath a private directory owned by your user, with access limited to you.",
@@ -379,11 +392,29 @@ def issue_message(code: str) -> str:
 def issue_code(error: Exception, *, kind: str = "") -> str:
     """Only fixed local codes cross into a view; arbitrary exception text stays out."""
     from .admission import AdmissionTimeout
+    from .bootstrap import RecoveryRequired
     from .capture import CaptureReviewRequired
     from .crypto import CryptoError
 
     if isinstance(error, AdmissionTimeout):
         return "admission_timeout"
+    if (
+        kind == "backup"
+        and isinstance(error, RecoveryRequired)
+        and error.args == ("capture_source_outside_scope",)
+    ):
+        # TASK-34100.16.1: its own code, not the generic failure. Its copy
+        # claims no cause (five raise sites, no live reproduction), and its
+        # remedy is Create backup's: later rollback's held scope raises it
+        # too, where carrying files by hand is no remedy.
+        return "capture_source_outside_scope"
+    if isinstance(error, RecoveryRequired) and error.args == (
+        "registered_storage_missing",
+    ):
+        # TASK-34100.16.1 review v5r2: a removed registered folder, named. Its
+        # copy holds for every flow that resolves the registry (Create backup,
+        # Replace restore, later rollback), and _start attaches the path.
+        return "registered_storage_missing"
     if isinstance(error, InterruptedError):
         return "cancelled"
     if isinstance(error, CaptureReviewRequired):
@@ -515,12 +546,27 @@ class RecoveryService:
                     self._update(operation, review_issues=error.issues)
                     self._failed(operation, "review_required")
                 except Exception as error:  # noqa: BLE001 - discard secret-bearing tracebacks after mapping a fixed code.
+                    self._name_missing_storage(operation, error)
                     self._failed(operation, issue_code(error, kind=kind))
                 else:
                     self._update(operation, state="succeeded")
 
             self._futures[operation] = self._executor.submit(run)
             return operation
+
+    def _name_missing_storage(self, operation, error):
+        """Show a removed registered location above any operation's message.
+
+        ``RegisteredStorageMissing`` comes from ``_capture_names``, which Create
+        backup, Replace restore and later rollback all run. Its text stays the
+        bounded code; the screen renders ``result["path"]`` above the issue.
+        """
+        from .capture_service import RegisteredStorageMissing
+
+        if isinstance(error, RegisteredStorageMissing):
+            with self._lock:
+                result = dict(self._states[operation]["result"])
+            self._update(operation, result={**result, "path": str(error.path)})
 
     def _failed(self, operation, issue):
         with self._lock:

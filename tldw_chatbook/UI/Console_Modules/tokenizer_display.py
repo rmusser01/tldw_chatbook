@@ -23,6 +23,7 @@ _MANAGER_TYPE = custom.CustomTokenizerManager
 _MANAGER_METHODS = (
     "__init__",
     "_load_mappings",
+    "_tokenizer_files",
     "has_tokenizers",
     "get_tokenizer_for_model",
     "load_tokenizer",

@@ -156,7 +156,10 @@ def test_guard_detects_injected_private_uses(tmp_path):
 # A new store, or a changed closer or policy, updates this table in the same commit.
 DECLARED_STORES = {
     "db.agent_runs": ("DB.AgentRuns_DB.AgentRunsDB", "closer='close', policy='db.base', finite_worker=False"),
-    "db.chachanotes.primary": ("DB.ChaChaNotes_DB.CharactersRAGDB", "closer='close_connection'"),
+    "db.chachanotes.primary": (
+        "DB.ChaChaNotes_DB.CharactersRAGDB",
+        "closer='close_connection', finite_closer='retire_finite_worker_connection'",
+    ),
     "db.dreams": ("DB.Dreams_DB.DreamsDB", "closer='close', policy='db.base'"),
     "db.evals": ("DB.Evals_DB.EvalsDB", "closer='close'"),
     "db.guardian": ("DB.Guardian_DB.GuardianDB", "closer='close', policy='db.base'"),

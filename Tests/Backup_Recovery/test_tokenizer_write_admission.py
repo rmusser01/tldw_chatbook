@@ -14,16 +14,21 @@ from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 owner = module.CustomTokenizerManager(str(Path.home()/'tokenizers'))
 case = sys.argv[1]
 if case == 'constructor':
+    # TASK-34100.16.1: constructing writes nothing, paused or not; the first
+    # admitted write creates the folder, owner-only.
     target = Path.home()/'new-tokenizers'
     pause = storage._begin_local_pause()
     try:
-        try: module.CustomTokenizerManager(str(target))
+        paused = module.CustomTokenizerManager(str(target))
+        try: paused.save_mappings()
         except RecoveryRequired: pass
-        else: raise AssertionError('paused constructor created directory')
+        else: raise AssertionError('paused tokenizer write created directory')
         assert not target.exists()
     finally: pause.resume()
     created = module.CustomTokenizerManager(str(target))
-    assert target.is_dir() and created._model_mappings == {}
+    assert not target.exists() and created._model_mappings == {}
+    created.save_mappings()
+    assert target.is_dir() and target.stat().st_mode & 0o077 == 0
 elif case == 'paused':
     pause = storage._begin_local_pause()
     try:

@@ -77,8 +77,10 @@ def _companion_record_calls(source):
     records_code, records_globals = records.__code__, records.__globals__
     defining_path = Path(bootstrap.__file__).resolve()
     defining_source = defining_path.read_bytes()
+    # Re-pinned 2026-11-19 (TASK-34100.16.1): only RecoveryRequired's docstring
+    # changed (it names the path a subclass may carry); _records is untouched.
     assert hashlib.sha256(defining_source).hexdigest() == (
-        "398ac4ad624e75979e15a57a49ea59c27928a2996ce3122cad000601064412aa"
+        "1ff9080d683f36efc115054e4b3383048b12ceb2fc104c2e8ccb0a40d06db8bd"
     )
     assert bootstrap.__spec__.name == bootstrap.__name__
     assert Path(bootstrap.__spec__.origin).resolve() == defining_path

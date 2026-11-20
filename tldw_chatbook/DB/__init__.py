@@ -33,6 +33,10 @@ class StoreDeclaration:
     #: False: ``run_finite_local_worker`` leaves the caches it opened to the
     #: store's owner instead of closing them.
     finite_worker: bool = True
+    #: Owner method ``run_finite_local_worker`` retires its cache with, when
+    #: that must differ from ``closer`` (``None``: ``closer``). It runs on
+    #: interactive reads, so it must never wait on another connection.
+    finite_closer: str | None = None
     #: One native connection serves every thread, so a retirement on any
     #: thread refuses access and a live operation on any thread refuses close.
     shared_connection: bool = False
@@ -56,7 +60,8 @@ def declare_store(owner_id: str, **fields):
     """Class decorator registering ``cls`` as the exact type of ``owner_id``.
 
     Raises:
-        TypeError: ``closer`` does not name a callable attribute of ``cls``.
+        TypeError: ``closer`` or ``finite_closer`` does not name a callable
+            attribute of ``cls``.
         ValueError: ``owner_id`` is already declared by another class. A class
             with the same module and qualified name replaces its entry, because a
             retried import of a module that failed after the class ran redefines it.
@@ -65,9 +70,9 @@ def declare_store(owner_id: str, **fields):
 
     def register(cls):
         global store_types
-        closer = declaration.closer
-        if closer is not None and not callable(getattr(cls, closer, None)):
-            raise TypeError(f"{cls.__qualname__} has no callable closer {closer!r}")
+        for closer in (declaration.closer, declaration.finite_closer):
+            if closer is not None and not callable(getattr(cls, closer, None)):
+                raise TypeError(f"{cls.__qualname__} has no callable closer {closer!r}")
         with _store_lock:  # Store modules can be imported on two threads at once.
             table = dict(store_types)
             for previous in [known for known, owner in table.items() if owner == owner_id]:

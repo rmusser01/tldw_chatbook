@@ -350,6 +350,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # Raised again for TASK-41307, 2026-11-17: +1 method (the held-slots
     # segment opens its list; Console_Modules/agent.py) and +11 lines.
     # 2026-11-18: rebased onto dev 45b1949ca3 (dev's row + this branch's growth, measured): 24592.
+    # TASK-34100.16.1 review v5r2, 2026-11-13: owner decision 2026-10-04
+    # (expand limits). The Console dictionary and world-book pickers run their
+    # store reads and writes through run_finite_local_worker, so they no longer
+    # keep pool-thread leases a backup's pause cannot revoke: +3 lines (one
+    # import, two comment-carrying calls), no methods. Rebased onto dev
+    # 2026-11-19 (dev's file measured 24,563 / 743): 24,566 / 743 fits inside
+    # dev's own row, so dev's row is kept rather than tightened under other PRs.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24592, 743),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
