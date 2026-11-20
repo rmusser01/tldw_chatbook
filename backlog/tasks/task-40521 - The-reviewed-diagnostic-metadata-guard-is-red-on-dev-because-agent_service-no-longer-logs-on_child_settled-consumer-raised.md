@@ -19,6 +19,8 @@ priority: medium
 Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only fails on dev 4b90eb860b with two failures. The first reads "tldw_chatbook/Agents/agent_service.py: expected one diagnostic containing 'on_child_settled consumer raised', found 0": the test's reviewed-metadata table still lists that label (with field type(exc).__name__), but agent_service.py has no diagnostic with that text; `git log -S` names 6125fbc5b8 ("Integrate native Console phases with current dev") as the last change to it. Either the diagnostic was removed or reworded and the reviewed table is stale, or the review-gated diagnostic was lost.
 
 Measured 2026-11-12 while rebasing TASK-36571.1: it failed 2 of 2 runs on a detached dev 4b90eb860b worktree and 2 of 2 on the TASK-36571.1 head, which does not touch agent_service.py or the test.
+
+Re-checked 2026-11-19 on dev a6df4d8d48: still red, same message. The diagnostic was not lost: `tldw_chatbook/Agents/agent_native_execution.py` logs "on_child_settled consumer raised (exception_type={})" with `type(exc).__name__` (it moved there in 6125fbc5b8). The reviewed tables in the test (`REVIEWED_METADATA_ONLY_DIAGNOSTICS` and the TASK-15743 delta) still name `agent_service.py` as its owner.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
