@@ -59,6 +59,12 @@ _FILE_UNSAVED_STATES = frozenset({"dirty", "saving", "conflict", "error"})
 _RETAINED_FLUSHES: set[asyncio.Future[Any]] = set()
 
 
+def _navigation_flush_timeout(screen: LibraryScreen) -> float | None:
+    return getattr(
+        screen.app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", _DEFAULT_FLUSH_TIMEOUT_SECONDS
+    )
+
+
 # --- Untouched blank note GC ---------------------------------------------------
 
 
@@ -137,10 +143,7 @@ async def gc_untouched_session_blank_note(
     if not discard:
         return True
     # A committed autosave can still own the version the delete needs.
-    timeout = getattr(
-        screen.app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", _DEFAULT_FLUSH_TIMEOUT_SECONDS
-    )
-    async with asyncio.timeout(timeout):
+    async with asyncio.timeout(_navigation_flush_timeout(screen)):
         await session.wait_for_pending_save()
     current = session.snapshot
     if not (
@@ -253,9 +256,7 @@ async def _flush_for_quit(screen: LibraryScreen) -> str | None:
     """
     task = asyncio.ensure_future(screen.flush_pending_work(quitting=True))
     _retain(task)
-    timeout = getattr(
-        screen.app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", _DEFAULT_FLUSH_TIMEOUT_SECONDS
-    )
+    timeout = _navigation_flush_timeout(screen)
     try:
         allowed = await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
     except asyncio.TimeoutError:

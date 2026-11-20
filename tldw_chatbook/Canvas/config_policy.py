@@ -362,6 +362,28 @@ def _end_canvas_poll_handoffs(owner: Any, token: Any = None) -> None:
                 _poll_handoffs.discard(issued)
 
 
+def _retire_console_canvas_attachment(runtime: Any) -> None:
+    """Release the departing view's Canvas callbacks and poll handoffs."""
+    _end_canvas_poll_handoffs(runtime.view)
+    with runtime._canvas_native_lock:
+        if runtime._canvas_native_view_binding is None:
+            return
+        runtime._canvas_native_view_binding = None
+        authority = runtime._canvas_native_authority
+        if authority is None:
+            return
+
+        def unavailable(_session_id: str) -> Any:
+            raise RuntimeError("canvas_scope_unavailable")
+
+        authority.rebind_view(
+            scope_resolver=unavailable,
+            bridge_sink=None,
+            auto_open=None,
+            publication_guard=lambda _publication: False,
+        )
+
+
 def _poll_runtime_canvas_enabled(owner: Any, expected_owner_type: type) -> bool | None:
     """Let only the stock background poll decline busy native config locks.
 
