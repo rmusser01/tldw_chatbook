@@ -407,9 +407,12 @@ class ShadowRepoService:
 
             data_dir = get_user_data_dir() / "change_review"
         self._data_dir = Path(data_dir)
-        self._git = (
-            git_executable if git_executable is not None else shutil.which("git")
-        )
+        if git_executable is None:
+            # Absolute: Git runs at the workspace root, which an agent can write
+            # to, so a relative PATH entry must not resolve inside it.
+            found = shutil.which("git")
+            git_executable = os.path.abspath(found) if found else None
+        self._git = git_executable
 
     @property
     def available(self) -> bool:

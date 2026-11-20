@@ -132,11 +132,13 @@ LFS installed in the user's global config for a workspace that tracks no LFS pat
 no longer refuses capture. That refusal decides the outcome but is not the
 guarantee. Every configured driver is also emptied for the command itself
 (through GIT_CONFIG_COUNT, so names stay out of argv and Git children inherit it),
-and `diff` never enters a dirty submodule (`--ignore-submodules=dirty`). Git
+and `diff` never starts Git inside a submodule (`--ignore-submodules=dirty`,
+`--submodule=short`), where config this qualification never reads would apply. Git
 therefore runs no configured filter program even if an attribute changes between
-check and command. A selected path then fails a `required` driver, or is captured
-unfiltered. `cat-file --textconv` and a non-`-z` `update-index --stdin` are
-refused outright.
+check and command. A selected path then fails a `required` driver, with the
+generic Git-failure message, or is captured unfiltered. The config query runs
+under `LC_ALL=C`, so a driver or remote name holding invalid UTF-8 is still found.
+`cat-file --textconv` and a non-`-z` `update-index --stdin` are refused outright.
 Configuration discovery stays private; global ignore/privacy rules, existing
 history/restore and user Git configuration remain unchanged. Known native opaque
 coordination does not isolate external OS configuration edits. The standalone

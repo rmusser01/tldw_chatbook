@@ -71,6 +71,12 @@ ADR required: yes (ADR-084 and ADR-285 amended in place).
   - **Working directory:** ShadowRepo runs Git at its root, for both the native and legacy runners. This also fixes `add -- .` and stdin paths resolving against the app's cwd.
   - **Refused outright:** `cat-file --textconv` (a textconv driver is not a filter and is not qualified) and non-`-z` `update-index --stdin`.
   - **Checked empirically:** in a scratch HOME, the env pins kept a sentinel filter from running in the superproject and in a submodule child. A selected `required` driver fails the command instead.
+- **Second review (9a8dfe33dd).** All three escapes are closed: 7 of 25 racing captures got past the check and the filter ran 0 times. The review found two gaps that predate this task, and both are fixed:
+  - **Submodule child diff:** with `diff.submodule=diff`, a moved submodule started a child `git diff` without --no-ext-diff/--no-textconv, so its external diff ran. `diff` now also gets `--submodule=short`.
+  - **Non-UTF-8 names:** under a UTF-8 locale the `--get-regexp` query missed driver and remote names holding invalid UTF-8, so the check failed open. The query now runs under `LC_ALL=C`.
+  - **Hardening:** ShadowRepoService resolves the `git` it finds on PATH to an absolute path, since Git now runs at the agent-writable root.
+  - **Tests:** each of these has a test that fails on 9a8dfe33dd.
+  - **Accepted:** a missed `required` driver fails with the generic Git-failure message rather than the remedy text, because that is fail-closed. ADR-084 says so.
 - **Message.** "configured filters selected by Git attributes (remove the filter= attribute or its filter config)". The Console shows it as "⚠ change tracking failed for <root>: <error>".
 - **Plumbing.**
   - `ShadowRepo._native_command` passes stdin.
