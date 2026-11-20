@@ -76,6 +76,7 @@ ADR required: yes (ADR-084 and ADR-285 amended in place).
   - **Non-UTF-8 names:** under a UTF-8 locale the `--get-regexp` query missed driver and remote names holding invalid UTF-8, so the check failed open. The query now runs under `LC_ALL=C`.
   - **Hardening:** ShadowRepoService resolves the `git` it finds on PATH to an absolute path, since Git now runs at the agent-writable root.
   - **Tests:** each of these has a test that fails on 9a8dfe33dd.
+- **Third pass (ac8d4f281d).** The reviewer confirmed both gaps closed: no textconv or external diff program ran on a moved submodule, and the `\xff\xfe` driver and remote are refused. `LC_ALL=C` changes only the query's regex matching. Its one Minor, older than this task, is fixed too: the references `git` is now made absolute in `ReferenceAuthority` and in `run_git_reference`'s fallback, as ShadowRepoService does.
   - **Accepted:** a missed `required` driver fails with the generic Git-failure message rather than the remedy text, because that is fail-closed. ADR-084 says so.
 - **Message.** "configured filters selected by Git attributes (remove the filter= attribute or its filter config)". The Console shows it as "⚠ change tracking failed for <root>: <error>".
 - **Plumbing.**

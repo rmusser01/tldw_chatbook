@@ -18,6 +18,7 @@ Two invariants carry the safety (AC#7 + AC#3):
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shutil
 import subprocess
@@ -414,7 +415,9 @@ def run_git_reference(
         raise RuntimeError("the git repository is outside the allowed workspace roots")
     if kind not in _SPECIAL_TOKENS:
         raise RuntimeError("unsupported git reference")
-    executable = executable or shutil.which("git")
+    if not executable:
+        found = shutil.which("git")
+        executable = os.path.abspath(found) if found else None  # see ReferenceAuthority
     if executable is None:
         raise RuntimeError("git executable unavailable")
     environment = (
