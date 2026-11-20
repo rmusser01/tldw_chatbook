@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-11-12 23:24'
-updated_date: '2026-11-20 16:56'
+updated_date: '2026-11-20 17:55'
 labels:
   - console
   - trace
@@ -26,7 +26,7 @@ The chained trace replacement (TASK-38298, ADR-337 amendment 2026-11-06) is writ
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Binding a chain is measured at about 2,000 rows and at the 256-link cap, wall and CPU, with the share spent validating links
-- [ ] #2 If the duplicate validation is removed or narrowed, every link is still validated once inside the binding transaction, and the tests that pin per-link revalidation stay green
+- [x] #2 If the duplicate validation is removed or narrowed, every link is still validated once inside the binding transaction, and the tests that pin per-link revalidation stay green
 - [x] #3 The measurements and the decision are recorded in the task notes
 <!-- AC:END -->
 
@@ -48,7 +48,7 @@ Filed 2026-11-12 from the PR #3515 review (finding F4). A sweep of every ref's t
 <!-- SECTION:NOTES:BEGIN -->
 **Measured first, decided second: the duplicate validation stays.** The write lock is held for about 38 s at the 256-link cap, but validation is 0.6% of that; 99% is the replacement-row lineage trigger, filed as TASK-42130.
 
-**Method.** A scratch probe under `Tests/Chat/` (deleted before commit; kept in the session scratchpad) used the planner tests' real `_Chat` harness and the Compact now shape: record N rows in one send, commit a conversation memory, then send 3 rows, so the whole history is replaced as a chain. A template database was copied with the SQLite backup API before each run. A fresh service prepared the send and then bound it, warm, as the runtime does. `bind_and_mark_dispatch` was timed with `perf_counter` and `thread_time`, after `gc.collect()`. Wrappers timed each `_validate_replacement_range` pass and its `read_lineage_surface_nodes` calls. load1 was read before and after every bind. M4 Pro, shared host.
+**Method.** A scratch probe, now kept as the opt-in `Tests/Benchmarks/test_console_trace_chain_binding.py` (set `TLDW_TRACE_CHAIN_BINDING_BENCH=1`), used the planner tests' real `_Chat` harness and the Compact now shape: record N rows in one send, commit a conversation memory, then send 3 rows, so the whole history is replaced as a chain. A template database was copied with the SQLite backup API before each run. A fresh service prepared the send and then bound it, warm, as the runtime does. `bind_and_mark_dispatch` was timed with `perf_counter` and `thread_time`, after `gc.collect()`. Wrappers timed each `_validate_replacement_range` pass and its `read_lineage_surface_nodes` calls. load1 was read before and after every bind. M4 Pro, shared host.
 
 The cap shape is an upper bound. Its 65,536 rows were recorded live in one send; the setup raised the credential sanitizer's 100,000-node budget to do that, since a captured request otherwise carries at most about 20,000 messages. The validation's lineage reads are at their true maximum regardless: 65,536 rows per pass, live or dead. The trigger's cost follows stored depth, and any 256-link chain spans at least 65,281 stored sequences.
 
@@ -80,7 +80,7 @@ cProfile agrees. At the cap, 37.77 s of a 38.24 s bind was in the 257 `append_su
 2. The pass is `_replace_surface`'s own check, in the only writer of replacement rows. It keeps that writer safe if its caller, or the code between the request writer's check and the write, changes later.
 3. The lock is the trigger's, so TASK-42130 owns it. Once that cost is gone, validation is most of what remains (76% of a 0.29 s bind at the cap, 38% for the duplicate). Revisit the duplicate with that task's measurements.
 
-AC#2 is conditional and its condition did not arise: no validation was removed or narrowed. The per-link revalidation pins (`test_dispatch_binding_revalidates_every_link`, and TASK-40577's binding test) are green.
+AC#2 is ticked as conditional, not triggered: no validation was removed, and the per-link revalidation pins stay green (`test_dispatch_binding_revalidates_every_link` and TASK-40577's binding tests).
 
-No code changed for this task; its commit holds only these notes and the follow-up task file.
+No product code changed for this task. Its commit holds these notes, the follow-up task file, and the ADR-337 paragraph "Dispatch binding re-measured 2026-11-20". A later commit adds the opt-in probe (`Tests/Benchmarks/test_console_trace_chain_binding.py`, see TASK-42130) and amends that ADR's 2026-11-12 cost sentence.
 <!-- SECTION:NOTES:END -->
