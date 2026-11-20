@@ -375,21 +375,7 @@ def test_device_state_store_lifecycle_does_not_void_a_reviewed_scope(
 
 @pytest.mark.parametrize(
     "owner",
-    [
-        "notes.sync_state",
-        "personal_context.interview_drafts",
-        pytest.param(
-            "personal_context.repository",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "TASK-34100.16.1.1: its present files stay explicit "
-                    "unsupported rows (owner decision 2026-11-06), and a "
-                    "present row's path is reviewed scope"
-                ),
-            ),
-        ),
-    ],
+    ["notes.sync_state", "personal_context.interview_drafts"],
 )
 def test_local_sqlite_wal_lifecycle_does_not_void_a_reviewed_scope(
     tmp_path, monkeypatch, owner
@@ -399,11 +385,11 @@ def test_local_sqlite_wal_lifecycle_does_not_void_a_reviewed_scope(
     TASK-34100.16.1 review: the excluded stores (the Notes device state and
     the Personal Context interview drafts) share the fixed code path; Create
     runs with the digest reviewed while the store was open.
-    ``personal_context.repository`` is declared but not excluded: its
-    ``-wal``/``-shm`` rows flip between unsupported (present, path in scope)
-    and unused (absent) as Personal Context opens and closes per-operation
-    WAL connections, so a Review taken during one fails at Create with
-    ``scope_changed``. That case is held for TASK-34100.16.1.1.
+    ``personal_context.repository`` was a third case, a strict xfail for
+    TASK-34100.16.1.1, until dev's TASK-40134 captured that database through
+    its own owner (one row, no sidecar rows). This test's foreign-schema file
+    is refused there as unsupported, so the case no longer measured the WAL
+    lifecycle and was dropped at the 2026-11-19 rebase.
     """
     import sqlite3
     from contextlib import closing
