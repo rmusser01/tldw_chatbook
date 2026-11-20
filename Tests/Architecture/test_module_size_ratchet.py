@@ -1157,7 +1157,8 @@ _BUDGETS: dict[str, int] = {
     # (measured 7,028): exact measurement 7,037.
     # 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7067 -> 7076.
     # 2026-11-15: re-measured after rebasing onto dev cc6006fcf5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7078 -> 7087.
-    "tldw_chatbook/Chat/console_runtime.py": 7087,
+    # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 7087 -> 7096.
+    "tldw_chatbook/Chat/console_runtime.py": 7096,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
