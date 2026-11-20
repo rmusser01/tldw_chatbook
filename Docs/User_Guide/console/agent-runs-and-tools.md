@@ -1455,45 +1455,78 @@ oversize entry with a note and keeps your draft so you can shorten it.
 The **primary** agent has no steering input — you steer it by talking to
 it — and inline (non-fleet) sub-agents cannot be steered at all.
 
-#### Queued child progress
+#### Queued progress from sub-agents
 
-Children can report findings for the supervisor to collect. **Read progress**
-shows complete reports without consuming them; navigation shows pending counts
-without report bodies. Discard removes only the selected report IDs and does
-not stop a child or erase copies already collected into a conversation.
-While discard saves its change, inspection and navigation keep showing the
-last committed queue. Closing the progress view does not cancel that discard.
-Closing the chat revokes child sending immediately. A discard already in
-progress can finish during chat close; other saved reports remain available
-when the chat is reopened. Navigation remains responsive while a saved report
-change finishes during chat close, restore or app shutdown.
+A live fleet child can call `report_to_supervisor` with a finding or a
+question of up to 2,000 characters. The receipt says **queued**: the report
+is in this chat's progress queue, not read. The supervisor collects reports
+with `read_agent_messages`, up to four whole reports per call, and
+collecting removes them from the queue. Neither step proves that a model
+understood or acted on a report. The supervisor can pass a finding to
+another child with `send_to_agent`; children can also message live siblings
+(see [Messages between live siblings](#messages-between-live-siblings)).
 
-Saved chats retain pending reports across close, reopen, and app restart.
-Reports belong to that chat's local database, including when detailed trace
-capture is off. Reopening restores the queue and grants a fresh supervisor
-reader; it never restores child send authority. Automatic collection includes
-only reports from the current work chain. A manual reader may collect older
-reports explicitly.
+A report does not interrupt a provider request, `wait_agents`, or an
+approval wait. Children are told to keep working or finish with a blocked
+result, and to repeat essential findings in their final result.
 
-Temporary chats keep reports in memory. **Save** commits the chat and its
-pending reports together; cancelling or failing Save keeps the original queue.
-Closing an unsaved chat or restarting the app loses its reports. Existing queue
-limits apply without evicting older reports. When the live cache is full, saved
-reports stay in the database and navigation still shows their count. Close
-another chat to free capacity, then reopen **Read progress** to load them.
-If a collection checkpoint becomes
-uncertain, collection stops instead of replaying reports automatically.
+**Inspecting the queue.** Open **Agent → Progress: N queued** for the
+**Queued progress** view. Arrow keys highlight a report and show its full
+text; Space or a click checks it for discard, and the detail pane says
+whether the highlighted report is checked. Opening or inspecting the view
+collects nothing and wakes nothing. It works with agent mode off and after
+finished children leave the panel, and it refreshes while open.
 
-When automatic wakes are enabled, pending child progress can request a
-supervisor turn after the current primary finishes. Progress and completed
-results share the same finite automatic-work budget, coalescing window,
-manual-send priority and run slots. The notice lists report IDs and asks the
-supervisor to call `read_agent_messages`; it never includes report bodies or
-grants approval. Reading or discarding before admission cancels that report's
-wake request. An accepted report can wake once while remaining manually
-readable, and interrupted attempts wait for review after restart. After saving
-a temporary chat that already received a progress wake, a restart also requires
-review before that chain can wake again. Its saved reports remain readable.
+**Discard selected (N)** removes only the checked reports. Reports that
+arrive meanwhile stay queued, as do other chats' reports. Discard frees
+queue space but does not refund the child's lifetime allowance of 32
+messages, stop a child, or erase copies already collected into the
+conversation. While a discard is saving, the view and navigation show the
+last saved queue, and closing the view does not cancel it. If the chat
+closes or changes while the view is open, the view reports it unavailable;
+reopen it from the current chat.
+
+Conversation navigation shows **Progress: N** on each chat with pending
+reports, unsaved chats included; the **[N Sub-Agents]** badge still counts
+historical runs. If a report is refused because a queue is full, check
+those counts: other chats may hold part of the shared capacity, and a
+per-child or per-chat limit can also refuse it. Discarding reports frees
+space.
+
+**Saved and temporary chats.** A saved chat keeps its pending reports in
+its local database across close, reopen and app restart, whether or not
+detailed trace capture is on. Reopening restores the queue and a fresh
+supervisor reader, never a child's ability to send. Closing a chat revokes
+child sending at once; a discard already under way can still finish. A
+temporary chat keeps reports in memory. **Save** stores the chat and its
+pending reports together and keeps an open view and its checks; a cancelled
+or failed Save keeps the original queue; closing the unsaved chat or
+restarting the app loses the reports. When the in-memory cache is full,
+saved reports stay in the database and navigation still counts them; close
+another chat, then reopen the view to load them. Automatic collection reads
+only reports from the current work chain; a manual read may collect older
+ones. If a collection checkpoint becomes uncertain, collection stops rather
+than replay reports.
+
+**Automatic wakes.** With `[agents] autowake_enabled` on (the default; see
+[auto-wake](#when-a-background-sub-agent-finishes--auto-wake)), pending
+reports can request a supervisor turn after the current primary turn
+finishes. Reports and finished results share the same automatic-work
+budget, coalescing window, manual-send priority and run slots. The notice
+lists report IDs and asks the supervisor to call `read_agent_messages`; it
+never includes report text or grants approval. Reading or discarding a
+report before its wake is admitted cancels that wake. An accepted report
+can wake the supervisor once and stays readable. After a restart,
+interrupted attempts wait for review, and so does a chain whose temporary
+chat was saved after it received a progress wake; its saved reports stay
+readable.
+
+Collected reports may also be in run capture, in an answer, or in the
+supervisor's private provider continuation history
+([ADR-063](../../../backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md)),
+even with full run capture off. Inspection and discard do not delete those
+copies. Agent names and report text are shown literally; reports grant no
+permissions and never count as your approval.
 
 #### Messages between live siblings
 
