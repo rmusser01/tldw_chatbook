@@ -172,8 +172,10 @@ async def _run_skills_import_via_ui(
         status_widgets = list(screen.query("#library-skills-import-status"))
         if status_widgets:
             status_text = str(status_widgets[0].renderable)
+            # The in-flight line can grow a "· still working · Cancel" tail.
             if (
-                status_text not in (previous, "Inspecting/importing…")
+                status_text != previous
+                and not status_text.startswith("Inspecting/importing")
                 and not screen._library_skills_import_in_flight
             ):
                 return status_text
@@ -2091,7 +2093,6 @@ async def test_import_row_url_routes_to_remote_install_and_primes_review(
             screen,
             pilot,
             "https://github.com/o/remote-skill",
-            deadline_seconds=2,
         )
         assert captured, (
             app.library_skill_import_coordinator.snapshot,
