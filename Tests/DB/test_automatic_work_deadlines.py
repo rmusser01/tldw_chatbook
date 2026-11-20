@@ -400,3 +400,40 @@ def test_a_hold_before_the_first_wake_starts_no_clock(db, clock):
     assert db.automatic_work.snapshot(chain_id).started_at is None
     assert db.automatic_work.commit("first", owner_id="owner")
     assert db.automatic_work.snapshot(chain_id).deadline_at == 1110.0
+
+
+def test_other_automatic_work_in_the_allowance_ends_the_hold(db, clock):
+    """Review of TASK-33621.153: another chat's wake under the same allowance
+    runs, so the clock runs again from its admission. Only the wait before it
+    stays out; the rest of the held chat's wait counts (TASK-33621.157)."""
+    from Tests.DB.test_automatic_chat_starts import prepare, source_run
+
+    root, source = source_run(db, wall_seconds=10)
+    member = prepare(db, source, "a", "member-start")
+    assert db.automatic_work.accept_chat_start(member.id, owner_id="owner")
+    assert db.automatic_work.complete_chat_start(member.id, owner_id="owner")
+    clock[:] = [1004.0, 4.0]
+    db.automatic_work.pause(root, "compaction_ask")
+    clock[:] = [1005.0, 5.0]
+    finished = survivor(db, member.chain_id, conversation="a")
+
+    claim(db, member.chain_id, [finished], attempt="member-wake", session="session-a")
+
+    snapshot = db.automatic_work.snapshot(root)
+    assert (snapshot.status, snapshot.pause_reason) == ("active", None)
+    assert snapshot.deadline_at == 1011.0, "only the 1 s before it stays out"
+    clock[:] = [1100.0, 100.0]
+    with pytest.raises(AutomaticWorkRefused, match="wall_budget"):
+        _call(db, root, "held-chat-retry")
+
+
+def test_a_review_pause_with_the_ask_code_starts_no_hold(db, clock):
+    chain_id = _started(db)
+    clock[:] = [1001.0, 5.0]  # a slow wall clock: a hold would fold 4 s in
+
+    db.automatic_work.pause(chain_id, "compaction_ask", review_required=True)
+
+    with db.connection() as conn:
+        row = db.automatic_work._chain(conn, chain_id)
+    assert row["status"] == "review_required"
+    assert (row["last_observed_at"], row["deadline_at"]) == (1000.0, 1010.0)
