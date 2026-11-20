@@ -995,7 +995,7 @@ _MOUNT_REBUILD_STARTS = {
 @pytest.mark.asyncio
 @pytest.mark.parametrize("start", list(_MOUNT_REBUILD_STARTS))
 async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
-    tmp_path, start, monkeypatch
+    tmp_path, start, monkeypatch, request
 ):
     """TASK-35836: the refreshes a Console mount schedules never wait for a rebuild.
 
@@ -1020,6 +1020,7 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
 
     app = _build_test_app()
     app.chachanotes_db = CharactersRAGDB(tmp_path / "console-mount.sqlite", "mount-ui")
+    request.addfinalizer(app.chachanotes_db.close_connection)
     _configure_native_ready_console(app, model="test-model")
     assert save_setting_to_cli_config("console", "agent_runtime", False)
     app.app_config.setdefault("console", {})["agent_runtime"] = False
@@ -1161,10 +1162,12 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
 
     holder.start()
     coordinator = asyncio.create_task(coordinate_hold())
+    runtime = None
     try:
         await asyncio.sleep(0)  # the heartbeat runs before mount readiness waits
         async with ConsoleHarness(app).run_test(size=(120, 35)) as pilot:
             console = pilot.app.screen_stack[-1]
+            runtime = console._console_runtime()
             deferred = await coordinator
             holder.join(3)
             assert not holder.is_alive()
@@ -1207,7 +1210,6 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
                     f"timer_count={len(console._timers)}"
                 )
             assert console._last_console_workspace_width_band is not None
-            await console._console_runtime().dispose()
     finally:
         coordinator.cancel()
         await asyncio.gather(coordinator, return_exceptions=True)
@@ -1219,6 +1221,9 @@ async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
         release.set()
         hold.set()
         holder.join(3)
+        if runtime is not None:
+            # The host drains its view workers before AgentRuns can retire.
+            await runtime.dispose()
     assert not holder.is_alive() and not watch.is_alive()
 
 

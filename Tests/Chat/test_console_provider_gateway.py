@@ -4402,7 +4402,7 @@ async def test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base() -> None
         assert "api_mode" not in primary_kwargs
         assert "api_mode" not in prepared_kwargs
         assert "api_mode" not in auxiliary_kwargs
-        if provider == "anthropic":
+        if provider in {"anthropic", "deepseek"}:
             assert primary_kwargs["api_base_url"] == base_url
             assert prepared_kwargs["api_base_url"] == base_url
         else:
@@ -4525,13 +4525,14 @@ async def test_console_send_pins_configured_base_url_for_every_affected_provider
 async def test_console_send_leaves_base_url_unpinned_in_default_case(
     provider_key: str,
 ) -> None:
-    """TASK-2117 AC#3: with no api_base_url configured, nothing is pinned.
+    """TASK-2117 AC#3: preserve each provider's default endpoint policy.
 
     The kwarg stays absent so each adapter keeps resolving its own default
     (including any legacy-section endpoint) exactly as before the fix.
-    HuggingFace is the exception (TASK-40300 review r14ep-rev5): its adapter
+    HuggingFace requires a pin (TASK-40300 review r14ep-rev5): its adapter
     reads ``huggingface_api`` unpinned, whatever Console checked, so it is
-    always pinned to the endpoint Console checked.
+    always pinned to the endpoint Console checked. DeepSeek freezes its
+    normalized base with its API mode (ADR-064).
     """
 
     calls: list[dict[str, object]] = []
@@ -4556,8 +4557,8 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
         ConsoleProviderSelection(provider=provider_key, streaming=False)
     )
     assert resolution.ready, resolution.visible_copy
-    # The resolution still carries the builtin fallback for display purposes;
-    # only the adapter kwarg must stay unset.
+    # Every resolution carries a builtin fallback; only providers that freeze
+    # their checked endpoint pass it explicitly to the adapter.
     assert resolution.base_url
 
     assert [
@@ -4567,7 +4568,7 @@ async def test_console_send_leaves_base_url_unpinned_in_default_case(
         )
     ] == ["ok"]
 
-    if provider_key == "huggingface":
+    if provider_key in {"huggingface", "deepseek"}:
         assert calls[0]["api_base_url"] == resolution.base_url
     else:
         assert "api_base_url" not in calls[0]
@@ -11419,9 +11420,9 @@ class TestGatewayExchangeCapture:
             def raise_for_status(self) -> None:
                 return None
 
-            def iter_lines(self, *, decode_unicode: bool):
-                assert decode_unicode is True
-                yield 'data: {"choices": [{"delta": {"content": "he"}}]}'
+            def iter_lines(self, *, decode_unicode: bool = False):
+                assert decode_unicode is False
+                yield b'data: {"choices": [{"delta": {"content": "he"}}]}'
                 raise AssertionError("stopped stream requested another HTTP chunk")
 
             def close(self) -> None:

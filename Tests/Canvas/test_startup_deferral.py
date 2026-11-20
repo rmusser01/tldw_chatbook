@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import subprocess
 import sys
 import textwrap
 import threading
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Canvas.control_protocol import CONTROL_PROTOCOL_VERSION
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
@@ -64,6 +67,8 @@ def _isolated_environment(tmp_path: Path) -> dict[str, str]:
     return environment
 
 
+@private_profile_test
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("environment", "expects_handler", "expects_client"),
     [
@@ -73,7 +78,8 @@ def _isolated_environment(tmp_path: Path) -> dict[str, str]:
     ],
     ids=["native", *[f"partial-{key}" for key in CONTROL_ENV], "served"],
 )
-def test_app_constructs_served_control_only_for_present_spawn_environment(
+async def test_app_constructs_served_control_only_for_present_spawn_environment(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     environment: dict[str, str],
     expects_handler: bool,
@@ -92,6 +98,8 @@ def test_app_constructs_served_control_only_for_present_spawn_environment(
         assert app.served_canvas_control.child_id == "child-a"
 
 
+@private_profile_test
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "package_damage",
     [
@@ -101,7 +109,8 @@ def test_app_constructs_served_control_only_for_present_spawn_environment(
         "malformed-catalog",
     ],
 )
-def test_served_child_keeps_control_without_native_fallback_when_profiles_fail(
+async def test_served_child_keeps_control_without_native_fallback_when_profiles_fail(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     damage_canvas_package,
     package_damage: str,
@@ -131,12 +140,14 @@ def test_served_child_keeps_control_without_native_fallback_when_profiles_fail(
         )
         assert app.console_runtime.ensure_canvas_gateway(authority=object()) is None
     finally:
-        asyncio.run(app.console_runtime.dispose())
+        await app.console_runtime.dispose()
 
 
+@private_profile_test
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
 async def test_unavailable_child_retains_snapshot_and_healthy_parent_refuses(
+    request,
     monkeypatch: pytest.MonkeyPatch,
     candidate_snapshot,
     damage_canvas_package,
@@ -474,6 +485,87 @@ def _publish_root_canvas(
     return created, settlement
 
 
+@pytest.mark.parametrize("retirement", ["detach", "replace"])
+@pytest.mark.parametrize("materialized", [False, True])
+def test_retiring_canvas_view_releases_callbacks_without_disposing_run_state(
+    retirement, materialized
+) -> None:
+    runtime = ConsoleRuntime(
+        SimpleNamespace(chachanotes_db=None), canvas_enabled_reader=lambda: True
+    )
+    store = runtime.ensure_chat_store()
+    session = store.create_session(ephemeral=True)
+    scopes = {}
+
+    class View:
+        def console_view_hooks(self):
+            return {}
+
+        def scope(self, requested):
+            return scopes[requested]
+
+        def opened(self, _requested, _info):
+            pass
+
+    view = View()
+    generation = runtime.attach_view(view)
+    _bind_canvas_view(runtime, scope_resolver=view.scope, auto_open=view.opened)
+    authority = None
+    browser = None
+    try:
+        if materialized:
+            created, _ = _publish_root_canvas(
+                runtime, store, session.id, "retired-view-run", scopes
+            )
+            authority = runtime._canvas_native_authority
+            assert authority is not None
+            browser = authority.gateway_scope(
+                session_id=session.id,
+                browser_session_id="view-lifetime-browser",
+                canvas_id=created.revision.canvas_id,
+                revision_id=created.revision.revision_id,
+                follow_latest=False,
+            )
+            assert "synthetic" in authority.read_source(browser).source
+
+        successor = View()
+        if retirement == "detach":
+            assert runtime.detach_view(view, generation) is True
+        else:
+            runtime.attach_view(successor)
+            assert runtime.detach_view(view, generation) is False
+        if authority is not None:
+            with pytest.raises(RuntimeError, match="canvas_scope_unavailable"):
+                authority.read_source(browser)
+            selected = runtime.canvas_controller.capture_selected_scope(
+                runtime._canvas_scope_for_run(session.id)
+            )
+            assert (selected.selected_canvas_id, selected.selected_revision_id) == (
+                created.revision.canvas_id,
+                created.revision.revision_id,
+            )
+        retired = weakref.ref(view)
+        del view
+        gc.collect()
+        assert retired() is None
+
+        if retirement == "detach":
+            runtime.attach_view(successor)
+        _bind_canvas_view(
+            runtime, scope_resolver=successor.scope, auto_open=successor.opened
+        )
+        assert runtime.detach_view(object(), generation) is False
+        assert runtime.view is successor
+        if authority is not None:
+            assert runtime._canvas_native_authority is authority
+            assert "synthetic" in authority.read_source(browser).source
+        else:
+            assert runtime._canvas_native_authority is None
+    finally:
+        asyncio.run(runtime.dispose())
+
+
+@pytest.mark.bootstrap_profile
 def test_canvas_view_binding_builds_authority_on_first_publication_and_rebinds(
     tmp_path,
 ) -> None:
@@ -565,6 +657,7 @@ async def test_canvas_view_binding_cannot_build_authority_after_runtime_closes(
         await runtime.dispose()
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_view_rebind_registers_listener_on_rebuilt_controller() -> None:
     runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=None))
     first_store = runtime.ensure_chat_store()
@@ -597,6 +690,7 @@ def test_canvas_view_rebind_registers_listener_on_rebuilt_controller() -> None:
         asyncio.run(runtime.dispose())
 
 
+@pytest.mark.bootstrap_profile
 def test_concurrent_first_canvas_ensure_constructs_one_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

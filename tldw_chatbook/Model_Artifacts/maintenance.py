@@ -14,7 +14,12 @@ _local = threading.local()
 
 class _Lifetime:
     def __init__(self, root):
-        self.root = root.resolve()
+        from .service import ArtifactPathError
+
+        try:
+            self.root = root.resolve()
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ArtifactPathError("failed to resolve artifact store root") from error
         self.lease = storage.acquire_storage(self.root)
         self.references = 1
         with storage._changed:

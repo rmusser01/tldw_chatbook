@@ -498,14 +498,24 @@ async def test_live_work_mcp_row_names_the_unbound_store_reason(
 
 
 @pytest.mark.asyncio
-async def test_unbound_live_work_mcp_row_fits_the_section_at_full_screen(tmp_path):
+@pytest.mark.parametrize("rag_available,expected_card_rows", [(True, 17), (False, 18)])
+async def test_unbound_live_work_mcp_row_fits_the_section_at_full_screen(
+    tmp_path, monkeypatch, rag_available, expected_card_rows
+):
     """TASK-41631: the reason wraps the MCP row, and the card stays in its cap.
 
     Measured with the Inspector open: the row's content is 36 columns at
     235x52, 29 at 200x60 and 23 at 160x45. The unbound row takes 2, 2 and 3
     lines, and the card 17, 18 and 19 rows (bound: 16, 17, 18). All stay
     within the live-work section's 20-row cap, so no "more" hint appears.
+    Those counts include the Ready RAG row; without extras its Unavailable
+    row adds one line at 235x52, independently of the MCP reason.
     """
+    from tldw_chatbook.Utils import optional_deps
+
+    monkeypatch.setattr(
+        optional_deps, "embeddings_rag_deps_installed", lambda: rag_available
+    )
     app = _build_console_send_test_app(user_data_dir=tmp_path)
     host = ConsoleHarness(app)
 
@@ -532,6 +542,6 @@ async def test_unbound_live_work_mcp_row_fits_the_section_at_full_screen(tmp_pat
 
     assert text == f"MCP: Off - {UNBOUND_MCP_STORE_REASON}"
     assert row_lines == 2
-    assert card_rows == demand == 17
+    assert card_rows == demand == expected_card_rows
     assert demand <= cap == 20
     assert hint_shown is False
