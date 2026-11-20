@@ -4570,6 +4570,7 @@ class TldwCli(
         if execution_allowed(("db.scheduled_tasks",), self.scheduler_loop.db.db_path):
             self.scheduler_worker = self.run_worker(
                 self._run_scheduler_after_local_recovery(),
+                name="run",  # Keep the scheduler identity in the boot policy.
                 exclusive=True,
                 group="scheduling",
             )

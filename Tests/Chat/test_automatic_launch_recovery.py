@@ -66,7 +66,9 @@ def test_discovery_reads_unmarked_claimed_results_without_recovery(native):
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
-@pytest.mark.parametrize("outcome", ["current", "new-source", "disabled", "cancelled"])
+@pytest.mark.parametrize(
+    "outcome", ["current", "new-source", "disabled", "closing", "cancelled"]
+)
 async def test_app_launch_discovery_retires_on_a_worker_before_delivery(
     native, monkeypatch, outcome
 ):
@@ -118,6 +120,8 @@ async def test_app_launch_discovery_retires_on_a_worker_before_delivery(
             )
         elif outcome == "disabled":
             monkeypatch.setattr(launch, "autowake_enabled", lambda: False)
+        elif outcome == "closing":
+            app._shutting_down = True
         elif outcome == "cancelled":
             startup.cancel()
             await asyncio.sleep(0)
