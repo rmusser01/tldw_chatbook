@@ -5881,8 +5881,9 @@ class ConsoleTraceService:
         A chain's links must also leave no live row between them, so removing
         the whole range removes exactly what the links replace. Each link must
         hold at least one live row: the reader folds a link over the live rows
-        in its range and refuses one that has none, which would fail every
-        later read of the trace (TASK-40577).
+        in its range and refuses one that has none, so neither the new head nor
+        any later head would read back, and after a restart no send could plan
+        (TASK-40577). Heads recorded before the chain are unaffected.
         """
 
         if tail is None or tail.node_id != plan.predecessor_head_id:

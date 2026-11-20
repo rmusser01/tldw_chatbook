@@ -47,13 +47,13 @@ Filed 2026-11-12 from the PR #3515 review (finding F3). The backlog CLI offered 
 <!-- SECTION:NOTES:BEGIN -->
 **Dispatch binding now refuses a chain link that holds no live row, before it writes anything.**
 
-**The premise, confirmed on dev d85e90bc9e** with a scratch probe, since deleted. An earlier edit left sequences 1..130 dead. A defective grouping, (0,0) (1,130) (131,255) (256,260), passed preparation and binding, and the call committed as `dispatch_started`. A cold read of the new head then failed with `surface_replacement_target_inactive`, and so did the planning of the chat's next send.
+**The premise, confirmed on dev d85e90bc9e** with a scratch probe, since deleted. An earlier edit left sequences 1..130 dead. A defective grouping, (0,0) (1,130) (131,255) (256,260), passed preparation and binding, and the call committed as `dispatch_started`. A cold read of the new head then failed with `surface_replacement_target_inactive`, and so did the planning of the chat's next send by a fresh service. A second probe found two more effects; it ran on this branch with both copies of the check skipped. The warm service that bound the chain kept sending, but every head it recorded after the chain also failed to read back. Heads recorded before the chain still read.
 
 **The change.** `_validate_replacement_range` already makes one pass over the predecessor surface's live entries. It now maps each linked sequence to its link and records the link each live row falls in:
 - A live row inside the range but outside every link is still `replacement_chain_gap`.
 - A link that no live row falls in is now `replacement_chain_link_inactive`.
 
-The request writer runs this check before the binding transaction's first write, so the send is refused with nothing written, and preparation refuses the same plan. No schema change. The ADR-337 amendment's implementation paragraph now names the check. The size ratchet row for `console_trace_service.py` moves 6739 -> 6746 (+7, exact).
+The request writer runs this check before the binding transaction's first write, so the send is refused with nothing written, and preparation refuses the same plan. No schema change. The ADR-337 amendment's implementation paragraph now names the check. The size ratchet row for `console_trace_service.py` moves 6739 -> 6747 (+8, exact).
 
 **The test.** `test_dispatch_binding_refuses_a_link_that_covers_no_live_row` in `Tests/Chat/test_console_trace_chained_replacement.py` drives:
 - the real planner, with the defective grouping standing in for a planner defect;
@@ -75,8 +75,9 @@ The real send then records the planner's own chain, (0,255) (256,260), and reads
 - Green with the fix.
 - Mutation: with the new `raise` disabled, red again with the same DID NOT RAISE.
 - Preparation's copy of the check is skipped in the test, so the binding layer is tested alone, not shadowed by the earlier guard.
+
 **AC#3: chains the planner builds, and single replacements, still bind and read back.** Every trace dispatch, binding, chain and read-back file was run, one file per command, on this branch and on a detached dev d85e90bc9e worktree:
-- Chained replacement 12 passed (dev 11; +1 is the new test); rewritten history 14; rewritten-tail planner 4; rewritten tail 26.
+- Chained replacement 12 passed (dev 11; +1 is the new test), 13 with the review follow-up's test; rewritten history 14; rewritten-tail planner 4; rewritten tail 26.
 - Trace service 77, whose single-replacement cases are among them; trace runtime 87; call lifecycle 15.
 - Dispatch continuation handoff 73; discarded tool run 31; failed tool run 51; refusal diagnostics 3; spawn sub-agent capture 20.
 - Continuation 29; fork lineage 7; native reader 9; repository 27; projection 72.
@@ -89,6 +90,13 @@ Five reds are dev's own, identical by test id and failure on dev d85e90bc9e:
 - `Tests/Benchmarks/test_console_trace_growth.py::test_console_trace_growth_release_gate[append]` (append dispatch refused at turn 104).
 
 None of them reaches a chained replacement.
+
+**Review follow-up (2026-11-20).** Changing the live-row filter to `start <= sequence < end`, so that it skips the range's end row, left all 12 earlier chained-replacement tests green. Only the planner tests caught it. A binding-level case now pins it: `test_dispatch_binding_accepts_a_final_link_holding_only_its_end_row`. An edit replaced 12..267, so the planner's links are (0,11) and (268,268), and the second link's only live row is the range's end sequence. Preparation's copy of the check is skipped, so binding's own check must accept the chain, and the send must read back warm, cold and through the native reader.
+- Green on the head.
+- Under that mutation it is red (`_TraceDispatchWriteError`, the bind refused), while the other 12 tests in the file stay green.
+- Green again once the mutation was reverted.
+
+The docstring and the ADR now say the new head and every later head would not read back, and that after a restart no send could plan; heads recorded before the chain still read.
 
 Not verified in the running app. The planner never builds such a link, so no UI path reaches the check, and launching the TUI would use the owner's real profile.
 <!-- SECTION:NOTES:END -->
