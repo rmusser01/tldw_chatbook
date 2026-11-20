@@ -874,15 +874,16 @@ def _refusing_state(case, state):
         finally:
             participant.resume()
     else:
-        # An earlier write of this store that could not retire its native
-        # resources: every later scope over its selected file is refused until
-        # the process retires them (here: the injected record is removed).
+        # An earlier write that could not retire its native resources: every
+        # later scope over the same selected file is refused until the process
+        # retires them (here: the injected record is removed). The write was
+        # this store's own, or another object's over the same file.
         from tldw_chatbook.Backup_Recovery import mcp_source_participants
 
         selected = mcp_source_participants.binding(permission)[1]
         token = object()
         record = raw_participants._State(
-            permission,
+            permission if state == "unretired-write" else object(),
             None,
             selected,
             (),
@@ -918,7 +919,13 @@ async def _outcome(case):
 
 @pytest.mark.parametrize(
     "state",
-    ["producer-paused", "storage-paused", "admission-closed", "unretired-write"],
+    [
+        "producer-paused",
+        "storage-paused",
+        "admission-closed",
+        "unretired-write",
+        "unretired-write-other-object",
+    ],
 )
 async def test_a_kept_switch_read_never_answers_where_a_real_read_is_refused(
     preview_case, run_start_tools, state
@@ -940,3 +947,60 @@ async def test_a_kept_switch_read_never_answers_where_a_real_read_is_refused(
         read = await _outcome(case)
     assert read != LIGHT, "precondition: a real read is refused in this state"
     assert kept == read, "a kept switch read answered where a real read is refused"
+
+
+async def test_a_kept_switch_read_never_waits_for_a_contended_storage_lock(
+    preview_case, run_start_tools
+):
+    """The proof never waits on the storage lock; contended, the hop reads.
+
+    Storage admission holds its lock across file reads and a registry
+    ``flock`` (``_acquire_storage``), so a blocking wait for it on the UI loop
+    can last as long as another thread's acquisition. With the lock held
+    elsewhere for 1 s, the loop-side proof answers None at once and the
+    preview takes the hop, which waits on the worker as dev's read does; the
+    loop keeps ticking throughout.
+    """
+    case = preview_case
+    first, surface = await _counted_preflight(case)
+    assert first.calls == 1 and surface == LIGHT
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with storage_admission._lock:
+            held.set()
+            release.wait(1.0)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert held.wait(2)
+        started = time.perf_counter()
+        answer = run_start_tools.proven_preview_switch(case.service._permission_store)
+        waited = time.perf_counter() - started
+        assert answer is None, "a kept read answered while the storage lock was held"
+        assert waited < 0.2, f"the loop-side proof waited {waited * 1000:.0f} ms"
+        gaps, ticking = [], True
+
+        async def tick():
+            last = time.perf_counter()
+            while ticking:
+                await asyncio.sleep(0.01)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        ticker = asyncio.create_task(tick())
+        probe = _OriginalPermissionRead(case.permissions)
+        probe.release.set()
+        with probe.installed(), pytest.raises(_Captured):
+            await _preflight(case)
+        ticking = False
+        await ticker
+    finally:
+        release.set()
+        holder.join(timeout=5)
+    assert probe.calls == 1, "the preview did not take the hop"
+    assert probe.thread is not threading.current_thread()
+    assert max(gaps) < 0.5, f"the UI loop stalled {max(gaps) * 1000:.0f} ms"
+    assert {row["function"]["name"] for row in case.prepared.pop()[1]} == LIGHT

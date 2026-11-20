@@ -152,17 +152,25 @@ class _RawParticipant:
 def refused_in_process(source) -> str | None:
     """The in-process refusal a new raw scope over ``source`` would meet now.
 
-    Reads process state only, under the storage lock, never a file: a local
-    storage pause, the source's participant admission closed or uninstalled,
-    or an earlier operation on the same source or selected file that could
-    not retire its native resources. For an estimate that answers without
-    opening the source (TASK-33620.15.52); a real scope still makes every
-    check itself, these included.
+    Reads process state only, never a file: a local storage pause, the
+    source's participant admission closed or uninstalled, or an earlier
+    operation on the same source or selected file that could not retire its
+    native resources. For an estimate that answers without opening the source
+    (TASK-33620.15.52); a real scope still makes every check itself, these
+    included.
+
+    It never waits for the storage lock. Storage admission holds that lock
+    across file reads and a registry ``flock`` (``_acquire_storage``), so a
+    caller on the UI loop could otherwise wait for another thread's whole
+    acquisition (TASK-35612 met the same stall). A lock held elsewhere counts
+    as a refusal, and the caller takes its real read instead.
 
     Returns:
         The refusal's reason code, or None when none of these holds.
     """
-    with storage._lock:
+    if not storage._lock.acquire(blocking=False):
+        return "storage_lock_contended"
+    try:
         if storage._pause is not None:
             return "storage_locally_paused"
         selected = set()
@@ -174,13 +182,16 @@ def refused_in_process(source) -> str | None:
             if state.closed:
                 return "storage_locally_paused"
             selected.add(state.selected)
+        # Holds the lock for O(live raw operations): a short in-memory scan.
         if any(
             operation.uncertain
             and (operation.source is source or operation.selected in selected)
             for operation in _states.values()
         ):
             return "raw_resources_not_retired"
-    return None
+        return None
+    finally:
+        storage._lock.release()
 
 
 def participant_identity(participant):
