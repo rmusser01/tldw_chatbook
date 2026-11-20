@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 16:42
+updated_date: 2026-11-20 17:23
 labels:
 - follow-up
 - tests
@@ -39,9 +39,9 @@ Found by TASK-41526 (round 17). `test_settings_tool_profiles.py::test_removal_co
 
 Cause: test drift. 88ae92a234 (TASK-32802.2) made `ConfirmationDialog` render its title and message literally and removed the callers' pre-escaping, including `escape_markup(display_profile_id)` in Settings' removal flow. The test still asserted the escaped contract (`profile_id not in screen.message`) inside the mocked `push_screen_wait`; that assertion failed in the removal worker, which has `exit_on_error=False`, so the worker died before setting a result and the only visible failure was `assert '' == 'Remove cancelled'`. No product change.
 
-Fix: the mocked dialog only records what it was shown; after the run the test asserts one `ConfirmationDialog` whose message names the id verbatim (`Remove [bold]local-profile[/bold]?`) and the cancelled result. Literal rendering itself is the dialog's contract, pinned by `Tests/Widgets/test_confirmation_dialog_literal_text.py`.
+Fix: the test is renamed `test_removal_confirmation_names_the_profile_id_verbatim` (was `test_removal_confirmation_does_not_interpolate_the_profile_id`, which named the old escaped contract). The mocked dialog only records what it was shown; after the run the test asserts one `ConfirmationDialog` whose message names the id verbatim (`Remove [bold]local-profile[/bold]?`) and the cancelled result. Literal rendering itself is the dialog's contract, pinned by `Tests/Widgets/test_confirmation_dialog_literal_text.py`. Review rev1: the two sibling removal tests (`test_removal_worker_confirms_and_uses_the_rendered_revision`, `test_removal_worker_rechecks_cancellation_after_confirmation`) asserted `isinstance(screen, ConfirmationDialog)` inside the same kind of mock; they now record the dialog and assert its type after the run.
 
-Red/green: red at base (`assert '' == 'Remove cancelled'`). With `escape_markup(...)` temporarily restored in `settings_screen.py` (run through pytest, then reverted) the new assertion fails visibly: `assert 'Remove [bold]local-profile[/bold]?' in 'Remove \\[bold]local-profile\\[/bold]? ...'`. Green after.
+Red/green: red at base (`assert '' == 'Remove cancelled'`). With `escape_markup(...)` temporarily restored in `settings_screen.py` (run through pytest, then reverted) the new assertion fails visibly: `assert 'Remove [bold]local-profile[/bold]?' in 'Remove \\[bold]local-profile\\[/bold]? ...'`. Green after. Rev1: with the removal flow temporarily pushing a `dict(...)` instead of the dialog, all three removal tests fail visibly on `assert [<class 'dict'>] == [<class '...ConfirmationDialog'>]`; reverted, 3 passed.
 
 Lane: appended whole at the UI census tail (`MINIMUM_FILES` 2439 -> 2440). Charge: 30 tests (all `@private_profile_test`), 30 passed in 190.5 s serially with the lane's flags (`-p no:xdist --timeout=180 --durations=0 --durations-min=0 --tb=short`), load 20-27.
 
