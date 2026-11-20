@@ -296,7 +296,10 @@ save recorded the key as stored, the env var is unset: `openai_api_key`, `anthro
 `custom_openai2_api_key` is the tenth, on its own rule (below). Saving a change of
 provider, model or endpoint with that provider chosen copies the key into its
 own `[api_settings.<provider>]` table, so it stays the key in use if you set
-the env var later; a save of other rows alone copies nothing. No other `[API]`
+the env var later; a save of other rows alone copies nothing. A key of the
+provider's own that is still encrypted keeps the older key out, as for
+Custom 2: the provider is not ready, because its saved key is still
+encrypted, and nothing sends the older key. No other `[API]`
 key is shown in that row or copied. Once a save records "no credential"
 (**Clear**) or an **Env var** for the provider, its `[API]` key is no longer
 shown or copied, and chats and summaries no longer send it. The MCP server's

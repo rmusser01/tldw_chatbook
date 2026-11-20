@@ -1708,6 +1708,10 @@ def _normalize_legacy_provider_api_key(
     )
     if env_value:
         return env_value
+    if is_encrypted_config_value(table.get("api_key")):
+        # TASK-42007: ciphertext is a key of its own (TASK-41710's Custom 2
+        # rule), so readiness says still encrypted and nothing spends the legacy key.
+        return None
 
     legacy_value = resolve_provider_api_key(raw_api_section.get(toml_key))
     if legacy_value:

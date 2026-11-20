@@ -960,7 +960,9 @@ _BUDGETS: dict[str, int] = {
     # so this branch measures 8,837 (dev 8,835, +2); exact measurement.
     # 2026-11-20, TASK-42002 (owner decision "Migrate on load"): 8837 -> 8871
     # (+34) -- config migration 2 and the stamp-only no-rewrite check.
-    "tldw_chatbook/config.py": 8871,
+    # 2026-11-20, TASK-42007: 8871 -> 8875 (+4) -- the legacy key bridge
+    # keeps a still-encrypted slot key instead of copying the legacy key over it.
+    "tldw_chatbook/config.py": 8875,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

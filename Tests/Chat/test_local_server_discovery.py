@@ -5686,6 +5686,64 @@ def test_dreams_refuses_a_still_encrypted_key_and_sends_nothing(legacy, tmp_path
     )
 
 
+def _bridged_providers():
+    from tldw_chatbook.config import _LEGACY_PROVIDER_API_KEY_BRIDGE
+
+    return _LEGACY_PROVIDER_API_KEY_BRIDGE
+
+
+@pytest.mark.parametrize(("provider", "toml_key", "env_var"), _bridged_providers())
+def test_a_still_encrypted_slot_key_keeps_the_legacy_key_out(
+    provider, toml_key, env_var, tmp_path, monkeypatch
+):
+    """TASK-42007: the nine-provider bridge read a still-``enc:`` slot key as
+    no key and copied the legacy ``[API]`` key over it, so readiness said
+    Ready and the send spent the older key. As Custom 2's rule does
+    (TASK-41710), ciphertext is now a key of its own: the slot keeps it,
+    readiness says still encrypted, the legacy ``<provider>_api`` dict gets
+    no key, and a send without a pinned key reaches nothing. Hugging Face
+    sends keyless by design (public Inference API or an unsecured TGI), as
+    Custom 2 does here; it carries neither key."""
+    import requests
+
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.Chat.provider_readiness import (
+        STILL_ENCRYPTED_REASON,
+        get_provider_readiness,
+    )
+    from tldw_chatbook.Provider_Contract import ChatAPIError
+
+    monkeypatch.delenv(env_var, raising=False)
+    slot_key = _ciphertext("slot-key-0000")
+    path = tmp_path / "config.toml"
+    path.write_text(
+        toml.dumps(
+            {"API": {toml_key: "legacy-key-0000"}, "api_settings": {provider: {"api_key": slot_key}}}
+        ),
+        encoding="utf-8",
+    )
+    settings = select_config_source(monkeypatch, path).load_settings(force_reload=True)
+    readiness = get_provider_readiness(provider, settings)
+    sent = _cloud_world(monkeypatch, settings)
+    stub, wire = requests.Session.send, []
+
+    def recording(session, request, **kwargs):
+        wire.append(f"{request.url} {dict(request.headers)}")
+        return stub(session, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", recording)
+
+    with pytest.raises(ChatAPIError):
+        chat_api_call(provider, [{"role": "user", "content": "x"}], model="m", streaming=False)
+
+    assert (readiness.ready, readiness.reason) == (False, STILL_ENCRYPTED_REASON)
+    assert settings["api_settings"][provider]["api_key"] == slot_key
+    assert settings.get(f"{provider}_api", {}).get("api_key") is None
+    assert [line for line in wire if "legacy-key-0000" in line or "enc:" in line] == []
+    if provider != "huggingface":
+        assert sent == []
+
+
 def test_a_legacy_only_custom_2_key_reads_the_same_in_readiness_and_every_send(
     tmp_path, monkeypatch
 ):
