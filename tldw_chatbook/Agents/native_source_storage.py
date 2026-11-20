@@ -86,6 +86,15 @@ class _AgentSources:
             getattr(db, "db_path", None) for db in self.databases
         )
         self.mcp = read_mcp_service(self.app)
+        if self.mcp is not None and getattr(self.mcp, "_permission_store", None) is None:
+            from tldw_chatbook.MCP.console_snapshot import unbound_console_sources
+
+            if unbound_console_sources(self.mcp):
+                # TASK-41900: an unbound store is no MCP source (TASK-40714)
+                # and no binding can prove its permission store. The turn's
+                # kill-switch and tool-state readers still create that store
+                # lazily, so select it before the turn pins it below.
+                self.mcp.permission_store  # noqa: B018 - the property selects it
         self.permission = getattr(self.mcp, "_permission_store", None)
         self.permission_path = getattr(self.permission, "path", None)
         self.prospective_mcp_store = self.prospective_mcp_identity = None

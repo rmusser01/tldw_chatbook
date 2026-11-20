@@ -15,9 +15,16 @@ bound store.
 
 TASK-41308: the Inspector's MCP row says MCP is off, and why, whenever the
 store is unbound, so a Send without MCP tools is never silent.
+
+TASK-41900: the ordinary send also runs with the agent runtime on (the
+Console default). Unbound, the turn's native sources refused it with
+`mcp_source_not_installed`; a bound store keeps its source proofs.
 """
 
 from __future__ import annotations
+
+import time
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Static
@@ -35,11 +42,18 @@ from Tests.UI.test_console_send_admission_off_pump import _record_notices
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
+    _visible_text,
 )
+from tldw_chatbook import config as config_module
+from tldw_chatbook.Agents import native_source_storage
 from tldw_chatbook.Backup_Recovery import mcp_source_participants, raw_participants
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 from tldw_chatbook.Chat import console_configuration_preparation as preparation
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.MCP.console_snapshot import UNBOUND_MCP_STORE_REASON
+from tldw_chatbook.MCP.console_snapshot import (
+    UNBOUND_MCP_STORE_REASON,
+    _source_identity,
+)
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -88,10 +102,90 @@ def _bind_without_pinned_io(monkeypatch) -> None:
     monkeypatch.setattr(mcp_source_participants, "bind", bind)
 
 
+def _acknowledge_leaked_receipts(app) -> None:
+    """Mark seen the Console turn receipts earlier tests left unseen.
+
+    Bootstrap-profile tests share one ChaChaNotes database, and an app opens
+    by announcing unseen receipts ("A Console turn completed while hidden.").
+    A test that has no chats yet owns none of them. Call before mounting.
+    """
+    from tldw_chatbook.Chat.conversation_local_marks_service import (
+        ConversationLocalMarksService,
+    )
+
+    marks = getattr(
+        app, "conversation_local_marks_service", None
+    ) or ConversationLocalMarksService(app.chachanotes_db)
+    for conversation_id, receipt_id in marks.list_console_unseen_marks(limit=10_000):
+        marks.acknowledge_console_unseen(conversation_id, receipt_id)
+
+
+async def _wait_for_own_receipts_seen(console, pilot) -> None:
+    """Wait until this test's own turn receipts are seen on screen.
+
+    Left unseen in the shared database, a later test's app announces them.
+    """
+    marks = console._console_runtime()._console_local_marks_service()
+    store = console._ensure_console_chat_store()
+    mine = {s.persisted_conversation_id for s in store.sessions()} - {None}
+    assert mine
+
+    def unseen() -> list:
+        return [m for m in marks.list_console_unseen_marks() if m[0] in mine]
+
+    for _ in range(200):
+        if not unseen():
+            return
+        await pilot.pause(0.05)
+    assert unseen() == []
+
+
+async def _wait_for_saved_reply(console, pilot, reply: str = "accepted") -> None:
+    """Wait up to 30 s for ``reply`` to be saved or shown.
+
+    An agent-runtime turn took about 4.5 s from press to reply under I/O
+    load, past the shared ``_wait_for_reply``'s 4 s (TASK-41900 review).
+    """
+    from tldw_chatbook.Chat.console_display_state import QUEUE_REASON_PREPARING
+
+    store = console._ensure_console_chat_store()
+
+    def arrived() -> bool:
+        saved = any(
+            m.role is ConsoleMessageRole.ASSISTANT and m.content == reply
+            for m in store.messages_for_session(store.active_session_id)
+        )
+        return saved or reply in _visible_text(console).replace(
+            QUEUE_REASON_PREPARING, ""
+        )
+
+    deadline = time.monotonic() + 30
+    while not arrived():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"Reply not found: {reply!r}")
+        await pilot.pause(0.05)
+
+
+def _turn_on_agent_runtime(app, monkeypatch) -> list:
+    """Run the agent runtime (the builder turns it off) and record its sources."""
+    assert config_module.save_setting_to_cli_config("console", "agent_runtime", True)
+    app.app_config = config_module.load_settings(force_reload=True)
+    built: list = []
+    real = native_source_storage._AgentSources.__init__
+
+    def init(self, *args, **kwargs):
+        real(self, *args, **kwargs)
+        built.append(self)
+
+    monkeypatch.setattr(native_source_storage._AgentSources, "__init__", init)
+    return built
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("runtime", ["gateway", "agent"])
 @pytest.mark.parametrize("profile", ["bound", "no-pinned-io", "non-default-data-dir"])
 async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
-    monkeypatch, tmp_path, profile
+    monkeypatch, tmp_path, profile, runtime
 ):
     kwargs = {}
     if profile == "no-pinned-io":
@@ -101,6 +195,9 @@ async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
     gateway = _ToolRecordingGateway()
     maximums = _record_mcp_maximum(monkeypatch)
     app = _build_console_send_test_app(**kwargs)
+    sources = (
+        _turn_on_agent_runtime(app, monkeypatch) if runtime == "agent" else []
+    )
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -116,9 +213,10 @@ async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
         composer.load_draft("hello without mcp")
         console.query_one("#console-send-message", Button).press()
         try:
-            await _wait_for_reply(console, pilot)
+            await _wait_for_saved_reply(console, pilot)
         except AssertionError:
             raise AssertionError(f"no reply; notices: {notices}") from None
+        await _wait_for_own_receipts_seen(console, pilot)
         store = console._ensure_console_chat_store()
         replies = [
             m.content
@@ -134,6 +232,78 @@ async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
     assert len(maximums) == 1
     assert bool(maximums[0]) is (profile == "bound")
     assert gateway.offered_tools == [None]
+    # The agent runtime really ran the turn: it pinned the turn's sources.
+    assert len(sources) == (runtime == "agent")
+    for source in sources:
+        assert source.permission is app.unified_mcp_service._permission_store
+        assert source.prospective_mcp_identity is None
+        assert (
+            mcp_source_participants._BINDINGS.get(source.permission) is not None
+        ) is bound
+
+
+def _agent_sources(app) -> native_source_storage._AgentSources:
+    """Pin one turn's native sources for ``app``, as a Console submit does."""
+    store = SimpleNamespace(persistence=SimpleNamespace(db=None))
+    controller = SimpleNamespace(app=app, store=store, _scratch_spaces=None)
+    return native_source_storage._AgentSources(
+        controller,
+        None,
+        SimpleNamespace(_db=None),
+        SimpleNamespace(workspace_id=None, incarnation_id="incarnation"),
+        SimpleNamespace(scratch_space=None),
+    )
+
+
+@pytest.mark.parametrize("profile", ["bound", "no-pinned-io", "replaced-reader"])
+def test_turn_sources_prove_a_bound_store_and_select_an_unbound_ones_permissions(
+    monkeypatch, profile
+):
+    """TASK-41900: a turn pins its MCP permission store before it runs.
+
+    A bound store whose permission store does not exist yet still gives the
+    turn its prospective identity, exactly as before. An unbound stock store
+    cannot be proven, so the turn selects the service's own permission store
+    instead: the turn's kill-switch and tool-state readers would otherwise
+    create it after the pin and fail the turn. A replaced reader is not stock
+    and still refuses.
+    """
+    if profile != "bound":
+        _bind_without_pinned_io(monkeypatch)
+    app = _build_console_send_test_app()
+    service = app.unified_mcp_service
+    store = service.local_service.store
+    if profile == "replaced-reader":
+        original = service.get_kill_switch
+        monkeypatch.setattr(
+            service, "get_kill_switch", lambda *a, **k: original(*a, **k), raising=False
+        )
+    assert service._permission_store is None
+
+    if profile == "replaced-reader":
+        with pytest.raises(RecoveryRequired, match="mcp_source_not_installed"):
+            _agent_sources(app)
+        assert service._permission_store is None
+        return
+    source = _agent_sources(app)
+
+    if profile == "bound":
+        assert service._permission_store is None
+        assert source.permission is None
+        assert source.prospective_mcp_store is store
+        assert source.prospective_mcp_identity == _source_identity(store)
+        assert source.prospective_permission_path == store.path.with_name(
+            "mcp_permissions.json"
+        )
+    else:
+        with pytest.raises(RecoveryRequired, match="mcp_source_not_installed"):
+            _source_identity(store)
+        assert source.permission is service._permission_store is not None
+        assert source.permission_path == store.path.with_name("mcp_permissions.json")
+        assert source.prospective_mcp_store is None
+        assert source.prospective_mcp_identity is None
+        service.get_kill_switch()  # a turn's lazy reader finds the pinned store
+        assert service._permission_store is source.permission
 
 
 @pytest.mark.asyncio
@@ -150,6 +320,7 @@ async def test_unbound_store_with_a_replaced_mcp_reader_is_still_refused(monkeyp
     monkeypatch.setattr(
         service, "get_kill_switch", lambda *a, **k: original(*a, **k), raising=False
     )
+    _acknowledge_leaked_receipts(app)  # its first notice must be the refusal
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -261,9 +432,10 @@ async def test_inspector_keeps_the_unbound_reason_when_the_kill_switch_is_on(tmp
 
     Turning the switch off would not bring MCP back while the store cannot be
     used, so the row names the cause that stays. Nothing may show the switch
-    instead: a mount-time read is a UI-thread disk read, and a Send never
-    reads it for an unbound store (the preparation drops MCP first), so no
-    published state carries it.
+    instead: a mount-time read is a UI-thread disk read, and the row's reason
+    comes from the store's binding, which wins over any kill-switch read a
+    Send makes (with the agent runtime on, its tools read the switch;
+    TASK-41900).
     """
     app = _build_console_send_test_app(user_data_dir=tmp_path)
     app.unified_mcp_service.set_kill_switch(True)

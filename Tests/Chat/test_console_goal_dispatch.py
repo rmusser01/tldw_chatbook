@@ -28,7 +28,8 @@ def goal_module():
     return importlib.import_module(spec.name)
 
 
-def build_goal_rig(stores, monkeypatch, provider=None, *, resolved=None):
+def build_goal_rig(stores, monkeypatch, provider=None, *, resolved=None, app=None):
+    """``app``: the app the runtime runs on (its stores are set here)."""
     mod = goal_module()
     runs, persistence, registry, req = stores
     monkeypatch.setenv("TLDW_AGENTS_GOAL_RUNS_ENABLED", "true")
@@ -65,14 +66,12 @@ def build_goal_rig(stores, monkeypatch, provider=None, *, resolved=None):
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
     from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
-    runtime = ConsoleRuntime(
-        SimpleNamespace(
-            app_config={},
-            workspace_registry_service=registry,
-            chachanotes_db=persistence.db,
-            local_chat_conversation_service=ChatConversationService(persistence.db),
-        )
-    )
+    if app is None:
+        app = SimpleNamespace(app_config={})
+    app.workspace_registry_service = registry
+    app.chachanotes_db = persistence.db
+    app.local_chat_conversation_service = ChatConversationService(persistence.db)
+    runtime = ConsoleRuntime(app)
     runs._goal_test_runtimes = [*getattr(runs, "_goal_test_runtimes", ()), runtime]
     runtime._chat_store = store
     controller = runtime.ensure_chat_controller(
@@ -752,4 +751,62 @@ async def test_goal_authorization_cannot_bypass_retired_received_claim(
     finally:
         for claim in claims:
             store.release_received_turn(claim)
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_goal_iteration_from_a_cold_console_builds_the_skill_trust_it_captures(
+    stores, monkeypatch
+):
+    """TASK-41903: a goal iteration captures its configuration synchronously,
+    as the launch wake did (TASK-41507). Before Console skill discovery has
+    built the app's skill trust service, that capture found the slot empty
+    and refused with ``console_capture_source_not_ready``; nothing reached
+    the provider."""
+    from types import SimpleNamespace
+
+    from Tests.UI.app_factory import _build_test_app
+    from tldw_chatbook import config
+
+    # The app's own MCP service (at the profile's data folder, as in the app)
+    # and skills stack, with the skill trust service not built yet. A bare
+    # stand-in has neither, so its capture never reads the trust slot.
+    real = _build_test_app(user_data_dir=config.get_user_data_dir())
+    scope = real.skills_scope_service
+    app = SimpleNamespace(
+        app_config={},
+        unified_mcp_service=real.unified_mcp_service,
+        skills_scope_service=scope,
+        _skills_scope_service=scope,
+        ensure_local_skill_trust_service=real.ensure_local_skill_trust_service,
+    )
+    goal, _store, session, controller, coordinator, gateway, calls = build_goal_rig(
+        stores, monkeypatch, app=app
+    )
+    local = scope.local_service
+    assert vars(real)["_local_skill_trust_service"] is None, "precondition: cold"
+    assert vars(local)["_trust_service"] is None, "precondition: cold"
+    # Precondition: this rig's synchronous capture is the one that refuses cold.
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    with pytest.raises(RecoveryRequired, match="console_capture_source_not_ready"):
+        controller.resolve_runtime_turn_configuration_snapshot(session.id)
+    assert vars(local)["_trust_service"] is None, "precondition: still cold"
+    submit, raised = coordinator._runtime_submitter, []
+
+    async def recorded(*args, **kwargs):
+        try:
+            return await submit(*args, **kwargs)
+        except Exception as exc:  # the coordinator keeps only UNKNOWN_EFFECT
+            raised.append(exc)
+            raise
+
+    coordinator.bind_runtime_submitter(recorded)
+    try:
+        result = await coordinator.dispatch_once(goal.id)
+        assert raised == []
+        assert result.native_run_id and result.outcome.status == "done", result
+        assert len(calls) == 1
+        assert vars(local)["_trust_service"] is not None
+    finally:
         await gateway.aclose()

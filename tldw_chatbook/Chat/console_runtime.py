@@ -5377,6 +5377,10 @@ class ConsoleRuntime:
         controller = self._chat_controller
         if controller is None:
             raise RuntimeError("Console controller is unavailable for goal custody.")
+        from .console_configuration_preparation import publish_cold_skill_trust
+
+        # The capture below is synchronous, as a launch wake's is (TASK-41903).
+        await publish_cold_skill_trust(controller.app)
         request = ConsoleTurnCustodyRequest(
             turn_id=str(uuid4()),
             session_id=session_id,

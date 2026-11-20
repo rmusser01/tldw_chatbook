@@ -90,7 +90,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
     "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
-    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
+    # 2026-11-19, TASK-41904 (owner rule: raise by the change's own lines):
+    # 1567 -> 1571 (+4) -- a Send pressed during the first-send save waits.
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1571,
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
@@ -1146,7 +1148,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-20, TASK-42028 (owner rule: raise by the change's own lines):
     # 7078 -> 7083 (+5) -- dispose joins the cancelled wake deliveries before
     # it retires AgentRuns.
-    "tldw_chatbook/Chat/console_runtime.py": 7083,
+    # 2026-11-19, TASK-41903 (owner rule: raise by the change's own lines):
+    # 7083 -> 7087 (+4) -- a goal iteration builds the cold skill trust
+    # before its synchronous capture.
+    "tldw_chatbook/Chat/console_runtime.py": 7087,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
