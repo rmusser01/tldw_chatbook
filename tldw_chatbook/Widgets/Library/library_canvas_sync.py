@@ -27,54 +27,11 @@ anywhere else goes stale the moment a widget is replaced.
 
 from __future__ import annotations
 
-from functools import partial
 from typing import Any, Callable, Optional
 
 from loguru import logger
 from textual.css.query import NoMatches
-from textual.message import Message
 from textual.widgets import Button
-
-
-async def _bubble_past_a_closing_parent(
-    canvas: Any, node: Any, on_message: Callable[..., Any], message: Message
-) -> None:
-    """Run ``node``'s own dispatch, then hand a dropped press to ``canvas``."""
-    await on_message(message)
-    if (
-        isinstance(message, Button.Pressed)
-        and not message._stop_propagation
-        and not node.is_parent_active
-        and canvas.is_attached
-        and not canvas._pruning
-    ):
-        message._bubble_to(canvas)
-
-
-def _keep_presses_through_the_removal(canvas: Any) -> None:
-    """Deliver a press that the recompose's removal would drop (TASK-41703).
-
-    Textual removes the old children top down: a canvas child stops taking
-    messages first, and a node below it that then handles a queued
-    ``Button.Pressed`` finds its parent closing, so ``MessagePump._on_message``
-    does not bubble the press and the user's click does nothing. Each node
-    between a button and the canvas child bubbles such a press to the canvas
-    instead, which outlives its recompose and bubbles it on to the screen.
-    The forwarded press reaches the canvas and what is above it only: the
-    handlers on the removed nodes it skips, the canvas child's own
-    ``@on(Button.Pressed, ...)`` handlers included, do not run.
-    """
-    for button in canvas.walk_children(Button):
-        node = button
-        while (
-            node.parent is not None
-            and node.parent is not canvas
-            and "_on_message" not in vars(node)
-        ):
-            node._on_message = partial(
-                _bubble_past_a_closing_parent, canvas, node, node._on_message
-            )
-            node = node.parent
 
 
 class PostRecomposeCallback:
@@ -219,8 +176,11 @@ class PostRecomposeCallback:
         return None
 
     async def recompose(self) -> None:
-        """Recompose, then re-wire and fire the queued callback."""
-        _keep_presses_through_the_removal(self)
+        """Recompose, then re-wire and fire the queued callback.
+
+        A press queued below a removed child is kept by ``Widget.recompose``
+        (``tldw_chatbook.keep_queued_presses``, TASK-41703/TASK-42014).
+        """
         await super().recompose()  # type: ignore[misc]
         callback = self._post_recompose_callback
         # Cleared unconditionally: a callback that itself queues another one

@@ -27,6 +27,15 @@ recompose seam every Library canvas shares (``PostRecomposeCallback``): a
 press still queued below a canvas child the recompose removes reaches the
 screen.
 
+TASK-42014 moved that keeper into ``Widget.recompose`` (the package's Textual
+shims), so the tests after it hold a press across every other route a
+container's recompose takes: ``refresh(recompose=True)``, a recompose
+reactive, an awaited ``recompose()``, an override chained to ``super()``, a
+screen, a container removed by its parent's recompose, and the two overrides
+that remove their children themselves (``SettingsRegion`` and the Console
+tray's kept filter row). The last test fails when an override removes
+children without the keeper.
+
 Fast lane: a bare Textual app (``run_test``), no product app boot; the
 fallback and recompose tests mount one ``LibraryNotesCanvas`` under the app
 stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
@@ -34,7 +43,9 @@ stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -43,13 +54,23 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.reactive import reactive
 from textual.screen import Screen
+from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.Widgets.Library.test_library_notes_canvas import _editor_state
+import tldw_chatbook
+from tldw_chatbook import RECOMPOSE_PRESS_KEEPER
+from tldw_chatbook.UI.Screens.settings_screen import SettingsRegion
+from tldw_chatbook.Widgets.Console.console_workspace_context import (
+    _CONVERSATION_FILTER_ROW_ID,
+    _KeepsConversationFilterRow,
+)
 from tldw_chatbook.Widgets.Library import library_notes_canvas as canvas_module
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     LibraryNotesCanvas,
     _pending_widget_lookup,
@@ -367,3 +388,170 @@ async def test_a_press_queued_below_a_removed_canvas_child_still_reaches_the_scr
 
         assert screen.handled == 1, "the press below the removed toolbar was dropped"
         assert screen.query_one("#opener") is not opener, "the canvas never recomposed"
+
+
+def _toolbar() -> Horizontal:
+    return Horizontal(Button("type", id="opener"), id="toolbar")
+
+
+class _Container(Vertical):
+    """A plain container: the button one level below the child it removes."""
+
+    bump = reactive(0, recompose=True)
+
+    def compose(self) -> ComposeResult:
+        yield _toolbar()
+
+
+class _GuardedContainer(RecomposeCaptureGuard, _Container):
+    """An override that runs its own code around ``super().recompose()``."""
+
+
+class _Outer(Vertical):
+    """Its recompose removes the whole ``_Container`` (the press is deeper)."""
+
+    def compose(self) -> ComposeResult:
+        yield _Container(id="container")
+
+
+class _KeptRowTray(_KeepsConversationFilterRow, Vertical):
+    """The Console tray's rebuild around a mounted filter row it keeps."""
+
+    def compose(self) -> ComposeResult:
+        yield self._retained_filter_row or Horizontal(
+            Static("filter"), id=_CONVERSATION_FILTER_ROW_ID
+        )
+        yield _toolbar()
+
+
+def _recompose(container):
+    container.refresh(recompose=True)
+
+
+def _bump(container):
+    container.bump += 1
+
+
+def _awaited(container):
+    return asyncio.ensure_future(container.recompose())
+
+
+# route: (the screen's children, the recomposing node (None: the screen),
+#         the child its recompose removes above the button, the trigger)
+_ROUTES = {
+    "refresh": (lambda: [_Container(id="container")], "#container", "#toolbar", _recompose),
+    "reactive": (lambda: [_Container(id="container")], "#container", "#toolbar", _bump),
+    "awaited": (lambda: [_Container(id="container")], "#container", "#toolbar", _awaited),
+    "chained-override": (
+        lambda: [_GuardedContainer(id="container")], "#container", "#toolbar", _recompose
+    ),
+    "screen": (lambda: [_toolbar()], None, "#toolbar", _recompose),
+    "removed-by-its-parent": (lambda: [_Outer(id="outer")], "#outer", "#container", _recompose),
+    "settings-region": (
+        lambda: [SettingsRegion(lambda: [_toolbar()], id="container")],
+        "#container",
+        "#toolbar",
+        _recompose,
+    ),
+    "console-kept-filter-row": (
+        lambda: [_KeptRowTray(id="container")], "#container", "#toolbar", _recompose
+    ),
+}
+
+
+class _RouteScreen(Screen):
+    def __init__(self, children) -> None:
+        super().__init__()
+        self._children = children
+        self.handled = 0
+
+    def compose(self) -> ComposeResult:
+        yield from self._children()
+
+    @on(Button.Pressed, "#opener")
+    def _count(self, event: Button.Pressed) -> None:
+        self.handled += 1
+
+
+class _RouteApp(App):
+    def __init__(self, children) -> None:
+        super().__init__()
+        self._children = children
+
+    def get_default_screen(self) -> Screen:
+        return _RouteScreen(self._children)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", sorted(_ROUTES))
+async def test_every_recompose_route_keeps_a_press_queued_below_a_removed_child(route):
+    """TASK-42014: no container's recompose drops a pending press.
+
+    Same hold as the canvas test above: the press waits in the button until
+    the child the recompose removes above it is closing, so the order is
+    driven, not timed. Every route reaches the screen's handler.
+    """
+    children, recomposing, removed, trigger = _ROUTES[route]
+    app = _RouteApp(children)
+    async with app.run_test(size=(40, 8)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        container = screen if recomposing is None else screen.query_one(recomposing)
+        closing = screen.query_one(removed)
+        opener = screen.query_one("#opener", Button)
+        held = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hold() -> None:
+            held.set()
+            await release.wait()
+
+        opener.call_later(hold)
+        pending = None
+        try:
+            await asyncio.wait_for(held.wait(), timeout=5)
+            opener.press()  # queued in the button, behind ``hold``
+            pending = trigger(container)
+            deadline = asyncio.get_running_loop().time() + 5
+            while not closing._closing:
+                assert asyncio.get_running_loop().time() < deadline, (
+                    f"the {route} recompose never closed {removed}"
+                )
+                await asyncio.sleep(0)
+        finally:
+            release.set()
+        if pending is not None:
+            await asyncio.wait_for(pending, timeout=5)
+        for _ in range(100):
+            if screen.handled:
+                break
+            await pilot.pause(0.02)
+
+        assert screen.handled == 1, f"the {route} recompose dropped the press"
+        assert screen.query_one("#opener") is not opener, "nothing recomposed"
+
+
+def test_every_recompose_reaches_the_press_keeper():
+    """TASK-42014: ``Widget.recompose`` keeps presses, and no override in the
+    package removes children before it without calling the keeper first."""
+    assert getattr(Widget.recompose, RECOMPOSE_PRESS_KEEPER, False)
+    unkept = []
+    for path in sorted(Path(tldw_chatbook.__file__).parent.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "def recompose(" not in source:
+            continue
+        for node in ast.walk(ast.parse(source)):
+            if not (isinstance(node, ast.AsyncFunctionDef) and node.name == "recompose"):
+                continue
+            calls = [
+                (call.lineno, ast.unparse(call.func))
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call)
+            ]
+            kept = [line for line, name in calls if name == "keep_queued_presses"]
+            for line, name in calls:
+                if name.endswith((".remove", ".remove_children")) and not any(
+                    k < line for k in kept
+                ):
+                    unkept.append(f"{path.name}:{line} {name}")
+    assert unkept == []
