@@ -12,6 +12,7 @@ and advanced RAG (Retrieval-Augmented Generation) capabilities.
 # This must be done before any libraries that use progress bars are imported
 import os
 import sys
+from typing import TYPE_CHECKING
 
 from .Utils.tiktoken_runtime import (
     arm_bundled_tiktoken_runtime as _arm_bundled_tiktoken_runtime,
@@ -492,6 +493,9 @@ def _install_zero_width_fold_guard() -> None:
     Content._wrap_and_format = _wrap_and_format  # type: ignore[method-assign]
 
 
+if TYPE_CHECKING:
+    from textual.widget import Widget
+
 #: Marks the press-keeping ``Widget.recompose`` (idempotent, detectable).
 RECOMPOSE_PRESS_KEEPER = "_tldw_recompose_press_keeper"
 
@@ -514,7 +518,7 @@ async def _forward_a_dropped_press(pressed, node, on_message, message) -> None:
             message._bubble_to(target)
 
 
-def keep_queued_presses(container) -> None:
+def keep_queued_presses(container: "Widget") -> None:
     """Deliver the presses that removing ``container``'s children would drop.
 
     TASK-41703, generalised by TASK-42014. Textual removes old children top
@@ -552,10 +556,13 @@ def _install_recompose_press_keeper() -> None:
         return
 
     @wraps(native)
-    async def recompose(self) -> None:
-        if self.is_attached and not self._pruning:
-            keep_queued_presses(self)
-        await native(self)
+    async def recompose(self: "Widget") -> None:
+        # Under the lock (re-entrant per task) a concurrent batch or recompose
+        # cannot mount buttons between the keeper and the removal.
+        async with self.lock:
+            if self.is_attached and not self._pruning:
+                keep_queued_presses(self)
+            await native(self)
 
     setattr(recompose, RECOMPOSE_PRESS_KEEPER, True)
     Widget.recompose = recompose  # type: ignore[method-assign]

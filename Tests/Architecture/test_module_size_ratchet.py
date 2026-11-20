@@ -1192,7 +1192,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-18, TASK-41650: 4021 -> 4040 (+19), exact measurement. The
     # owner-requested Trace view read of spawned children's calls.
     "tldw_chatbook/Chat/console_trace_repository.py": 4040,
-    "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
+    # 2026-11-20, TASK-42014 (owner rule: raise by the change's own lines):
+    # 6108 -> 6110 (+2) -- the credential buttons carry the class their
+    # press handler selects, so a press a recompose forwards still runs it.
+    "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6110,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
