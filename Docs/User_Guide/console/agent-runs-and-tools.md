@@ -1047,14 +1047,15 @@ not enable automatic routing or establish savings by themselves.
 
 When an agent turn edits files, the transcript shows a **turn file card**
 directly under that turn instead of a plain summary line: a header with the
-counts ("✎ Edited 3 files  +92 −468"), an **expand/collapse-all** toggle, a
-**Review** button, then one row per changed file. Press **Enter** or click
-a row to expand its diff in place — expanding is per-row and the diff
-loads (and is cached) the first time you open it, so collapsing and
-reopening a row is instant. Long paths are middle-elided to fit the row
+counts ("✎ Edited 3 files  +92 −468"), an **expand/collapse-all** toggle,
+**Undo All** and **Review** buttons, then one row per changed file. Press
+**Enter** or click a row to expand its diff in place — expanding is per-row
+and the diff loads (and is cached) the first time you open it, so collapsing
+and reopening a row is instant. Long paths are middle-elided to fit the row
 (the start and end stay visible, with `…` in between); the row's tooltip
-always shows the full, un-elided path. The card never mutates anything
-directly; there is no undo or revert control on it.
+always shows the full, un-elided path. **Undo All** is the card's only
+control that changes files, and it asks first; see [Reviewing or undoing a
+turn's changed files](#reviewing-or-undoing-a-turns-changed-files).
 
 The header's chevron toggle expands or collapses every row at once. The
 first expand-all loads whatever diffs aren't cached yet one at a time (not
@@ -1066,9 +1067,9 @@ Click **Review** (or press **`v`**, unchanged from before the card
 shipped) to open the full **Review** screen scoped to *this card's own
 turn* — no need to reselect it once the screen opens. Reach the same
 screen from the selected transcript row or the run inspector's **Review
-changes** action. Revert-all and the other destructive actions live only
-on that screen, behind a confirm, never as a one-keystroke action in the
-transcript.
+changes** action. That screen can also revert one file (**`u`**) or the
+whole turn (**`U`**), behind the same confirmation the card uses. Nothing
+in the transcript reverts files on a single keystroke.
 
 #### Leaving feedback on a hunk
 
@@ -1128,44 +1129,35 @@ by design it covers the same run's full set of tracked changes — turn and
 post-turn windows alike — the same union the `v` Review screen shows for
 that run. It supports notes and Review exactly like a turn's own card.
 
-#### The rail's Changed-files section
+#### Reviewing or undoing a turn's changed files
 
-Turn file cards only show one turn at a time. To see everything a
-conversation has changed, look for the **Changed files** section in the
-Inspector (right rail) — a quiet-framed section sitting between the
-retrieval Scope row and the run inspector. It lists the conversation's
-changed files across **every** turn, one row per file, latest state only:
-status glyph, cell-elided path, that file's `+A −D`, and a `✎ N` badge
-when the file carries notes.
+Each agent turn that edited files keeps its card in the transcript. It is
+the quickest place to see what that turn did: expand one file or all of
+them, read the diffs, leave notes, or choose **Review** for the full Change
+Review screen. The card stays after an undo, so you can still see what the
+agent changed.
 
-The header names the honesty rule directly — `Changed files (N) · latest
-turn deltas +A −D` — because the per-row and header counts are each
-file's **newest** covering turn's own deltas, never a cumulative total
-across the conversation. The list caps at 12 rows; past that, a
-`+N more — open Review` tail line names the rest instead of growing the
-rail without bound. If retention pruned a turn's snapshot history, a dim
-`history pruned for N turns` line appears below the list rather than
-hiding the gap. A conversation that hasn't touched a file yet renders no
-header and no empty box at all.
+Choose **Undo All** to restore every file the turn changed. The button stays
+disabled until the card's file rows have loaded. It opens the same
+confirmation the Review screen uses, "Undo all N files from this turn?",
+with **Revert** and **Cancel**. If a file changed after the turn, the
+confirmation lists it under "⚠ Changed since this turn (reverting
+overwrites that work)". Cancel leaves your files as they are and makes
+Undo All available again. While the undo is in progress the button reads
+**Undoing…**; a complete undo relabels it **Undone** and keeps the rows and
+**Review**. If some files could not be reverted, a notice counts them and
+names the first five, and the button returns to **Undo All** so you can try
+again.
 
-The section is never computed on the rail's regular sync tick — the same
-cached-summary discipline the dictionary/world-book rail sections already
-use. An off-thread worker recomputes only when the conversation switches
-or a new turn's marker message appears (an in-memory check, no DB read),
-and it re-derives incrementally, so only turns it hasn't already read
-cost a fresh git call. Saving or deleting a note anywhere — the card or
-the Review screen below — also forces one refresh so a stale `✎ N` badge
-never lingers.
-
-Set **`[console] changed_files_section`** in `config.toml` to `false` to
-turn the section off (default `true`): it's a pure presentation switch —
-off renders nothing and skips the recompute worker entirely.
-
-**Click a row** (or press Enter on it) to open the Review screen already
-focused on that exact file: its newest covering turn is selected and that
-file's diff loads immediately, pinned to the specific snapshot the row's
-counts came from — so two windows of the same run that happen to touch
-the same path never open to the wrong one.
+Undo All refuses while a run is active on the turn's workspace, when change
+tracking failed for the turn, and when files change while the confirmation
+is open (open **Review** and try again). A turn can also hold two change
+windows for the same workspace, for example the turn's own and a sub-agent's
+that kept editing after the turn. The card cannot order those safely, so it
+opens **Review** instead, where you revert files one labeled window at a
+time. A turn that changed files in several workspaces is undone in one step;
+file names in the confirmation and notices then start with the workspace
+folder's name, or its full path when two folders share a name.
 
 #### Leaving feedback on a diff line or the whole file
 
@@ -2979,11 +2971,6 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   review](#change-review--reviewing-a-turns-file-changes) above, or the
   original plain-text marker row (default `true`, card on). No Settings UI
   switch.
-- **`[console] changed_files_section`** in `config.toml` — whether the
-  Inspector rail's cross-turn [Changed-files
-  section](#the-rails-changed-files-section) renders at all (default
-  `true`, on). A pure presentation switch: `false` renders nothing and
-  skips its off-thread recompute worker entirely. No Settings UI switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [Settings ▸ Tools & MCP](../mcp.md) — servers, tools, and permissions.
