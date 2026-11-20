@@ -4,7 +4,7 @@ title: "A quit during a Console session close does not wait for the wake deliver
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 02:35
-updated_date: 2026-11-20 16:15
+updated_date: 2026-11-20 20:52
 labels:
 - follow-up
 - console
@@ -67,7 +67,7 @@ The 16 failures are the same test ids with base sources (16 failed, 3 passed). T
 
 Earlier runs made during the 15:50-16:07Z disk-full window were discarded and re-run.
 
-**Proposed follow-up.** `ConsoleChatController.maintenance_drain` waits only on `_fleet_wake._delivery_tasks`. A delivery that a session fence cancelled is therefore not waited for during maintenance, the same gap this task closed for quit.
+**Proposed follow-up.** `ConsoleChatController.maintenance_drain` waits only on `_fleet_wake._delivery_tasks`. A delivery that a session fence cancelled is therefore not waited for during maintenance, the same gap this task closed for quit. A fix cannot simply add `_fenced_delivery_tasks` to that loop's truthiness test. The `WeakSet` keeps settled tasks for as long as anything references them, so the drain must wait only on members where `not task.done()`.
 
 **Files:**
 - `tldw_chatbook/Chat/console_fleet_wake.py`
