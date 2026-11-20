@@ -83,9 +83,11 @@ async def test_a_selected_git_filter_names_its_cause_and_remedy(
         row = host.screen.query_one("#settings-workspace-change-review-failed", Static)
         text = " ".join(_painted(host, row).split())
         assert "preparation failed for 1 folder(s)" in text
-        assert "configured filters selected by Git attributes" in text
-        assert "Cause: native change review unavailable: configured filters" in text
-        assert "remove the filter= attribute or its filter config" in text
+        assert "Files here use configured Git filters (such as Git LFS)" in text
+        # It states the trade-off: for an LFS repository, removing the
+        # attribute or the configuration changes how Git stores the files.
+        assert "changes how Git stores those files" in text
+        assert "native change review" not in text
         assert text.count("preparation failed") == 1
         assert str(root) not in text and "lfs" not in text
 

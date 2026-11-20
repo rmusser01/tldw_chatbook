@@ -78,19 +78,30 @@ def scrubbed_git_environment() -> dict[str, str]:
     return env
 
 
-# Refusals a user can act on. Authored text with no config names or paths, so
-# Settings and the turn's "change review skipped" row may show them (TASK-42101).
 GIT_TOO_OLD = "native change review requires Git >=2.36"
 PARTIAL_CLONE_CONFIGURED = (
     "native change review unavailable: configured partial-clone remotes"
 )
 FILTERS_SELECTED = (
-    "native change review unavailable: configured filters selected by Git"
-    " attributes (remove the filter= attribute or its filter config)"
+    "native change review unavailable: configured filters selected by Git attributes"
 )
-ACTIONABLE_REFUSALS = frozenset(
-    {GIT_TOO_OLD, PARTIAL_CLONE_CONFIGURED, FILTERS_SELECTED}
-)
+# Refusals a user can act on, with the plain sentence Settings and the turn's
+# "change review skipped" row show (TASK-42101). Authored text: no config names
+# or paths. The filter sentence states the trade-off rather than advising a
+# fix, because for a Git LFS repository removing the attribute or the
+# configuration changes how Git stores those files.
+ACTIONABLE_REFUSALS = {
+    GIT_TOO_OLD: "Change Review needs Git 2.36 or newer.",
+    PARTIAL_CLONE_CONFIGURED: (
+        "The folder's Git configuration uses partial-clone remotes, which could"
+        " fetch objects while Change Review reads them."
+    ),
+    FILTERS_SELECTED: (
+        "Files here use configured Git filters (such as Git LFS), which Change"
+        " Review never runs. Removing their filter= attribute or configuration"
+        " would let it prepare, but changes how Git stores those files."
+    ),
+}
 
 # Invocations that can hand work-tree content to a clean/smudge/process filter;
 # a configured driver a reachable path selects refuses them. Refusal decides the
@@ -202,11 +213,10 @@ def qualified_git_command(
     try:
         version = run_process([executable, "--version"], env)
         match = re.match(r"git version (\d+)\.(\d+)", version.stdout)
-        if (
-            version.returncode
-            or match is None
-            or tuple(map(int, match.groups())) < (2, 36)
-        ):
+        if version.returncode or match is None:
+            # Not a version to judge (e.g. the macOS developer-tools stub).
+            raise unavailable("native change-review Git unavailable")
+        if tuple(map(int, match.groups())) < (2, 36):
             raise unavailable(GIT_TOO_OLD)
         config = run_process(
             [

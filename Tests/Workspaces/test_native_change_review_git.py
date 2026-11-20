@@ -357,8 +357,6 @@ def test_a_forced_ignored_path_that_selects_a_configured_filter_refuses(
     assert not sentinel.exists()
     rows = h.bridge._db.change_snapshots_for_run(run_id)
     assert len(rows) == 1 and "configured filters" in rows[0]["tracking_error"]
-    # The transcript row shows this text: it names the cause and the remedy.
-    assert "remove the filter= attribute" in rows[0]["tracking_error"]
 
 
 def test_configured_filters_are_emptied_for_the_command_when_detection_misses(
