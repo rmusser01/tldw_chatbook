@@ -487,7 +487,7 @@ class AutomaticWorkLedger:
         """Stamp a hold's start durably, folding the elapsed time into the wall anchors.
 
         ``last_observed_at`` is the stamp: nothing else moves it while the chain
-        is held, because a held chain gets no admission until the hold ends.
+        is held, because any admission in the allowance ends the hold first.
         Elapsed time is the larger of the wall and monotonic readings, as the
         admission check counts it, so a slow wall clock before the hold is not
         forgotten when the hold ends.
@@ -498,7 +498,10 @@ class AutomaticWorkLedger:
         """
         now, monotonic = self._wall_clock(), self._monotonic_clock()
         if not math.isfinite(now) or now < root["last_observed_at"]:
-            return  # The next admission refuses on this clock.
+            # Keep the anchors and stamp: the hold is measured from the last
+            # admission's stamp, and the next admission refuses only if the
+            # clock is still unknown or behind it then.
+            return
         started_at, deadline_at = root["started_at"], root["deadline_at"]
         if started_at is not None and deadline_at is not None:
             elapsed = now - started_at
