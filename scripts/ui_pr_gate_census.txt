@@ -3564,3 +3564,16 @@ Tests/UI/test_screen_navigation.py::test_library_completions_after_the_exit_fenc
 # 2 passed in 3.2 s serially with the lane's flags (load ~10).
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_prefers_still_checked_row_in_select_mode
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_checked_row_preference_is_media_only
+# TASK-33620.15.41 review (2026-11-05): the run chip's "Searching Library…"
+# copy (TASK-33621.20) went red on dev with neither file in any PR lane. The
+# activity-copy file runs whole (16 tests, 4.6 s serially at load 30). The
+# Library Auto outcome file ran 93 s serially at load 38-41, over the 30 s
+# per-file budget, so it enters as its six cases, 12-15 s each. Appended at
+# the tail, so no slot moves.
+Tests/UI/test_console_send_activity_copy.py
+Tests/UI/test_console_library_auto_outcome.py::test_a_slow_library_search_is_shown_and_stop_pauses_the_send
+Tests/UI/test_console_library_auto_outcome.py::test_shelf_action_on_a_timed_out_preparation_lets_the_next_send_through[Discard]
+Tests/UI/test_console_library_auto_outcome.py::test_shelf_action_on_a_timed_out_preparation_lets_the_next_send_through[Restore]
+Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[retry-library-search]
+Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[send-once-without-library]
+Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[cancel-send]
