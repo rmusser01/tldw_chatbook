@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 06:57
-updated_date: 2026-11-20 09:50
+updated_date: 2026-11-20 10:20
 labels:
 - follow-up
 - logging
@@ -46,3 +46,4 @@ Found by TASK-41500 and its review (round 16), widened by the filing review. Log
 - Files: the 13 modules in the diff, `Docs/security/production-diagnostic-inventory.json`, `Tests/test_stdlib_logging_format_style.py`, `Tests/DB/test_client_media_debug_logging.py`, `Tests/Chat/test_chat_functions.py`, `Tests/UI/test_console_session_settings.py`.
 - Checks: `./scripts/preflight.sh` passed (wrapper); `ruff check --select F` on the changed files passed; module, screen and Library size ratchets passed (serial; 2 failures in that run were the diagnostic inventory, since regenerated, and the base-red metadata-only rows above).
 - **Review r17lg-rev1 minor 3.** The scan skipped any message containing `{`, so `logger.info("{} rows to %s", n, path)` escaped it. `_percent_message` now flags a `%`-placeholder message whose `str.format` fields are fewer than its positional arguments (`"{}% done", 50` still passes). `test_the_loguru_scan_flags_a_mixed_brace_and_percent_call` was red before (`[] == [(2, '{} rows to %s')]`); the package scan still finds no offender; the file passes 8 of 8.
+- **Review r17lg-rev2 minor 1.** The minor-3 change dropped keyword-only calls: `_percent_message` returned early without positional arguments, so `logger.info("x %s", value=3)` and `logger.error("Failed: %s", exc_info=True)` passed. Keywords now count as arguments, as the original rule did. `test_the_loguru_scan_flags_keyword_only_percent_calls` was red before (`assert [] == [(2, 'x %s'), ...]`); the package scan still finds no offender; the file passes 9 of 9.
