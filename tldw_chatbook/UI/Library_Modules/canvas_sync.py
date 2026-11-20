@@ -477,9 +477,9 @@ def _apply_library_row_toggle(
             # TASK-34000.29 (N-14): Actions… is the second bulk action on the
             # Notes strip and follows the same count, in place. By query, so
             # a strip composed before it existed cannot raise.
-            for actions in screen.query("#library-notes-select-actions").results(
-                Button
-            ):
+            for actions in screen.query("#library-notes-select-actions"):
+                if not isinstance(actions, Button):
+                    continue
                 actions.disabled = selection.count == 0
                 actions.tooltip = (
                     LIBRARY_NOTES_SELECT_ACTIONS_DISABLED_TOOLTIP
