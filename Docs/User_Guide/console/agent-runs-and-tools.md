@@ -1504,10 +1504,10 @@ pending reports together and keeps an open view and its checks; a cancelled
 or failed Save keeps the original queue; closing the unsaved chat or
 restarting the app loses the reports. When the in-memory cache is full,
 saved reports stay in the database and navigation still counts them; close
-another chat, then reopen the view to load them. Automatic collection reads
-only reports from the current work chain; a manual read may collect older
-ones. If a collection checkpoint becomes uncertain, collection stops rather
-than replay reports.
+another chat, then reopen the view to load them. A supervisor turn started
+by an automatic wake collects only its own work chain's reports; a turn you
+start can also collect older ones. If a collection checkpoint becomes
+uncertain, collection stops rather than replay reports.
 
 **Automatic wakes.** With `[agents] autowake_enabled` on (the default; see
 [auto-wake](#when-a-background-sub-agent-finishes--auto-wake)), pending
