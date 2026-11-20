@@ -1322,6 +1322,7 @@ _BUDGETS: dict[str, int] = {
     # 4b90eb860b (owner rule: exact; dev measures 8953): 9231 -> 9223.
     # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9223 -> 9231.
     # 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9231 -> 9230.
+    # 2026-11-20: re-measured after rebasing onto dev d85e90bc9e (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 9230 -> 9233.
     "tldw_chatbook/UI/Console_Modules/workspace.py": 8958,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
