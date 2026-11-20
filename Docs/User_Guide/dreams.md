@@ -19,7 +19,10 @@ What switching it off again does — and does not — stop is described in
 The same page lets you:
 
 - pick a **provider** and **model** for Dreams alone — leave both unset to
-  follow your chat defaults (Settings ▸ Providers & Models);
+  follow your chat defaults (Settings ▸ Providers & Models). Dreams sends
+  only while that provider reads ready, as Console would show it: with no
+  key where one is needed, or a saved key still encrypted, it makes no model
+  call and the cycle's **Collection notice** gives the reason;
 - set a **region**. Dreams sends it to the model with every
   query-synthesis and story prompt, the model may write it into the
   searches Dreams runs, and it fills `{region}` in a tracked question's

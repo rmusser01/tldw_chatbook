@@ -1076,7 +1076,7 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
             # resolved and nothing is synthesized -- with no chat and no
             # queries every later stage has nothing to spend on.
             if not switched_off():
-                # Thread-offloaded: the getter force-reloads config from
+                # Thread-offloaded: the getter may load config from
                 # disk and may reach the keyring — neither belongs on the
                 # event loop.
                 chat = await asyncio.to_thread(deps.chat_getter)

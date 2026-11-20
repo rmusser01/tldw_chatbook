@@ -1,8 +1,9 @@
-"""Keep an explicit legacy Custom OpenAI API 2 endpoint in the merged config.
+"""Keep an explicit legacy Custom OpenAI API 2 endpoint and key in the loaded config.
 
-Kernel code: ``config._merge_user_config_over_shipped_defaults`` calls it, so it
-lives below Chat (Docs/Architecture/layer-map.md); ``Chat.console_provider_endpoints``
-imports it from here.
+Kernel code: ``config._merge_user_config_over_shipped_defaults`` (endpoint) and
+``config.load_settings`` (key) call it, so it lives below Chat
+(Docs/Architecture/layer-map.md); ``Chat.console_provider_endpoints`` imports it
+from here.
 """
 
 from __future__ import annotations
@@ -51,3 +52,46 @@ def keep_legacy_custom_2_endpoint(
             "before": slot.get("api_url") or "",
         }
         slot["api_url"] = legacy.strip()
+
+
+def bridge_legacy_custom_2_api_key(
+    api_settings: dict, legacy: object, bridged: set[str]
+) -> None:
+    """Copy the legacy ``[API] custom_openai2_api_key`` into the Custom 2 slot.
+
+    TASK-41710: readiness, Settings and Console read only the slot, so a key
+    set only in ``[API]`` was spent by Dreams and import analysis but shown
+    and sent by nothing else. ``config.load_settings`` calls this beside the
+    nine-provider bridge (``config._normalize_legacy_provider_api_key``); in
+    memory only, and ``bridged`` gains ``custom_2`` so a Settings save that
+    keeps the stored key writes it into the slot. TASK-41523's rule holds: the
+    copy happens only while the slot records no credential decision, holds no
+    key of its own (ciphertext included, so a still-encrypted key keeps
+    blocking) and its named variable holds no key.
+
+    Args:
+        api_settings: The loaded ``api_settings`` table; changed in place.
+        legacy: The user's ``[API] custom_openai2_api_key``.
+        bridged: The loader's ``legacy_api_key_providers`` names.
+    """
+    import os
+
+    from tldw_chatbook.config import is_encrypted_config_value, resolve_provider_api_key
+
+    key = resolve_provider_api_key(legacy)
+    slot = api_settings.setdefault("custom_2", {}) if key else None
+    if not isinstance(slot, dict):
+        return
+    # The recorded sources are Chat.provider_readiness._PERSISTED_CREDENTIAL_SOURCES,
+    # the source of truth; spelled out here because Utils sits below Chat.
+    source = slot.get("credential_source")
+    own, named = slot.get("api_key"), slot.get("api_key_env_var")
+    if (
+        (isinstance(source, str) and source.strip().lower() in {"none", "stored", "environment"})
+        or resolve_provider_api_key(own)
+        or is_encrypted_config_value(own)
+        or (isinstance(named, str) and resolve_provider_api_key(os.environ.get(named.strip())))
+    ):
+        return
+    slot["api_key"] = key
+    bridged.add("custom_2")

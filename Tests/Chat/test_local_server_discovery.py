@@ -3893,7 +3893,7 @@ def test_dreams_resolves_a_custom_slot_to_its_handler(provider, handler, endpoin
     )
     monkeypatch.setattr(
         story_service,
-        "load_cli_config_and_ensure_existence",
+        "load_settings",
         lambda **kw: _merged(
             {
                 "chat_defaults": {"provider": provider, "model": "m"},
@@ -4106,7 +4106,7 @@ def test_dreams_never_sends_to_an_endpoint_the_contract_refuses(monkeypatch):
         posts = _local_world(monkeypatch, config)
         monkeypatch.setattr(
             story_service,
-            "load_cli_config_and_ensure_existence",
+            "load_settings",
             lambda config=config, **kw: {
                 **config, "chat_defaults": {"provider": "vllm", "model": "m"}
             },
@@ -4871,7 +4871,7 @@ def test_a_dreams_send_on_custom_2_reaches_the_endpoint_settings_saved(monkeypat
         "tldw_chatbook.Dreams.settings.get_cli_setting",
         lambda section, key, default=None: default,
     )
-    monkeypatch.setattr(story_service, "load_cli_config_and_ensure_existence", lambda **kw: config)
+    monkeypatch.setattr(story_service, "load_settings", lambda **kw: config)
 
     reply = story_service.resolve_dreams_chat()(
         messages_payload=[{"role": "user", "content": "hi"}], streaming=False
@@ -5025,7 +5025,7 @@ def test_a_keyless_custom_slot_sends_from_dreams_and_ingest(
         "tldw_chatbook.Dreams.settings.get_cli_setting",
         lambda section, key, default=None: default,
     )
-    monkeypatch.setattr(story_service, "load_cli_config_and_ensure_existence", lambda **kw: config)
+    monkeypatch.setattr(story_service, "load_settings", lambda **kw: config)
 
     reply = story_service.resolve_dreams_chat()(
         messages_payload=[{"role": "user", "content": "hi"}], streaming=False
@@ -5046,28 +5046,106 @@ def test_a_keyless_custom_slot_sends_from_dreams_and_ingest(
     assert auth == [None, None]
 
 
+def _custom_2_scratch_world(tmp_path, monkeypatch, user, env=None):
+    """``user`` as a real config file, read by the real loader with
+    ``CUSTOM_2_API_KEY`` set to ``env``; Custom 2's POSTs and their
+    Authorization headers land in the lists returned, and none reaches a
+    socket."""
+    from tldw_chatbook.Dreams import story_service
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local_calls
+    from tldw_chatbook.LLM_Calls import provider_sessions
+
+    if env is None:
+        monkeypatch.delenv("CUSTOM_2_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("CUSTOM_2_API_KEY", env)
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(toml.dumps(user), encoding="utf-8")
+    config_mod = select_config_source(
+        monkeypatch, config_path, vars(local_calls), vars(story_service)
+    )
+    posts: list[str] = []
+    auth: list = []
+    monkeypatch.setattr(
+        local_calls,
+        "create_pooled_default_session",
+        lambda **_kw: _AuthRecordingSession(posts, auth),
+    )
+    monkeypatch.setattr(provider_sessions, "get_session", lambda _key, factory: factory())
+    monkeypatch.setattr(
+        "tldw_chatbook.Dreams.settings.get_cli_setting",
+        lambda section, key, default=None: default,
+    )
+    return config_mod, posts, auth
+
+
+def _dreams_send():
+    """One Dreams send; returns its refusal, or None when it was sent."""
+    from tldw_chatbook.Dreams import story_service
+
+    try:
+        story_service.resolve_dreams_chat()(
+            messages_payload=[{"role": "user", "content": "hi"}], streaming=False
+        )
+    except RuntimeError as exc:
+        return str(exc)
+    return None
+
+
+_ENC_PASSWORD = "earlier-master-pw"
+
+
+def _ciphertext(value):
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    return ConfigEncryption().encrypt_value(value, _ENC_PASSWORD)
+
+
 @pytest.mark.parametrize(
-    ("slot", "sent"),
+    ("slot", "env", "sent"),
     [
-        ({}, "Bearer legacy-key-0000"),
-        ({"api_key": "slot-key-0000"}, "Bearer slot-key-0000"),
-        ({"credential_source": "none"}, None),
-        ({"credential_source": "stored"}, None),
+        ({}, None, "Bearer legacy-key-0000"),
+        ({"api_key": "slot-key-0000"}, None, "Bearer slot-key-0000"),
+        ({}, "env-key-0000", "Bearer env-key-0000"),
+        ({"api_key": "enc"}, None, None),
+        ({"credential_source": "none"}, None, None),
+        ({"credential_source": "stored"}, None, None),
+        ({"credential_source": "environment"}, None, None),
     ],
-    ids=["no-decision", "slot-key-first", "none", "stored-without-a-key"],
+    ids=[
+        "no-decision",
+        "slot-key-first",
+        "env-before-legacy",
+        "slot-key-encrypted",
+        "none",
+        "stored-without-a-key",
+        "environment-unset",
+    ],
 )
 def test_custom_2_reads_its_legacy_key_only_without_a_credential_decision(
-    slot, sent, monkeypatch
+    slot, env, sent, tmp_path, monkeypatch
 ):
     """TASK-41523: Custom OpenAI API 2 resolves its key from its slot, as
-    readiness does; the legacy ``[API] custom_openai2_api_key`` (exposed by
-    ``load_settings`` as ``custom_openai_api_2.api_key``) is still read when
-    the slot records no credential decision, never over an explicit one."""
-    monkeypatch.delenv("CUSTOM_2_API_KEY", raising=False)
-    endpoint = {"api_url": "http://127.0.0.1:5678/v1"}
-    config = _merged({"api_settings": {"custom_2": {**endpoint, **slot}}})
-    config["custom_openai_api_2"] = {"api_key": "legacy-key-0000"}
-    posts, auth = _auth_world(monkeypatch, config)
+    readiness does; the legacy ``[API] custom_openai2_api_key`` is still read
+    when the slot records no credential decision, never over an explicit one,
+    the slot's own key or its variable. TASK-41710: the loader copies it into
+    the slot, so a slot key that is still ciphertext keeps it out (readiness
+    says "still encrypted"; the handler used to send the legacy key). Only a
+    copy names ``custom_2`` for a Settings save to write: under an
+    "environment" choice with its variable unset the send is keyless either
+    way, so the loader's own record is what shows the choice held (review
+    r17rd-rev1)."""
+    if slot.get("api_key") == "enc":
+        slot = {"api_key": _ciphertext("slot-key-0000")}
+    config_mod, posts, auth = _custom_2_scratch_world(
+        tmp_path,
+        monkeypatch,
+        {
+            "API": {"custom_openai2_api_key": "legacy-key-0000"},
+            "api_settings": {"custom_2": {"api_url": "http://127.0.0.1:5678/v1", **slot}},
+        },
+        env,
+    )
 
     from tldw_chatbook.Chat.Chat_Functions import chat_api_call
 
@@ -5080,6 +5158,113 @@ def test_custom_2_reads_its_legacy_key_only_without_a_credential_decision(
 
     assert posts == [_CUSTOM_2_POST]
     assert auth == [sent]
+    settings = config_mod.load_settings()
+    copied = sent == "Bearer legacy-key-0000"
+    assert (
+        settings["legacy_api_key_providers"],
+        settings["api_settings"]["custom_2"].get("api_key") == "legacy-key-0000",
+    ) == ((("custom_2",) if copied else ()), copied)
+
+
+@pytest.mark.parametrize("legacy", [None, "legacy-key-0000"], ids=["alone", "with-a-legacy-key"])
+def test_dreams_refuses_a_still_encrypted_key_and_sends_nothing(legacy, tmp_path, monkeypatch):
+    """TASK-41709: Dreams took readiness's key without checking ``ready``. With
+    Custom 2's saved key still ``enc:`` ciphertext readiness blocks, yet Dreams
+    sent without a key, and with a plaintext legacy ``[API]
+    custom_openai2_api_key`` beside it Dreams sent that key. A send readiness
+    blocks is refused with readiness's reason and posts nothing."""
+    from tldw_chatbook.Chat.provider_readiness import (
+        STILL_ENCRYPTED_REASON,
+        get_provider_readiness,
+    )
+
+    user = {
+        "api_settings": {
+            "custom_2": {
+                "api_url": "http://127.0.0.1:5678/v1",
+                "api_key": _ciphertext("slot-key-0000"),
+            }
+        },
+        "chat_defaults": {"provider": "custom_2", "model": "m"},
+    }
+    if legacy is not None:
+        user["API"] = {"custom_openai2_api_key": legacy}
+    config_mod, posts, auth = _custom_2_scratch_world(tmp_path, monkeypatch, user)
+    readiness = get_provider_readiness("custom_2", config_mod.load_settings())
+
+    refusal = _dreams_send()
+
+    assert (readiness.ready, readiness.reason) == (False, STILL_ENCRYPTED_REASON)
+    assert (refusal, posts, auth) == (
+        f"Dreams provider is not ready ({STILL_ENCRYPTED_REASON})",
+        [],
+        [],
+    )
+
+
+def test_a_legacy_only_custom_2_key_reads_the_same_in_readiness_and_every_send(
+    tmp_path, monkeypatch
+):
+    """TASK-41710: with only the legacy ``[API] custom_openai2_api_key`` set,
+    readiness (and so Settings) found no key and Console sent without one,
+    while Dreams and import analysis sent the legacy key. The loader now
+    copies it into the slot, as it does the nine bridged providers' keys:
+    readiness reports it, Console's resolved send and a Dreams send spend it,
+    and a Settings save that keeps the stored key writes it into the slot."""
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        ProviderSetupDraft,
+        build_provider_setup_mutation,
+    )
+
+    config_mod, posts, auth = _custom_2_scratch_world(
+        tmp_path,
+        monkeypatch,
+        {
+            "API": {"custom_openai2_api_key": "legacy-key-0000"},
+            "api_settings": {"custom_2": {"api_url": "http://127.0.0.1:5678/v1"}},
+            "chat_defaults": {"provider": "custom_2", "model": "m"},
+        },
+    )
+    settings = config_mod.load_settings()
+    readiness = get_provider_readiness("custom_2", settings)
+
+    refusal = _dreams_send()
+    # Console's shape: readiness's key, marked resolved.
+    chat_api_call(
+        "custom-openai-api-2",
+        [{"role": "user", "content": "x"}],
+        api_key=readiness.api_key,
+        api_key_resolved=True,
+        model="m",
+        streaming=False,
+    )
+
+    assert (readiness.ready, readiness.api_key, readiness.api_key_source) == (
+        True,
+        "legacy-key-0000",
+        "config:api_settings.custom_2.api_key",
+    )
+    assert (refusal, posts, auth) == (
+        None,
+        [_CUSTOM_2_POST] * 2,
+        ["Bearer legacy-key-0000"] * 2,
+    )
+    assert settings["legacy_api_key_providers"] == ("custom_2",)
+    mutation = build_provider_setup_mutation(
+        ProviderSetupDraft(
+            provider="custom_2",
+            model="m",
+            endpoint="http://127.0.0.1:5678/v1",
+            credential_source="stored",
+            credential_revision=0,
+            draft_generation=1,
+        ),
+        settings,
+        keep_stored_credential=True,
+    )
+    assert mutation.section_values["api_settings.custom_2"].get("api_key") == "legacy-key-0000"
 
 
 # --- TASK-41145, owner decision 2026-11-16: "Settings edits host/port" -------
