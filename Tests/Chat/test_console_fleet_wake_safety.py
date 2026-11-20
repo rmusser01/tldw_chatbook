@@ -523,8 +523,8 @@ async def test_second_wake_progresses_while_first_waits_for_real_approval(tmp_pa
         for sid in wake.delivering_session_ids():
             controller._signal_stop(session_id=sid)
         # dispose() ends drain_automatic_primary's wait (a cancelled _deliver
-        # keeps draining there) but empties the registry, so keep the tasks
-        # first; then bound the wait and name what is still parked
+        # keeps draining there); keep the tasks first, then bound the wait and
+        # name what is still parked
         # (TASK-39044: this gather once waited out the 300 s timeout).
         deliveries = tuple(wake._delivery_tasks)
         wake.dispose()

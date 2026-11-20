@@ -26,6 +26,7 @@ warm-up's modules today (the second is checked below).
 from __future__ import annotations
 
 import ast
+import builtins
 import importlib.util
 import inspect
 import json
@@ -137,10 +138,14 @@ def test_missing_optional_root_does_not_omit_following_imports(monkeypatch):
         if name == "textual_serve":
             raise ModuleNotFoundError(name=name)
 
-    monkeypatch.setattr("builtins.__import__", import_module)
-    assert _import_warmup_modules(["textual_serve", "required_after"]) == [
-        "textual_serve"
-    ]
+    # TASK-42028: the fake takes one argument, so it must not outlive the call.
+    # Plain setattr kept it installed until monkeypatch's own teardown, after
+    # the autouse teardowns that import (drain_attached_real_databases).
+    with monkeypatch.context() as patch:
+        patch.setattr("builtins.__import__", import_module)
+        missing = _import_warmup_modules(["textual_serve", "required_after"])
+    assert builtins.__import__ is not import_module
+    assert missing == ["textual_serve"]
     assert calls == ["textual_serve", "required_after"]
 
 
@@ -159,9 +164,11 @@ def test_other_warmup_import_failures_remain_fatal(monkeypatch, requested, error
         assert name == requested
         raise error
 
-    monkeypatch.setattr("builtins.__import__", import_module)
     with pytest.raises(type(error)) as caught:
-        _import_warmup_modules([requested])
+        with monkeypatch.context() as patch:
+            patch.setattr("builtins.__import__", import_module)
+            _import_warmup_modules([requested])
+    assert builtins.__import__ is not import_module
     assert caught.value is error
 
 
