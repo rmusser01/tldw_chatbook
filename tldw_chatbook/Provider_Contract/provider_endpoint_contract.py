@@ -100,6 +100,19 @@ _CLOUD_BASE_KEYS = frozenset(
 #: DeepSeek's bare host is its base only on its own host (review r17cu-rev1
 #: M-1: an OpenAI-compatible proxy under its key may serve only ``/v1``).
 _BARE_BASE_ANY_HOST_KEYS = frozenset({"cohere"})
+#: TASK-42002 (owner decision 2026-11-19, "Migrate on load"): the paths an
+#: earlier Settings saved with ``/v1`` wrongly appended to a first-party base.
+#: On the provider's own host each reads as its documented path, so a save
+#: writes that base (TASK-42019) and config load rewrites a saved one
+#: (``config._migrate_v1_appended_provider_bases``). Google's ``/v1`` is a
+#: real Gemini API version, so it is not here.
+_V1_APPENDED_PATHS = {
+    "google": ("v1beta", "v1"),
+    "cohere": ("v1",),
+    "groq": ("v1",),
+    "openrouter": ("v1",),
+    "qwencloud": ("v1",),
+}
 
 
 #: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
@@ -323,6 +336,7 @@ def _resolve_provider_endpoint(
     segments = tuple(segment for segment in path.split("/") if segment)
     if any(segment in {".", ".."} for segment in segments):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
+    segments = _read_v1_appended_path(provider_key, canonical_host, segments)
     if provider_key == "qwencloud" and segments[-1:] == ("responses",):
         # TASK-41722: QwenCloud's adapter strips its own /responses from a
         # pasted endpoint (normalize_qwencloud_base_url), so this reads the
@@ -461,6 +475,47 @@ def _documented_own_path(provider_key: str, host: str) -> tuple[str, ...] | None
     if default.hostname != host:
         return None
     return tuple(segment for segment in default.path.split("/") if segment)
+
+
+def _read_v1_appended_path(
+    provider_key: str, host: str, segments: tuple[str, ...]
+) -> tuple[str, ...]:
+    """The documented path for a ``_V1_APPENDED_PATHS`` shape on the provider's
+    own host; any other path unchanged (TASK-42002)."""
+    if _V1_APPENDED_PATHS.get(provider_key) != segments:
+        return segments
+    documented = _documented_own_path(provider_key, host)
+    return segments if documented is None else documented
+
+
+def v1_appended_documented_base(provider: object, value: object) -> str | None:
+    """The documented base a value saved with ``/v1`` wrongly appended reads as.
+
+    TASK-42002: config load rewrites such a saved base with this, the rule a
+    save resolves through (``_V1_APPENDED_PATHS``).
+
+    Args:
+        provider: Provider key.
+        value: A saved ``api_base_url``.
+
+    Returns:
+        The documented base on the value's own scheme and host, or None for
+        any other value, including one the contract refuses (user info, a
+        query or a fragment never reach the result).
+    """
+    key = normalize_provider_key_for_contract(provider)
+    if key not in _V1_APPENDED_PATHS or type(value) is not str:
+        return None
+    try:
+        parsed = urlsplit(value.strip())
+        host = canonical_endpoint_host(parsed.hostname or "")
+    except ValueError:
+        return None
+    segments = tuple(segment for segment in parsed.path.split("/") if segment)
+    if host is None or _read_v1_appended_path(key, host, segments) == segments:
+        return None
+    resolution = resolve_provider_endpoint(key, value)
+    return None if resolution.errors else resolution.normalized_input
 
 
 def _names_a_native_route(provider_key: str, segments: tuple[str, ...]) -> bool:

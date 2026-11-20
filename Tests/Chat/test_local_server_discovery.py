@@ -4799,7 +4799,10 @@ async def test_a_project_instruction_key_saved_before_the_v1_fix_still_resolves(
     not a value an earlier version saved with ``/v1`` added. Console still
     sends to that value as stored, so its project-instruction consent key is
     the one the user gave consent under, and a save that leaves the Endpoint
-    alone writes it back unchanged."""
+    alone writes it back unchanged. TASK-42002 (owner decision "Migrate on
+    load"): Google's and Cohere's own-host values are the exception; config
+    load rewrites them and a save writes the documented base, so their keys
+    change once."""
     from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
 
     locator = fingerprint_canonical_locator(_PROJECT_LOCATOR)
@@ -4818,7 +4821,125 @@ async def test_a_project_instruction_key_saved_before_the_v1_fix_still_resolves(
         ) == notice_key, stored
         assert resolution.base_url == stored, stored
         assert seen == [f"adapter:{stored}"], stored
-        assert persisted_endpoint_for_key(provider, "api_base_url", stored) == stored
+        saved = _V1_APPENDED.get(provider, ("", stored))
+        expected = saved[1] if saved[0] == stored else stored
+        assert persisted_endpoint_for_key(provider, "api_base_url", stored) == expected
+
+
+#: TASK-42002 (owner decision 2026-11-19, "Migrate on load"): what an earlier
+#: Settings saved with ``/v1`` appended on each provider's own host, the
+#: documented base it now reads and saves as, and the URL its adapter posts.
+_V1_APPENDED = {
+    "google": (
+        "https://generativelanguage.googleapis.com/v1beta/v1",
+        "https://generativelanguage.googleapis.com/v1beta",
+        "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+    ),
+    "cohere": ("https://api.cohere.com/v1", "https://api.cohere.com", "https://api.cohere.com/v2/chat"),
+    "groq": (
+        "https://api.groq.com/v1",
+        "https://api.groq.com/openai/v1",
+        "https://api.groq.com/openai/v1/chat/completions",
+    ),
+    "openrouter": (
+        "https://openrouter.ai/v1",
+        "https://openrouter.ai/api/v1",
+        "https://openrouter.ai/api/v1/chat/completions",
+    ),
+    "qwencloud": (
+        "https://dashscope-intl.aliyuncs.com/v1",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses",
+    ),
+}
+
+
+@pytest.mark.parametrize("provider", sorted(_V1_APPENDED))
+def test_a_base_saved_with_v1_appended_saves_its_documented_base(provider, monkeypatch):
+    """TASK-42019 (and TASK-42002's rule for a save): typing Cohere's
+    ``https://api.cohere.com/v1`` saved ``/v1`` and the adapter posted
+    ``/v1/v2/chat``. Each shape TASK-42002 migrates saves as the documented
+    base, and the adapter posts its own route under it."""
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+
+    typed, documented, posted = _V1_APPENDED[provider]
+    assert persisted_endpoint_for_key(provider, "api_base_url", typed) == documented
+    sent = _cloud_world(monkeypatch, _cloud_config(("api_settings", provider), "api_base_url", {}, documented))
+
+    try:
+        _dispatch(provider)
+    except Exception as exc:  # the stub answers 400
+        caught = exc
+    else:
+        caught = None
+
+    assert sent == [posted], repr(caught)
+
+
+#: Each saved value a load test writes: the shapes above are rewritten; these
+#: controls never are (TASK-42002 AC#2): OpenAI's correct ``/v1``, Google's
+#: ``/v1`` (a real Gemini version), gateway and foreign hosts, a custom and a
+#: preset base, DeepSeek's ``/v1``, and own-host shapes the contract refuses.
+_V1_APPENDED_LOAD_ROWS = {
+    **{f"{provider}-v1-appended": (provider, "api_base_url", row[0], row[1]) for provider, row in _V1_APPENDED.items()},
+    **{
+        case: (provider, key, value, value)
+        for case, (provider, key, value) in {
+            "openai-v1": ("openai", "api_base_url", "https://api.openai.com/v1"),
+            "google-v1": ("google", "api_base_url", "https://generativelanguage.googleapis.com/v1"),
+            "google-gateway": ("google", "api_base_url", "https://litellm.corp/gemini/v1beta/v1"),
+            "groq-gateway": ("groq", "api_base_url", "https://litellm.corp/v1"),
+            "qwencloud-china-host": ("qwencloud", "api_base_url", "https://dashscope.aliyuncs.com/v1"),
+            "deepseek-v1": ("deepseek", "api_base_url", "https://api.deepseek.com/v1"),
+            "custom": ("custom", "api_url", "http://127.0.0.1:8080/v1"),
+            "preset-own-host-v1": ("fireworks", "api_base_url", "https://api.fireworks.ai/v1"),
+            "cohere-query": ("cohere", "api_base_url", "https://api.cohere.com/v1?key=secret-42002"),
+            "openrouter-user-info": ("openrouter", "api_base_url", "https://u:secret-42002@openrouter.ai/v1"),
+        }.items()
+    },
+}
+
+
+@pytest.mark.parametrize("case", sorted(_V1_APPENDED_LOAD_ROWS))
+def test_config_load_migrates_a_base_saved_with_v1_appended_once(case, tmp_path, monkeypatch):
+    """TASK-42002: config load rewrites each shape on the provider's own host
+    to the documented base, logs it without credentials or a query, and the
+    boot step saves it once; a control is never rewritten and its file is
+    left byte for byte (no stamp-only rewrite)."""
+    from loguru import logger
+
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import endpoint_refusal
+
+    provider, key, stored, expected = _V1_APPENDED_LOAD_ROWS[case]
+    path = tmp_path / "config.toml"
+    path.write_text(
+        toml.dumps({"config_schema_version": 1, "api_settings": {provider: {key: stored}}}),
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+    logged: list[str] = []
+    sink = logger.add(lambda message: logged.append(str(message)), level="INFO", format="{message}")
+    try:
+        config_mod = select_config_source(monkeypatch, path)
+        loaded = config_mod.load_settings(force_reload=True)["api_settings"][provider][key]
+        first = config_mod.migrate_config_file_if_needed()
+        second = config_mod.migrate_config_file_if_needed()
+    finally:
+        logger.remove(sink)
+
+    assert loaded == expected
+    rewrites = [line for line in logged if f"api_settings.{provider}.api_base_url" in line]
+    assert not any("secret-42002" in line for line in logged)
+    if expected == stored:
+        assert (first, path.read_bytes(), rewrites) == (None, original, [])
+        # A save shares the rule, so it keeps every accepted control too.
+        if key == "api_base_url" and not endpoint_refusal(provider, stored):
+            assert persisted_endpoint_for_key(provider, key, stored) == stored
+        return
+    assert first is not None and second is None
+    assert tomllib.loads(path.read_text(encoding="utf-8"))["api_settings"][provider][key] == expected
+    assert rewrites and all(expected in line for line in rewrites)
 
 
 #: TASK-41727: per cloud dispatch case, a base that ends in a request route

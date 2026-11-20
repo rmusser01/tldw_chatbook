@@ -64,6 +64,7 @@ from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from tldw_chatbook.provider_registry import (  # noqa: F401 - normalize_provider_config_key is re-exported
     ALL_RECORDS,
     CLOUD_PROVIDER_CONFIG_KEYS,
+    RECORDS_BY_KEY,
     _ENGINE_CONFIG_KEY_ALIASES,
     normalize_provider_config_key,
 )
@@ -3966,13 +3967,44 @@ def format_config_key_report(findings: Sequence[ConfigKeyFinding]) -> str:
 #: carrying this version. An unversioned (pre-existing) file is treated as
 #: the baseline (0) and migrated forward, never rejected.
 CONFIG_SCHEMA_VERSION_KEY = "config_schema_version"
-_CURRENT_CONFIG_SCHEMA_VERSION = 1
+_CURRENT_CONFIG_SCHEMA_VERSION = 2
+
+
+def _migrate_v1_appended_provider_bases(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Migration 2 (TASK-42002, owner decision 2026-11-19 "Migrate on load").
+
+    Rewrites an ``api_base_url`` an earlier Settings saved with ``/v1``
+    appended (Google ``.../v1beta/v1``) to the documented base, by the endpoint
+    contract's rule (the save's too); those configs' project-instruction keys
+    change once. ADR-097: the contract is imported only for a value on a
+    provider's own host that is not its default.
+    """
+    from urllib.parse import urlsplit
+
+    api_settings = config.get("api_settings")
+    for provider, table in (api_settings.items() if isinstance(api_settings, dict) else ()):
+        value = table.get("api_base_url") if isinstance(table, dict) else None
+        default = getattr(RECORDS_BY_KEY.get(provider), "default_base_url", None)
+        if not (isinstance(value, str) and default) or value.strip().rstrip("/") == default:
+            continue
+        try:
+            if urlsplit(value.strip()).hostname != urlsplit(default).hostname:
+                continue
+        except ValueError:
+            continue
+        from tldw_chatbook.Provider_Contract.provider_endpoint_contract import v1_appended_documented_base
+
+        if (documented := v1_appended_documented_base(provider, value)) is not None:
+            table["api_base_url"] = documented
+            logger.info("Config migration: api_settings.{}.api_base_url had /v1 appended "
+                        "by an earlier version; now its documented base {}.", provider, documented)
+    return config
+
 
 #: Numbered stepwise migrations: ``{target_version: fn(config) -> config}``.
-#: Each transforms a config AT (target-1) into (target). Empty today -- this
-#: is the first versioned config -- but the runner is exercised by tests and
-#: ready for the first key rename, mirroring the DB migration pattern.
-_CONFIG_MIGRATIONS: Dict[int, Any] = {}
+#: Each transforms a config AT (target-1) into (target), mirroring the DB
+#: migration pattern.
+_CONFIG_MIGRATIONS: Dict[int, Any] = {2: _migrate_v1_appended_provider_bases}
 
 
 def migrate_config_forward(
@@ -4045,11 +4077,11 @@ def migrate_config_file_if_needed() -> Optional[Path]:
     """Persist a forward migration of the on-disk config (TASK-26040 AC#3/#4).
 
     Runs under the write lock. Reads the raw file, and only when an actual
-    migration function must run does it back up the original and atomically
-    rewrite the migrated result. A failed migration raises before any write,
-    leaving the original file untouched. Returns the backup path when a
-    migration was written, else ``None`` (no file, already current, bare
-    stamp only, or a newer-than-supported version).
+    migration function runs and changes it does it back up the original and
+    atomically rewrite the migrated result. A failed migration raises before
+    any write, leaving the original file untouched. Returns the backup path
+    when a migration was written, else ``None`` (no file, already current,
+    bare stamp only, or a newer-than-supported version).
     """
     if not _CONFIG_MIGRATIONS:
         return None  # no real migration exists yet -- free no-op
@@ -4071,6 +4103,8 @@ def migrate_config_file_if_needed() -> Optional[Path]:
         migrated, changed, conflict = migrate_config_forward(raw)
         if conflict is not None or not changed:
             return None
+        if {**migrated, CONFIG_SCHEMA_VERSION_KEY: None} == {**raw, CONFIG_SCHEMA_VERSION_KEY: None}:
+            return None  # TASK-42002: only the stamp changed (see _has_pending_config_migration)
         backup_path = _write_serialized_config_artifact_unlocked(
             _advanced_backup_path(config_path),
             current_serialized,

@@ -409,9 +409,14 @@ the start of its documented path is completed to that path: Groq's
 `https://api.groq.com` or `https://api.groq.com/openai` is saved as
 `…/openai/v1`, and Google's `https://generativelanguage.googleapis.com` as
 `…/v1beta`. On any other host a bare address gets `/v1`, except under Cohere,
-whose adapter adds its own `/v2/chat`. An address an earlier version saved with `/v1`
-added (such as `…/v1beta/v1`) stays as it is: enter the provider's address
-again and save. QwenCloud's Endpoint may be a pasted Responses endpoint
+whose adapter adds its own `/v2/chat`. An earlier version saved some of these
+addresses with `/v1` added; on the provider's own host the app rewrites them
+to the documented address once when it loads your config, and **s** saves
+them that way too: Google's `…/v1beta/v1` becomes `…/v1beta`, Cohere's
+`https://api.cohere.com/v1` the bare host, and Groq's, OpenRouter's and
+QwenCloud's `<host>/v1` become `…/openai/v1`, `…/api/v1` and
+`…/compatible-mode/v1`. Any other address, including a gateway's and Google's
+`…/v1`, is left as it is. QwenCloud's Endpoint may be a pasted Responses endpoint
 (`…/compatible-mode/v1/responses`): the Console, **s** and its chats all read
 it as the base before `/responses`, which is what **s** saves. When **s**
 refuses an endpoint, the save result and the Endpoint row's help give the

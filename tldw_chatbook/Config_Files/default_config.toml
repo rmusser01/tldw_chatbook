@@ -1,7 +1,7 @@
 
 # Configuration for tldw-chatbook TUI App
 # Located at: ~/.config/tldw_cli/config.toml
-config_schema_version = 1  # TASK-26040: config schema version; migrated forward on load
+config_schema_version = 2  # TASK-26040: config schema version; migrated forward on load
 [general]
 default_tab = "chat"  # "chat", "character", "logs", "media", "search", "ingest", "stats"
 focus_mode = false  # Start the Console chrome-free (no nav bar / workbench header; one-line status bar kept)
