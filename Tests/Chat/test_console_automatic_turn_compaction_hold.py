@@ -332,7 +332,7 @@ async def test_a_long_ask_hold_does_not_spend_the_chains_time_limit(rig) -> None
         rig.chain = ledger.create_chain(
             rig.cid,
             root_submission_id=uuid4().hex,
-            limits=AutomaticWorkLimits(wall_seconds=60),
+            limits=AutomaticWorkLimits(wall_seconds=600),
         )
         rig.finish_a_child_of_the_chain("First research result")
         assert await _settle(lambda: not wake.has_pending(rig.cid)), (
@@ -342,15 +342,17 @@ async def test_a_long_ask_hold_does_not_spend_the_chains_time_limit(rig) -> None
         assert await _settle(lambda: not wake._active)
         assert rig.attempts() == ["completed"]
         assert ledger.snapshot(rig.chain).started_at is not None, "clock started"
+        waited[0] += 300.0  # the chain's work runs 300 s of its 600 s
 
         rig.store.set_session_context_policy_overrides(_SESSION, _ASK)
+        before_the_hold = time.time()
         rig.finish_a_child_of_the_chain("Saved research result")
         assert await rig.wake_paused(), (rig.attempts(), wake.pause_reason(rig.cid))
         held = ledger.snapshot(rig.chain)
         assert (held.status, held.pause_reason) == ("paused", "compaction_ask")
         streams = rig.gateway.stream_calls
 
-        waited[0] += 120.0  # twice the chain's 60 s limit passes during the hold
+        waited[0] += 1200.0  # twice the chain's limit passes during the hold
         compacted, copy = await rig.controller.compact_context_now(_SESSION)
 
         assert compacted is True, copy
@@ -367,9 +369,12 @@ async def test_a_long_ask_hold_does_not_spend_the_chains_time_limit(rig) -> None
         assert rig.failed_rows() == []
         resumed = ledger.snapshot(rig.chain)
         assert resumed.status == "active"
-        assert resumed.deadline_at - held.deadline_at >= 120.0, "the hold stays out"
-        assert resumed.deadline_at < time.time() + waited[0] + 60.0, (
-            "the time the work ran still counts"
+        moved = resumed.deadline_at - held.deadline_at
+        assert 1200.0 <= moved <= 1200.0 + (time.time() - before_the_hold), (
+            "only the hold stays out"
+        )
+        assert resumed.deadline_at - (time.time() + waited[0]) < 300.0, (
+            "the 300 s the work ran before the hold still count"
         )
     finally:
         await rig.close()
