@@ -1080,6 +1080,9 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.2 rebased
     # 2026-11-19 onto dev a6df4d8d48 (dev row 8,837): the row is the
     # exact measured size, 9,018 (+181 over dev's row).
+    # owner decision 2026-10-04 (expand limits): TASK-34100.2 scoped review
+    # 2026-11-19, +2 (PRE_MARKER_TEMPLATE_SAMPLES' comment notes MLX-LM's
+    # identity is its host/port since dev's TASK-41145; 9,018 -> 9,020).
     "tldw_chatbook/config.py": 9080,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
