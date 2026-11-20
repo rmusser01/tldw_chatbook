@@ -118,9 +118,13 @@ leaves an inert retained attempt; a completed outer marker resumes the existing
 receipt-bound operation. Malformed or ambiguous older pending states still refuse.
 
 The installed `tamagotchi.config` owner (per-profile since TASK-42000) holds the
-profile's `tamagotchi_pets.json`, its exact dated backups and the
-`tamagotchi_pets.seeded` marker beside the selected config, and restores them
-beside the restored profile's config like its other settings files. A portable
+profile's `tamagotchi_pets.json` and the `tamagotchi_pets.seeded` marker beside
+the selected config, and restores them beside the restored profile's config like
+its other settings files. Its exact dated backups are listed as intentionally
+excluded (TASK-42114): the store deletes them as it rotates, and a captured
+file is registered as an admission root of its own, so capturing them bound
+roots that later vanished, after which every admission refused. Archives that
+hold dated rows still restore them. A portable
 copy made before pets were per-profile keeps them in the roaming
 `tldw_chatbook` folder; detached import takes those only when the profile has
 no pet files of its own, and reports them as not imported otherwise. Other

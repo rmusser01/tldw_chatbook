@@ -147,7 +147,9 @@ the safety copy retains the removed data.
 Pet settings are part of **Settings** and live in each profile's configuration
 folder, beside `config.toml`, so Replace treats them like the profile's other
 settings files. A backup's pets replace the profile's pets, and a backup from a
-profile without pets removes them. An older backup taken while every profile
+profile without pets removes them. The pet's dated copies are its own rotating
+backups, so a backup leaves them out and Replace leaves the profile's copies in
+place. An older backup taken while every profile
 shared one pet folder restores its pets into this profile. If that backup holds
 several profiles, restore all of them together, as for any data they share. The old shared folder
 (`~/.config/tldw_chatbook`, or `%APPDATA%\tldw_chatbook` on Windows) is never

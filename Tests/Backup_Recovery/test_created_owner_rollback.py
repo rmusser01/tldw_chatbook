@@ -185,7 +185,9 @@ _CASES = {
 # shared folder, which must never change; "target_files" are the target's own
 # files, "retired" the ones the restore must retire and the rollback bring
 # back; "pets_after_restore" is what the target's pet store lists once
-# started after the restore (no copy from the old shared folder).
+# started after the restore (no copy from the old shared folder);
+# "uncaptured" are source files a backup leaves out, so the restore never
+# creates them (TASK-42114: the store's own rotating dated copies).
 _PET = '{"bit": {"name": "Bit", "happiness": 70}}'
 _PET_GROUPS = ("conversations", "settings", "workspaces")
 _CASES.update(
@@ -202,6 +204,7 @@ _CASES.update(
                     "{}",
                 ),
             },
+            "uncaptured": ("pets.dated",),
             "delete": (),
             "extract": True,
             "refusal": None,
@@ -231,6 +234,9 @@ _CASES.update(
             "target_files": {
                 "own": ("pets", "tamagotchi_pets.json", '{"own": {"name": "Own"}}')
             },
+            # A backup with only a dated copy holds no pets (TASK-42114), so
+            # the Replace retires the target's pets as for "pets-none".
+            "uncaptured": ("pets.dated",),
             "retired": ("own",),
             "delete": (),
             "refusal": None,
@@ -297,7 +303,7 @@ keyring.set_keyring(Keyring())
 from tldw_chatbook.Backup_Recovery import bootstrap,credentials
 from tldw_chatbook.Backup_Recovery.control_records import admission_authority
 from tldw_chatbook.Backup_Recovery.later_rollback import preview_rollback
-from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
 from tldw_chatbook.Backup_Recovery.restore_plan import required_rollback_dependencies
 from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
 credential_store=KeyringServerCredentialStore(keyring_backend=Keyring())
@@ -307,7 +313,12 @@ case=CASES[name]
 groups=None if case['groups'] is None else tuple(case['groups'])
 os.environ['APPDATA']=str(Path.home()/'AppData'/'Roaming')
 backup_options={} if groups is None else {'data_groups':groups}
+if LOCATION=='default':
+    # The default config folder holds recovery-bootstrap, so it is never a
+    # root, and each file beside config.toml is registered on its own.
+    os.environ['TLDW_CONFIG_PATH']=str(Path.home()/'.config'/'tldw_cli'/'config.toml')
 source=Path(os.environ['TLDW_CONFIG_PATH'])
+source.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
 data=Path(os.environ['XDG_DATA_HOME'])/'fixture';data.mkdir(mode=0o700)
 source.write_text('[general]\nusers_name="default_user"\n[paths]\ndata_dir='+json.dumps(str(data))+'\n')
 source.chmod(0o600)
@@ -377,7 +388,7 @@ if sys.argv[1]=='source':
             # layout capture rewrites it to.
             text=json.dumps({'records':[{'title':'saved','file_path':str(root/'chatbooks'/'saved.zip')}]},ensure_ascii=False,indent=2)
         write(folder,leaf,text)
-        made[label]=(folder,leaf)
+        if label not in case.get('uncaptured',()):made[label]=(folder,leaf)
 else:
     for owner in case['delete']:
         for suffix in ('','-wal','-shm','-journal'):
@@ -435,7 +446,7 @@ def board_only_in_wal(paths,stage):
 
 shared=Path.home().parent.parent/'source'/'home'
 shared_pets=(Path(os.environ['APPDATA']) if os.name=='nt' else Path.home()/'.config')/'tldw_chatbook'
-service=RecoveryService(Path.home()/'recovery-control')
+service=RecoveryService(default_control_root() if LOCATION=='default' else Path.home()/'recovery-control')
 try:
     if role=='source':
         made=produce('source')['made']
@@ -466,9 +477,13 @@ try:
             lambda issues:service.start_restore(inspection,plan(issues),rollback_password=b'rollback-test-password'))
         operation=restored['result']['journal_operation_id']
         assert present(paths)==set(paths),sorted(set(paths)-present(paths))
-        for label,(folder,leaf,text) in case['files'].items():
+        captured={label:value for label,value in case['files'].items() if label not in case.get('uncaptured',())}
+        for label,(folder,leaf,text) in captured.items():
             # The pets restore with the source's bytes.
             if folder=='pets':assert paths[label].read_text()==text,label
+        for label in case.get('uncaptured',()):
+            folder,leaf,_=case['files'][label]
+            assert not (Path(folders[folder])/leaf).exists(),'restore created '+label
         retired=[label for label in case.get('retired',()) if own[label][0].exists()]
         assert not retired,'restore kept '+repr(retired)
         assert snapshot(shared_pets)==shared_before,'restore changed the old shared pet folder'
@@ -486,15 +501,15 @@ try:
             from tldw_chatbook.Backup_Recovery import archive_reader
             document=archive_reader.verify_sealed(service.inspection(inspection))
             pets={row.logical_id:row for row in document.files if row.owner_id=='tamagotchi.config'}
-            assert len(pets)==2,sorted(pets)
+            assert len(pets)==len(captured),sorted(pets)
             group_ids=tuple(group.group_id for group in document.dependency_groups if set(group.members)&set(pets))
             reviewed_extraction=service.wait(service.start_extraction_preview(inspection,group_ids=group_ids,destination=Path.home()/'extracted'))
             assert reviewed_extraction['state']=='succeeded',dict(reviewed_extraction)
             succeeded(service,service.start_extraction(inspection,reviewed_extraction['result']['plan']))
             report=json.loads((Path.home()/'extracted'/'inert-mapping.json').read_text())
             rows={row['archive_relative_path']:row for row in report['files'] if row['owner_id']=='tamagotchi.config'}
-            assert set(rows)=={leaf for folder,leaf,_ in case['files'].values()},sorted(rows)
-            for folder,leaf,text in case['files'].values():
+            assert set(rows)=={leaf for folder,leaf,_ in captured.values()},sorted(rows)
+            for folder,leaf,text in captured.values():
                 assert (Path.home()/'extracted'/rows[leaf]['output']).read_text()==text,leaf
         for label in case.get('wal',()):
             writer=("import os,sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('PRAGMA journal_mode=WAL');"
@@ -573,7 +588,7 @@ def test_later_rollback_retires_the_files_a_restore_created(tmp_path, case):
         + repr(_CASES)
         + "\nBOARD_INSERT="
         + repr(_BOARD_INSERT)
-        + "\n"
+        + "\nLOCATION='separate'\n"
         + _SCENARIO
     )
     for name in ("source", "target"):
@@ -591,4 +606,81 @@ def test_later_rollback_retires_the_files_a_restore_created(tmp_path, case):
         "target",
         script=script,
         timeout=2500 if sys.platform == "win32" else 900,
+    )
+
+
+# TASK-42114: after a backup, the pet store rotates its dated copies (three
+# kept); the app must still start and save. A backup used to register the
+# dated copy as its own admission root, and once rotation deleted it every
+# admission raised FileNotFoundError, so the app refused to start.
+_ROTATION_CASE = {
+    "groups": _PET_GROUPS,
+    "stores": (),
+    "extra": (),
+    "files": {
+        "pets": ("pets", "tamagotchi_pets.json", _PET),
+        "pets.dated": ("pets", "tamagotchi_pets.backup_20260101_000000.json", _PET),
+    },
+    "delete": (),
+    "refusal": None,
+}
+
+_ROTATION = r"""
+SAVE = r'''
+import json,sys,time
+from Tests import network_guard
+network_guard.install()
+for module in ('sounddevice','pyaudio'):sys.modules[module]=None
+from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+with acquire_storage():pass
+store=ConfigFileStorage()
+saved=[]
+for index in range(int(sys.argv[1])):
+    time.sleep(1.1)  # dated copies are named to the second
+    saved.append(store.save('bit',{'name':'Bit','happiness':60+index,'hunger':30,'energy':80,'health':90,'age':index}))
+print(json.dumps({'saved':saved,'pets':sorted(store.list_pets())}))
+'''
+def start(saves):
+    result=subprocess.run([sys.executable,'-c',SAVE,str(saves)],capture_output=True,text=True,env=dict(os.environ),timeout=900 if sys.platform=='win32' else 240)
+    assert result.returncode==0,result.stderr[-4000:]+result.stdout[-1000:]
+    return json.loads(result.stdout.strip().splitlines()[-1])
+backed_up=set(source.parent.glob('tamagotchi_pets.backup_*.json'))
+assert backed_up
+# Four saves rotate the backed-up copy away, then the app starts again.
+assert start(4)=={'saved':[True]*4,'pets':['bit']}
+assert not backed_up&set(source.parent.glob('tamagotchi_pets.backup_*.json'))
+assert start(1)=={'saved':[True],'pets':['bit']}
+# The store's own rotating copies are not registered as roots.
+registry=bootstrap._registry(bootstrap.default_bootstrap_root())
+roots={Path(root) for entry in registry.values() for root in entry['roots']}
+assert not any(root.name.startswith('tamagotchi_pets.backup_') for root in roots),sorted(map(str,roots))
+print('rotated and restarted')
+"""
+
+
+@pytest.mark.timeout(1500 if sys.platform == "win32" else 600)
+@pytest.mark.parametrize("location", ["separate", "default"])
+def test_a_backup_then_pet_rotation_keeps_the_app_starting(tmp_path, location):
+    """TASK-42114: a backup, then the pet store's dated-copy rotation, then the
+    next start and save, at the default config location and on a separate
+    config folder."""
+    script = (
+        "CASES="
+        + repr({"rotation": _ROTATION_CASE})
+        + "\nBOARD_INSERT="
+        + repr(_BOARD_INSERT)
+        + "\nLOCATION="
+        + repr(location)
+        + "\n"
+        + _SCENARIO
+        + _ROTATION
+    )
+    (tmp_path / "source").mkdir(mode=0o700)
+    _run(
+        tmp_path / "source",
+        "rotation",
+        "source",
+        script=script,
+        timeout=1500 if sys.platform == "win32" else 300,
     )
