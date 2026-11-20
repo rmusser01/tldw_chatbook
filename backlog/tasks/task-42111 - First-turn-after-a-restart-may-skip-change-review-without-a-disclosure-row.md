@@ -23,6 +23,8 @@ Seen once during TASK-42101's live check (2026-11-19, branch fu2/lfs-filters, sc
 
 **Expected.** `ChangeReviewConsentService` admission lists every non-READY root as skipped with its reason; a PREPARING root's reason is "Preparing change history; this turn continues without it". So a missing row means either the admission observation was not current (`return ChangeReviewAdmission()` with nothing to disclose), or the root had no readiness entry for the current consent revision.
 
+**Not every restart.** On a later relaunch the same workspace's first turn did show the row, so the gap is at least intermittent.
+
 **Evidence.** The pane captures are in the session scratchpad. Turn evidence: 02 (no row) against 01 and 04 (rows).
 <!-- SECTION:DESCRIPTION:END -->
 
