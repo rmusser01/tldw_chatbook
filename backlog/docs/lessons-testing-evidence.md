@@ -33,7 +33,7 @@
 
 **What to do.** After dropping the last reference, `await asyncio.sleep(0)` before `gc.collect()`, so the resuming handle is released. Then prove the pin with a negative control that does keep a strong reference (TASK-42074 swapped the `WeakSet` for a `set` and saw the assertion fail).
 
-## A mounted file appended to a heavy admission step paid 2.3x its solo time, all of it in teardown (TASK-33620.15.61, 2026-11-20)
+## A mounted file appended to a heavy admission step paid 2.2x its solo time, all of it in teardown (TASK-33620.15.61, 2026-11-20)
 
 **Incident.** TASK-33620.15.61 laned two mounted Console files (bootstrap_profile, 11 tests each) in `pr-fast-lane-admission-3`, behind the Roleplay item-list and import suites. Appended at the step's tail, as laning tasks usually do, they took 162 s and the step 650 s (lane install set, pytest 9, load 4-6). Alone they took 73 s. Their call column hardly moved (60 s against 61 s), but their teardown column went from about 2.4 s to 51 s per file: `Tests/conftest.py`'s `cleanup_file_descriptors` runs `gc.collect()` after every Tests/UI and Tests/Chat test, and the Roleplay files had grown the heap. Placed first, the two files took 69 s and the step 582 s. The Roleplay files behind them ran 24 s slower, at a higher load, so the step still saved about 70 s.
 
