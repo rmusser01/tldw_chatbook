@@ -33,7 +33,13 @@ a subclass (a plugin provider) composes from more than the key covers.
 A run start with nothing to reuse (no kept composition, or a run that
 freezes its definition ceiling at composition and so never reuses) takes no
 fingerprint before it composes (TASK-33620.15.38): there it decides nothing
-for the run, and a live Console send always composed after it. Such a run
+for the run. Live sends reach both halves of this: since the ordinary tree
+captures a send's MCP definitions before run start (064d5cb014), an ordinary
+send does not freeze its ceiling at composition, so a stock profile's first
+send anchors and keeps its composition pending, its second send's
+fingerprint (the worker read below) proves and reuses it, and later sends
+reuse after that fingerprint -- in a new chat and in a temporary chat alike
+(live markers, TASK-33620.15.66). Such a run
 over stock sources (the installed stores and the default manifest provider)
 takes an anchor instead -- the store files' stamps, the admission epoch and
 the selected sources, before the composition reads -- and keeps the
@@ -325,7 +331,8 @@ def _proven(entry: _Entry, fingerprint: tuple, service: Any) -> _Entry | None:
     that composition read only if the same sources were read, every store
     file kept the stamp anchored before the composition, and no admission or
     activation record was written in between. (``_keep`` kept the pending
-    composition only if those stamps were settled at the anchor.)
+    composition only if those stamps were settled at the anchor.) Live, a
+    stock profile's second send runs this (TASK-33620.15.66).
     """
     anchor = entry.anchor
     try:
