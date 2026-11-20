@@ -510,6 +510,9 @@ ARCHITECTURE_GUARD_TARGETS = (
     # so before the bootstrap_profile node below (102 tests, 99 s serially).
     "Tests/ChaChaNotesDB/test_historical_bootstrap.py",
     "Tests/ChaChaNotesDB/test_trigger_census.py",
+    # TASK-42026: the Media DB diagnostics privacy file (Tests/DB keeps the
+    # bootstrap profile, so after the sandboxed block; ~1 s serially).
+    "Tests/DB/test_client_media_debug_logging.py",
     # TASK-39153: last, after every sandboxed suite (one bootstrap_profile node).
     "Tests/Architecture/test_persistent_terminal_privacy_boundary.py",
 )

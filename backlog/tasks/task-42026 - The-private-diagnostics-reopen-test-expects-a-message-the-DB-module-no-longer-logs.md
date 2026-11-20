@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 16:36
+updated_date: 2026-11-20 17:36
 labels:
 - follow-up
 - tests
@@ -24,6 +24,7 @@ Found by TASK-41714 (round 17), red at base. `test_closed_connection_reopens_wit
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The test still observes a reopen diagnostic (the message the module logs today, or a restored one) and still checks it leaks no path or client name, and it passes
+- [x] #2 The file runs on a PR lane, with its time recorded. Added 2026-11-20 (review r18ln-rev1, coordinator decision).
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,3 +40,5 @@ Cause: test drift. b5251e9a6e (TASK-32628) rewrote the Media DB's liveness ping 
 Red/green: red at base on the old message (`1 failed, 8 passed`). Under temporary source edits, run through pytest and reverted: renaming the open message failed the new assertion (`assert 'Media database connection opened.' in ...`), and appending `self.db_path_str` to it failed the path check. Green after: the file 9 passed at -n 4.
 
 Files: `Tests/DB/test_client_media_debug_logging.py`.
+
+Rev1 (2026-11-20, AC#2): the file joins `architecture-guards` ("Architecture guard contracts"), beside the persistent-diagnostic and log-sanitizer guards. Tests/DB keeps the bootstrap profile (`Tests/conftest.py`'s directory rule), so it sits after the sandboxed block and the ChaChaNotesDB files, before the job's last node. Time with the lane's flags (`-p no:xdist --timeout=180 --tb=short`): 9 passed in 1.3 s at load 18. CI pin: `ARCHITECTURE_GUARD_TARGETS`. The whole step locally, serially: 757 passed, 1 skipped in 441 s (load 17-21). Tests/CI at -n 4: 1811 passed, 2 skipped. Files: `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.

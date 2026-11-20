@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 16:37
+updated_date: 2026-11-20 17:36
 labels:
 - follow-up
 - tests
@@ -28,6 +28,7 @@ Found by TASK-41709 (round 17), red at base. `test_no_wrapping_lets_a_mark_throu
 - [x] #1 The cause is named in the notes (generator exactness or product)
 - [x] #2 Either `_query_row` returns `'Kyoto "Wednesday 13" tour dates 2026'` for this input, or the generator marks this shape inexact
 - [x] #3 The input is pinned with `@example`, red before the fix
+- [x] #4 The file runs on a PR lane, with its time recorded. Added 2026-11-20 (review r18ln-rev1, coordinator decision).
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -47,3 +48,4 @@ Red/green: the `@example` failed at base (`AssertionError: ('Kyoto: **"[g1]"Wedn
 
 Files: `tldw_chatbook/Dreams/query_synthesis.py`, `Tests/Dreams/test_query_synthesis.py`.
 
+Rev1 (2026-11-20, AC#4): the file needs hypothesis, which only the `console-p0-gate` install line has among the PR jobs (TASK-42028), so it joins that job's sandboxed step (the file is sandboxed and reads no config). That profile took 4-6 min of its 35 over 17 recent PR runs; the admission-sensitive profile (26-33 min) was left alone. Time with the step's flags (`-p no:xdist --timeout=180 --tb=short`): 311 passed in 3.8 s at load 18. CI pins: the sandboxed step's inherited target list in `Tests/CI/test_response_rules_critical_gate.py`; the job's install-line note names the new reason for hypothesis. The whole step locally, serially: 541 passed in 304 s (load 17-21). Tests/CI at -n 4: 1811 passed, 2 skipped. Files: `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_response_rules_critical_gate.py`.
