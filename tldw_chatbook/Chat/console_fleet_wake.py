@@ -15,6 +15,7 @@ import contextvars
 import re
 import threading
 import time
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -297,6 +298,10 @@ class ConsoleFleetWakeCoordinator:
         self._retry_after = {}
         self._retry_timer = None
         self._delivery_tasks = {}
+        # Deliveries a session close cancelled and dropped above. Weak, so a
+        # delivery that never settles is not kept alive; quit still joins
+        # the ones that are settling before AgentRuns retires (TASK-42074).
+        self._fenced_delivery_tasks: weakref.WeakSet[asyncio.Task] = weakref.WeakSet()
         self._recovery_task = None
         self._recovery_requested = False
         self._recovery_failure_reason: str | None = None
@@ -1674,6 +1679,7 @@ class ConsoleFleetWakeCoordinator:
             )
             for task in tasks:
                 self._delivery_tasks.pop(task, None)
+            self._fenced_delivery_tasks.update(tasks)
         self._release_exact_wakes(conversation_id, run_ids)
         for task in tasks:
             try:
