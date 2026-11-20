@@ -599,8 +599,9 @@ def _shared_pets_path() -> Path:
 def _read_shared_pets() -> Dict[str, Any]:
     """Return the old shared pets, or ``{}`` when there is nothing to copy.
 
-    A link is never followed and a FIFO never blocks; a link, a non-file, an
-    oversized file or bytes that are not a JSON object count as nothing to copy.
+    A link is never followed and a FIFO never blocks; a link, a non-file (a
+    directory too), an oversized file or bytes that are not a JSON object count
+    as nothing to copy.
 
     Raises:
         OSError: The file exists but could not be read. Nothing has been
@@ -615,7 +616,9 @@ def _read_shared_pets() -> Dict[str, Any]:
     except FileNotFoundError:
         return {}
     except OSError as error:
-        if error.errno != errno.ELOOP:
+        # ELOOP is a link. Windows refuses to open a directory with
+        # PermissionError, as it does a locked file (TASK-42023).
+        if error.errno != errno.ELOOP and not os.path.isdir(path):
             raise
         fd = None
     data = b""
