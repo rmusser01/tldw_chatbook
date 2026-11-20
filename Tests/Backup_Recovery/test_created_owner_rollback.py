@@ -469,15 +469,19 @@ def succeeded(service,operation):
     assert result['state']=='succeeded',dict(result)
     return result
 
-def reviewed(service,start,retry):
+def reviewed(service,start,retry,expect='succeeded'):
     result=service.wait(start())
     if result['state']=='recovery_required' and result['review_issues']:
         issues=tuple(result['review_issues'])
         assert all(code.startswith('credential_') for code in issues),issues
         succeeded(service,service.start_recovery(result['result']['journal_operation_id'],action='abort'))
         result=service.wait(retry(issues))
-    assert result['state']=='succeeded',dict(result)
+    assert result['state']==expect,dict(result)
     return result
+
+class RestoreOnly(Exception):
+    # Ends a case after its restore (TASK-42113's default-location refusals).
+    pass
 
 def located(folders,made):
     return {label:Path(folders[folder])/leaf for label,(folder,leaf) in made.items()}
@@ -536,8 +540,31 @@ try:
             first=service.preview_restore(inspection,**choices)
             required=required_rollback_dependencies(first)
             return service.preview_restore(inspection,**choices,safety_scope=required) if required else first
+        refusals=[]
+        if case.get('restore_refusal'):
+            # Name the refusal behind backup_operation_failed: activation's,
+            # which replacement_rolled_back hides, or the service's own.
+            from tldw_chatbook.Backup_Recovery import publication,recovery_service as service_module
+            finalize,issue=publication.finalize_candidate,service_module.issue_code
+            def observed_finalize(*args,**kwargs):
+                try:return finalize(*args,**kwargs)
+                except (OSError,ValueError,RuntimeError) as error:
+                    refusals.append(str(error));raise
+            def observed_issue(error,**kwargs):
+                refusals.append(str(error));return issue(error,**kwargs)
+            publication.finalize_candidate,service_module.issue_code=observed_finalize,observed_issue
         restored=reviewed(service,lambda:service.start_restore(inspection,plan(),rollback_password=b'rollback-test-password'),
-            lambda issues:service.start_restore(inspection,plan(issues),rollback_password=b'rollback-test-password'))
+            lambda issues:service.start_restore(inspection,plan(issues),rollback_password=b'rollback-test-password'),
+            expect='failed' if case.get('restore_refusal') else 'succeeded')
+        if case.get('restore_refusal'):
+            # Fail-safe: refused (and rolled back), nothing created, the
+            # profile keeps its pets, and the app starts.
+            assert case['restore_refusal'] in refusals,refusals
+            assert not present(paths),sorted(present(paths))
+            assert all(path.read_text()==text for path,text in own.values()),'the refusal lost the profile\'s pets'
+            assert snapshot(shared_pets)==shared_before,'restore changed the old shared pet folder'
+            assert produce('admit')['permission'][0] is True
+            raise RestoreOnly
         operation=restored['result']['journal_operation_id']
         assert present(paths)==set(paths),sorted(set(paths)-present(paths))
         captured={label:value for label,value in case['files'].items() if label not in case.get('uncaptured',())}
@@ -643,6 +670,8 @@ try:
                     with closing(sqlite3.connect(copy)) as db:
                         found=db.execute("SELECT name FROM kanban_boards WHERE uuid='post-restore-board'").fetchall()
                     assert found==[('Post-restore board',)],(label,found)
+except RestoreOnly:
+    pass
 finally:
     service.close()
 assert not network_guard.blocked_attempts()
@@ -755,4 +784,54 @@ def test_a_backup_then_pet_rotation_keeps_the_app_starting(tmp_path, location):
         "source",
         script=script,
         timeout=1500 if sys.platform == "win32" else 300,
+    )
+
+
+@pytest.mark.timeout(2500 if sys.platform == "win32" else 900)
+@pytest.mark.parametrize(
+    "case,refusal",
+    [
+        ("pets-none", "activation_profile_outside_maintenance"),
+        ("pets-missing", "replacement_destination_parent_required"),
+    ],
+)
+def test_a_default_location_pet_replace_refuses_and_keeps_the_pets(
+    tmp_path, case, refusal
+):
+    """TASK-42113: at the default config location the config folder holds
+    recovery-bootstrap, so it is never a root and each file beside
+    config.toml is its own. A Replace that retires the profile's pet file
+    refuses at activation and rolls back; one that would create a pet file
+    refuses before publication. Both are fail-safe: nothing is created, the
+    profile keeps its pets and the app starts. TASK-42115 makes them
+    complete."""
+    spec = {
+        key: value
+        for key, value in _CASES[case].items()
+        if key not in ("pets_after_restore", "extract")
+    }
+    spec["restore_refusal"] = refusal
+    script = (
+        "CASES="
+        + repr({case: spec})
+        + "\nBOARD_INSERT="
+        + repr(_BOARD_INSERT)
+        + "\nLOCATION='default'\n"
+        + _SCENARIO
+    )
+    for name in ("source", "target"):
+        (tmp_path / name).mkdir(mode=0o700)
+    _run(
+        tmp_path / "source",
+        case,
+        "source",
+        script=script,
+        timeout=1500 if sys.platform == "win32" else 300,
+    )
+    _run(
+        tmp_path / "target",
+        case,
+        "target",
+        script=script,
+        timeout=2500 if sys.platform == "win32" else 900,
     )
