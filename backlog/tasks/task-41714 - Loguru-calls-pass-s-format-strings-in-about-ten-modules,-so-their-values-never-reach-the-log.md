@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-18 06:57
-updated_date: 2026-11-20 10:20
+updated_date: 2026-11-20 10:28
 labels:
 - follow-up
 - logging
@@ -47,3 +47,4 @@ Found by TASK-41500 and its review (round 16), widened by the filing review. Log
 - Checks: `./scripts/preflight.sh` passed (wrapper); `ruff check --select F` on the changed files passed; module, screen and Library size ratchets passed (serial; 2 failures in that run were the diagnostic inventory, since regenerated, and the base-red metadata-only rows above).
 - **Review r17lg-rev1 minor 3.** The scan skipped any message containing `{`, so `logger.info("{} rows to %s", n, path)` escaped it. `_percent_message` now flags a `%`-placeholder message whose `str.format` fields are fewer than its positional arguments (`"{}% done", 50` still passes). `test_the_loguru_scan_flags_a_mixed_brace_and_percent_call` was red before (`[] == [(2, '{} rows to %s')]`); the package scan still finds no offender; the file passes 8 of 8.
 - **Review r17lg-rev2 minor 1.** The minor-3 change dropped keyword-only calls: `_percent_message` returned early without positional arguments, so `logger.info("x %s", value=3)` and `logger.error("Failed: %s", exc_info=True)` passed. Keywords now count as arguments, as the original rule did. `test_the_loguru_scan_flags_keyword_only_percent_calls` was red before (`assert [] == [(2, 'x %s'), ...]`); the package scan still finds no offender; the file passes 9 of 9.
+- **Review r17lg-rev3.** Counting keywords as arguments flagged correct calls, because loguru binds keywords no field names to `extra`: `logger.info("50% of {}", n, user=u)` and `logger.info("{} at 5% rate", n, extra=1)`. The rule is now: flag a `%`-placeholder message when its positional arguments outnumber its `{}` fields, or when it has no field at all and any argument, keywords included. `test_the_loguru_scan_spares_unused_keywords_beside_brace_fields` was red against the previous rule (both calls flagged) and is green; the keyword-only planted case is still flagged; the file passes 10 of 10 and the package scan is clean.
