@@ -8,6 +8,36 @@ and this project adheres to Some kind of Versioning
 ## [Unreleased]
 
 ### Changed
+- Plain Console chat now offers a light, safe tool set by default — date and
+  time, a calculator and ask-you-a-question — until you turn on **Full agent
+  tools** (Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates, or
+  `[tools] full_agent_tools_enabled`). Sub-agents, skills, web, Watchlists,
+  workspace, character, Canvas and chat-fork tools come with it. Profiles
+  that already use agent features keep them: the first time the Chatbook app
+  or `tldw-serve` opens a profile with no `full_agent_tools_enabled` setting
+  on this version, it checks once for a sub-agent definition, a workspace
+  folder or SSH binding, or an earlier Console or mobile-companion reply
+  that ran a tool outside the light set (a call that was refused does not
+  count, and neither does the agent's own housekeeping: searching for or
+  loading tools, or reading its own run log or messages). If it finds one,
+  it adds the one line `full_agent_tools_enabled = true` under `[tools]` in
+  config.toml and keeps the rest of the file byte for byte, comments and
+  layout included (a later settings save rewrites the file, as every
+  settings save does). New profiles and profiles that use none of these stay
+  on the light set with config.toml unchanged. The check runs once per
+  profile, as recorded in the profile's workspaces database (a profile whose
+  workspaces database is replaced, or restored without that record, is
+  checked again), and never overrides a value you set, so switching Full
+  agent tools off afterwards keeps it off. If it cannot read the profile's
+  data or save the line, it changes nothing and tries again at the next
+  launch or server start. Once the line is saved, Full agent tools is on,
+  even if a later step of the check fails; the next launch or server start
+  finishes the check without touching the file again. The app runs the
+  check in the background once it is open;
+  `tldw-serve` runs it as it starts, before it accepts connections, so a
+  profile used only from the mobile companion is checked before its next
+  phone send, and a new profile first used from the phone is recorded before
+  any phone use can count.
 - Console replies now stream by default for every provider, including
   OpenAI, Anthropic and the Custom OpenAI-compatible slots: the shipped
   `[chat_defaults] streaming = true` outranks each `[api_settings.<provider>]

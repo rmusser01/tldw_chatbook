@@ -166,6 +166,12 @@ _SQLITE_OWNER_POLICIES = {
         "Native launch discovers pending agent results without creating, "
         "migrating, or reconciling the runs database (ADR-135).",
     ),
+    "agents.full_agent_tools_upgrade": SQLiteOwnerPolicy(
+        "tldw_chatbook/Agents/full_agent_tools_upgrade",
+        _READ_ONLY_URI,
+        "The one-time light-surface upgrade reads whether the existing runs "
+        "database shows agent use, without creating, migrating or writing it.",
+    ),
     "config.server_sqlite_parent": SQLiteOwnerPolicy(
         "tldw_chatbook/config",
         _PRIVATE_FILE,

@@ -286,6 +286,12 @@ async def test_new_clears_child_time_cap(runs_db):
     panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
     async with PanelHarness(panel).run_test(size=(120, 40)) as pilot:
         panel.query_one("#agents-wall-seconds-input").value = "5"
+        # The button sits at the foot of the scrolling form: at 120x40 its
+        # centre row is just off the harness screen once the scope note
+        # wraps to a third line (TASK-34100.5.3.2), so bring it into view
+        # first, as the Save-button test above does.
+        panel.query_one("#agents-new-button").scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#agents-new-button")
         await pilot.pause()
         assert panel.query_one("#agents-wall-seconds-input").value == ""
@@ -643,6 +649,28 @@ async def test_panel_inputs_carry_the_compact_class_that_makes_them_paint(runs_d
                 "not paint its placeholder or value inside "
                 ".settings-input-row's height:1"
             )
+
+
+@pytest.mark.asyncio
+async def test_scope_note_says_plain_chat_needs_full_agent_tools(runs_db):
+    """TASK-34100.5.3 review: plain Console chat offers no sub-agents until
+    Full agent tools is on, so the note must not promise that a definition
+    simply "takes effect on the next reply"."""
+    from textual.widgets import Static
+
+    panel = AgentsSettingsPanel(app_instance=None, runs_db=runs_db)
+    async with PanelHarness(panel).run_test(size=(120, 40)):
+        notes = [
+            _static_text(static)
+            for static in panel.query(Static)
+            if _static_text(static).startswith("Named sub-agents")
+        ]
+    assert len(notes) == 1, notes
+    assert "Plain chat spawns them only with Full agent tools on" in notes[0]
+    assert "Tool gates" in notes[0]
+    # Review v5r1 (R1-6): a message that names a skill gets the full agent
+    # surface for that turn, so it can spawn them with Full agent tools off.
+    assert "or for one turn that names a skill" in notes[0]
 
 
 @pytest.mark.asyncio

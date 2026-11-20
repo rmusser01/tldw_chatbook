@@ -56,6 +56,7 @@ only — never message content, never credentials.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import threading
 from collections.abc import Iterable, Mapping
@@ -64,6 +65,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
+from tldw_chatbook.Agents.plain_chat_tool_surface import (
+    light_surface_configured,
+    tool_kill_switch_engaged,
+)
 from tldw_chatbook.Canvas.control_protocol import ControlProtocolError
 from tldw_chatbook.Chat.chat_conversation_scope_service import (
     ChatConversationScopeService,
@@ -507,11 +512,22 @@ class MobileChatService:
                     workspace_registry=registry,
                 )
             )
+            app_context = HeadlessAppContext(
+                workspace_registry_service=registry,
+                chachanotes_db=chat_db,
+                conversation_service=conversation_service,
+            )
             bridge = ConsoleAgentBridge(
                 agent_runs_db=storage.agent_runs,
                 store=store,
                 provider_gateway=self._gateway,
                 storage_provider=lambda: storage,  # the engine's own DBs (ADR-234)
+                # TASK-34100.5.3 review: the phone's sends are plain Console
+                # chat, so they get the light tool surface unless Full agent
+                # tools is on -- the same readers ConsoleRuntime hands the
+                # desktop bridge.
+                light_tool_surface=light_surface_configured,
+                tool_kill_switch=functools.partial(tool_kill_switch_engaged, app_context),
             )
             controller = ConsoleChatController(
                 store=store,
@@ -527,11 +543,6 @@ class MobileChatService:
                 # hooks-free profile admits sends. No ``ensure_run_hooks`` is
                 # wired: mobile v1 does not fire run hooks (spike shape).
                 hook_permissions_accessor=lambda: self._ensure_hook_permissions(),
-            )
-            app_context = HeadlessAppContext(
-                workspace_registry_service=registry,
-                chachanotes_db=chat_db,
-                conversation_service=conversation_service,
             )
             controller.app = app_context
             controller.set_pending_approval = self._on_pending_approval
@@ -696,10 +707,13 @@ class MobileChatService:
         Default-workspace (``global``) sessions never do: an empty admitted
         ``admitted_roots`` sequence drops the whole ``fs_*``/``git_*`` path
         family (spike finding; the mobile UX must not offer folder tools
-        for those sessions).
+        for those sessions). Nor does plain chat's light tool surface
+        (TASK-34100.5.3): the folder tools come with Full agent tools.
         """
         engine = self._engine
         if engine is None or workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+            return False
+        if light_surface_configured():
             return False
         try:
             return bool(engine.registry.list_folder_bindings(workspace_id))
