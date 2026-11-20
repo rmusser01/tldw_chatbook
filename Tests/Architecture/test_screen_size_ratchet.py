@@ -350,7 +350,15 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # Raised again for TASK-41307, 2026-11-17: +1 method (the held-slots
     # segment opens its list; Console_Modules/agent.py) and +11 lines.
     # 2026-11-18: rebased onto dev 45b1949ca3 (dev's row + this branch's growth, measured): 24592.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24592, 743),
+    #: 2026-11-12: re-measured after rebasing onto dev 4b90eb860b (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24608/741 -> 24542/741.
+    #: 2026-11-12, TASK-33628.20 PR #3458 review (owner decision: a fix over a
+    #: size ratchet raises the row): the clearing commands take only their
+    #: captured draft and /doctor takes before its checks. 24542/741 -> 24555/741.
+    #: 2026-11-12: re-measured after rebasing onto dev 26b2e677dd (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24568/742 -> 24599/742.
+    #: 2026-11-13: re-measured after rebasing onto dev 531acb8cdc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24599/742 -> 24589/742.
+    #: 2026-11-15: re-measured after rebasing onto dev 2ff0e9a5e5 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24569/742 -> 24590/742.
+    #: 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24592/743 -> 24594/743.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24594, 743),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
