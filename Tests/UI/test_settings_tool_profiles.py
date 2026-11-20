@@ -1145,11 +1145,10 @@ async def test_removal_confirmation_does_not_interpolate_the_profile_id(
     app = _build_test_app()
     app.tool_pack_service = service
     host = DestinationHarness(app, "settings")
+    shown = []
 
     async def choose(screen):
-        assert isinstance(screen, ConfirmationDialog)
-        assert profile_id not in screen.message
-        assert "local-profile" in screen.message
+        shown.append(screen)
         return False
 
     async with host.run_test(size=(120, 35)) as pilot:
@@ -1162,6 +1161,13 @@ async def test_removal_confirmation_does_not_interpolate_the_profile_id(
         await pilot.pause()
 
         assert not service.calls
+        # TASK-42005: since 88ae92a234 (TASK-32802.2) ConfirmationDialog shows
+        # its message literally (test_confirmation_dialog_literal_text.py), so
+        # the caller passes the id verbatim; pre-escaped, it would show a
+        # backslash. Checked here: the removal worker swallows a failure
+        # raised inside the mocked dialog (exit_on_error=False).
+        assert [type(dialog) for dialog in shown] == [ConfirmationDialog]
+        assert f"Remove {profile_id}?" in shown[0].message
         assert screen._tool_profiles_result == "Remove cancelled"
 
 
