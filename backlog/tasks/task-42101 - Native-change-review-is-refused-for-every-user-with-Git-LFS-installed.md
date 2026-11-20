@@ -1,7 +1,7 @@
 ---
 id: TASK-42101
 title: "Native change review is refused for every user with Git LFS installed"
-status: In Progress
+status: Done
 assignee: []
 created_date: 2026-11-20 00:40
 labels:
@@ -38,7 +38,7 @@ So for anyone who has ever installed Git LFS, native change review is refused in
 <!-- AC:BEGIN -->
 - [x] #1 The owner's choice is recorded in ADR-084 and ADR-285. Chosen (2026-11-19): refuse a configured filter only when a path the invocation can reach selects it through Git attributes. The other options were to keep refusing any configured filter, or to treat Git LFS specially.
 - [x] #2 With Git LFS-style filters configured and a workspace that tracks no LFS path, native change review publishes and `@diff` reads, and the driver never runs. A path that selects the driver still refuses, including an ignored path force-staged from stdin and a top-level path while the app runs from a subdirectory. No configured driver runs even when detection misses one, and none runs inside a submodule (tests).
-- [ ] #3 When capture is refused because of configured filters, the user can see that cause and what would change it. Verify this in the running app.
+- [x] #3 When capture is refused because of configured filters, the user can see that cause and what would change it. Verify this in the running app.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -95,5 +95,22 @@ ADR required: yes (ADR-084 and ADR-285 amended in place).
   - The reference refusal cases now write a selecting `.gitattributes`, and include a dotted, mixed-case driver name.
 - **Cost.** Two extra Git calls per filter-capable invocation, only when a filter is configured. That took about 0.16 s over this repo's ~42k paths, measured by the reviewer.
 - **Docs.** ADR-084, ADR-285 and `Docs/Architecture/console.md` are amended.
-- **Open: AC #3.** Its "verify in the running app" is not done. The persisted text the row shows is pinned by a test, but the live TUI was not driven, so the AC stays open for the owner.
+- **Live check (AC #3, owner-requested, 2026-11-19).** Run on the fu2/lfs-filters worktree.
+  - **Setup:**
+    - a scratch HOME under `sandbox-exec`, with writes to the real profile denied;
+    - a stdlib fake OpenAI server serving llama.cpp;
+    - a global `[filter "lfs"]` with a sentinel program and `required = true`.
+  - **First run: the AC failed.** Enabling Change Review on a workspace whose `.gitattributes` selects `lfs` showed only "Change history preparation failed for 1 folder(s)". The turn showed only "⚠ change review skipped …: Change history preparation failed; this turn continues without it.". The refusal happens at preparation, before any capture, and `ChangeReviewConsentService` replaced every preparation error with that generic reason. The earlier capture-path test had pinned the text of a different path.
+  - **Fix:**
+    - `native_git` exports its user-actionable refusals (`ACTIONABLE_REFUSALS`: Git too old, partial-clone remotes, filters selected by attributes). These are authored text with no config names or paths.
+    - `_complete` and `_fail` use `_failed_reason`, which names such a refusal and keeps every other error generic, so a private path in an arbitrary error still never shows.
+    - The Settings failed row appends "Cause: <refusal>.".
+  - **After the fix, live:**
+    - The turn row reads "⚠ change review skipped folder-…: Change history preparation failed: native change review unavailable: configured filters selected by Git attributes (remove the filter= attribute or its filter config). This turn continues without it."
+    - Settings reads "… failed for 1 folder(s); chat and tools continue. Cause: native change review unavailable: configured filters selected by Git attributes (remove the filter= attribute or its filter config)."
+    - Following the remedy (emptying the `filter=` line, then "Retry failed preparation") turned it to "Change history ready for 1 folder(s)".
+    - A second workspace whose files select nothing became ready at once, and its turn recorded a clean snapshot. In `agent_runs.db` that is `turn` 120adcd8→d2fa19d6, and the shadow log shows the mid-turn edit.
+    - The sentinel filter never ran in the whole session, and nothing under the real profile changed.
+  - **Tests:** `test_actual_native_initializer_uses_helper_refusing_git` now pins the reason, for both filter and partial-clone. `test_a_selected_git_filter_names_its_cause_and_remedy` (Settings journey, real selected filter) pins the row. Both fail without the change.
+  - **Follow-up:** TASK-42111. One post-restart turn showed no skipped row at all. Seen once, not traced.
 <!-- SECTION:NOTES:END -->

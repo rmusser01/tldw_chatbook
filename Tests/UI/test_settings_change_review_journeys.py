@@ -40,6 +40,56 @@ def _receipt(host, needle):
     assert "/private/synthetic-root" not in str(receipt.renderable)
 
 
+@private_profile_test
+async def test_a_selected_git_filter_names_its_cause_and_remedy(
+    request, tmp_path, monkeypatch
+):
+    """TASK-42101: a qualification refusal the user can fix says how.
+
+    A real configured filter that a workspace file selects refuses native
+    preparation. The generic "preparation failed" row told a Git LFS user
+    nothing; the refusal's own text (no names, no paths) now follows it.
+    """
+    from tldw_chatbook.Workspaces.change_tracking import ShadowRepo
+
+    app = _build_test_app()
+    registry = app.workspace_registry_service
+    registry.create_workspace(workspace_id="ws-filter", name="Filter workspace")
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "a.bin").write_text("selected\n")
+    (root / ".gitattributes").write_text("*.bin filter=lfs\n")
+    registry.add_folder_binding("ws-filter", root)
+    git_home = tmp_path / "git-home"
+    git_home.mkdir()
+    (git_home / ".gitconfig").write_text('[filter "lfs"]\nclean = never-start-this\n')
+    environment = ShadowRepo._env
+    monkeypatch.setattr(
+        ShadowRepo,
+        "_env",
+        lambda repo: {
+            **environment(repo),
+            "HOME": str(git_home),
+            "XDG_CONFIG_HOME": str(git_home),
+            "GIT_CONFIG_NOSYSTEM": "1",
+        },
+    )
+    host = _StyledDestinationHarness(app, "settings")
+    async with host.run_test(size=(170, 48)) as pilot:
+        await _category(host, pilot, "Workspaces")
+        await _press(host, pilot, "#settings-workspace-row-ws-filter")
+        await _press(host, pilot, "#settings-workspace-change-review-toggle")
+        await _visible(host, pilot, "failed")
+        row = host.screen.query_one("#settings-workspace-change-review-failed", Static)
+        text = " ".join(_painted(host, row).split())
+        assert "preparation failed for 1 folder(s)" in text
+        assert "configured filters selected by Git attributes" in text
+        assert "Cause: native change review unavailable: configured filters" in text
+        assert "remove the filter= attribute or its filter config" in text
+        assert text.count("preparation failed") == 1
+        assert str(root) not in text and "lfs" not in text
+
+
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(80, 24), (170, 48)])
 @private_profile_test
