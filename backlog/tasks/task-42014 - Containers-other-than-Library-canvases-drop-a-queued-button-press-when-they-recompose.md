@@ -4,7 +4,7 @@ title: "Containers other than Library canvases drop a queued button press when t
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 18:41
+updated_date: 2026-11-20 18:51
 labels:
 - follow-up
 - ui
@@ -104,3 +104,5 @@ Files: `tldw_chatbook/__init__.py`, `tldw_chatbook/Widgets/Library/library_canva
 **Review r18lib-rev2 fix (2026-11-20).** The locked wrapper took `self.lock` before checking attachment. Native `Widget.recompose` returns at once for a detached or pruning widget (`if not self.is_attached or self._pruning: return`, the first lines of Textual 8.2.8's method) and never takes the lock, so skipping native there is equivalent. The wrapper now returns first in that case, and only then takes the lock and re-checks.
 - **Pilot.** `test_a_removed_container_recompose_never_waits_for_its_lock` has the probe's shape. A child's queued callback awaits `container.recompose()` after `container.remove()`, while another task holds `container.lock` and awaits that child through `remove_children()`. The remover must finish within 3 s. With the rev2 wrapper it was red 3 of 3 (`TimeoutError`); with the fix it passes 3 of 3, about 1.2 s each.
 - **Runs.** The lane file: 18 of 18 in each of 5 runs at `-n 4` (load 7-8). Ratchets, serial: 321 passed. The settings-region, tray-guard, tray-read, canvas-scoped-sync, `Tests/Widgets/Library` and external-view files: 276 passed, 2 failed; both failures are the local `RecoveryRequired` trap and fail at base too. Preflight passes.
+
+**Review r18lib-rev3 (2026-11-20).** The lock pilot now checks its own setup. After the remover's first turn it asserts `container.lock.is_locked`, and once the remover is done it asserts that the child's `recompose()` call returned. The lock check sits in a `try/finally` that always releases the held child, so a failed check fails the test instead of hanging it. The first draft hung teardown in the no-lock control: its assertion fired before the hold was released. Negative controls, each temporary and reverted, fail promptly on their assertions: a remover without the lock gives "the remover never took the lock", and no queued callback gives "the child's recompose never ran". The rev2 wrapper still times out (`TimeoutError`). The lane file passes 18 of 18 in each of 3 runs at `-n 4` (load 8-10), and preflight passes.

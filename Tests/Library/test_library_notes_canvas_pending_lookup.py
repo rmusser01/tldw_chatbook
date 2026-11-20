@@ -590,6 +590,7 @@ async def test_a_removed_container_recompose_never_waits_for_its_lock():
         child = container.query_one("#toolbar")
         held = asyncio.Event()
         go = asyncio.Event()
+        recomposed: list[bool] = []
 
         async def hold() -> None:
             held.set()
@@ -597,6 +598,7 @@ async def test_a_removed_container_recompose_never_waits_for_its_lock():
 
         async def recompose_the_container() -> None:
             await container.recompose()
+            recomposed.append(True)
 
         async def remove_children_under_the_lock() -> None:
             async with container.lock:
@@ -607,9 +609,13 @@ async def test_a_removed_container_recompose_never_waits_for_its_lock():
         child.call_later(recompose_the_container)  # runs once ``hold`` ends
         container.remove()
         remover = asyncio.ensure_future(remove_children_under_the_lock())
-        await asyncio.sleep(0)  # the remover takes the lock
-        go.set()
+        try:
+            await asyncio.sleep(0)  # the remover takes the lock
+            assert container.lock.is_locked, "the remover never took the lock"
+        finally:
+            go.set()  # a failed check must not leave the child held
         await asyncio.wait_for(remover, timeout=3)
+        assert recomposed == [True], "the child's recompose never ran"
 
 
 class _ExternalSources:
