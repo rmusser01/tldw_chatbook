@@ -1041,7 +1041,9 @@ CPU is the steadier figure):
 | Chain, 1,999 rows | 8 | 109 / 146 ms | 73 / 89 ms |
 
 A chain costs about one replacement's time per 256 replaced rows, mostly the
-per-link range reads and the replacement rows' lineage trigger. It is paid once,
+per-link range reads and the replacement rows' lineage trigger. (Superseded by the
+2026-11-20 re-measure below: each link's cost grows with the segment's stored depth,
+so a chain costs about links x depth, not a fixed amount per link.) It is paid once,
 by the send after the rewrite. Ordinary sends, which the 10 ms reservation gate
 measures, take no new work.
 
@@ -1052,6 +1054,13 @@ binding takes 36 ms, of which the two validation passes are 18% and the trigger 
 64%. At the 256-link cap (65,536 stored rows) binding takes about 38 s, so it holds
 the write lock for that long. The validation passes are 0.6% of that and the trigger
 99%; TASK-42130 tracks the trigger cost.
+
+The review measured the sizes between those two points. At 5,000 rows (20 links)
+binding takes 164 ms of CPU. At 10,000 rows (40 links) it takes 1.03 s of CPU, and
+7.0 s of wall time at load1 82. The cost grows about as links x stored depth. A
+captured request carries at most about 20,000 messages, so about 80 links.
+`Tests/Benchmarks/test_console_trace_chain_binding.py` reruns these shapes on
+request.
 
 ### Amendment 2026-11-17 (owner decision, TASK-41310): a spawned child's calls have their own segment
 
