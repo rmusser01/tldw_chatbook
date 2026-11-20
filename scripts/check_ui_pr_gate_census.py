@@ -1191,6 +1191,14 @@ MINIMUM_FILES = 2429
 # re-deal: about 107 s of local serial time over six shards). The floor is the
 # measured entry count.
 MINIMUM_FILES = 2435
+# TASK-34100.2 (rebased 2026-11-19 onto dev a6df4d8d48's 2435 entries)
+# appends 3 whole-file entries at the tail: test_switcher_capacity_rows.py
+# (the switcher's 'window too small' rows and Fix model limits),
+# test_console_env_key_card.py (the Get started card's env-key offers and
+# their one atomic commit) and test_template_sample_switcher.py (AC#9:
+# shipped samples never read Ready). Appended after dev's tail, so no other
+# entry changes shard. The floor is the measured entry count, 2435 + 3 = 2438.
+MINIMUM_FILES = 2438
 
 
 def read_census(path: Path) -> list[str]:

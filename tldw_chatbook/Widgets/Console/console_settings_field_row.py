@@ -186,6 +186,9 @@ _SUPPORT_CONTROL_FIELDS = _CHOICE_FIELDS | {"thinking_budget_tokens"}
 REQUIRED_FIELDS = ("temperature", "top_p")
 #: Recovery actions that are not a connection blocker: tuning opens first.
 _TUNING_RECOVERY_ACTIONS = frozenset({None, "wait_for_active_run"})
+#: A capacity verdict (replies fill the context window) is fixed on the
+#: CORE Max tokens row, not inside Connection (TASK-34100.2 review F5).
+_LIMITS_RECOVERY = "adjust_model_limits"
 #: A missing model is fixed by the MODEL row's Change, which takes focus.
 _SELECT_MODEL = "select_model"
 #: The focusable control each connection recovery action lands on.
@@ -345,7 +348,9 @@ def connection_blocked(readiness: Any) -> bool:
     Returns:
         True unless the draft is ready or only waits for an active run.
     """
-    return readiness.recovery_action not in _TUNING_RECOVERY_ACTIONS
+    return readiness.recovery_action not in _TUNING_RECOVERY_ACTIONS | {
+        _LIMITS_RECOVERY
+    }
 
 
 def endpoint_host(url: str | None) -> str:
@@ -1201,6 +1206,12 @@ class ConsoleSettingsFieldRowsMixin:
         action = self._readiness_for_current_draft(self._build_draft()).recovery_action
         if action == _SELECT_MODEL:
             self._focus_change()
+            return
+        if action == _LIMITS_RECOVERY:  # TASK-34100.2 review F5
+            max_tokens = self.query_one("#console-settings-max-tokens", Input)
+            if self._is_effectively_focusable(max_tokens):
+                max_tokens.focus()
+                max_tokens.scroll_visible(animate=False)
             return
         if action in _TUNING_RECOVERY_ACTIONS:
             for name in CORE_FIELDS:

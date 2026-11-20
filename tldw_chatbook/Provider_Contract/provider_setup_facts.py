@@ -140,19 +140,12 @@ LEGACY_PROVIDER_KEYS: frozenset[str] = frozenset(
     {"custom_2", "local_llamacpp", "local_llm", "local_ollama", "local_vllm", "mistral"}
 )
 
-#: Providers whose model list answers without a valid key, so listing it
-#: checks nothing; an authenticated check (TASK-34100.2) is the only proof.
-PUBLIC_LISTING_PROVIDER_KEYS: frozenset[str] = frozenset(
-    {"openrouter", "huggingface", "novita"}
-)
-#: Providers with a dedicated, non-billable authenticated key endpoint
-#: (OpenRouter /api/v1/key, Hugging Face whoami); TASK-34100.2 owns the call.
-#: ``check_kind == "authenticated"`` is the hook its Check key reads; until it
-#: lands, these providers' listings answer without a key and the wizard says
-#: so (``listing_requires_auth``).
-AUTHENTICATED_CHECK_PROVIDER_KEYS: frozenset[str] = frozenset(
-    {"openrouter", "huggingface"}
-)
+#: Which providers' model list answers without a valid key, and which of
+#: those have a dedicated, non-billable authenticated key endpoint (OpenRouter
+#: /api/v1/key, Hugging Face whoami-v2), are facts of the provider record
+#: (TASK-34100.2 AC#3: ``ProviderRecord.public_model_listing`` and
+#: ``key_check_url``, one set with ``PUBLIC_MODEL_LISTING_KEYS``):
+#: ``listing_requires_auth`` and ``check_kind == "authenticated"`` read them.
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,7 +228,8 @@ def provider_setup_facts(provider_key: str) -> ProviderSetupFacts:
     else:
         locality = "local" if keyless else "cloud"
     label, example = BASE_URL_FIELDS.get(key, (None, None))
-    if key in AUTHENTICATED_CHECK_PROVIDER_KEYS:
+    public_listing = record is not None and record.public_model_listing
+    if record is not None and record.key_check_url is not None:
         check_kind: CheckKind = "authenticated"
     elif (
         record is not None
@@ -256,6 +250,6 @@ def provider_setup_facts(provider_key: str) -> ProviderSetupFacts:
         local_ports=LOCAL_PORTS.get(key, ()),
         route_suffix=ROUTE_SUFFIXES.get(key),
         check_kind=check_kind,
-        listing_requires_auth=key not in PUBLIC_LISTING_PROVIDER_KEYS,
+        listing_requires_auth=not public_listing,
         legacy=key in LEGACY_PROVIDER_KEYS,
     )

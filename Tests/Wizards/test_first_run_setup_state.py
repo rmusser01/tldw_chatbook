@@ -1023,6 +1023,8 @@ class TestFirstRunProviderContracts:
 
         assert dict(mutation.section_values["api_settings.llama_cpp"]) == {
             "model": "local-model",
+            # TASK-34100.2 AC#10: a local server streams its first reply.
+            "streaming": True,
             "api_url": "http://127.0.0.1:8080",
             "credential_source": "none",
         }

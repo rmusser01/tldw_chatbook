@@ -170,7 +170,14 @@ MAX_MODULE_COUNT = 2200
 # definition); #3375 moved `Chat.console_capture_policy` out of the resident
 # `config.py`, which shrank by as much. One module each, no new code on the
 # path; measured 687 at dev 447628d08b.
-MAX_TLDW_MODULE_COUNT = 688
+# 688 -> 689 (2026-11-13, owner decision 2026-10-04 (expand limits), TASK-34100.2,
+# PR #3517): `app_env_key_notice` is `EnvKeyNoticeMixin`, a base class of
+# `TldwCli` (the held env-key launch notice, moved out of `app.py` whole for
+# its size ratchet), so it must load with the class. Measured 688 against
+# dev 26b2e677dd's 687; the PR's other two new boot residents
+# (`LLM_Calls.chat_transport_retry`, `LLM_Calls.provider_reason`) were
+# deferred into the handlers instead (Tests/Packaging/test_first_chat_boot_closure.py).
+MAX_TLDW_MODULE_COUNT = 689
 
 
 def _run_isolated_python(tmp_path: Path, code: str) -> subprocess.CompletedProcess[str]:

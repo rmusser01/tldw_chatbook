@@ -47,10 +47,15 @@ from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
 from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_VALUE_SOURCE_WORDS,
+    MODEL_LEVEL_BLOCKERS,
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
     build_console_provider_options,
+    build_target_default_console_session_settings,
+    console_reply_capacity_exhausted,
     model_readiness_words,
+    provider_holds_template_sample_values,
+    provider_is_template_sample,
     provider_left_at_shipped_default,
     resolve_console_value_layers,
     resolve_effective_chat_configuration,
@@ -148,6 +153,10 @@ _READINESS_COLUMNS = 28
 #: A row's cells beside its model, provider and note: glyph, context,
 #: readiness and the five gaps between the columns (``_prompt``).
 _OTHER_COLUMNS = 1 + _CONTEXT_COLUMNS + _READINESS_COLUMNS + 6
+
+#: TASK-34100.2 review F6: a ready provider's model whose reply reservation
+#: fills its window is fixed right here, in the value strip's Max tokens.
+CAPACITY_ROW_HINT = "lower Max tokens below"
 
 _SETUP_HINTS = {
     "configure_credential": "Enter: add key in Settings",
@@ -303,7 +312,16 @@ def switcher_readiness_words(
 
 
 def _is_ready(readiness: ConsoleSettingsReadiness | None) -> bool:
-    return readiness is not None and readiness.operability == "ready_to_send"
+    """A provider whose models can be listed as ready rows.
+
+    TASK-34100.2 AC#2: a model-level blocker (one model's reply reservation
+    fills its window, or the provider could not find it) leaves the provider
+    set up; each of its rows is judged on its own (``_row_words``).
+    """
+    return readiness is not None and (
+        readiness.operability == "ready_to_send"
+        or readiness.blocker in MODEL_LEVEL_BLOCKERS
+    )
 
 
 def _only_needs_a_model(readiness: ConsoleSettingsReadiness | None) -> bool:
@@ -1591,6 +1609,24 @@ class ConsoleModelPopover(
             )
             and key not in used
             and provider_left_at_shipped_default(self._app_config, key)
+        ) or (
+            # TASK-34100.2 AC#9: a template sample (placeholder endpoint
+            # and models) the user never saved, used or reached is not
+            # set up, whatever answered on its shipped port. Owner ruling
+            # 2026-11-05 ("Values decide"): a table is a sample only while
+            # it carries the marker AND still holds the shipped endpoint
+            # and model, the same rule whether its server was reached,
+            # refused or never contacted. Once its endpoint or model differs
+            # (a hand edit, a Settings save, Chat settings' 'Save endpoint &
+            # use model') it is the user's and keeps its own row. Only the
+            # endpoint and model are compared, so a pre-marker sample whose
+            # other keys drifted (Custom's old streaming = false) is a
+            # sample still.
+            provider_is_template_sample(self._app_config, key)
+            and provider_holds_template_sample_values(self._app_config, key)
+            and readiness.endpoint != "reachable"
+            and key not in used
+            and key != provider_key(self._current[0])
         )
 
     def _packed(self, names: list[str]) -> list[str]:
@@ -1751,14 +1787,60 @@ class ConsoleModelPopover(
             # Disabled options paint like headers; an unpickable pair is muted.
             muted = self.get_component_rich_style("console-popover--unpickable")
             style = Style(color=muted.color, bold=False)
+        words = self._row_words(readiness, row)
+        note = row.note
+        if words.endswith("window too small") and not self._pick_only:
+            note = f"{note} · {CAPACITY_ROW_HINT}" if note else CAPACITY_ROW_HINT
         return Text(
             f"{glyph} {model:<{self._model_columns}} "
             f"{_fit(self._display(row.provider), self._provider_columns):<{self._provider_columns}} "
             f"{context:>{_CONTEXT_COLUMNS}}  "
-            f"{_fit(switcher_readiness_words(readiness, row.model), _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "
-            f"{row.note}",
+            f"{_fit(words, _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "
+            f"{note}",
             style=style,
         )
+
+    def _row_words(
+        self, readiness: ConsoleSettingsReadiness | None, row: SwitcherRow
+    ) -> str:
+        """This row's readiness word, judged for its own model: its own
+        model-level blockers (TASK-34100.2) and what its listing verified
+        (TASK-33005.11)."""
+        if readiness is None or not row.model:
+            return switcher_readiness_words(readiness)
+        key = provider_key(row.provider)
+        try:
+            return model_readiness_words(
+                readiness, row.model, provider=key,
+                max_tokens=self._row_max_tokens(key, row.model),
+            )
+        except Exception:  # noqa: BLE001 - a row word never breaks the list
+            return switcher_readiness_words(readiness)
+
+    def _row_max_tokens(self, key: str, model: str) -> int | None:
+        """The reply maximum a row's pair would be sent with (review F7).
+
+        This chat's own pair uses the chat's value -- what the header judges
+        and Conversation settings edits. Any other pair uses what applying it
+        would inherit (its provider table and saved model defaults, through
+        the same layers the readiness resolver reads), memoized per open.
+        """
+        draft = self._draft.settings
+        if (key, model) == (provider_key(draft.provider), draft.model):
+            # Review round 2 (F6): the pair the value strip edits is judged
+            # with the value Enter would apply, so the row and Enter agree.
+            return draft.max_tokens
+        if (key, model) == (provider_key(self._current[0]), self._current[1]):
+            return self._chat_settings.max_tokens
+        cache = self.__dict__.setdefault("_row_max_tokens_memo", {})
+        if (key, model) not in cache:
+            try:
+                cache[(key, model)] = build_target_default_console_session_settings(
+                    self._app_config, key, model
+                ).max_tokens
+            except Exception:  # noqa: BLE001 - an unreadable table reads the default
+                cache[(key, model)] = None
+        return cache[(key, model)]
 
     def _rebuild_rows(self) -> None:
         """Re-render the list and keep (or choose) the highlighted row."""
@@ -2197,7 +2279,17 @@ class ConsoleModelPopover(
             )
         else:
             self._replace_quick_field(name, value, direct_edit=True)
+            if name == "max_tokens":
+                self._repaint_highlighted_row()
         self._sync_source_words()
+
+    def _repaint_highlighted_row(self) -> None:
+        """Re-judge the highlighted row after a Max tokens edit (review F6)."""
+        index = self._painted_index
+        if self.is_mounted and index is not None and index < len(self._rows):
+            self.query_one(
+                "#console-popover-pairs", OptionList
+            ).replace_option_prompt_at_index(index, self._prompt(self._rows[index], True))
 
     def _remember_current_draft(self) -> ConsoleSettingsDraftState:
         for name in ("temperature", "max_tokens"):
@@ -2383,6 +2475,26 @@ class ConsoleModelPopover(
             return
         draft = self._validated_draft()
         if draft is None:
+            return
+        if action != _FULL_SETTINGS_ACTION and console_reply_capacity_exhausted(
+            provider_key(draft.settings.provider),
+            str(draft.settings.model),
+            draft.settings.max_tokens,
+        ):
+            # TASK-34100.2 review F6: never apply a pair whose replies would
+            # leave no room for a message; the fix is in the strip below.
+            # Pass 3 review round 1 (F3): a refused save names the save, so it
+            # never repeats Enter's line and looks like nothing happened.
+            then = (
+                "Enter"
+                if action is ConsoleSettingsAction.APPLY_TO_CHAT
+                else "save it as a default"
+            )
+            self._set_error(
+                f"Replies fill {draft.settings.model}'s context window: lower "
+                f"Max tokens, then {then}.",
+                focus=self._value_input("max_tokens"),
+            )
             return
         # Ctrl+N, or any action while Enter also sets the new-chat default.
         if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT or (
