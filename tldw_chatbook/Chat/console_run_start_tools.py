@@ -592,7 +592,7 @@ def _permission_identity(permission: Any) -> tuple:
     return _source_identity(permission)[1:]
 
 
-def preview_switch_anchor(permission: Any) -> tuple | None:
+def preview_switch_anchor(service: Any, permission: Any) -> tuple | None:
     """What a preview's real kill-switch read is proven by, taken just before it.
 
     Drops any kept read first: this one replaces it. Returns None (keep
@@ -603,6 +603,7 @@ def preview_switch_anchor(permission: Any) -> tuple | None:
         _switch_proof = None
     try:
         return (
+            weakref.ref(service),
             permission,
             _permission_identity(permission),
             _stamp(permission.path),
@@ -619,15 +620,19 @@ def keep_preview_switch(anchor: tuple | None, engaged: bool) -> None:
     Kept only when its anchor can vouch for it, as TASK-33620.15.38's anchor
     vouches for a pending catalog: the file was last changed ``SETTLE_NS``
     before the anchor (so a later write changes its stamp), and the admission
-    epoch and the store's installed identity did not move during the read.
+    epoch and the store's installed identity did not move during the read,
+    and the read went through the anchored store (the service still selects
+    it). The epoch and identity re-checks here are defence in depth: the
+    proof compares both again before it answers.
     """
     global _switch_proof
     if anchor is None:
         return
-    permission, identity, stamp, observed_at, epoch = anchor
+    service, permission, identity, stamp, observed_at, epoch = anchor
     try:
         if (
             not _settled(((permission.path, stamp),), observed_at)
+            or vars(service()).get("_permission_store") is not permission
             or _admission_epoch() != epoch
             or _permission_identity(permission) != identity
         ):
@@ -646,10 +651,17 @@ def proven_preview_switch(permission: Any) -> bool | None:
 
     Current means: the same store object, with the same installed identity
     (path, binding, config, selected generation), the admission epoch
-    unmoved, and its file at the stamp anchored before that read -- one
-    ``stat``, no admission scope and no hop. The answer is the preview's
-    estimate only: run start and every tool call read the switch themselves.
+    unmoved, its file at the stamp anchored before that read -- one ``stat``,
+    no admission scope and no hop -- and no in-process state in which a real
+    read would be refused (a local storage pause, the store's participant
+    admission closed, an unretired uncertain write of it:
+    ``raw_participants.refused_in_process``). The caller holds the MCP
+    service's producer lifetime open around this, so paused producers defer
+    to the hop too. The answer is the preview's estimate only: run start and
+    every tool call read the switch themselves.
     """
+    from tldw_chatbook.Backup_Recovery import raw_participants
+
     with _lock:
         proof = _switch_proof
     if proof is None or permission is None or proof.permission() is not permission:
@@ -658,6 +670,7 @@ def proven_preview_switch(permission: Any) -> bool | None:
         if (
             _admission_epoch() != proof.epoch
             or _permission_identity(permission) != proof.identity
+            or raw_participants.refused_in_process(permission) is not None
             or _stamp(permission.path) != proof.stamp
         ):
             return None

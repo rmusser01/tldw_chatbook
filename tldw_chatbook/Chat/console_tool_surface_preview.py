@@ -292,8 +292,14 @@ async def owned_preflight_tool_surface(
         )
 
         # TASK-33620.15.52 (owner, 2026-11-06): a read the permission file's
-        # stamp proves current answers here, on the loop, without the hop.
-        engaged = proven_preview_switch(captured.permission)
+        # stamp proves current answers here, on the loop, without the hop --
+        # only while the service's producers are admitted: paused, the hop's
+        # read meets the same refusal it always met.
+        try:
+            with service._producer_lifetime.operation():
+                engaged = proven_preview_switch(captured.permission)
+        except RecoveryRequired:
+            engaged = None
         if engaged is not None:
             current()
             available = not engaged
@@ -302,7 +308,9 @@ async def owned_preflight_tool_surface(
             def read():
                 try:
                     with service._producer_lifetime.operation():
-                        anchor = preview_switch_anchor(captured.permission_owner())
+                        anchor = preview_switch_anchor(
+                            service, captured.permission_owner()
+                        )
                         engaged = bool(service.get_kill_switch())
                         keep_preview_switch(anchor, engaged)
                         return not engaged

@@ -149,6 +149,40 @@ class _RawParticipant:
             state.closed = False
 
 
+def refused_in_process(source) -> str | None:
+    """The in-process refusal a new raw scope over ``source`` would meet now.
+
+    Reads process state only, under the storage lock, never a file: a local
+    storage pause, the source's participant admission closed or uninstalled,
+    or an earlier operation on the same source or selected file that could
+    not retire its native resources. For an estimate that answers without
+    opening the source (TASK-33620.15.52); a real scope still makes every
+    check itself, these included.
+
+    Returns:
+        The refusal's reason code, or None when none of these holds.
+    """
+    with storage._lock:
+        if storage._pause is not None:
+            return "storage_locally_paused"
+        selected = set()
+        participant = _source_participants.get(source)
+        if participant is not None:
+            state = _participants.get(participant)
+            if state is None or state.source() is not source:
+                return "raw_participant_not_installed"
+            if state.closed:
+                return "storage_locally_paused"
+            selected.add(state.selected)
+        if any(
+            operation.uncertain
+            and (operation.source is source or operation.selected in selected)
+            for operation in _states.values()
+        ):
+            return "raw_resources_not_retired"
+    return None
+
+
 def participant_identity(participant):
     """Check only installed identity mappings; never read source metadata."""
     if type(participant) is not _RawParticipant or participant not in _participants:
