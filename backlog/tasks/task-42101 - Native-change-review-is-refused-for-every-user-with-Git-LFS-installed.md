@@ -1,7 +1,7 @@
 ---
 id: TASK-42101
 title: "Native change review is refused for every user with Git LFS installed"
-status: Done
+status: In Progress
 assignee: []
 created_date: 2026-11-20 00:40
 labels:
@@ -37,8 +37,8 @@ So for anyone who has ever installed Git LFS, native change review is refused in
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The owner's choice is recorded in ADR-084 and ADR-285. Chosen (2026-11-19): refuse a configured filter only when a path the invocation can reach selects it through Git attributes. The other options were to keep refusing any configured filter, or to treat Git LFS specially.
-- [x] #2 With Git LFS-style filters in the global config and a workspace that tracks no LFS path, native change review publishes and `@staged` reads, and the driver never runs. A path that selects the driver, including an ignored path force-staged from stdin, still refuses before Git can run it (tests).
-- [x] #3 When capture is refused because a path selects a configured filter, the Console change-tracking row names that cause and the remedy (a test pins the persisted text the row shows).
+- [x] #2 With Git LFS-style filters configured and a workspace that tracks no LFS path, native change review publishes and `@diff` reads, and the driver never runs. A path that selects the driver still refuses, including an ignored path force-staged from stdin and a top-level path while the app runs from a subdirectory. No configured driver runs even when detection misses one, and none runs inside a submodule (tests).
+- [ ] #3 When capture is refused because of configured filters, the user can see that cause and what would change it. Verify this in the running app.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,19 +56,37 @@ ADR required: yes (ADR-084 and ADR-285 amended in place).
 
 <!-- SECTION:NOTES:BEGIN -->
 - **Rule (`Workspaces/native_git.py`).** A configured clean/process/smudge driver refuses only when a reachable path selects it.
-  - **When the check runs:** only when the config query finds filter names, and only for invocations that can hand work-tree content to a filter: add, update-index, rm, commit, diff, and cat-file with --filters/--textconv.
-  - **How it decides:** `_selects_configured_filter` runs `ls-files -z --cached --others --exclude-standard`, adds the exact paths an `update-index --stdin` stages (these may be ignored), and asks `check-attr -z --stdin filter`. Git applies its own attribute rules, macros included.
-  - **Inside the custody job:** both commands use the invocation's prefix, pins and runner, so they stay in the same opaque job as the version and config discovery.
-  - **Not cached:** the check runs again before every filter-capable invocation, as the config check already did.
-  - **Unchanged:** partial-clone and promisor remotes still always refuse.
-- **Message.** The refusal now reads "configured filters selected by Git attributes (remove the filter= attribute or its filter config)". That text is what the Console's "⚠ change tracking failed for <root>: <error>" row shows.
+  - **When the check runs:** only when the config query finds filter names, and only for invocations that can hand work-tree content to a filter: add, update-index, rm, commit, diff, `ls-files -m`, and `cat-file --filters`.
+  - **How it decides:** `_selects_configured_filter` runs `ls-files -z --cached --others --exclude-standard`, adds the exact paths an `update-index -z --stdin` stages, and asks `check-attr -z --stdin filter`. Git resolves the attributes, macros included.
+  - **Inside the custody job:** the check runs in the same opaque job, again before every such invocation.
+  - **Unchanged:** partial-clone remotes still always refuse.
+- **Guarantee (from the security review).** Detection decides the refusal; it does not guarantee that no filter runs. The review reproduced three escapes on the first version (80f7b33ad6):
+  - `@diff`'s dirty-submodule check ran `git status` inside a submodule, and that ran its filter.
+  - With the app's cwd in a subdirectory of the root, Git scoped the check to that subdirectory, while `commit` refreshed the whole index.
+  - A `.gitattributes` write racing the check got the filter run in 4 of 25 captures.
+
+  Now:
+  - **Neutralization:** `_neutralize_filters` empties every configured driver's commands for the command itself, through GIT_CONFIG_COUNT. That keeps driver names out of argv, and submodule children inherit it.
+  - **Submodules:** `diff` gets `--ignore-submodules=dirty`, which also covers a driver configured only in a submodule's own config.
+  - **Working directory:** ShadowRepo runs Git at its root, for both the native and legacy runners. This also fixes `add -- .` and stdin paths resolving against the app's cwd.
+  - **Refused outright:** `cat-file --textconv` (a textconv driver is not a filter and is not qualified) and non-`-z` `update-index --stdin`.
+  - **Checked empirically:** in a scratch HOME, the env pins kept a sentinel filter from running in the superproject and in a submodule child. A selected `required` driver fails the command instead.
+- **Message.** "configured filters selected by Git attributes (remove the filter= attribute or its filter config)". The Console shows it as "⚠ change tracking failed for <root>: <error>".
 - **Plumbing.**
-  - `ShadowRepo._native_command` passes the invocation's stdin.
-  - The references `run_process` accepts `input_data`, for both its direct and custody paths.
+  - `ShadowRepo._native_command` passes stdin.
+  - The references runner accepts `input_data`.
+  - Each references invocation qualifies a copy of the environment.
 - **Tests.**
-  - New, each red first: a global LFS-style driver with no selecting path (capture publishes, the driver never runs); `@staged` with a repo-local driver nothing selects; and an ignored, force-staged path whose directory selects the driver. That last one is refused, and without the stdin paths the helper really ran (mutation check).
-  - The reference refusal test now writes a selecting `.gitattributes`. The existing Workspaces refusal tests already did.
-- **Cost.** The check adds two Git calls per filter-capable invocation, and only on machines with a filter configured. Before this change, those machines had no native capture at all.
-- **Docs.** ADR-084 and ADR-285 are amended, and so is `Docs/Architecture/console.md`.
-- **Not done:** I did not drive the live TUI. The row text is the existing marker's f-string over the persisted `tracking_error`, which the test pins.
+  - Red first, against the old any-filter rule:
+    - no selecting path (capture publishes);
+    - `@diff` with a sentinel driver nothing selects;
+    - an ignored force-staged path that selects one (refused; without the stdin paths the helper really ran).
+  - Red against 80f7b33ad6, all three:
+    - detection forced to miss (the driver never runs);
+    - a filter configured only inside a submodule (`@diff` never enters it);
+    - the app's cwd in a subdirectory (refused, never run).
+  - The reference refusal cases now write a selecting `.gitattributes`, and include a dotted, mixed-case driver name.
+- **Cost.** Two extra Git calls per filter-capable invocation, only when a filter is configured. That took about 0.16 s over this repo's ~42k paths, measured by the reviewer.
+- **Docs.** ADR-084, ADR-285 and `Docs/Architecture/console.md` are amended.
+- **Open: AC #3.** Its "verify in the running app" is not done. The persisted text the row shows is pinned by a test, but the live TUI was not driven, so the AC stays open for the owner.
 <!-- SECTION:NOTES:END -->

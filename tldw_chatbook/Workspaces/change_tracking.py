@@ -572,6 +572,7 @@ class ShadowRepo:
         if source is None and undo is None:
             return subprocess.run(
                 cmd,
+                cwd=str(self.root),
                 capture_output=True,
                 env=env,
                 input=input_data,
@@ -603,7 +604,10 @@ class ShadowRepo:
                     cmd,
                     env,
                     payload,
-                    cwd=os.getcwd(),
+                    # The work tree, not the app's cwd: from a subdirectory, Git
+                    # would scope `add -- .`, stdin paths and the filter check
+                    # to that subdirectory (TASK-42101 review).
+                    cwd=str(self.root),
                     timeout_seconds=_GIT_TIMEOUT_SECONDS,
                 )
             )

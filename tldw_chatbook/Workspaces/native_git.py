@@ -78,16 +78,36 @@ def scrubbed_git_environment() -> dict[str, str]:
     return env
 
 
-# Commands that can hand work-tree content to a clean/smudge/process filter.
-# The others read only objects, the index or config (`show` and `diff` get
-# --no-textconv below; `cat-file` filters only when asked to).
+# Invocations that can hand work-tree content to a clean/smudge/process filter;
+# a configured driver a reachable path selects refuses them. Refusal decides the
+# outcome; it is not the guarantee -- every configured driver is also emptied for
+# the command itself (`_neutralize_filters`), so Git never runs one.
 _FILTER_CAPABLE = frozenset({"add", "update-index", "rm", "commit", "diff"})
 
 
 def _filter_capable(args) -> bool:
     if args[0] == "cat-file":
-        return any(arg in ("--filters", "--textconv") for arg in args)
+        return "--filters" in args
+    if args[0] == "ls-files":
+        return any(arg in ("-m", "--modified") for arg in args)
     return args[0] in _FILTER_CAPABLE
+
+
+def _neutralize_filters(env, drivers) -> None:
+    """Empty every configured driver's commands for this one invocation.
+
+    Through GIT_CONFIG_COUNT rather than `-c`, so driver names stay out of
+    argv; Git children (submodule status) inherit it. A selected path whose
+    driver is `required` then fails the command instead of running anything.
+    """
+    count = int(env.get("GIT_CONFIG_COUNT") or 0)
+    for driver in sorted(drivers):
+        name = os.fsdecode(driver)
+        for part in ("clean", "smudge", "process"):
+            env[f"GIT_CONFIG_KEY_{count}"] = f"filter.{name}.{part}"
+            env[f"GIT_CONFIG_VALUE_{count}"] = ""
+            count += 1
+    env["GIT_CONFIG_COUNT"] = str(count)
 
 
 def _selects_configured_filter(prefix, args, env, run_process, drivers, payload):
@@ -107,8 +127,7 @@ def _selects_configured_filter(prefix, args, env, run_process, drivers, payload)
     )
     paths = listing.stdout
     if args[0] == "update-index" and "--stdin" in args and payload:
-        staged = payload.encode() if isinstance(payload, str) else payload
-        paths += staged if "-z" in args else staged.replace(b"\n", b"\0")
+        paths += os.fsencode(payload) if isinstance(payload, str) else payload
     attributes = run_process(
         [*prefix, "check-attr", "-z", "--stdin", "filter"],
         env,
@@ -127,7 +146,8 @@ def qualified_git_command(
 
     A configured clean/process/smudge filter refuses the invocation only when a
     path it can reach selects that driver (TASK-42101); partial-clone remotes
-    always refuse.
+    always refuse. When filters are configured, ``env`` (this invocation's own
+    copy) also gets every configured driver emptied for the returned command.
     """
     allowed = {
         "init",
@@ -145,6 +165,11 @@ def qualified_git_command(
         "check-ignore",
     }
     if not args or args[0] not in allowed:
+        raise unavailable("native change-review Git command unsupported")
+    if (args[0] == "cat-file" and "--textconv" in args) or (
+        # Detection reads stdin paths NUL-delimited; quoted lines would not match.
+        args[0] == "update-index" and "--stdin" in args and "-z" not in args
+    ):
         raise unavailable("native change-review Git command unsupported")
     pins = (
         "core.hooksPath=" + os.devnull,
@@ -211,6 +236,20 @@ def qualified_git_command(
                 "native change review unavailable: configured filters selected by"
                 " Git attributes (remove the filter= attribute or its filter config)"
             )
-    if args[0] in {"diff", "show"}:
-        args = (args[0], "--no-ext-diff", "--no-textconv", *args[1:])
+    if names:
+        _neutralize_filters(
+            env, {name[len(b"filter.") : name.rindex(b".")] for name in names}
+        )
+    if args[0] == "diff":
+        # A dirty-submodule check runs `git status` inside the submodule, whose
+        # own config this qualification never reads.
+        args = (
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--ignore-submodules=dirty",
+            *args[1:],
+        )
+    elif args[0] == "show":
+        args = ("show", "--no-ext-diff", "--no-textconv", *args[1:])
     return [*prefix, *args]

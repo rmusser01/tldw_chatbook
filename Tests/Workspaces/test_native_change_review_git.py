@@ -359,3 +359,68 @@ def test_a_forced_ignored_path_that_selects_a_configured_filter_refuses(
     assert len(rows) == 1 and "configured filters" in rows[0]["tracking_error"]
     # The transcript row shows this text: it names the cause and the remedy.
     assert "remove the filter= attribute" in rows[0]["tracking_error"]
+
+
+def test_configured_filters_are_emptied_for_the_command_when_detection_misses(
+    private_git, tmp_path, monkeypatch
+):
+    """TASK-42101 review: refusal is not the guarantee; Git never runs a driver.
+
+    Selection is made to miss here, as a `.gitattributes` write racing the
+    check would. The selected path is captured anyway, and the configured
+    driver still never runs, because the command gets it emptied.
+    """
+    from tldw_chatbook.Workspaces import native_git
+
+    h = private_git
+    sentinel, helper = _lfs_like_helper(tmp_path, "raced")
+    (h.git_home / ".gitconfig").write_text(
+        f'[filter "raced"]\nclean = {helper}\nsmudge = {helper}\nprocess = {helper}\n'
+    )
+    (h.root / ".gitattributes").write_text("*.txt filter=raced\n")
+    monkeypatch.setattr(
+        native_git, "_selects_configured_filter", lambda *args, **kwargs: False
+    )
+    reservation = register(h)
+    assert reservation.await_baseline(5)
+    wait_for(lambda: reservation.baseline_completion.value != "pending")
+    (h.root / "a.txt").write_text("after\n")
+    run_id = h.bridge._db.create_run(conversation_id="capture", agent_kind="primary")
+    h.coordinator.finalize(
+        reservation, run_id=run_id, kind="turn", touched_paths=[str(h.root / "a.txt")]
+    )
+    wait_for(lambda: reservation.completion.value != "pending")
+    assert reservation.completion.value == "published", reservation._handle.errors
+    assert not sentinel.exists()
+
+
+def test_capture_from_a_subdirectory_cwd_still_checks_the_whole_root(
+    private_git, tmp_path, monkeypatch
+):
+    """TASK-42101 review: Git runs at the work tree, not at the app's cwd.
+
+    Launched from a subdirectory of the root, Git would scope `add -- .` and
+    the selection check to that subdirectory, while `commit` refreshes the
+    whole index and would run the filter on a stat-dirty top-level file.
+    """
+    h = private_git
+    (h.root / "sub").mkdir()
+    (h.root / "sub" / "inner.txt").write_text("inner\n")
+    (h.root / "top.bin").write_text("top\n")
+    (h.root / ".gitattributes").write_text("*.bin filter=late\n")
+    reservation = register(h)
+    assert reservation.await_baseline(5)
+    wait_for(lambda: reservation.baseline_completion.value != "pending")
+    assert reservation.baseline_completion.value == "observed", (
+        reservation._handle.errors
+    )
+    sentinel, helper = _lfs_like_helper(tmp_path, "late-sub")
+    (h.git_home / ".gitconfig").write_text(f'[filter "late"]\nclean = {helper}\n')
+    (h.root / "top.bin").write_text("top changed\n")
+    monkeypatch.chdir(h.root / "sub")
+    run_id = h.bridge._db.create_run(conversation_id="capture", agent_kind="primary")
+    h.coordinator.finalize(reservation, run_id=run_id, kind="turn", touched_paths=())
+    wait_for(lambda: reservation.completion.value != "pending")
+    assert not sentinel.exists()
+    rows = h.bridge._db.change_snapshots_for_run(run_id)
+    assert len(rows) == 1 and "configured filters" in rows[0]["tracking_error"]

@@ -508,6 +508,7 @@ async def test_whole_repo_git_exclusions_magic_paths_and_no_mutation(reference_h
         ("filter.fixture.clean", "never-start-this"),
         ("filter.fixture.process", "never-start-this"),
         ("filter.fixture.smudge", "never-start-this"),
+        ("filter.My.Drv.clean", "never-start-this"),
         ("remote.origin.promisor", "true"),
         ("extensions.partialclone", "origin"),
     ],
@@ -516,8 +517,10 @@ async def test_git_helpers_refuse_without_body(reference_host, key, value):
     h = reference_host
     git(h.root, "init", "-q")
     git(h.root, "add", "visible.txt")
-    # A filter refuses only when a path selects it (TASK-42101).
-    (h.root / ".gitattributes").write_text("visible.txt filter=fixture\n")
+    # A filter refuses only when a path selects it (TASK-42101); driver names
+    # keep their case and may contain dots.
+    driver = key[len("filter.") : key.rindex(".")] if key.startswith("filter.") else "x"
+    (h.root / ".gitattributes").write_text(f"visible.txt filter={driver}\n")
     git(h.root, "config", key, value)
     config = (h.root / ".git" / "config").read_bytes()
     assert (
@@ -531,22 +534,70 @@ async def test_git_helpers_refuse_without_body(reference_host, key, value):
     )
 
 
-async def test_a_configured_filter_no_path_selects_still_reads_staged(
+async def test_a_configured_filter_no_path_selects_still_reads_the_diff(
     reference_host,
 ):
-    """TASK-42101: a filter no path selects (Git LFS installed) does not refuse."""
+    """TASK-42101: a filter no path selects (Git LFS installed) does not refuse.
+
+    `@diff` is the reference that compares the work tree, so it is the one
+    that could run a filter; the configured driver still never runs.
+    """
     h = reference_host
     git(h.root, "init", "-q")
     git(h.root, "add", "visible.txt")
+    sentinel = h.tmp_path / "lfs-entered"
+    helper = h.tmp_path / "lfs-helper"
+    helper.write_text(f"#!/bin/sh\nprintf entered > '{sentinel}'\ncat\n")
+    helper.chmod(0o700)
     for part in ("clean", "process", "smudge"):
-        git(h.root, "config", f"filter.lfs.{part}", "never-start-this")
+        git(h.root, "config", f"filter.lfs.{part}", str(helper))
     (h.root / ".gitattributes").write_text("*.bin filter=other\n")
+    (h.root / "visible.txt").write_text("VISIBLE-REFERENCE\nDIFF-CHANGED\n")
     config = (h.root / ".git" / "config").read_bytes()
     assert (
-        await h.controller.submit_draft("read @staged", session_id=h.session.id)
+        await h.controller.submit_draft("read @diff", session_id=h.session.id)
     ).accepted
-    await until(lambda: "VISIBLE-REFERENCE" in str(h.gateway.payloads))
+    await until(lambda: "DIFF-CHANGED" in str(h.gateway.payloads))
+    assert not sentinel.exists()
     assert (h.root / ".git" / "config").read_bytes() == config
+
+
+async def test_diff_never_enters_a_filter_configured_only_in_a_submodule(
+    reference_host,
+):
+    """TASK-42101 review: `@diff` must not run `git status` in a submodule.
+
+    A dirty-submodule check runs the submodule's own filter, configured where
+    the superproject's qualification never looks. `--ignore-submodules=dirty`
+    keeps Git out of the submodule.
+    """
+    import os
+    import time
+
+    h = reference_host
+    git(h.root, "init", "-q")
+    git(h.root, "add", "visible.txt")
+    sub = h.root / "sub"
+    sub.mkdir()
+    git(sub, "init", "-q")
+    (sub / "a.bin").write_text("inside\n")
+    (sub / ".gitattributes").write_text("*.bin filter=subonly\n")
+    git(sub, "add", "a.bin", ".gitattributes")
+    git(sub, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "s")
+    git(h.root, "add", "sub")  # an embedded repository: a gitlink entry
+    sentinel = h.tmp_path / "submodule-filter-entered"
+    helper = h.tmp_path / "submodule-filter"
+    helper.write_text(f"#!/bin/sh\nprintf entered > '{sentinel}'\ncat\n")
+    helper.chmod(0o700)
+    git(sub, "config", "filter.subonly.clean", str(helper))
+    later = time.time() + 5
+    os.utime(sub / "a.bin", (later, later))  # stat-dirty inside the submodule
+    (h.root / "visible.txt").write_text("VISIBLE-REFERENCE\nDIFF-CHANGED\n")
+    assert (
+        await h.controller.submit_draft("read @diff", session_id=h.session.id)
+    ).accepted
+    await until(lambda: "DIFF-CHANGED" in str(h.gateway.payloads))
+    assert not sentinel.exists()
 
 
 @pytest.fixture
