@@ -330,7 +330,13 @@ _BUDGETS: dict[str, int] = {
     # adopted reply row writes the durable active-leaf cursor and legacy mix-in state.
     # 2026-11-08, TASK-36949.4: 22445 -> 22440 (-5), chat-sync reads go
     # through the Sync_Interop adapter instead of getattr method lookups.
-    "tldw_chatbook/Chat/console_chat_store.py": 22244,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.3 +11 -- the
+    # continuation owner row is created under the stream flush's insert lock
+    # with a re-check, kept inline so the semantic mutation census still sees
+    # the ``create_assistant_with_continuation`` write (review v5r1 F1).
+    # Rebased onto dev a6df4d8d48 (2026-11-19): dev's 22,231 + 11 = 22,242,
+    # exact measurement (under dev's row of 22,244, so the row comes down).
+    "tldw_chatbook/Chat/console_chat_store.py": 22242,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -1171,7 +1177,15 @@ _BUDGETS: dict[str, int] = {
     # (+139), exact measurement. The owner-approved chained replacement
     # (ADR-337 amendment 2026-11-06): the planner cuts a rewritten tail into
     # links, and the writer validates and writes each link in dispatch binding.
-    "tldw_chatbook/Chat/console_trace_service.py": 6739,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.3 +24 -- the
+    # planner hook for the per-domain append (rule in
+    # console_trace_domain_append.py) and its non-contiguous admitted delta.
+    # owner decision 2026-10-04 (expand limits), applied 2026-11-13:
+    # TASK-34100.3 pre-merge review +2 -- the hook hands the rule the flat
+    # prefix and the retained values it restores after a refused probe; +1,
+    # the delta's tool-loop overlay is read from the admitted indices.
+    # Rebased onto dev a6df4d8d48 (2026-11-19): 6739 -> 6766, exact measurement.
+    "tldw_chatbook/Chat/console_trace_service.py": 6766,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
@@ -1181,6 +1195,13 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-18, TASK-41650: 4021 -> 4040 (+19), exact measurement. The
     # owner-requested Trace view read of spawned children's calls.
     "tldw_chatbook/Chat/console_trace_repository.py": 4040,
+    # owner decision 2026-10-04 (expand limits), applied 2026-11-19 on the
+    # rebase onto dev a6df4d8d48: TASK-34100.3 crosses 4000 at 4,069, exact
+    # measurement (dev's 3,961 + 108). Each continuation-error exit names its
+    # reason code, a failed persist logs the store's precondition as a code
+    # (``acknowledge_failed`` after the commit), and an unwritten optional
+    # reasoning checkpoint keeps the delivered reply (AC#2, AC#3).
+    "tldw_chatbook/Agents/agent_runtime.py": 4069,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6049,

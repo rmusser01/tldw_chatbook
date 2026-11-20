@@ -21086,13 +21086,20 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     provider_continuation_json=private_json,
                     provider_continuation=checkpoint,
                 ):
-                    self.mark_dispatch_recovery_needed(session_id, message.id)
+                    # TASK-34100.3: the atomic settlement committed nothing and
+                    # the dispatch stays in flight, so the runtime can keep the
+                    # reply through the ordinary completion path.
                     raise RuntimeError(
                         "Provider continuation terminal settlement failed."
                     )
+                # The settlement completed the reply, so no later terminal
+                # write drains its trace handoff (call stays response_started).
+                self._settle_provider_trace_settlements(
+                    message.id, message.persisted_message_id
+                )
                 return
 
-        message_version: int | None
+        message_version: int | None = None
         if message.persisted_message_id is None:
             if not isinstance(event, (ToolBatchReady, FinalContinuation)) or (
                 event.expected_checkpoint_revision is not None
@@ -21108,18 +21115,22 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             if not callable(creator):
                 raise RuntimeError("Durable continuation storage is unavailable.")
             parent_message_id = self._previous_persisted_message_id(message)
-            creator(
-                message_id=message.id,
-                conversation_id=conversation_id,
-                parent_message_id=parent_message_id,
-                content=content,
-                provider_continuation_json=private_json,
-            )
-            message.persisted_message_id = message.id
-            message.parent_message_id = parent_message_id
-            self._pending_persistence_message_ids.discard(message.id)
-            message_version = 1
-        else:
+            # TASK-34100.3: create under the stream flush's insert claim and
+            # re-check; when the flush won, update its row (never a sibling).
+            with self._pending_row_insert_lock:
+                if message.persisted_message_id is None:
+                    creator(
+                        message_id=message.id,
+                        conversation_id=conversation_id,
+                        parent_message_id=parent_message_id,
+                        content=content,
+                        provider_continuation_json=private_json,
+                    )
+                    message.persisted_message_id = message.id
+                    message.parent_message_id = parent_message_id
+                    self._pending_persistence_message_ids.discard(message.id)
+                    message_version = 1
+        if message_version is None:
             version_reader = getattr(persistence, "get_message_version", None)
             durable_version = (
                 version_reader(message.persisted_message_id)
