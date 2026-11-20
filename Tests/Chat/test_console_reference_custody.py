@@ -1,6 +1,7 @@
 """Explicit references retain their original roots, worker and native custody."""
 
 import asyncio
+import os
 import subprocess
 import threading
 from types import SimpleNamespace
@@ -15,9 +16,11 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Tools import workspace_file_roots as roots_api
+from tldw_chatbook.Workspaces import native_git
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
+_FIXTURE_GIT_CONFIG = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
 
 
 async def until(probe):
@@ -48,6 +51,14 @@ def _record_executions(monkeypatch):
 
 @pytest.fixture
 async def reference_host(tmp_path, monkeypatch):
+    qualify = native_git.qualified_git_command
+
+    def qualify_fixture_git(executable, prefix, args, env, run_process, unavailable):
+        # The fixture owns the repo config, and production still qualifies it.
+        env.update(_FIXTURE_GIT_CONFIG)
+        return qualify(executable, prefix, args, env, run_process, unavailable)
+
+    monkeypatch.setattr(native_git, "qualified_git_command", qualify_fixture_git)
     root = tmp_path / "project"
     root.mkdir()
     (root / "visible.txt").write_text("VISIBLE-REFERENCE\n")
@@ -457,7 +468,11 @@ async def test_zero_roots_has_no_native_operation_or_git_launch(
 
 def git(root, *args):
     return subprocess.run(
-        ["git", "-C", str(root), *args], check=True, capture_output=True, text=True
+        ["git", "-C", str(root), *args],
+        env={**os.environ, **_FIXTURE_GIT_CONFIG},
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
 
 
@@ -516,7 +531,6 @@ async def test_git_helpers_refuse_without_body(reference_host, key, value):
 
 @pytest.fixture
 async def reference_git_child(reference_host, monkeypatch, request):
-    import os
     import shutil
     import sys
 

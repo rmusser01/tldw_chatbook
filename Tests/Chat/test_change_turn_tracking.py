@@ -3761,6 +3761,8 @@ def test_a_child_that_finishes_inside_its_turn_opens_no_survivor_window(
         ],
         gate=gate,
         child_side_effect=lambda: (root / "by_the_child.txt").write_text("x\n"),
+        parent_side_effect=_join_fleet_threads,
+        parent_side_effect_on_call=3,
     )
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
     run_id, outcome = _run(bridge, session, aid, root)
@@ -3789,6 +3791,8 @@ def test_a_turn_without_a_foreign_survivor_is_not_stamped_concurrent(
         ],
         gate=gate,
         child_side_effect=lambda: (root / "by_the_child.txt").write_text("x\n"),
+        parent_side_effect=_join_fleet_threads,
+        parent_side_effect_on_call=3,
     )
     bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
     run_id, _ = _run(bridge, session, aid, root)
