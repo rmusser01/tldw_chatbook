@@ -2,7 +2,8 @@
 id: TASK-23149
 title: Library focus tests stub a focus path production no longer takes
 status: Done
-assignee: []
+assignee:
+  - '@claude'
 created_date: '2026-08-28'
 updated_date: '2026-11-20 03:10'
 labels:
