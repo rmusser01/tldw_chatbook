@@ -3,6 +3,27 @@
 Mechanical traps in the task board and the plumbing around it. Cheap to avoid once
 known, expensive to rediscover. Every entry states the incident that produced it.
 
+## A "page has no section for X" finding can be a section a squash deleted (TASK-41526, 2026-11-19)
+
+**Incident.** TASK-41101's stamp sweep reported that no User Guide page covered Change Review's commit and push dialogs, and TASK-41526 was filed to write them. `console/agent-runs-and-tools.md` had a full "Git actions in change review" section, kept current by TASK-19701 and TASK-19703, until 6a6242ce3a (2026-09-12) squashed a feature branch onto dev. That squash removed 16 headings from the page. Thirteen came back later. Three never did:
+- "Git actions in change review", until TASK-41526 wrote its replacement, "Commit and push from the working tree";
+- "Reviewing or undoing a turn's changed files";
+- "Queued progress from sub-agents", which 827b622638 added (`report_to_supervisor`, **Agent → Progress: N queued**, **Discard selected**). The feature still ships (`Agents/fleet_message_tools.py`).
+
+The sweep only saw the leftover stamps that named the lost section; a review of the fix found the third loss. Run at b6f1d45fcf, the first `comm` command below prints the 16 headings the squash removed, and the second prints these three.
+
+**What to do.** Before writing a "missing" section, run `git log -S "<a phrase it would contain>" -- <page>`. A hit means the section existed. Restore its text and re-check every sentence against current code; do not write the section from scratch, and do not paste it back unchecked. When the deleting commit is a squash or rebase, the same commit may have taken sibling sections. Diff the page's headings across that commit to see everything it removed:
+
+```
+comm -23 <(git show <sha>^:<page> | grep '^#' | sort -u) <(git show <sha>:<page> | grep '^#' | sort -u)
+```
+
+Then compare against today's page to see which of those headings are still missing:
+
+```
+comm -23 <(git show <sha>^:<page> | grep '^#' | sort -u) <(grep '^#' <page> | sort -u)
+```
+
 ## A "shrink by N lines" criterion goes stale when another PR moves part of the code first (TASK-36950.3, 2026-11-13)
 
 **Incident.** TASK-36950.3's AC #2 asked for `_run_one` to be "at least 1,800 lines shorter". The architecture review had measured the fleet closures at about 1,900 lines on 7a5e2513c5. Before the Phase 4 base, d4733e97a5, an unrelated workflow commit, had already moved about 450 lines of `_launch_fleet_child`'s body into `AgentService` methods. Moving every fleet closure at the base could then remove only about 1,607 lines. The implementer had to stop with NEEDS_CONTEXT, and the coordinator ruled to fold TASK-36950.4's run-log tools into the same PR to reach the number.

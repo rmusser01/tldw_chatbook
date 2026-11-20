@@ -537,6 +537,17 @@ server's default, which beats the profile's global default. A row carrying its
 own explicit value is marked with **•** in the State cell, so an override is
 visible without opening it.
 
+The **Tool policy profile** selector above the matrix chooses which profile
+you are editing. Each entry names the profile and where it came from:
+`default · local`, a `ws-…` profile reads `· workspace-managed`, and a
+profile imported from a Tool Pack reads `· imported` (`· unavailable` is
+added when a profile's stored policy fails its checks). With any profile other than
+`default` chosen, a line under the selector reads "Console agents run with
+this profile; persona policy may still floor some tools to Ask." Profiles
+are imported, exported, bound to a workspace and removed in **Settings ▸
+Tool Profiles** (see [Settings](settings.md#data--privacy--tool-profiles));
+its **Edit** button opens this mode with that profile chosen.
+
 **Space** on the matrix's cursor row cycles it — **Inherit → Allow → Ask →
 Off → Inherit** for a server or tool row, and **Allow → Ask → Off** for the
 global row, which has no Inherit rung. The legend under the matrix states the

@@ -361,9 +361,7 @@ shows the same after a send whether it was open during the send or opened
 afterwards; see
 [The fleet panel](#the-fleet-panel--three-states) below for its three
 states (collapsed summary, expanded rows, drilled into one child), how to
-cancel a child, and how its token spend shows up. The list used to live in
-the left rail's Agent section; only the list moved, and everything about
-its rows and actions is unchanged.
+cancel a child, and how its token spend shows up.
 
 **In the status chips** (above the composer) — "Tools: N ready" counts the
 tools available to the agent (the chip stays hidden until tools are counted,
@@ -1208,6 +1206,49 @@ comment reads `📝 Diff feedback attached — a.py @@ -1,4 +1,6 @@ line:
 "note"` — one line per note, oldest first, byte-identical whether you're
 watching it happen live or reading it back after a resume.
 
+#### Commit and push from the working tree
+
+The Review screen's turn selector can also offer **Working tree (current) —
+\<branch\>**: your repository as it is on disk right now, not a recorded
+turn. It appears when a workspace folder bound to the conversation, or a
+folder a recorded turn wrote to, is the top folder of a git repository (a
+subfolder of a repository does not count), and **`[change_review]
+git_actions`** in `config.toml` is on (the default). Select it to see what
+is different right now, with **Commit…** (`g`), **Push…** (`p`) and **Open
+PR** (`P`) beside the totals. Console's **Review in Change Review…** and
+**Review & commit…** open this view directly (see [Context &
+RAG](context-and-rag.md)).
+
+**Commit…** reads the working tree again when you press it and opens a
+dialog headed "Commit in \<repository\> · \<branch\>": every changed file is
+listed and checked (uncheck one to leave it out), **Commit message
+(required)** must be filled, and **Create branch first (optional)** checks
+out a new branch before committing. A warning line such as "⚠ committing
+directly to main" or "⚠ detached HEAD — this commit will not be on any
+branch" never blocks the commit. While an agent run is active on that
+workspace, the commit is refused before the dialog opens: "a run is active
+on this workspace — finish or stop the run first". A repository in the
+middle of a merge, rebase or cherry-pick is refused when you confirm, not
+before: the dialog closes and the notice reads "Commit failed at
+in-progress-check: finish or abort the merge/rebase/cherry-pick first". The
+check runs then because a merge can start while the dialog is open. A
+commit that lands says "Committed N file(s) as \<sha\>".
+
+**Push…** always asks first, in a dialog headed "Push from \<repository\>".
+Its summary line names the branch and where the push will go, including the
+remote's push URL, for example `main ↑2 → origin/main  ·  pushes to origin
+(ssh://git@example.com/repo.git)`. The URL is the one git will really use, so
+a `remote.<name>.pushurl` or `url.<base>.pushInsteadOf` redirect shows here,
+and a remote with several push URLs lists them all. A branch with no upstream
+reads "no upstream — will push -u to …", or asks you to choose a remote when
+there is more than one. Push is not refused during an agent run, because it
+only sends commits that already exist. None of these actions force-pushes or
+rewrites history: a push the remote rejects shows git's own message.
+
+**Open PR** opens the branch's compare or merge-request page on github.com,
+gitlab.com, bitbucket.org or codeberg.org. The branch must have an upstream
+first ("push the branch first").
+
 ### Parallel sub-agents (the fleet)
 
 An agent can request `isolation="worktree"` in fleet mode when the run has an
@@ -1616,20 +1657,10 @@ first's genuinely-running rows.
   Console is open at all — before the first Console open after a
   restart, or after you have left Console for another screen — the
   completion is staged durably and delivered when Console next opens.
-  *(This paragraph previously promised the wake was "never acted on
-  invisibly in the background" while you were elsewhere; corrected
-  2026-08-14 — the wake does act, and the `◈` marker is the guarantee
-  you find out. A second correction the same day, task-16300: it also
-  said the wake fires from "a live Console you navigated away from".
-  That described a bug, not a feature — navigating away while a dialog
-  was open used to leave the old Console screen running invisibly behind
-  the new screen. Leaving Console now genuinely closes it, so a
-  completion after you leave is staged, exactly as the "Leaving the
-  Console screen" note below has always said.)*
 
 **Turning it off.** Set `[agents] subagents_outlive_turn = false` in
 `config.toml`: sub-agents are then settled at the end of the turn that
-spawned them, exactly as before this behavior existed. Setting
+spawned them. Setting
 `max_live_subagents = 1` removes it too, by removing the fleet entirely.
 
 #### Stopping a run vs. stopping its sub-agents
@@ -1732,8 +1763,7 @@ turn that is still running when you quit — leaves a completion the
 ledger still shows as owed. The next launch announces that completion
 once more. You may therefore see the same sub-agent result reported
 twice; you will never see it lost, and it cannot repeat beyond that one
-extra time, because the second delivery does stamp. (Measured on
-2026-08-17, both in a test and in a live run.)
+extra time, because the second delivery does stamp.
 
 **You always win ties.**
 
@@ -1800,16 +1830,7 @@ or negative values have no deadline; a positive value sets the approval ceiling.
 Stopping a wait still clears it, and does not grant permission to execute a tool.
 
 **The card is rendered and answerable the first time you open Console —
-no session switch needed.** (Fixed as task-17500, 2026-08-17.) As first
-shipped, opening Console in response to that toast showed the card's
-"Approval required" title and *nothing else* — no tool row, no arguments,
-no Approve/Deny buttons — until you clicked that conversation's session
-tab. The cause was an ordering race inside the card itself: its initial
-"hide the batch body" step was deferred mount work, and on a real
-terminal the fresh Console screen's first paint delivered that hide
-*after* the mount-time sync had rendered the round, unrendering it. The
-hide is now construction state, so it cannot land on top of a rendered
-card.
+no session switch needed.**
 
 **While an approval waits, other conversations' owed wakes wait behind
 it — by design.** Wake deliveries are serialized app-wide (one delivery

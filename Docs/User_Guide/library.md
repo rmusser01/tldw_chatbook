@@ -569,7 +569,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | u | Use Library context in Console — only while the Search / RAG row is selected (the footer hint appears only there) |
 | ↑ / ↓ | Inside a Media, Notes, Prompts, or Skills list — or the New note canvas's Blank note / template rows — move to the previous/next row (stops at the first/last row — it does not wrap) |
 | Enter | Open the focused list row (same as clicking it) |
-| Tab / Shift+Tab | Move to the next/previous control **within Library**. Tab stays on this screen; the top navigation bar is reached with its own keys (Ctrl+digit / F-keys), never by tabbing off the end of a canvas |
+| Tab / Shift+Tab | Move to the next/previous control **within Library**. Once focus is in the rail or a canvas, Tab cycles there and never tabs off the end of a canvas into the top navigation bar, which is reached with its own keys (Ctrl+digit / F-keys). When Library opens — at startup, or on your first visit from another screen — focus starts on the navigation bar's first button (**⌃1 Home**, where Enter leaves Library), and Tab walks the bar's buttons before it reaches the rail. From there, on the landing, **/** or **F6** goes straight to the rail's **Search Library…** box, and Shift+Tab reaches Library's last control |
 | Esc | Context-dependent — see below |
 
 Entering a Media, Notes, Prompts, or Skills list (from the rail, or
