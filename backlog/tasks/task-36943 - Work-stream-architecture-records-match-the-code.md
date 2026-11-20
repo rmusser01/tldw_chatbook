@@ -1,8 +1,9 @@
 ---
 id: TASK-36943
 title: 'Work stream: architecture records match the code'
-status: To Do
+status: Done
 created_date: 2026-10-26 01:06
+updated_date: '2026-11-20 14:55'
 labels:
 - architecture-review-2026-10-25
 - docs
@@ -22,13 +23,13 @@ Source: architecture review 2026-10-25, `Docs/QA/architecture-review-2026-10-25/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every subtask of this stream is Done
+- [x] #1 Every subtask of this stream is Done
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Closed 2026-11-20 on dev `d85e90bc9e`. AC #1: all three subtasks (TASK-36943.1 to .3) are Done.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

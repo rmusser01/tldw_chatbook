@@ -1,8 +1,9 @@
 ---
 id: TASK-36948
 title: 'Work stream: backup participants are declared by their owners'
-status: To Do
+status: Done
 created_date: 2026-10-26 01:10
+updated_date: '2026-11-20 14:55'
 labels:
 - architecture-review-2026-10-25
 - backup
@@ -23,13 +24,13 @@ Source: architecture review 2026-10-25, `Docs/QA/architecture-review-2026-10-25/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every subtask of this stream is Done
+- [x] #1 Every subtask of this stream is Done
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Closed 2026-11-20 on dev `d85e90bc9e`. AC #1: all three subtasks (TASK-36948.1 to .3) are Done. The roadmap's follow-up for the remaining screens is TASK-41049, still open.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
