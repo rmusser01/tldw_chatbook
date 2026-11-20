@@ -4,7 +4,7 @@ title: "Migrate provider base URLs that an earlier version saved with /v1 wrongl
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 17:26
+updated_date: 2026-11-20 18:01
 labels:
 - follow-up
 - providers
@@ -77,3 +77,5 @@ Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_ch
   - Tests: 10 new save rows in `test_a_base_saved_with_v1_appended_saves_its_documented_base` and 10 new load rows (plus a `qwencloud-v1-models` control) in `test_config_load_migrates_a_base_saved_with_v1_appended_once`; 20 red at the previous commit (the save or load kept `.../v1` plus the tail), green after.
 - `_migrate_v1_appended_provider_bases` drops its default-equality and raw-hostname pre-filter; the contract decides alone. Boot budget re-run: boot-import count unchanged (687/688).
 - `config.py` 8875 -> 8884 (+9), dated ratchet comment. Docs: `Docs/Architecture/llm-providers.md` and `Docs/User_Guide/settings.md`.
+
+**Review r18-rev2:** `config.py`'s unused `RECORDS_BY_KEY` import (only the removed pre-filter used it) is gone; ratchet 8884 -> 8883. `test_the_boot_migration_step_writes_a_file_changed_after_the_load_settled_it` pins that a file changed after the load settled it (a different size, now holding Groq's `<host>/v1`) takes the locked path and is rewritten; red with the stamp comparison temporarily ignored (`assert None is not None`), green after.

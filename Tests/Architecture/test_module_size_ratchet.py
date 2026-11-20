@@ -965,7 +965,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-20, review r18-rev1 of TASK-42002: 8875 -> 8884 (+9) -- the load
     # records per path that migration found nothing to persist, so the boot
     # step skips the lock; the migration's host pre-filter is gone.
-    "tldw_chatbook/config.py": 8884,
+    # 2026-11-20, review r18-rev2: 8884 -> 8883 (-1) -- the unused
+    # RECORDS_BY_KEY import the pre-filter needed is gone.
+    "tldw_chatbook/config.py": 8883,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

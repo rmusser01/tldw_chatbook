@@ -64,7 +64,6 @@ from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from tldw_chatbook.provider_registry import (  # noqa: F401 - normalize_provider_config_key is re-exported
     ALL_RECORDS,
     CLOUD_PROVIDER_CONFIG_KEYS,
-    RECORDS_BY_KEY,
     _ENGINE_CONFIG_KEY_ALIASES,
     normalize_provider_config_key,
 )

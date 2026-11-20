@@ -4993,6 +4993,33 @@ def test_the_boot_migration_step_takes_no_lock_for_a_config_with_nothing_to_rewr
     assert path.read_bytes() == original
 
 
+def test_the_boot_migration_step_writes_a_file_changed_after_the_load_settled_it(
+    tmp_path, monkeypatch
+):
+    """Review r18-rev2: the settled record holds only for the file the load
+    read. A file changed afterwards (here a different size, now holding a
+    shape migration 2 rewrites) takes the locked path and is written."""
+    path = tmp_path / "config.toml"
+
+    def write(base):
+        path.write_text(
+            toml.dumps({"config_schema_version": 1, "api_settings": {"groq": {"api_base_url": base}}}),
+            encoding="utf-8",
+        )
+        return path.stat().st_size
+
+    settled_size = write("https://api.groq.com/openai/v1")
+    config_mod = select_config_source(monkeypatch, path)
+    config_mod.load_cli_config_and_ensure_existence(force_reload=True)
+    assert write("https://api.groq.com/v1") != settled_size
+
+    backup = config_mod.migrate_config_file_if_needed()
+
+    assert backup is not None
+    stored = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert stored["api_settings"]["groq"]["api_base_url"] == "https://api.groq.com/openai/v1"
+
+
 #: TASK-41727: per cloud dispatch case, a base that ends in a request route
 #: with no ``v1`` before it. Z.ai's preset reading takes any path as its base
 #: (TASK-34100.6), and QwenCloud strips its own ``/responses`` (TASK-41722).
