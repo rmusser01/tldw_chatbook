@@ -54,10 +54,16 @@ async def test_received_draft_publication_obeys_original_save_outcome(
         monkeypatch, store, after_commit=True
     )
     publications = []
+    original_project = runtime._project_received_input
+
+    def observe_publication(record, *, draft_committed):
+        publications.append((record.turn_id, draft_committed))
+        return original_project(record, draft_committed=draft_committed)
+
     monkeypatch.setattr(
         runtime,
         "_project_received_input",
-        lambda record: publications.append(record.turn_id),
+        observe_publication,
     )
     successor = None
     task = None
@@ -93,7 +99,7 @@ async def test_received_draft_publication_obeys_original_save_outcome(
         assert result.accepted and len(calls) == 1 and exited.is_set()
         assert record.inputs.durable_accepted
         if outcome == "normal":
-            assert session.draft == "" and publications == [intent.turn_id]
+            assert session.draft == "" and publications == [(intent.turn_id, True)]
             assert gateway.calls == 1
         elif outcome == "retyped":
             assert session.draft == intent.inputs.draft

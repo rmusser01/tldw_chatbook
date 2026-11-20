@@ -251,6 +251,93 @@ def test_scan_excludes_git_and_symlinks_and_rejects_unsafe_paths(
     assert (root / "ignored.rst").exists()
 
 
+def test_unchanged_rescan_does_not_write_the_replica(
+    tmp_path: Path, replica: FileNotesReplica
+) -> None:
+    for index in range(3):
+        (tmp_path / f"note-{index}.md").write_text("original", encoding="utf-8")
+    service = FileNotesService(tmp_path, replica)
+    original = service.scan()
+    assert original.replica_warning is None
+    assert len(original.entries) == 3
+
+    statements = []
+    with replica._locked_connection():
+        replica._connection.set_trace_callback(statements.append)
+    try:
+        assert service.scan() == original
+    finally:
+        with replica._locked_connection():
+            replica._connection.set_trace_callback(None)
+
+    assert not any(
+        sql.lstrip().startswith(("INSERT INTO files", "DELETE FROM files_fts"))
+        for sql in statements
+    )
+    assert replica.search(service.root_key, "original") == [
+        entry.relative_path for entry in original.entries
+    ]
+
+
+def test_rescan_repairs_changed_bytes_and_inconsistent_search_rows(
+    tmp_path: Path, replica: FileNotesReplica
+) -> None:
+    for name in ("changed", "missing", "stale", "duplicate", "bad-bytes", "reappeared"):
+        (tmp_path / f"{name}.md").write_text("original", encoding="utf-8")
+    service = FileNotesService(tmp_path, replica)
+    assert service.scan().replica_warning is None
+    root = service.root_key
+    assert replica.mark_deleted(root, "reappeared.md")
+    changed = tmp_path / "changed.md"
+    before = changed.stat()
+    changed.write_text("revision", encoding="utf-8")
+    os.utime(changed, ns=(before.st_atime_ns, before.st_mtime_ns))
+
+    with replica._locked_connection():
+        connection = replica._connection
+        connection.execute(
+            "DELETE FROM files_fts WHERE root = ? AND relative_path = 'missing.md'",
+            (root,),
+        )
+        connection.execute(
+            "UPDATE files_fts SET decoded_text = 'stale' "
+            "WHERE root = ? AND relative_path = 'stale.md'",
+            (root,),
+        )
+        connection.executemany(
+            "INSERT INTO files_fts (root, relative_path, decoded_text) VALUES (?, ?, ?)",
+            [
+                (root, "duplicate.md", "original"),
+                (root, "reappeared.md", "original"),
+                ("other-root", "duplicate.md", "foreign"),
+            ],
+        )
+        connection.execute(
+            "UPDATE files SET raw_bytes = ? WHERE root = ? AND relative_path = 'bad-bytes.md'",
+            (b"damaged!", root),
+        )
+
+    assert service.scan().replica_warning is None
+    assert replica.get_bytes(root, "changed.md") == b"revision"
+    assert replica.get_bytes(root, "bad-bytes.md") == b"original"
+    assert replica.list_deleted(root) == []
+    assert replica.search(root, "original") == [
+        "bad-bytes.md",
+        "duplicate.md",
+        "missing.md",
+        "reappeared.md",
+        "stale.md",
+    ]
+    assert replica.search(root, "revision") == ["changed.md"]
+    assert replica.search(root, "stale") == []
+    with replica._locked_connection():
+        foreign = connection.execute(
+            "SELECT decoded_text FROM files_fts WHERE root = ? AND relative_path = ?",
+            ("other-root", "duplicate.md"),
+        ).fetchone()
+    assert foreign[0] == "foreign"
+
+
 def test_dot_directories_are_hidden_from_the_tree(
     tmp_path: Path,
     replica: FileNotesReplica,

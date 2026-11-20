@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from contextlib import ExitStack
 from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
@@ -371,10 +372,10 @@ class PreProviderSetupStop:
         )
 
 
-def request_accepted_pre_stream_stop(
-    controller: Any, session_id: str, *, record_user_stop: bool
-) -> bool:
-    """Cancel only the live accepted submit before a stream owner takes over."""
+def _accepted_pre_stream_stop_target(
+    controller: Any, session_id: str, *, blocking: bool
+) -> tuple[asyncio.Task[Any], str] | None:
+    """Find the exact accepted submit and assistant before provider setup takes over."""
     from .console_turn_preparation import ConsoleTurnPreparationState
 
     if (
@@ -386,16 +387,28 @@ def request_accepted_pre_stream_stop(
             or controller._active_assistant_message_ids.get(session_id)
             in controller._pending_dispatch_transitions
         )
-    ) or controller._ordinary_native_commit_tasks(session_id):
-        return False
+    ):
+        return None
     store = controller.store
-    with controller._active_submit_tasks_lock, store.durable_preparation_lock:
+    with ExitStack() as locks:
+        submit_lock = controller._active_submit_tasks_lock
+        if not submit_lock.acquire(blocking=blocking):
+            return None
+        locks.callback(submit_lock.release)
+        if controller._ordinary_native_commit_tasks(session_id):
+            return None
+        preparation_lock = store.durable_preparation_lock
+        if not preparation_lock.acquire(blocking=blocking):
+            return None
+        locks.callback(preparation_lock.release)
+        if controller.store is not store:
+            return None
         preparation = store.preparation_for_session(session_id)
         if (
             preparation is None
             or preparation.state is not ConsoleTurnPreparationState.ACCEPTED
         ):
-            return False
+            return None
         continuation = controller._durable_postcommit_continuations.get(
             preparation.preparation_id
         )
@@ -425,7 +438,7 @@ def request_accepted_pre_stream_stop(
                 or not recovery.runtime_active
                 or recovery.recovery_needed
             ):
-                return False
+                return None
         tasks = tuple(
             task
             for task, owner_session in controller._active_submit_tasks.items()
@@ -435,14 +448,31 @@ def request_accepted_pre_stream_stop(
             and not task.done()
         )
         if len(tasks) != 1 or tasks[0] is asyncio.current_task():
-            return False
+            return None
         assistant_id = recovery.assistant_message_id
         if ephemeral and (
             controller._active_stream_tasks.get(session_id) is not tasks[0]
             or controller._active_assistant_message_ids.get(session_id) != assistant_id
             or session_id in controller._active_cancel_events
         ):
-            return False
+            return None
+        return tasks[0], assistant_id
+
+
+def accepted_pre_stream_stop_available(controller: Any, session_id: str) -> bool:
+    """Project the accepted Stop owner without waiting on its locks."""
+    target = _accepted_pre_stream_stop_target(controller, session_id, blocking=False)
+    return target is not None and not target[0].cancelling()
+
+
+def request_accepted_pre_stream_stop(
+    controller: Any, session_id: str, *, record_user_stop: bool
+) -> bool:
+    """Cancel only the live accepted submit before a stream owner takes over."""
+    target = _accepted_pre_stream_stop_target(controller, session_id, blocking=True)
+    if target is None:
+        return False
+    task, assistant_id = target
     # Stream registration precedes ledger/project startup. Keep this exact
     # accepted task's settlement ownership until the actual reply takes over.
     controller._replies_in_pre_provider_setup.add(assistant_id)
@@ -453,7 +483,7 @@ def request_accepted_pre_stream_stop(
     controller.prompt_queue_coordinator.pause_for_stop(session_id)
     if record_user_stop:
         controller._deferred_user_stop_markers.add(assistant_id)
-    controller._cancel_task_on_owner_loop(tasks[0])
+    controller._cancel_task_on_owner_loop(task)
     return True
 
 

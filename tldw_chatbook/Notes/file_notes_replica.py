@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -178,6 +178,64 @@ class FileNotesReplica:
                 decoded_text=decoded_text,
                 size=size,
                 mtime_ns=mtime_ns,
+            )
+
+    def _scan_search_rows(
+        self, root: str, observed_paths: Collection[str]
+    ) -> tuple[int, dict[str, int | None]]:
+        """Collect rowid hints for the scanned paths, recording duplicates."""
+        rowids: dict[str, int | None] = {}
+        with self._locked_connection():
+            connection = self._connection
+            version = connection.execute("PRAGMA data_version").fetchone()[0]
+            for path, rowid in connection.execute(
+                "SELECT relative_path, rowid FROM files_fts WHERE root = ?", (root,)
+            ):
+                if path in observed_paths:
+                    rowids[path] = None if path in rowids else rowid
+        return version, rowids
+
+    def _matches_scanned_file(
+        self,
+        root: str,
+        relative_path: str,
+        raw_bytes: bytes,
+        *,
+        content_hash: str,
+        decoded_text: str,
+        mtime_ns: int,
+        rowid: int,
+        version: int,
+    ) -> bool:
+        """Confirm both projections before skipping a scan's repair write."""
+        with self._locked_connection():
+            # Our connection's writers replace all FTS rows for a path. A
+            # commit on another connection can invalidate the uniqueness hint.
+            return (
+                self._connection.execute(
+                    """
+                SELECT 1
+                FROM files f JOIN files_fts idx ON idx.rowid = ?
+                WHERE f.root = ? AND f.relative_path = ? AND f.deleted_at IS NULL
+                  AND f.content_hash = ? AND f.size = ? AND f.mtime_ns = ?
+                  AND f.raw_bytes = ? AND f.decoded_text = ?
+                  AND idx.root = f.root AND idx.relative_path = f.relative_path
+                  AND idx.decoded_text = f.decoded_text
+                  AND (SELECT data_version FROM pragma_data_version) = ?
+                """,
+                    (
+                        rowid,
+                        root,
+                        relative_path,
+                        content_hash,
+                        len(raw_bytes),
+                        mtime_ns,
+                        raw_bytes,
+                        decoded_text,
+                        version,
+                    ),
+                ).fetchone()
+                is not None
             )
 
     def get_bytes(self, root: str, relative_path: str) -> bytes | None:

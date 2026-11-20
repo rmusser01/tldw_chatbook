@@ -386,29 +386,24 @@ class LifecycleMixin:
             )
 
     async def _close_main_databases(self) -> None:
-        """Retire the main stores' handles at quit (TASK-38955, TASK-39047).
-
-        ChaChaNotes, media, Dreams, Guardian, and (TASK-39117) the Workspace,
-        Library Collections and notifications stores each close their handles
-        on every thread only if none is in use, so a straggler worker's write is
-        never aborted; a busy store is left to close with the process. Each
-        idle store then closes this thread's handle with its checkpoint wait
-        bounded. In-memory stores keep their data. Failures never abort.
-        """
-        for name, label in (
-            ("chachanotes_db", "ChaChaNotes"),
-            ("media_db", "Media"),
-            ("dreams_db", "Dreams"),
-            ("guardian_db", "Guardian"),
-            ("local_workspace_db", "Workspace"),
-            ("local_library_collections_db", "Library Collections"),
-            ("client_notifications_db", "Notifications"),
+        """Retire idle file-backed handles after worker settlement."""
+        for owner, name, label in (
+            (self, "chachanotes_db", "ChaChaNotes"),
+            (self, "media_db", "Media"),
+            (self, "dreams_db", "Dreams"),
+            (self, "guardian_db", "Guardian"),
+            (self, "local_workspace_db", "Workspace"),
+            (self, "local_library_collections_db", "Library Collections"),
+            (self, "client_notifications_db", "Notifications"),
+            (getattr(self, "evaluation_orchestrator", None), "db", "Evals"),
+            (self, "subscriptions_db", "Subscriptions"),
         ):
-            db = getattr(self, name, None)
+            db = getattr(owner, name, None)
             if db is None or db.is_memory_db:
                 continue
             try:
-                idle = await asyncio.to_thread(db.close_idle_connections)
+                close_idle = getattr(db, "close_idle_connections", None)
+                idle = close_idle is None or await asyncio.to_thread(close_idle)
             except Exception as exc:  # noqa: BLE001 - quit must go on regardless
                 idle = False
                 self.loguru_logger.error(
@@ -421,9 +416,13 @@ class LifecycleMixin:
                 continue
             try:
                 local = getattr(db, "_local", None) or db._thread_local
-                conn = getattr(local, "conn", None)
+                conn = getattr(local, "conn", None) or getattr(
+                    local, "connection", None
+                )
                 if conn is not None:
                     with contextlib.suppress(sqlite3.Error):  # already retired
+                        if close_idle is None and conn.in_transaction:
+                            continue
                         conn.execute(
                             f"PRAGMA busy_timeout = {int(_QUIT_CLOSE_BUSY_SECONDS * 1000)}"
                         )

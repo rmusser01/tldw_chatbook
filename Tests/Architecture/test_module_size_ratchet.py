@@ -88,11 +88,13 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/DB/prompt_export.py": 241,
     # PR3346 pre-merge review: exact existing save and screen-derivation owners.
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
-    "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
+    # 2026-11-18, TASK-40970: 401 -> 443 for saved-graduation onboarding.
+    "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 443,
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
     # 2026-11-19, TASK-41904 (owner rule: raise by the change's own lines):
     # 1567 -> 1571 (+4) -- a Send pressed during the first-send save waits.
-    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1571,
+    # TASK-33621.79: rebased dev measures 1564; accepted-setup Stop adds one.
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1565,
     "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1314,
     "tldw_chatbook/Notes/notes_sync_startup.py": 34,
     "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
@@ -157,7 +159,7 @@ _BUDGETS: dict[str, int] = {
     # TldwCli.__init__ installs the stock Select exit gate.
     # 2026-11-18, TASK-41642 review (owner rule: raise by the change's own lines):
     # +4, TldwCli.__init__ registers the policy state provider it builds.
-    "tldw_chatbook/app.py": 5711,
+    "tldw_chatbook/app.py": 5707,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -209,7 +211,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-14, TASK-40716 (owner rule: exact measurement, dated note):
     # 2207 -> 2216 (+9) -- quit logs every app-owned shutdown failure it
     # does not raise, so a Console shutdown error is never dropped.
-    "tldw_chatbook/app_lifecycle.py": 2216,
+    "tldw_chatbook/app_lifecycle.py": 2215,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -330,7 +332,7 @@ _BUDGETS: dict[str, int] = {
     # adopted reply row writes the durable active-leaf cursor and legacy mix-in state.
     # 2026-11-08, TASK-36949.4: 22445 -> 22440 (-5), chat-sync reads go
     # through the Sync_Interop adapter instead of getattr method lookups.
-    "tldw_chatbook/Chat/console_chat_store.py": 22244,
+    "tldw_chatbook/Chat/console_chat_store.py": 22243,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -746,7 +748,7 @@ _BUDGETS: dict[str, int] = {
     # Raised for TASK-40716 unproven-cleanup retention, 2026-11-14: 8534 ->
     # 8556 (+22, exact), the Release tool slot row (row kind, two protected
     # click classes, setter, row plan, lazy widget hook).
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8556,
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8554,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -1039,7 +1041,7 @@ _BUDGETS: dict[str, int] = {
     # dev's 9,534 plus TASK-39118's +22.
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +2, the store's @declare_store backup-participant declaration and import.
-    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9558,
+    "tldw_chatbook/DB/Client_Media_DB_v2.py": 9545,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
     # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
     # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
@@ -1123,7 +1125,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-06, TASK-36948.1 (owner rule: a size ratchet raises the row with a dated
     # comment): +3, the store's @declare_store backup-participant declaration (wrapped) and import.
     "tldw_chatbook/DB/Subscriptions_DB.py": 6996,
-    "tldw_chatbook/Media/local_media_reading_service.py": 6911,
+    "tldw_chatbook/Media/local_media_reading_service.py": 6910,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
@@ -1171,7 +1173,7 @@ _BUDGETS: dict[str, int] = {
     # (+139), exact measurement. The owner-approved chained replacement
     # (ADR-337 amendment 2026-11-06): the planner cuts a rewritten tail into
     # links, and the writer validates and writes each link in dispatch binding.
-    "tldw_chatbook/Chat/console_trace_service.py": 6739,
+    "tldw_chatbook/Chat/console_trace_service.py": 6731,
     # 2026-11-17, TASK-41310 (owner rule 2026-10-04: a fix over a size ratchet
     # raises the row): crosses 4000 at 4017, exact measurement. The owner-
     # approved child trace segments (ADR-337 amendment 2026-11-17): create and
@@ -1217,7 +1219,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-18, TASK-41522 (owner rule: raise by the change's own lines): +13,
     # OpenAI, Anthropic, Cohere, Google and Hugging Face check their base URL.
     "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5202,
-    "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
+    "tldw_chatbook/Notes/notes_sync_runtime.py": 5033,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     # owner decision 2026-11-06 (expand limits, never contort code): TASK-39040
     # fix rounds 2 and 3, 4968 -> 5138 (+170) -- a clip handed to the default
@@ -1279,7 +1281,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-02, TASK-37655 review (owner rule: a fix over a size ratchet
     # raises the row with a dated comment): dev 88af9f9379's 4,304 + 1 = 4,305. The
     # exclusion dedupe/remove import the shared fold_path_part.
-    "tldw_chatbook/Workspaces/registry_service.py": 4305,
+    # 2026-11-18, TASK-40969: rebased dev measures 4294; grouped reads add 51.
+    "tldw_chatbook/Workspaces/registry_service.py": 4345,
     # 2026-11-03, TASK-36527 review round 3, under the owner's 2026-10-31 size
     # waiver: each workspace-reachable entry point and call_after_refresh
     # target opens with the two-line `_going_away()` guard: 4207 -> 4253.

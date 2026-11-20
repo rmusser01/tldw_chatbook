@@ -3491,13 +3491,7 @@ class SubscriptionsDB(BaseDB):
         )
 
         with self.transaction() as conn:
-            # `transaction()` preserves nested write ownership but does not
-            # itself issue a BEGIN for read-only statements.  A first Reader
-            # page has three related SELECTs (high-water, count, rows), so
-            # start a deferred SQLite read transaction when no caller-owned
-            # transaction is active. It takes no write lock and pins one WAL
-            # snapshot on the first read. An outer transaction owns its own
-            # boundary, so never begin a nested transaction inside it.
+            # Pin one WAL snapshot for the count, high-water and rows.
             if not conn.in_transaction:
                 conn.execute("BEGIN DEFERRED")
             search_join, predicates, params = self._reader_matching_parts(
@@ -3512,59 +3506,65 @@ class SubscriptionsDB(BaseDB):
                 search=search,
                 since=since,
             )
-            first_page = after is None
-            if first_page and snapshot_max_item_id is None:
-                high_water_row = conn.execute(
-                    f"""
-                    SELECT COALESCE(MAX(i.id), 0)
-                    FROM subscription_items i
-                    {search_join}
-                    JOIN subscriptions s ON i.subscription_id = s.id
-                    {self._reader_where_clause(predicates)}
-                    """,
+            capture_high_water = after is None and snapshot_max_item_id is None
+            matching_from = (
+                f"FROM subscription_items i {search_join} "
+                "JOIN subscriptions s ON i.subscription_id = s.id"
+            )
+            where = self._reader_where_clause
+            snapshot_count: int | None = None
+            if capture_high_water:
+                high_water, count = conn.execute(
+                    f"SELECT COALESCE(MAX(i.id), 0), COUNT(*) "
+                    f"{matching_from} {where(predicates)}",
                     tuple(params),
                 ).fetchone()
-                snapshot_max_item_id = int(high_water_row[0])
+                snapshot_max_item_id, snapshot_count = int(high_water), int(count)
                 self._after_reader_page_high_water()
             assert snapshot_max_item_id is not None
             bounded_predicates = [*predicates, "i.id <= ?"]
             bounded_params = [*params, snapshot_max_item_id]
-            snapshot_count: Optional[int] = None
-            if first_page:
+            if after is None and snapshot_count is None:
                 count_row = conn.execute(
-                    f"""
-                    SELECT COUNT(*)
-                    FROM subscription_items i
-                    {search_join}
-                    JOIN subscriptions s ON i.subscription_id = s.id
-                    {self._reader_where_clause(bounded_predicates)}
-                    """,
+                    f"SELECT COUNT(*) {matching_from} {where(bounded_predicates)}",
                     tuple(bounded_params),
                 ).fetchone()
                 snapshot_count = int(count_row[0])
-            if after is not None:
-                if after.effective_date is None:
-                    bounded_predicates.append("i.effective_date IS NULL AND i.id < ?")
-                    bounded_params.append(after.item_id)
-                else:
-                    bounded_predicates.append(
-                        "(i.effective_date IS NULL OR i.effective_date < datetime(?) "
-                        "OR (i.effective_date = datetime(?) AND i.id < ?))"
-                    )
-                    bounded_params.extend(
-                        [after.effective_date, after.effective_date, after.item_id]
-                    )
+            if after is not None and after.effective_date is None:
+                bounded_predicates.append("i.effective_date IS NULL AND i.id < ?")
+                bounded_params.append(after.item_id)
+            elif after is not None:
+                bounded_predicates.append(
+                    "(i.effective_date IS NULL OR i.effective_date < datetime(?) "
+                    "OR (i.effective_date = datetime(?) AND i.id < ?))"
+                )
+                date = after.effective_date
+                bounded_params.extend((date, date, after.item_id))
+            # For the global All view the captured bound is redundant inside
+            # this snapshot and would steer SQLite away from the date index.
+            global_all = capture_high_water and (
+                not predicates
+                or (
+                    len(predicates) == 1
+                    and statuses is not None
+                    and set(statuses) == {"new", "reviewed", "ingested"}
+                )
+            )
+            page_predicates = predicates if global_all else bounded_predicates
+            page_params = params if global_all else bounded_params
             rows = conn.execute(
                 f"""
+                WITH page AS MATERIALIZED (
+                    SELECT i.id {matching_from} {where(page_predicates)}
+                    ORDER BY {self._READER_ITEM_ORDER_BY} LIMIT ?
+                )
                 SELECT {self._LIST_ITEM_COLUMNS}
-                FROM subscription_items i
-                {search_join}
+                FROM page
+                JOIN subscription_items i ON i.id = page.id
                 JOIN subscriptions s ON i.subscription_id = s.id
-                {self._reader_where_clause(bounded_predicates)}
                 ORDER BY {self._READER_ITEM_ORDER_BY}
-                LIMIT ?
                 """,
-                tuple([*bounded_params, limit + 1]),
+                (*page_params, limit + 1),
             ).fetchall()
         visible_rows = [dict(row) for row in rows[:limit]]
         has_more = len(rows) > limit

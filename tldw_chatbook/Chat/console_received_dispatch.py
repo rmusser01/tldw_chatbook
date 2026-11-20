@@ -506,6 +506,34 @@ async def _run_received_intent_bound(runtime, record, source):
     )
 
 
+def preparation_stop_available(
+    runtime: native_host.ConsoleRuntime, session_id: str
+) -> bool:
+    """Whether this session's Send still has a preparation Stop owner."""
+    if any(
+        record.session_id == session_id
+        and record.store is runtime.chat_store
+        and record.received_intent is not None
+        and record.received_claim is not None
+        and not record.inputs.durable_accepted
+        and record.task is not None
+        and not record.task.done()
+        and not record.task.cancelling()
+        for record in runtime._turn_custody.values()
+    ):
+        return True
+
+    controller = runtime.chat_controller
+    if controller is None or controller.store is not runtime.chat_store:
+        return False
+    from .console_native_commit import ordinary_native_commit_stop_available
+    from .console_pre_provider_stop import accepted_pre_stream_stop_available
+
+    return ordinary_native_commit_stop_available(
+        controller, session_id
+    ) or accepted_pre_stream_stop_available(controller, session_id)
+
+
 def accept_received_intent(
     self, intent: ConsoleReceivedTurnIntent, *, _configuration_preparation=None,
     terminal_callback=None,

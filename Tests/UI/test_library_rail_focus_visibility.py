@@ -54,8 +54,13 @@ async def test_tab_reveals_create_above_the_docked_cue(theme: str) -> None:
         host.theme = theme
         screen = host.screen
         await _wait_for_library_shell(screen, pilot)
-        screen.query_one("#library-row-browse-search", Button).focus()
+        # Artifacts is the section immediately before Create in the rail.
+        screen.query_one("#library-row-artifacts-dreams", Button).focus()
         await pilot.pause()
+        button = screen.query_one("#console-rail-section-toggle-library-create", Button)
+        cue = screen.query_one("#library-rail-fold-cue")
+        assert cue.display
+        assert button.region.bottom > cue.region.y
         await pilot.press("tab")
         await pilot.pause()
         button = screen.query_one("#console-rail-section-toggle-library-create", Button)

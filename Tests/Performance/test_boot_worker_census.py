@@ -133,6 +133,8 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # the worker waits for UI-ready before reading, then projects that hold.
         ("refresh", "console-emergency-stop"),
         ("_refresh_console_skill_candidates", "console-skill-discovery"),
+        # TASK-41642: cold Console discovery starts its admitted trust setup.
+        ("ensure_local_skill_trust_service", "console-skill-trust-setup"),
         # The Character view owns its initial/resume context refresh.
         ("refresh_if_scope_changed", "console-character-context-refresh"),
         ("_refresh_console_persisted_rows_cache", "console-persisted-browser-cache"),

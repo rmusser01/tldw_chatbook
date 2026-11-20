@@ -72,6 +72,147 @@ def normalize_notes_sync_relative_path(value: object) -> str:
     return "/".join(parts)
 
 
+_RUNTIME_STATUSES = frozenset(
+    {
+        "active",
+        "awaiting_cutover",
+        "changes_available",
+        "failed",
+        "needs_attention",
+        "not_configured",
+        "offline",
+        "partial",
+        "passive",
+        "paused",
+        "starting",
+        "stopped",
+        "stopping",
+        "unsupported",
+        "up_to_date",
+    }
+)
+_NEXT_ACTIONS = frozenset(
+    {
+        "apply_reviewed",
+        "finish_upgrade",
+        "none",
+        "open_active_process",
+        "reconnect_folder",
+        "close_other_process_and_restart",
+        "resolve_cleanup",
+        "resume_sync",
+        "review_changes",
+        "review_settings",
+        "review_migration",
+        "sync_now",
+        "wait",
+    }
+)
+
+
+def _validate_projection(status: str, next_action: str) -> None:
+    if status not in _RUNTIME_STATUSES:
+        raise ValueError("unknown runtime status")
+    if next_action not in _NEXT_ACTIONS:
+        raise ValueError("unknown runtime next action")
+
+
+_ROOT_LABEL_MAX_CHARS = 160
+
+
+def _is_bounded_root_label(label: str) -> bool:
+    """The bounds ``NotesSyncRootSetup`` enforces on a typed display name."""
+
+    return (
+        bool(label.strip())
+        and len(label) <= _ROOT_LABEL_MAX_CHARS
+        and "\n" not in label
+        and "/" not in label
+        and "\\" not in label
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class NotesSyncRootRuntimeSnapshot:
+    """Path-free status projection for one lasting-sync root.
+
+    ``published_at`` is the wall clock (``time.time()``) at which the runtime
+    published this status -- TASK-32633 (N-03): the healthy row says when it
+    was last confirmed instead of an unqualified "Up to date", and that time
+    has to come from the publication, never from the paint. ``None`` only for
+    a snapshot built by hand.
+
+    ``watching`` (TASK-34000.50) is whether a watcher is running for this
+    root's lease RIGHT NOW: read live by :meth:`NotesSyncRuntimeOwner.snapshot`
+    and stamped onto every listener notification, never frozen into the
+    stored publication (startup publishes each root's ``up_to_date`` before
+    it starts the watcher, and a backup fence stops the watcher without
+    publishing anything). A healthy status with ``watching`` False is a row
+    nothing is carrying changes for; the projection says so.
+
+    ``display_name`` (TASK-32451) is the root's managed folder's name -- the
+    label the user typed at setup, the same one the Notes tree shows -- or
+    one of the owner's honest fallbacks for a root that has no folder yet.
+    A bounded non-path label, never a path: ``""`` only for a snapshot
+    built by hand.
+    """
+
+    root_id: str
+    status: str
+    next_action: str
+    action_id: str | None = None
+    published_at: float | None = None
+    watching: bool = True
+    display_name: str = ""
+
+    def __post_init__(self) -> None:
+        validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
+        _validate_projection(self.status, self.next_action)
+        if self.action_id is not None:
+            validate_notes_sync_opaque_id(self.action_id, field_name="action_id")
+        if self.published_at is not None and type(self.published_at) is not float:
+            raise TypeError("published_at must be a float or None")
+        if type(self.watching) is not bool:
+            raise TypeError("watching must be a bool")
+        if type(self.display_name) is not str:
+            raise TypeError("display_name must be a str")
+        if self.display_name and not _is_bounded_root_label(self.display_name):
+            raise ValueError("display_name must be a bounded non-path label")
+
+
+@dataclass(frozen=True, slots=True)
+class NotesSyncRuntimeSnapshot:
+    """Path-free application runtime projection."""
+
+    status: str
+    next_action: str
+    roots: tuple[NotesSyncRootRuntimeSnapshot, ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_projection(self.status, self.next_action)
+        if type(self.roots) is not tuple or any(
+            type(root) is not NotesSyncRootRuntimeSnapshot for root in self.roots
+        ):
+            raise TypeError("roots must be runtime root snapshots")
+
+
+@dataclass(frozen=True, slots=True)
+class NotesSyncControlResult:
+    """Bounded outcome for a root lifecycle control."""
+
+    accepted: bool
+    status: str
+    next_action: str
+    applied_count: int = 0
+
+    def __post_init__(self) -> None:
+        if type(self.accepted) is not bool:
+            raise TypeError("accepted must be a boolean")
+        _validate_projection(self.status, self.next_action)
+        if type(self.applied_count) is not int or not 0 <= self.applied_count <= 1_000:
+            raise ValueError("applied_count must be a bounded non-negative integer")
+
+
 class NotesSyncDirection(StrEnum):
     """Configured authority direction for one lasting root."""
 

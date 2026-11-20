@@ -24,9 +24,11 @@ thread-local and invisible to the worker thread by design).
 """
 
 import asyncio
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from itertools import islice
 
 import pytest
 
@@ -1135,6 +1137,83 @@ class TestBackfill:
         summary = asyncio.run(backfill_semantic_index(media_db=media_db))
         assert summary["status"] == "unavailable"
         assert summary["indexed"] == 0
+
+    def test_media_backfill_seeks_past_visited_rows_across_deletion(self, media_db):
+        ids = [
+            _add_media(media_db, title=f"Media {i}", content=f"Distinct text {i}")[0]
+            for i in range(4)
+        ]
+        entries = ingestion_indexing._iter_media_entries(media_db, page_size=2)
+        assert [next(entries).item_id, next(entries).item_id] == [
+            str(i) for i in ids[:2]
+        ]
+
+        assert media_db.soft_delete_media(ids[0])
+        assert [entry.item_id for entry in entries] == [str(i) for i in ids[2:]]
+
+        statements = []
+        conn = media_db.get_connection()
+        conn.set_trace_callback(statements.append)
+        try:
+            assert ingestion_indexing._active_media_ids(media_db, page_size=2) == {
+                str(i) for i in ids[1:]
+            }
+        finally:
+            conn.set_trace_callback(None)
+        scans = [sql for sql in statements if sql.startswith("SELECT id FROM Media")]
+        assert len(scans) == 2 and all("OFFSET" not in sql for sql in scans)
+        assert f"id > {ids[2]}" in scans[-1]
+
+    def test_notes_backfill_seeks_across_date_ties_and_consumed_deletion(
+        self, monkeypatch
+    ):
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        monkeypatch.setitem(
+            sqlite3.converters,
+            "DATETIME",
+            lambda raw: datetime.fromisoformat(raw.decode()),
+        )
+        database = CharactersRAGDB(":memory:", "notes-backfill")
+        try:
+            with database.transaction() as connection:
+                connection.executemany(
+                    "INSERT INTO notes(id, title, content, last_modified, deleted) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [
+                        (
+                            f"note-{i}",
+                            f"Note {i}",
+                            f"Body {i}" if i != 5 else "",
+                            "2026-02-01" if i else "2026-01-01",
+                            int(i == 2),
+                        )
+                        for i in range(7)
+                    ],
+                )
+            traced = []
+            database.get_connection().set_trace_callback(traced.append)
+            entries = ingestion_indexing._iter_note_entries(database, page_size=2)
+            assert next(entries).item_id == "note-6"
+            with database.transaction() as connection:
+                connection.execute("UPDATE notes SET deleted = 1 WHERE id = 'note-6'")
+            assert [entry.item_id for entry in islice(entries, 5)] == [
+                "note-4",
+                "note-3",
+                "note-1",
+                "note-0",
+            ]
+            pages = [
+                sql
+                for sql in traced
+                if sql.startswith("SELECT ") and "FROM notes WHERE deleted = 0" in sql
+            ]
+            assert len(pages) == 4
+            assert all("OFFSET" not in sql for sql in pages)
+            assert "last_modified = " in pages[1] and "rowid < " in pages[1]
+            assert "last_modified < " in pages[1]
+        finally:
+            database.close()
 
     def test_backfill_reconciles_tracked_media_deleted_while_hook_was_absent(
         self, media_db, tmp_path

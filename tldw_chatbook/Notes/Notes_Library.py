@@ -124,15 +124,20 @@ class NotesInteropService:
                 "No unified database template for NotesInteropService."
             )
 
-    def _get_db(self, user_id: str) -> CharactersRAGDB:
+    def _get_db(
+        self, user_id: str, *, profile_read_db: CharactersRAGDB | None = None
+    ) -> CharactersRAGDB:
         """
         Retrieves or creates a CharactersRAGDB instance for a given user_id,
         always pointing to the single, unified database file.
         The `user_id` is used as the `client_id` for the returned DB instance.
         Instances are cached per `user_id`. This method is thread-safe.
+        A profile-wide read can reuse the initialized template before a per-user
+        owner exists.
 
         Args:
             user_id: The unique identifier for the user, used as client_id for DB operations.
+            profile_read_db: An already-initialized profile owner for profile-wide reads.
 
         Returns:
             A CharactersRAGDB instance configured for the specified user_id
@@ -165,6 +170,13 @@ class NotesInteropService:
                 raise CharactersRAGDBError(
                     "Unified database template is not available in NotesInteropService."
                 )
+
+            # Profile-wide reads need no additional owner for the same file.
+            if (
+                profile_read_db is not None
+                and self.unified_db_template is profile_read_db
+            ):
+                return profile_read_db
 
             # Create a new CharactersRAGDB instance for this user_id,
             # ensuring it points to the *global unified database file path*
@@ -418,17 +430,19 @@ class NotesInteropService:
     def list_notes(
         self, user_id: str, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
+        return self._list_notes(user_id, limit, offset)
+
+    def _list_notes(
+        self, user_id: str, limit: int, offset: int, *, db: CharactersRAGDB | None = None
+    ) -> List[Dict[str, Any]]:
         start_time = time.time()
         log_counter(
             "notes_library_list_notes_attempt",
             labels={"limit": str(limit), "has_offset": str(offset > 0)},
         )
 
-        db = self._get_db(user_id)
-        # If notes are truly global and not per-user within the DB, then user_id here doesn't filter.
-        # If notes *are* associated with a client_id in the DB table, then CharactersRAGDB.list_notes
-        # would need to be modified to filter by its self.client_id (which is user_id here).
-        # Assuming current list_notes in ChaChaNotes_DB lists all non-deleted notes.
+        if db is None:
+            db = self._get_db(user_id)
         results = db.list_notes(limit=limit, offset=offset)
 
         # Log metrics
@@ -452,11 +466,14 @@ class NotesInteropService:
             The exact number of non-deleted notes, per
             ``CharactersRAGDB.count_notes``.
         """
+        return self._count_notes(user_id)
+
+    def _count_notes(self, user_id: str, *, db: CharactersRAGDB | None = None) -> int:
         start_time = time.time()
         log_counter("notes_library_count_notes_attempt")
 
-        db = self._get_db(user_id)
-        # Same "notes are global, not per-user-filtered" assumption as list_notes above.
+        if db is None:
+            db = self._get_db(user_id)
         result = db.count_notes()
 
         duration = time.time() - start_time

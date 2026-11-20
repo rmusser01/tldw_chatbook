@@ -29,6 +29,14 @@ This document describes the unified scheduler (reminders, watchlist checks, brie
 3. **Execute**: emergency-stop check → run-ledger row (reminder/briefing types) → optional handler preflight (bounded 10 s) → the handler awaited inline under `wait_for` with the effective timeout (row override > 300 s default; ≤ 0 disables). Long handlers (briefings, automations) spawn `asyncio.Task`s held in strong-ref sets so a multi-minute LLM call cannot stall the serial tick; an overlap guard degrades too-frequent intervals to back-to-back runs, never concurrent. For detached jobs, this timeout bounds the awaited handler dispatch, not the spawned job's execution lifetime.
 4. **Record reminders**: `mark_reminder_dispatched` advances the schedule from **now** (missed slots skipped), records `missed_at`/`missed_count` past the grace window with an attributed cause (`away`/`busy`/`stalled`), closes the ledger row, and dispatches notifications. Startup reconciliation fails `running` ledger rows left by a prior process.
 
+`SchedulingService.recover_startup` reconciles stale automation runs, recovers
+definition transfers, then reads local reminder transfers. For the stock
+file-backed store, each of those calls runs in a finite worker with its own
+storage admission. The app owns the recovery task through shutdown.
+`TldwCli._run_scheduler_after_local_recovery` waits for the local pass after
+the existing UI-ready check. The remote reminder lookup can finish while
+the scheduler runs.
+
 The automation definition form admits Save synchronously before starting its
 `automation-form-save` worker. While the admitted save is pending, its button
 shows **Saving…** and is disabled; repeated button or direct Save actions retain

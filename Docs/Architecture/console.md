@@ -64,6 +64,13 @@ Cold context and cost estimates share tokenizer preparation with `ConsoleReadine
 
 Console attention event callbacks use `ConsoleRuntime.request_console_attention_refresh` (TASK-35592). Stock file-backed unseen-mark queries are coalesced through finite runtime preparation reads with operation-owned connections. Existing read revisions invalidate results after newer refreshes or exact receipt acknowledgements; source, store, runtime and disposal checks gate publication. Visibility, receipt-outcome classification, notifications and projection still run on the caller loop. Explicit `recompute_console_attention` and custom readers retain their synchronous contract; no durable mark or permission cache is added.
 
+The app-owned `deferred_launch_wake` task reads the selected profile's
+existing AgentRuns database through a finite worker. After the worker
+returns, delivery checks the current source, quit state, and automatic-wake
+switch before constructing a runtime. The existing durable recovery audit
+still precedes hydration and delivery. Cancelling startup waits for the
+admitted read to close. See [ADR-135](../../backlog/decisions/135-fleet-completion-delivery-and-crash-recovery.md).
+
 Ordinary resume prepares the original active-workspace registry read after successful FULL sync and before restoring runtime answerability (TASK-35593). `prepare_console_workspace_reconciliation` supplies a single-use result to the original synchronous reconciler in that resume stack. Native admission, current registry generation, source/session/view checks and physical retirement remain intact; workspace repair and subsequent resume actions retain their order. Explicit saved-chat resume and custom callbacks keep their original routes. The prepared result is discarded at the end of the stack and is not a reusable display or authority cache.
 
 FULL synchronization awaits the existing stock `ConsoleReadinessConfigProjection.warm()` before synchronous rail/control presentation (TASK-35594). This avoids entering native config admission on the UI thread when the display projection expires. The await is outside the workspace build scope and config operation; source/session ownership is checked by the existing projection, and the screen rechecks its attach visit and maintenance state before rendering. Refusal retains whole-FULL replay without declaring attach complete. Direct/custom presentation keeps its original fallback, live actions keep their checks, and cancellation retains the finite native read until physical retirement. No display lifetime is extended and general narrow polling remains Proposed (ADR-231). A queued readiness refresh keeps its entry-time session lookup inside the same cold/refusal cleanup boundary as the native read. If that session closes before worker entry, the worker publishes nothing and settles pending waiters. A refresh that fails or is refused (its read or default handoff raises, or the owner, source, runtime or pricing sources moved) schedules the existing coalesced control-bar retry, so a lone sync deferred on a cold display still converges. The retry waits 0.2 s and doubles that wait for each consecutive failure on the same owner, up to 5 s. A successful read or an owner change resets the wait. A projection keeps one pending retry, whoever started the failed read, and each new failure replaces it. A successful refresh with nothing changed schedules no whole-FULL sync. Cancellation, a closing screen and a disposed runtime also schedule nothing (TASK-38649). Cancellation still retains an issued finite read until physical retirement.
@@ -505,7 +512,18 @@ command APIs. Full qualification receipts retain their source and platform scope
 
 ## Run states and gating
 
-`ConsoleRunStatus`: idle / validating / streaming / checking_citations / completed / blocked / stopped / failed / retrying. New sends are only allowed from idle/blocked/completed/failed/stopped; Stop is only allowed during streaming/citation-checking. `_set_run_state` is the single writer of run state.
+`ConsoleRunStatus`: idle / validating / streaming / checking_citations / completed / blocked / stopped / failed / retrying. `_set_run_state` is the single writer of run state. The prompt queue projects Send and Queue availability from the session's admission and run state.
+
+The viewed Console offers Stop and Ctrl+G during preparation when its runtime
+can prove an exact cancellation owner. Cancellation of a received send before
+durable acceptance preserves the authored draft, including edits made during
+preparation. For a live accepted submit preparing to dispatch, the control
+checks the same preparation, recovery and task identities as the Stop command,
+using nonblocking lock acquisition. The command rechecks ownership. A Stop
+received during a confirmed native save's postcommit work lets its required
+effects finish before the same owner settles the turn. Redirect still depends
+on active generation. The mobile cancel endpoint selects the requested chat
+and delegates to the same controller entry point.
 
 ## Approvals
 
@@ -609,6 +627,12 @@ ADR-052 (memory and compaction policy), ADR-314 (indefinite approval waits), ADR
 5. The review hook clears per-run decision stamps at entry so a raising approval round can never leak a prior turn's approval.
 6. Approved Quit cancels the exact cache/flat browser workers before cleanup yields; the existing manager still drains their finite native reads. New read admission checks the same App's permanent shutdown flag as well as runtime disposal, because runtime detachment can precede the end of screen cleanup. Ordinary no-runtime/custom routes remain available before that terminal flag.
 
+
+During a plain streaming update in the same session, unchanged message
+identities and roles let the transcript reuse its causal spans and visible
+window while adopting the new message models. Tool or thinking activity,
+selection handoff, a hydrating window, and stream termination use normal
+reconciliation.
 
 ### Learned response rules (ADR232)
 

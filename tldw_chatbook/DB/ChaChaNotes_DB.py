@@ -12416,7 +12416,7 @@ DELETE FROM keywords
         query = (
             f"SELECT m.conversation_id, COUNT(1) AS cnt FROM messages m "
             f"JOIN conversations c ON m.conversation_id = c.id "
-            f"WHERE m.conversation_id IN ({placeholders})"
+            f"WHERE c.id IN ({placeholders})"
         )
         if not include_deleted_conversation:
             query += " AND c.deleted = 0"

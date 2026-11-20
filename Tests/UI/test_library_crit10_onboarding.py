@@ -22,6 +22,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from textual.screen import Screen
 from textual.widgets import Button
 
 from tldw_chatbook.Library.library_ingest_jobs import (
@@ -36,6 +37,11 @@ from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_destination_shells import (
+    StaticLibraryConversationScopeService,
+    StaticLibraryMediaScopeService,
+    StaticLibraryNotesScopeService,
+)
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -62,6 +68,126 @@ def _pre_written_config_app(gates: _LibraryEvidenceGates, *, lifecycle=None):
         rail_state["lifecycle"] = lifecycle
     gates.install(app)
     return app
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_saved_graduation_skips_evidence_and_refreshes_attention_on_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence_requests: list[int] = []
+
+    async def record_evidence(_screen: LibraryScreen, generation: int) -> None:
+        evidence_requests.append(generation)
+
+    monkeypatch.setattr(
+        LibraryScreen, "_gather_library_onboarding_evidence", record_evidence
+    )
+    app = _build_test_app()
+    rail_state = app.app_config.setdefault("library", {}).setdefault("rail_state", {})
+    rail_state["lifecycle"] = "graduated"
+    app.notes_scope_service = StaticLibraryNotesScopeService(
+        [{"id": "note-one", "title": "Saved note"}]
+    )
+    app.media_reading_scope_service = StaticLibraryMediaScopeService([])
+    app.chat_conversation_scope_service = StaticLibraryConversationScopeService(
+        [{"id": "chat-one", "title": "Saved conversation"}]
+    )
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        await _wait_for_library_shell(screen, pilot)
+        assert evidence_requests == []
+        assert screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+        assert screen._library_lookup_error is None
+        assert screen._local_source_counts == {
+            "notes": 1,
+            "media": 0,
+            "conversations": 1,
+        }
+        assert not screen.query("#library-hub-attention-action")
+
+        await host.push_screen(Screen())
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_screen_suspended,
+            message="Library did not suspend under the covering screen",
+        )
+        job = app.library_ingest_jobs.submit(source_path="/tmp/hidden-import.pdf")
+        app.library_ingest_jobs.mark_failed(job.job_id, error="Private failure")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._library_landing_attention_signature is not None,
+            message="The hidden ingest failure did not reach the attention owner",
+        )
+        assert not screen.query("#library-hub-attention-action")
+
+        await host.pop_screen()
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(screen.query("#library-hub-attention-action")),
+            message="The landing did not show the failed import after returning",
+        )
+        attention = screen.query_one("#library-hub-attention-action", Button)
+        assert str(attention.label) == "Review"
+        assert evidence_requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_unsaved_graduation_keeps_evidence_and_retries_the_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saves: list[str] = []
+
+    def save_lifecycle(_section: str, _setting: str, lifecycle: str) -> bool:
+        saves.append(lifecycle)
+        return len(saves) > 1
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.library_screen.save_setting_to_cli_config",
+        save_lifecycle,
+    )
+    gates = _LibraryEvidenceGates(
+        rounds=2,
+        outcomes={"notes": [LibraryContentEvidence.HAS_USER_CONTENT] * 2},
+    )
+    app = _pre_written_config_app(gates)
+    screen = LibraryScreen(app)
+    host = LibraryHarness(app, screen=screen)
+
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            await _wait_for_evidence_round(pilot, gates)
+            gates.release_round(0)
+            await _wait_for_condition(
+                pilot,
+                lambda: bool(screen._library_onboarding_persistence_warning),
+                message="The first failed save did not publish its warning",
+            )
+            assert screen._library_lifecycle is LibraryLifecycle.GRADUATED
+            assert (
+                screen._library_lifecycle_last_persisted
+                is not LibraryLifecycle.GRADUATED
+            )
+            assert saves == ["graduated"]
+
+            assert screen._refresh_library_onboarding_evidence() is not None
+            await _wait_for_evidence_round(pilot, gates, 1)
+            gates.release_round(1)
+            await _wait_for_condition(
+                pilot,
+                lambda: (
+                    screen._library_lifecycle_last_persisted
+                    is LibraryLifecycle.GRADUATED
+                ),
+                message="The next evidence generation did not save graduation",
+            )
+            assert saves == ["graduated", "graduated"]
+            assert not screen._library_onboarding_persistence_warning
+    finally:
+        gates.release_all()
 
 
 @pytest.mark.asyncio
@@ -131,8 +257,9 @@ async def test_an_explicit_explore_keeps_the_expanded_rail_when_empty() -> None:
                 pilot,
                 lambda: (
                     screen._library_onboarding_status is LibraryEvidenceStatus.SETTLED
+                    and bool(screen.query("#library-rail-back-to-starter"))
                 ),
-                message="empty evidence did not settle",
+                message="empty evidence did not settle and show Back to Get started",
             )
             assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
             assert screen.query_one("#library-rail-back-to-starter")

@@ -1,7 +1,10 @@
 """Tests for SchedulingService local/server routing and offline behavior."""
 
+import asyncio
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -2880,6 +2883,121 @@ async def test_cancel_transfer_release_definitively_failed_no_live_mutation(db):
 
 
 # -- recover_inflight_transfers ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_startup_recovers_local_schedules_before_waiting_for_server(
+    db, monkeypatch
+):
+    server_client = _connected_server_client()
+    svc = _transfer_service(db, server_client=server_client)
+    definition_id = _make_definition(db, transfer_state="to_server_sent")
+    reminder_id = _make_reminder(db, transfer_state="to_server_sent")
+    ui_thread = threading.get_ident()
+    calls = []
+    for name in (
+        "reconcile_stale_automation_runs",
+        "list_automation_definitions",
+        "list_reminder_tasks",
+    ):
+        native = getattr(db, name)
+
+        def observed(*args, _name=name, _native=native, **kwargs):
+            calls.append((_name, threading.get_ident()))
+            return _native(*args, **kwargs)
+
+        monkeypatch.setattr(db, name, observed)
+
+    local_ready = asyncio.Event()
+    server_entered = asyncio.Event()
+    release_server = asyncio.Event()
+
+    async def list_server_reminders():
+        server_entered.set()
+        await release_server.wait()
+        return {"items": []}
+
+    server_client.list_reminders.side_effect = list_server_reminders
+    recovery = asyncio.create_task(
+        svc.recover_startup(older_than_seconds=3600, local_ready=local_ready)
+    )
+    try:
+        await asyncio.wait_for(server_entered.wait(), timeout=10)
+        assert local_ready.is_set() and not recovery.done()
+        assert [name for name, _ in calls] == [
+            "reconcile_stale_automation_runs",
+            "list_automation_definitions",
+            "list_reminder_tasks",
+        ]
+        assert all(thread != ui_thread for _, thread in calls)
+        assert (
+            db.get_automation_definition(definition_id)["transfer_state"]
+            == "to_server_pending"
+        )
+        assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_sent"
+    finally:
+        release_server.set()
+        await recovery
+    assert db.get_reminder_task(reminder_id)["transfer_state"] == "to_server_pending"
+
+
+@pytest.mark.asyncio
+async def test_startup_skips_sqlite_calls_when_execution_is_denied(db, monkeypatch):
+    from tldw_chatbook.Backup_Recovery import activation
+
+    svc = _transfer_service(db)
+    operations = Mock()
+    for name in (
+        "reconcile_stale_automation_runs",
+        "list_automation_definitions",
+        "list_reminder_tasks",
+    ):
+        monkeypatch.setattr(db, name, getattr(operations, name))
+
+    monkeypatch.setattr(
+        activation, "activation_permission", lambda *args, **kwargs: False
+    )
+    local_ready = asyncio.Event()
+    await svc.recover_startup(older_than_seconds=3600, local_ready=local_ready)
+
+    assert operations.mock_calls == []
+    assert local_ready.is_set()
+
+
+@pytest.mark.asyncio
+async def test_startup_cancel_waits_for_scheduling_transaction_to_retire(
+    db, monkeypatch
+):
+    svc = _transfer_service(db)
+    loop = asyncio.get_running_loop()
+    native_started = asyncio.Event()
+    release = threading.Event()
+    local_ready = asyncio.Event()
+    transaction = db.transaction
+
+    @contextmanager
+    def held_transaction():
+        with transaction() as connection:
+            loop.call_soon_threadsafe(native_started.set)
+            assert release.wait(10)
+            yield connection
+
+    monkeypatch.setattr(db, "transaction", held_transaction)
+    recovery = asyncio.create_task(
+        svc.recover_startup(older_than_seconds=3600, local_ready=local_ready)
+    )
+    try:
+        await asyncio.wait_for(native_started.wait(), timeout=10)
+        recovery.cancel()
+        await asyncio.sleep(0)
+        recovery.cancel()
+        await asyncio.sleep(0)
+        assert not recovery.done()
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await recovery
+    assert not local_ready.is_set()
 
 
 @pytest.mark.asyncio

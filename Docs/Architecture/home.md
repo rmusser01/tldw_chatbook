@@ -24,8 +24,10 @@ it pending. The adapter TTL and native checks remain unchanged. Content builds
 stop issuing further queries once the mounted Home is hidden (TASK-38267). A
 read already issued remains awaited through its existing cleanup; a hidden
 partial build never replaces the last complete snapshot. The next visit starts
-the ordinary refresh. This suspension rule does not change the preexisting
-exclusive-worker cancellation behavior on a rapid subsequent resume.
+the ordinary refresh. The stock file-backed Notes preview and count share one
+finite connection using the Library Notes reader. Cancellation awaits that
+connection's retirement. A failed preview still permits the exact count, and
+a failed count leaves the successfully read preview available.
 
 ## Dashboard build (dataflow)
 

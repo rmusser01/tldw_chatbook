@@ -505,59 +505,57 @@ def claim_arrival_key(screen: Any, composer: ConsoleComposerBar, event: Key) -> 
         composer.focus_draft_from(arrival)
 
 
-def stop_available(screen: Any) -> bool:
-    """Whether the stop key applies now -- exactly when Stop is shown.
-
-    Args:
-        screen: The Console screen (or a class/stub: then False).
-
-    Returns:
-        True while the viewed tab's run is active and the setup card does
-        not block the Console; False otherwise.
-    """
-
-    composer = _composer(screen)
-    if composer is None or not composer.run_active:
+def preparation_stop_available(screen: Any) -> bool:
+    """Whether the visible tab still has an owner for Stop during preparation."""
+    runtime = getattr(screen, "_console_runtime_ref", None)
+    store = runtime.chat_store if runtime is not None else None
+    session_id = store.active_session_id if store is not None else None
+    if (
+        not session_id
+        or session_id != screen._console_visible_draft_session_id
+        or not runtime.has_custodied_turns(session_id)
+    ):
         return False
-    return not screen._console_setup_modal_blocking()
+
+    from tldw_chatbook.Chat.console_received_dispatch import (
+        preparation_stop_available as owned_preparation_stop_available,
+    )
+
+    return owned_preparation_stop_available(runtime, session_id)
+
+
+def request_controller_stop(screen: Any, controller: Any) -> bool:
+    """Request Stop and report the result in the visible Console."""
+    preparing = preparation_stop_available(screen)
+    if controller is None or not controller.stop_active_run():
+        screen.app_instance.notify("No active Console run to stop.", severity="warning")
+        return False
+    if preparing:
+        screen.app_instance.notify("Stopping send…", severity="information")
+    return True
+
+
+def stop_available(screen: Any) -> bool:
+    """Whether the composer offers Stop and no setup card blocks it."""
+    composer = _composer(screen)
+    return (
+        composer is not None
+        and composer.stop_available
+        and not screen._console_setup_modal_blocking()
+    )
 
 
 def with_stop_shortcut(
     screen: Any, shortcuts: tuple[tuple[str, str], ...]
 ) -> tuple[tuple[str, str], ...]:
-    """Prepend the stop-key hint while a run is stoppable.
-
-    Prepended, not appended: the footer degrades by dropping hints from the
-    END as width runs out, and the stop key is the one hint a running tab
-    must never lose.
-
-    Args:
-        screen: The Console screen whose footer hints are being built.
-        shortcuts: The footer's ``(key label, description)`` hints, in the
-            order the footer shows them.
-
-    Returns:
-        ``shortcuts`` unchanged when `stop_available` is False; otherwise a
-        new tuple with `STOP_RUN_FOOTER_HINT` first and ``shortcuts`` after
-        it in their original order.
-    """
-
+    """Keep Stop first so a narrow footer keeps its hint."""
     if not stop_available(screen):
         return shortcuts
     return (STOP_RUN_FOOTER_HINT, *shortcuts)
 
 
 def sync_stop_affordances(screen: Any) -> None:
-    """Re-advertise the stop key when its availability flips.
-
-    Keyed on `stop_available` -- run state AND the setup-modal gate -- not
-    on run state alone, so the footer hint never outlives the key.
-
-    Args:
-        screen: The Console screen whose footer hints and bindings follow
-            the stop key's availability.
-    """
-
+    """Re-advertise the stop key when its availability flips."""
     available = stop_available(screen)
     if getattr(screen, "_console_stop_key_advertised", False) == available:
         return
@@ -961,6 +959,9 @@ def _project_console_received_preparing(self, session_id: str) -> None:
             button.disabled = True
         except QueryError:
             pass
+        if preparation_stop_available(self):
+            composer.sync_stop_action(True)
+            sync_stop_affordances(self)
     self._start_console_transcript_sync_timer()
     from .agent import project_console_run_feedback
 

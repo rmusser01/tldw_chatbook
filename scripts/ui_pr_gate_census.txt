@@ -3564,3 +3564,11 @@ Tests/UI/test_screen_navigation.py::test_library_completions_after_the_exit_fenc
 # 2 passed in 3.2 s serially with the lane's flags (load ~10).
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_prefers_still_checked_row_in_select_mode
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_checked_row_preference_is_media_only
+# TASK-33621.79: accepted Stop across native postcommit, hook wait and project startup.
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[native-postcommit]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[hook-lifecycle]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[project-instructions]
+# TASK-40970 and TASK-40971: saved Library evidence and rail ownership.
+Tests/UI/test_library_crit10_onboarding.py::test_saved_graduation_skips_evidence_and_refreshes_attention_on_return
+Tests/UI/test_library_crit10_onboarding.py::test_unsaved_graduation_keeps_evidence_and_retries_the_save
+Tests/UI/test_library_crit9_rail.py::test_saved_landing_counts_keep_the_focused_rail_input

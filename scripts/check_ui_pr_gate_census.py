@@ -1198,6 +1198,10 @@ MINIMUM_FILES = 2437
 # _focus_library_list_entry nodes at the tail. The floor is the measured
 # entry count.
 MINIMUM_FILES = 2439
+# TASK-33621.79 adds three accepted Stop windows at the tail.
+MINIMUM_FILES = 2442
+# TASK-40970 and TASK-40971 append saved graduation and rail ownership checks.
+MINIMUM_FILES = 2445
 
 
 def read_census(path: Path) -> list[str]:

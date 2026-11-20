@@ -8,8 +8,9 @@ server identity (``server:<user_id>``).
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import asyncio
+from collections.abc import Awaitable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from dataclasses import field as _dataclass_field
 from datetime import datetime, timedelta, timezone
@@ -2139,16 +2140,61 @@ class SchedulingService:
         )
         return ResolveOutcome(status="saved")
 
-    async def recover_inflight_transfers(self) -> None:
+    async def recover_startup(
+        self, *, older_than_seconds: float, local_ready: asyncio.Event
+    ) -> None:
+        """Settle local recovery in order before the scheduler loads its queue.
+
+        Args:
+            older_than_seconds: Existing age cutoff for stale automation runs.
+            local_ready: Signals completion of the local phase before server I/O.
+        """
+        try:
+            await self._run_startup_db(
+                self.db.reconcile_stale_automation_runs,
+                older_than_seconds=older_than_seconds,
+            )
+        except Exception:
+            logger.exception("Failed to reconcile stale automation runs at startup")
+        await self.recover_inflight_transfers(
+            run_local=self._run_startup_db, local_ready=local_ready
+        )
+
+    async def _run_startup_db(
+        self, operation: Callable[..., Any], /, *args: Any, **kwargs: Any
+    ) -> Any:
+        db = self.db
+        if type(db) is not ScheduledTasksDB or db.is_memory_db:
+            return operation(*args, **kwargs)
+
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+        from tldw_chatbook.Backup_Recovery.runtime_producer_lifetime import (
+            await_finite_read,
+        )
+
+        def run() -> Any:
+            with execution_scope(("db.scheduled_tasks",), db.db_path) as allowed:
+                if not allowed:
+                    raise RecoveryRequired("recovery_activation_required")
+                return operation(*args, **kwargs)
+
+        # Keep the admitted transaction owned until its worker returns.
+        return await await_finite_read(asyncio.to_thread(run))
+
+    async def recover_inflight_transfers(
+        self,
+        *,
+        run_local: Callable[..., Awaitable[Any]] | None = None,
+        local_ready: asyncio.Event | None = None,
+    ) -> None:
         """Startup recovery for rows stuck `to_server_sent` (spec §6.1.3).
 
         An ambiguous timeout between a transfer's send and its ack is the
         ONE scenario this replaces -- `SyncEngine`'s own push replay
         deliberately refuses to touch a `to_server_sent` row (Task 4/5),
-        so this is the only path that un-sticks one. Mirrors the
-        `reconcile_stale_automation_runs` on_mount precedent: each
-        sub-step is independently exception-guarded, so a broken recovery
-        pass can never block app startup.
+        so this is the only path that un-sticks one. Each pass handles
+        its own errors so the scheduler can proceed after local recovery.
 
         Definitions: CAS straight back to `to_server_pending` -- the
         server's create is hash-idempotent (ruling 4), so a blind retry
@@ -2164,21 +2210,32 @@ class SchedulingService:
         the primitive alone: no single row is implicated when the
         listing itself is what failed. Guarding per row also stops one
         bad row from cancelling recovery for every row behind it.
+
+        Args:
+            run_local: Optional startup owner for the local recovery calls.
+            local_ready: Optional scheduler gate for the local recovery phase.
         """
         try:
-            self._recover_stuck_definitions()
+            if run_local is None:
+                self._recover_stuck_definitions()
+            else:
+                await run_local(self._recover_stuck_definitions)
         except Exception:
             logger.exception(
                 "Inflight-transfer recovery pass failed for primitive {primitive}",
                 primitive=_DEFINITION_PRIMITIVE,
             )
         try:
-            await self._recover_stuck_reminders()
+            await self._recover_stuck_reminders(
+                run_local=run_local, local_ready=local_ready
+            )
         except Exception:
             logger.exception(
                 "Inflight-transfer recovery pass failed for primitive {primitive}",
                 primitive=_REMINDER_PRIMITIVE,
             )
+        if local_ready is not None:
+            local_ready.set()
 
     def _recover_stuck_definitions(self) -> None:
         stuck = [
@@ -2203,7 +2260,12 @@ class SchedulingService:
                     primitive=_DEFINITION_PRIMITIVE,
                 )
 
-    async def _recover_stuck_reminders(self) -> None:
+    async def _recover_stuck_reminders(
+        self,
+        *,
+        run_local: Callable[..., Awaitable[Any]] | None,
+        local_ready: asyncio.Event | None,
+    ) -> None:
         """List-and-match recovery, scoped to rows this server actually owns.
 
         The list-and-match is only meaningful against the server the
@@ -2230,11 +2292,11 @@ class SchedulingService:
         skipping it would leave it stuck with nothing left that could
         ever un-stick it.
         """
-        stuck = [
-            row
-            for row in self.db.list_reminder_tasks()
-            if row.get("transfer_state") == "to_server_sent"
-        ]
+        list_reminders = self.db.list_reminder_tasks
+        rows = (
+            list_reminders() if run_local is None else await run_local(list_reminders)
+        )
+        stuck = [row for row in rows if row.get("transfer_state") == "to_server_sent"]
         if not stuck:
             return
         if (
@@ -2273,6 +2335,8 @@ class SchedulingService:
         if not recoverable:
             return
 
+        if local_ready is not None:
+            local_ready.set()
         try:
             response = await self.server_client.list_reminders()
         except Exception as exc:  # noqa: BLE001 - recovery must never crash startup

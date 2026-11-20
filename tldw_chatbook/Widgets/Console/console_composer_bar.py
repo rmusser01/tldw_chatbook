@@ -1098,8 +1098,13 @@ class ConsoleComposerBar(Horizontal):
 
     @property
     def run_active(self) -> bool:
-        """Whether this tab's run is stoppable -- exactly when Stop is shown."""
+        """Whether active generation can offer run controls such as Redirect."""
         return self._run_active
+
+    @property
+    def stop_available(self) -> bool:
+        """Whether the composer offers Stop, including during preparation."""
+        return self._stop_available
 
     @staticmethod
     def is_text_entry_key(event: Key) -> bool:
@@ -2643,9 +2648,6 @@ class ConsoleComposerBar(Horizontal):
             or self._attachment_block != attachment_block
         )
         self._run_active = run_active
-        self._stop_available = (
-            run_active if stop_available is None else bool(stop_available)
-        )
         self._send_blocked = send_blocked
         self._dispatch_recovery_blocked = bool(dispatch_recovery_blocked)
         self._setup_blocked_reason = setup_blocked_reason
@@ -2655,11 +2657,12 @@ class ConsoleComposerBar(Horizontal):
         self._wake_turn_active = bool(wake_turn_active)
         self._can_save_chatbook = can_save_chatbook
         self._ephemeral = ephemeral
-        self._sync_collapsed_presentation()
+        self.sync_stop_action(
+            run_active if stop_available is None else bool(stop_available)
+        )
 
         try:
             send_button = self.query_one("#console-send-message", Button)
-            stop_button = self.query_one("#console-stop-generation", Button)
             actions = self.query_one("#console-composer-actions", Horizontal)
         except NoMatches:
             return
@@ -2794,33 +2797,6 @@ class ConsoleComposerBar(Horizontal):
         self._send_disabled_reason = reason
         self._sync_send_disabled_reason(reason, muted=not effective_send_blocked)
 
-        stop_button.disabled = False
-        # TASK-36571: one restyle for Stop's variant and state classes; the
-        # variant watcher and three `set_class` calls paid four on a run start.
-        _restyle_button_once(
-            stop_button,
-            "warning" if self._stop_available else "default",
-            {
-                "console-stop-active": self._stop_available,
-                "console-stop-idle": not self._stop_available,
-                "console-action-disabled": not self._stop_available,
-            },
-        )
-        # Fleet-UX expert review F7 (task-1234): this LIVE sync overrides
-        # the button's construction-time tooltip on every action-state
-        # refresh, so the compose-time copy alone (see `compose()` above)
-        # was never actually what a user hovering an active Stop button
-        # saw -- fixed here too, matching the collapsed Stop button (which
-        # has no such override).
-        # TASK-2154.6 (DS-07): the idle copy ("No active run to stop in
-        # this tab.") was unreachable -- the button is display-toggled off
-        # while idle, so nothing could ever be hovered to read it. The
-        # alternative (a permanently visible disabled-idle Stop) would
-        # spend 8 cells of the fixed BASE_ACTIONS_WIDTH budget on a
-        # control that is never actionable while shown, so the dead copy
-        # goes instead of the budget.
-        stop_button.tooltip = "Stop this tab's run." if self._stop_available else None
-        stop_button.styles.display = "block" if self._stop_available else "none"
         # Redirect requires active generation; a pending hook exposes only Stop.
         # TASK-28227: Redirect appears only while this tab's run is active.
         # TASK-33625.1: and only where the row budget holds it whole (see
@@ -2836,8 +2812,6 @@ class ConsoleComposerBar(Horizontal):
             )
         # A control that just hid must not keep focus, nor pass it to a
         # sibling: the draft takes it now, not when its Hide event arrives.
-        if not run_active:
-            self.focus_draft_from(stop_button)
         if redirect_button is not None and not redirect_visible:
             self.focus_draft_from(redirect_button)
 
@@ -2859,6 +2833,30 @@ class ConsoleComposerBar(Horizontal):
             # still read the PRE-toggle width (same reason
             # `set_pending_attachment_label` does not re-window inline).
             self.call_after_refresh(self._refresh_visible_draft)
+
+    def sync_stop_action(self, available: bool) -> None:
+        """Project Stop without recomputing the rest of the composer."""
+        self._stop_available = available
+        self._sync_collapsed_presentation()
+        try:
+            stop_button = self.query_one("#console-stop-generation", Button)
+        except NoMatches:
+            return
+        stop_button.disabled = False
+        # TASK-36571: apply the variant and state classes in one restyle.
+        _restyle_button_once(
+            stop_button,
+            "warning" if available else "default",
+            {
+                "console-stop-active": available,
+                "console-stop-idle": not available,
+                "console-action-disabled": not available,
+            },
+        )
+        stop_button.tooltip = "Stop this tab's run." if available else None
+        stop_button.styles.display = "block" if available else "none"
+        if not available:
+            self.focus_draft_from(stop_button)
 
     def sync_dictation_state(self, state: _DictationState) -> None:
         """Refresh the microphone action for the current one-shot lifecycle.

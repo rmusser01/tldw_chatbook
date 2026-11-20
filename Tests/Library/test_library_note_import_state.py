@@ -336,6 +336,38 @@ def test_review_page_is_bounded_and_clamps_after_plan_changes() -> None:
     assert len(last.page.items) == 7
 
 
+def test_review_pages_reuse_layout_until_plan_or_size_changes(monkeypatch) -> None:
+    from tldw_chatbook.Library import library_note_import_state
+
+    plan = _plan(
+        *(_distinct_item(number) for number in range(1, 8)),
+        collision=RootCollisionState(proposed_label="Imported", collides=True),
+    )
+    first = _file_review(plan, page_size=2)
+    builds = []
+    paginate = library_note_import_state._paginate
+
+    def record(ordered, size):
+        builds.append(size)
+        return paginate(ordered, size)
+
+    monkeypatch.setattr(library_note_import_state, "_paginate", record)
+    next_page = set_review_page(first, 2)
+    assert set_review_page(next_page, 1) == first
+    assert next_page.page.items == plan.items[2:4]
+    assert next_page.page.group_totals == first.page.group_totals
+    assert next_page.page.run_totals == first.page.run_totals
+    assert not builds
+
+    revised = set_root_collision_resolution(
+        next_page, RootCollisionChoice.UNIQUE_SIBLING, resolved_label="Imported 2"
+    )
+    assert revised.plan is not plan and revised.page == next_page.page
+    smaller = replace(revised, page=replace(revised.page, page_size=1))
+    assert set_review_page(smaller, 6).page.items == plan.items[5:6]
+    assert builds == [2, 1]
+
+
 def test_a_run_of_interchangeable_sources_is_never_cut_by_a_page_break() -> None:
     """task-32250 AC#2/AC#4: one folder showed as two runs with two counts.
 

@@ -96,6 +96,7 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
 from tldw_chatbook.Chat.console_turn_grouping import (
     ConsoleAssistantTurn,
     ConsoleTranscriptUnit,
+    build_transcript_unit_spans,
     group_console_transcript_messages,
     ordered_assistant_activities,
     project_thinking_activities,
@@ -3472,47 +3473,13 @@ class ConsoleTranscript(VerticalScroll):
         index = max(0, min(index, len(messages) - 1))
         if messages is self._messages:
             return self._unit_spans_by_index[index]
-        return self._build_unit_spans(messages)[index]
-
-    @staticmethod
-    def _build_unit_spans(
-        messages: list[ConsoleChatMessage],
-        units: Iterable[ConsoleTranscriptUnit] | None = None,
-    ) -> tuple[tuple[int, int, str, tuple[str, ...]], ...]:
-        """Build one causal span lookup entry per message index."""
-        index_by_id = {message.id: offset for offset, message in enumerate(messages)}
-        spans: list[tuple[int, int, str, tuple[str, ...]] | None] = [None] * len(
-            messages
-        )
-        if units is None:
-            units = group_console_transcript_messages(messages)
-        for unit in units:
-            if unit.standalone is not None:
-                standalone = unit.standalone
-                start = index_by_id[standalone.id]
-                spans[start] = (start, start + 1, standalone.id, (standalone.id,))
-                continue
-            turn = unit.assistant_turn
-            assert turn is not None
-            start = index_by_id[turn.assistant.id]
-            end = start + len(turn.owned_message_ids)
-            span = (start, end, turn.assistant.id, turn.owned_message_ids)
-            spans[start:end] = [span] * (end - start)
-        return tuple(
-            span
-            if span is not None
-            else (index, index + 1, messages[index].id, (messages[index].id,))
-            for index, span in enumerate(spans)
-        )
+        return build_transcript_unit_spans(messages)[index]
 
     def _units_for_current_messages(self) -> tuple["ConsoleTranscriptUnit", ...]:
         """Grouping for the exact current ``self._messages`` list.
 
-        TASK-34960: set_messages installs a fresh list per ingest and
-        nothing mutates it in place, so list identity is a sound cache
-        token; the ingest itself, span building, ownership mapping, and
-        the prune/measure helpers all share ONE grouping walk per ingest
-        instead of one each.
+        TASK-34960: ingest, span building, ownership and prune/measure
+        share one grouping walk keyed by the list installed by set_messages.
         """
         if self._units_cache_source is not self._messages:
             self._units_cache = group_console_transcript_messages(self._messages)
@@ -4219,6 +4186,55 @@ class ConsoleTranscript(VerticalScroll):
             states.pop(message_id, None)
             self._message_signature_cache.pop(message_id, None)
 
+    def _reuse_plain_stream_window(
+        self, messages: list[ConsoleChatMessage], session_id: object
+    ) -> bool:
+        """Reuse message spans when a plain streaming history keeps its structure."""
+        previous = self._messages
+        if (
+            session_id is _SESSION_ID_UNSET
+            or session_id != self._session_identity
+            or not messages
+            or len(previous) != len(messages)
+            or len(self._unit_spans_by_index) != len(messages)
+            or previous[-1].status != "streaming"
+            or messages[-1].status != "streaming"
+            or messages[-1].role is not ConsoleMessageRole.ASSISTANT
+            or self.pending_selection_id is not None
+            or self._window_fill is not None
+            or self._hidden_tail_start is not None
+            or len(self._pruned_message_ids) == len(messages)
+            or self._thinking_activity_refs
+            or not self._expanded_tool_output_ids <= self._seen_message_ids
+        ):
+            return False
+        if any(
+            old.id != new.id
+            or span[2] != new.id
+            or span[1] - span[0] != 1
+            or old.role is not new.role
+            or new.role == ConsoleMessageRole.TOOL
+            or old.thinking is not None
+            or new.thinking is not None
+            for span, old, new in zip(
+                self._unit_spans_by_index, previous, messages, strict=True
+            )
+        ):
+            return False
+
+        self._messages = messages
+        # Ownership and spans contain IDs and indices only. Units hold the old models.
+        self._units_cache_source = None
+        self._units_cache = ()
+        if self._ownership_cache_source is previous:
+            self._ownership_cache_source = messages
+        else:
+            self._ownership_cache_source = None
+            self._ownership_cache = None
+        if self.selected_message_id not in self._seen_message_ids:
+            self.selected_message_id = None
+        return True
+
     def set_messages(
         self,
         messages: Iterable[ConsoleChatMessage],
@@ -4236,6 +4252,9 @@ class ConsoleTranscript(VerticalScroll):
                 new session recycles message ids. Omitting it preserves the
                 legacy id-intersection behavior.
         """
+        incoming = list(messages)
+        if self._reuse_plain_stream_window(incoming, session_id):
+            return
         previous_thinking_refs = self._thinking_activity_refs
         previous_activity_ids = {
             message.id
@@ -4249,9 +4268,9 @@ class ConsoleTranscript(VerticalScroll):
             and message.id not in self._hidden_tail_ids
         ]
         previous_hidden_tail_ids = self._hidden_tail_ids
-        self._messages = list(messages)
+        self._messages = incoming
         units = self._units_for_current_messages()
-        self._unit_spans_by_index = self._build_unit_spans(self._messages, units)
+        self._unit_spans_by_index = build_transcript_unit_spans(self._messages, units)
         message_ids = {message.id for message in self._messages}
         session_changed = False
         self._fork_eligibility_by_message_id = {
@@ -4319,10 +4338,7 @@ class ConsoleTranscript(VerticalScroll):
         # set grows for the life of the widget and a recycled id would come
         # back already expanded.
         self._expanded_tool_output_ids &= message_ids | thinking_ids
-        # TASK-15455: preserve the current contiguous window across streaming
-        # updates by anchoring it to the first still-present visible id.  A
-        # disjoint session switch has no such id and starts from a bounded tail
-        # before any Markdown signature/widget is built.
+        # TASK-15455: keep the window at the first surviving visible id.
         index_by_id = {
             message.id: index for index, message in enumerate(self._messages)
         }
@@ -4359,27 +4375,9 @@ class ConsoleTranscript(VerticalScroll):
             self._hide_tail_from(None)
             preserved_start = None
         if not self._windowing_enabled():
-            # TASK-15455 (reconciliation): `[chat_defaults]
-            # transcript_window_lines = 0` mounts the whole history, the
-            # behaviour that shipped before this task. The escape hatch is the
-            # point: a windowing bug must be switchable off without a release.
-            #
-            # It must still leave the WATERMARK prune alone. Forcing 0 here
-            # cleared `_pruned_message_ids` on every ingest, so an
-            # over-watermark session re-mounted its entire history on each
-            # 0.2s sync tick and pruned it back down again (measured: 180 rows
-            # remounted, settled to 11, every tick). Pre-task code kept pruning
-            # sticky across ingests (`_pruned_message_ids &= message_ids`);
-            # carrying the preserved boundary forward reproduces that, while a
-            # fresh or disjoint ingest still starts at 0 = mount everything.
-            #
-            # Review C: the kill switch must clear the hidden TAIL too — the
-            # escape hatch exists so a windowing bug can be switched off
-            # without a release, and carrying the sticky suffix forward left
-            # the trimmed tail hidden forever after a mid-session flip. Safe
-            # against the 15458 per-tick churn: no tail-creating path runs
-            # with windowing off, so this clear is one-shot, and the
-            # watermark-pruned PREFIX stays sticky exactly as before.
+            # TASK-15455: clear the hidden suffix when disabling windowing.
+            # Keep watermark pruning: clearing the prefix remounted 180 rows
+            # only to prune back to 11 on every streaming poll.
             self._hide_tail_from(None)
             window_start = 0 if preserved_start is None else preserved_start
         elif preserved_start is None:

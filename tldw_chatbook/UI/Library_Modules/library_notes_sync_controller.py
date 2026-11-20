@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import datetime
-from typing import Never, Protocol
+from typing import TYPE_CHECKING, Never, Protocol
 
 from loguru import logger
 
@@ -40,28 +40,30 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     NotesSyncConflictChoice,
     eligible_conflict_reason,
 )
-from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutionResult
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     ReconciliationAttentionKind,
     ReconciliationPlan,
 )
-from tldw_chatbook.Notes.notes_sync_runtime import (
-    NotesSyncControlResult,
-    NotesSyncRootRuntimeSnapshot,
-    NotesSyncRootSetup,
-    NotesSyncRuntimeSnapshot,
-    RuntimeConflictHistoryRow,
-    RuntimeBindingLabel,
-    RuntimeConflictLabel,
-    RuntimeConflictReceipt,
-    RuntimeWriteReceipt,
-)
 from tldw_chatbook.Notes.notes_sync_models import (
     NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
     NotesSyncActionKind,
+    NotesSyncControlResult,
     NotesSyncDirection,
     NotesSyncOperationState,
+    NotesSyncRootRuntimeSnapshot,
+    NotesSyncRuntimeSnapshot,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutionResult
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        NotesSyncRootSetup,
+        RuntimeBindingLabel,
+        RuntimeConflictHistoryRow,
+        RuntimeConflictLabel,
+        RuntimeConflictReceipt,
+        RuntimeWriteReceipt,
+    )
 
 
 def _carries_obsidian_marker(folder: str) -> bool:
@@ -490,6 +492,8 @@ class LibraryNotesSyncController:
         if not binding_ids:
             return {}
         labels = await self._runtime.binding_labels(plan.root_id, binding_ids)
+        from tldw_chatbook.Notes.notes_sync_runtime import RuntimeBindingLabel
+
         if type(labels) is not tuple or any(
             type(label) is not RuntimeBindingLabel for label in labels
         ):
@@ -518,6 +522,8 @@ class LibraryNotesSyncController:
         labels = await self._runtime.conflict_labels(
             plan.root_id, plan.observation_token
         )
+        from tldw_chatbook.Notes.notes_sync_runtime import RuntimeConflictLabel
+
         if type(labels) is not tuple or any(
             type(label) is not RuntimeConflictLabel for label in labels
         ):
@@ -1159,6 +1165,8 @@ class LibraryNotesSyncController:
         )
         self._publish()
         try:
+            from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRootSetup
+
             plan = await self._runtime.review_setup(
                 NotesSyncRootSetup(
                     display_name=setup.display_name,
@@ -1810,6 +1818,8 @@ class LibraryNotesSyncController:
 
     async def _read_receipts(self, root_id: str) -> tuple[LastingSyncReceiptRow, ...]:
         rows = await self._runtime.active_conflict_receipts(root_id)
+        from tldw_chatbook.Notes.notes_sync_runtime import RuntimeConflictReceipt
+
         if type(rows) is not tuple or any(
             type(row) is not RuntimeConflictReceipt for row in rows
         ):
@@ -1984,6 +1994,8 @@ class LibraryNotesSyncController:
         )
         try:
             result = await self._runtime.undo_resolution(root_id, operation_id)
+            from tldw_chatbook.Notes.notes_sync_executor import NotesSyncExecutionResult
+
             if type(result) is not NotesSyncExecutionResult:
                 raise RuntimeError("invalid Undo result")
         except Exception:
@@ -2076,6 +2088,8 @@ class LibraryNotesSyncController:
             limit=LASTING_SYNC_HISTORY_PAGE_SIZE,
             offset=offset,
         )
+        from tldw_chatbook.Notes.notes_sync_runtime import RuntimeConflictHistoryRow
+
         if type(rows) is not tuple or any(
             type(row) is not RuntimeConflictHistoryRow for row in rows
         ):

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 from Tests.Chat.test_response_rules_builder import Transport
+from Tests.UI.app_factory import attach_chachanotes_db, swap_app_aliases
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -11,7 +12,6 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.DB.base_db import SqliteRetirementIncomplete
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
 
@@ -20,17 +20,21 @@ async def mounted_rules_console(tmp_path, size=(80, 24)):
     from tldw_chatbook.config import get_user_data_dir
 
     app = _build_test_app(user_data_dir=get_user_data_dir())
-    app.chachanotes_db = CharactersRAGDB(tmp_path / "console-rules.sqlite", "rules-ui")
+    database = attach_chachanotes_db(
+        app, db_path=tmp_path / "console-rules.sqlite", client_id="rules-ui"
+    )
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
-
-    app.local_chat_conversation_service = ChatConversationService(app.chachanotes_db)
     from tldw_chatbook.Chat.chat_conversation_scope_service import (
         ChatConversationScopeService,
     )
 
-    app.chat_conversation_scope_service = ChatConversationScopeService(
-        local_service=app.local_chat_conversation_service,
-        server_service=None,
+    local_service = ChatConversationService(database)
+    swap_app_aliases(
+        app,
+        local_chat_conversation_service=local_service,
+        chat_conversation_scope_service=ChatConversationScopeService(
+            local_service=local_service, server_service=None
+        ),
     )
     _configure_native_ready_console(app, model="test-model")
     from tldw_chatbook.config import save_setting_to_cli_config
