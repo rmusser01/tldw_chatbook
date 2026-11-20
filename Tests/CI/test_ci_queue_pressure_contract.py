@@ -1667,6 +1667,7 @@ def test_console_p0_gate_runs_three_serial_minimal_python_312_profiles() -> None
     )
     assert setup["with"]["python-version"] == "3.12"
     install = _named_step(p0, "Install fast-lane dependencies")["run"]
+    # TASK-42028: the agent-call thinking file imports a hypothesis test module.
     assert shlex.split(install) == [
         "python",
         "-m",
@@ -1679,6 +1680,7 @@ def test_console_p0_gate_runs_three_serial_minimal_python_312_profiles() -> None
         "pytest-timeout",
         "packaging",
         "aiohttp-jinja2",
+        "hypothesis",
     ]
     commands = "\n".join(str(step.get("run", "")) for step in p0["steps"])
     assert commands.count("pip install") == 1

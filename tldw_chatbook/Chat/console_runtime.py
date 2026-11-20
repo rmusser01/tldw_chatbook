@@ -6670,6 +6670,11 @@ class ConsoleRuntime:
                 continue
             task.cancel()
             drain_tasks.add(task)
+        # A cancelled wake delivery settles its attempt in AgentRuns from its
+        # `finally`; it must finish before that file retires (TASK-42028).
+        if _recovery_owner is not None:
+            with _recovery_owner._registry_lock:
+                drain_tasks.update(_recovery_owner._delivery_tasks)
 
         bridge = self._agent_bridge
         fence_fleet = getattr(bridge, "fence_fleet", None)

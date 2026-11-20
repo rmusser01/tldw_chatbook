@@ -38,6 +38,7 @@ Rig notes:
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
@@ -761,6 +762,55 @@ async def test_the_startup_cost_pin_is_not_vacuous(tmp_path):
             assert "deferred_launch_wake" in task_names, task_names
     finally:
         type(app)._create_deferred_startup_task = real_create
+
+
+@pytest.mark.asyncio
+async def test_quit_settles_an_in_flight_launch_wake_before_retiring_agent_runs(
+    tmp_path, monkeypatch
+):
+    """TASK-42028: a quit cancels the launch wake's delivery mid-turn, and the
+    delivery's `finally` still settles its attempt in AgentRuns. Disposal
+    used to drop that task and retire the file under it, so the retirement
+    refused (`sqlite_retirement_incomplete:AgentRuns`) or beat the
+    settlement. The settlement is held 0.5 s so the race cannot be won by
+    luck; the quit must wait for it and then retire cleanly."""
+    from tldw_chatbook.Chat import console_activity_receipts
+    from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
+
+    conversation_id, _run_id, rows = await _seed_a_finished_background_job(tmp_path)
+    app, _marks, gateway = _launch_app(
+        tmp_path, tree=_fixture_tree(conversation_id, rows)
+    )
+    gateway.stall_stream = True
+    settle = ConsoleFleetWakeCoordinator._finish_attempt
+
+    async def held_settle(self, authorization, returned):
+        await asyncio.sleep(0.5)
+        await settle(self, authorization, returned)
+
+    monkeypatch.setattr(ConsoleFleetWakeCoordinator, "_finish_attempt", held_settle)
+    retire = console_activity_receipts.retire_agent_runs_db
+    deliveries: tuple = ()
+    unsettled_at_retire: list = []
+
+    async def recording_retire(database):
+        unsettled_at_retire.append([task for task in deliveries if not task.done()])
+        return await retire(database)
+
+    monkeypatch.setattr(
+        console_activity_receipts, "retire_agent_runs_db", recording_retire
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        assert await _settle(pilot, gateway.entered_stream.is_set)
+        deliveries = tuple(
+            app.console_runtime.chat_controller.fleet_wake._delivery_tasks
+        )
+        assert deliveries, "precondition: the wake's turn is in flight at quit"
+    assert unsettled_at_retire and unsettled_at_retire[0] == [], (
+        "the quit retired AgentRuns while the cancelled wake delivery was "
+        f"still settling its attempt: {unsettled_at_retire!r}"
+    )
+    app._console_runtime_shutdown_task.result()
 
 
 # ---------------------------------------------------------------------------

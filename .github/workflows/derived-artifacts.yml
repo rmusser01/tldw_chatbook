@@ -1136,9 +1136,11 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      # pr-fast-lane's line plus hypothesis (TASK-42028): the admission step's
+      # agent-call thinking file imports Tests/Agents/test_fleet_continuation.py,
+      # which imports hypothesis.
       - name: Install fast-lane dependencies
-        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
 
       # TASK-41508 (2026-11-18): the trace provenance file, whose constructor
       # builder it fixed (sandboxed, no config read): 45 passed in 5.1 s

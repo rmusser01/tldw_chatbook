@@ -1143,7 +1143,10 @@ _BUDGETS: dict[str, int] = {
     # 7043): TASK-40717's +4 and TASK-40716's +20, so 7067 -- exact measurement.
     # 2026-11-15, TASK-40325 (owner size waiver): the bounded app exit on a
     # hung rule helper, +11 over dev 2ff0e9a5e5's 7,067; exact measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7078,
+    # 2026-11-20, TASK-42028 (owner rule: raise by the change's own lines):
+    # 7078 -> 7083 (+5) -- dispose joins the cancelled wake deliveries before
+    # it retires AgentRuns.
+    "tldw_chatbook/Chat/console_runtime.py": 7083,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in

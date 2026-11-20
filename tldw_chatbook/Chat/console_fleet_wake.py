@@ -1717,7 +1717,13 @@ class ConsoleFleetWakeCoordinator:
             return True
 
     def dispose(self) -> None:
-        """Terminally fence producers, then clear membership and leases."""
+        """Terminally fence producers, then clear membership and leases.
+
+        Cancelled deliveries stay in ``_delivery_tasks`` until they finish
+        (``_forget_delivery_task``): their ``finally`` still settles the
+        attempt in AgentRuns, and runtime disposal joins them before it
+        retires that file (TASK-42028).
+        """
         with self._registry_lock:
             if self._disposed:
                 return
@@ -1727,7 +1733,6 @@ class ConsoleFleetWakeCoordinator:
             self._pending_progress.clear()
             self._progress_owners.clear()
             tasks = tuple(self._delivery_tasks)
-            self._delivery_tasks.clear()
             sink = self.buddy_sink
         for task in tasks:
             try:
