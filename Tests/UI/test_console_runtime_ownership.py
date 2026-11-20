@@ -719,6 +719,31 @@ async def test_leaving_console_preserves_live_session_scratch(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_disposed_runtime_still_removes_its_scratch_under_the_suite_default(
+    tmp_path_factory,
+):
+    # TASK-42112: Tests/conftest.py parks an argument-less scratch manager in
+    # basetemp so a leaked directory never reaches TMPDIR. The runtime must
+    # still remove its own; the redirect must not hide a product-side leak.
+    runtime = ConsoleRuntime(type("App", (), {})())
+    snapshot = runtime.scratch_spaces.snapshot("session-a")
+    assert tmp_path_factory.getbasetemp().resolve() in snapshot.root.parents
+
+    await runtime.dispose()
+
+    assert not snapshot.root.exists()
+
+
+def test_an_explicit_scratch_parent_still_wins_over_the_suite_default(tmp_path):
+    manager = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+    snapshot = manager.snapshot("session-a")
+
+    assert snapshot.root.parent == tmp_path.resolve()
+    assert manager.dispose() is True
+    assert not snapshot.root.exists()
+
+
+@pytest.mark.asyncio
 async def test_raw_cli_refusal_bank_survives_leave_and_clears_on_dispose():
     runtime = ConsoleRuntime(type("App", (), {})())
     stash = object()

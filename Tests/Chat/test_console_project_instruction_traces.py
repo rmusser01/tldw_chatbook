@@ -13,6 +13,7 @@ import pytest
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
@@ -187,12 +188,14 @@ async def _project_console(
             bridge = ConsoleAgentBridge(
                 agent_runs_db=runs, store=store, provider_gateway=gateway
             )
+            scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
             controller = ConsoleChatController(
                 store=store,
                 provider_gateway=gateway,
                 agent_runtime_enabled=True,
                 agent_bridge=bridge,
                 confirm_project_instruction_dispatch=lambda _notice: "proceed",
+                scratch_spaces=scratch_spaces,
             )
             controller.app = SimpleNamespace(workspace_registry_service=registry)
             if nested_tools:
@@ -247,6 +250,7 @@ async def _project_console(
                     registry=registry,
                 )
             finally:
+                scratch_spaces.dispose()  # TASK-42112: the controller is never shut down
                 await gateway.aclose()
 
 

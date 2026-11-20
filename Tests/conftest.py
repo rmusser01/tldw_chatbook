@@ -714,6 +714,31 @@ def semantic_coordination_installed() -> None:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def console_scratch_defaults_to_basetemp(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    """Give a ``ConsoleScratchSpaceManager`` built without ``temp_parent`` one in basetemp.
+
+    A test that builds a Console controller and never shuts it down leaves its
+    ``tldw-console-*`` directory behind; in the system TMPDIR a Chat run left
+    1,650 of them (TASK-42112). An explicit ``temp_parent`` still wins, and
+    ``test_console_runtime_ownership.py`` pins that a disposed runtime still
+    removes its own directory.
+    """
+    from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
+
+    parent = tmp_path_factory.mktemp("console-scratch")
+    real_init = ConsoleScratchSpaceManager.__init__
+
+    def init(self, *, temp_parent=None):
+        real_init(self, temp_parent=parent if temp_parent is None else temp_parent)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ConsoleScratchSpaceManager, "__init__", init)
+        yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 def fd_leak_sentinel() -> Iterator[None]:
     """Warn when the session's open-fd count grows past a leak threshold.
 
