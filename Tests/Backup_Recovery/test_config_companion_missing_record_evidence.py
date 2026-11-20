@@ -78,8 +78,11 @@ def _companion_record_calls(source):
     defining_path = Path(bootstrap.__file__).resolve()
     defining_source = defining_path.read_bytes()
     # TASK-42115 changed bootstrap._binding (a deleted file root), not _records.
+    # Re-pinned 2026-11-23 (TASK-34100.16.1, ported onto dev b31e3e9241): only
+    # RecoveryRequired's docstring changed (it names the path a subclass may
+    # carry); _records is untouched.
     assert hashlib.sha256(defining_source).hexdigest() == (
-        "401204d9c6c3770c427e85d86123e168f3ceef4e9adb686b1c5b25899ea5aacf"
+        "41eaca635a5e887d305025be1aedb0c641fce4943cf085db748055cca3d46a73"
     )
     assert bootstrap.__spec__.name == bootstrap.__name__
     assert Path(bootstrap.__spec__.origin).resolve() == defining_path
