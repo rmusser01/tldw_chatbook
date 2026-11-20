@@ -725,11 +725,14 @@ def console_scratch_defaults_to_basetemp(
     ``test_console_runtime_ownership.py`` pins that a disposed runtime still
     removes its own directory.
     """
+    from functools import wraps
+
     from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 
     parent = tmp_path_factory.mktemp("console-scratch")
     real_init = ConsoleScratchSpaceManager.__init__
 
+    @wraps(real_init)
     def init(self, *, temp_parent=None):
         real_init(self, temp_parent=parent if temp_parent is None else temp_parent)
 

@@ -4,7 +4,7 @@ title: "Test runs may leave Console scratch directories in TMPDIR"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 10:36
-updated_date: 2026-11-20 20:17
+updated_date: 2026-11-20 20:52
 labels:
 - follow-up
 - tests
@@ -46,10 +46,10 @@ The leak is real: a Console controller built in a test without `scratch_spaces`,
 
 **Fix**
 - `Tests/conftest.py` gains a session-scoped autouse fixture, `console_scratch_defaults_to_basetemp`. It wraps `ConsoleScratchSpaceManager.__init__` so that a manager built without `temp_parent` gets a `tmp_path_factory.mktemp("console-scratch")` parent. An explicit `temp_parent` is passed through unchanged.
-  - Any directory that is still leaked now lands in pytest's basetemp, which the run deletes. No product code changed.
-- Two shared rigs that never shut their controller down now own their scratch:
-  - `Tests/Chat/test_console_project_instruction_traces.py::_project_console` builds a `ConsoleScratchSpaceManager(temp_parent=tmp_path)` and disposes it in its `finally`.
-  - `Tests/Chat/test_console_agent_swap.py::_controller` scopes its scratch to the test's `tmp_path`. Its roughly 60 call sites in 13 files return without a teardown point, so there is nothing to dispose it in.
+  - Any directory that is still leaked now lands in pytest's basetemp instead of `$TMPDIR`. The scratch wrapper deletes basetemp after each run; a bare pytest keeps the last three basetemps, so the leaked directories are bounded and kept for up to three runs. No product code changed.
+  - The wrapper is decorated with `functools.wraps(real_init)`.
+- The shared rig `Tests/Chat/test_console_project_instruction_traces.py::_project_console` never shuts its controller down. It now builds a `ConsoleScratchSpaceManager(temp_parent=tmp_path)` and disposes it in its `finally`.
+- `test_console_agent_swap._controller` is left as it was. Review rev1 found that many of its callers do shut down (for example `test_console_chat_start.py` and `test_console_agent_progress_identity.py`). An external manager makes `_owns_scratch_spaces` False, so `shutdown()` would no longer dispose it: with that change `test_native_start_uses_both_receipts_and_literal_machine_request[*]` left 3 directories, against 0 without it. The conftest default covers this rig's callers that do not shut down.
 - Pins (in `Tests/UI/test_console_runtime_ownership.py`, laned in derived-artifacts.yml):
   - `test_a_disposed_runtime_still_removes_its_scratch_under_the_suite_default`: an argument-less runtime's scratch lies under basetemp, and `runtime.dispose()` still removes it. The redirect therefore cannot hide a product-side leak.
   - `test_an_explicit_scratch_parent_still_wins_over_the_suite_default`.
@@ -81,13 +81,14 @@ After the fix:
   - 16 test outcomes differed between the two m-r runs, all delete/undo, parallel-run and rewind UI tests. Re-running exactly those 16 at load 10-12 failed 11 of them with the fixture and 10 without it. They are local-trap and timing flakes, not caused by the fixture.
 - **The 32 most-leaking Chat files** (19:39-19:51Z):
   - An unfixed re-run of the same files (19:52-20:05Z) left 1,225 directories in `$TMPDIR`.
-  - The fixed run left **0** in `$TMPDIR`; 1,030 are contained in basetemp. The 195 fewer come from the two rig fixes.
+  - The fixed run left **0** in `$TMPDIR`; 1,030 are contained in basetemp. The 195 fewer come from the rig changes.
+  - This run still had the `_controller` change that review rev1 reverted. The `$TMPDIR` count does not depend on it, because the conftest default covers that rig.
   - Both runs had the same 46 failing tests.
 - Spot check: `test_console_prompt_mixin_retry.py` and `test_console_rewind_summarize.py` left 160 directories in `$TMPDIR` before, and 160 in basetemp after.
 
 **Sources (AC#2)**, per test file, from the probe. Each entry is directories left / tests that left them. In every case the cause is a `ConsoleChatController` built in the test, or by a shared rig, without `scratch_spaces`, and never shut down. The shared rigs are:
 - `test_console_project_instruction_traces._project_console` (fixed; also used by `test_console_trace_failed_tool_run.py` and `test_console_trace_discarded_tool_run.py`)
-- `test_console_agent_swap._controller` (fixed; also used by `test_console_fleet_wake_safety.py`, `test_automatic_wake_dispatch.py` and others)
+- `test_console_agent_swap._controller`, through callers that never shut the controller down, for example `test_console_fleet_wake_safety.py` and `test_automatic_wake_dispatch.py` (unchanged; covered by the conftest default)
 - `test_console_trace_discarded_tool_run._reload_console`
 - `test_console_rewind_summarize._durable_controller`
 
@@ -104,7 +105,7 @@ Tests/UI:
 - `test_console_dictionary_send_integration.py` (1/1): `test_native_send_applies_conversation_dictionary_agent_branch`.
 - `test_console_resume_active_path.py` (1/1): `test_resumed_untrusted_handoff_keeps_provider_sequence`.
 
-No source is left writing to `$TMPDIR`. The rigs and tests other than the two fixed above still do not shut their controllers down; their directories now go to basetemp.
+No source is left writing to `$TMPDIR`. The rigs and tests other than `_project_console` still do not shut their controllers down; their directories now go to basetemp.
 
 **Checks:**
 
@@ -116,11 +117,13 @@ No source is left writing to `$TMPDIR`. The rigs and tests other than the two fi
 | ruff F | clean |
 | `ruff_gate.py` | RATCHET OK |
 | `preflight.sh` | all checks passed |
+| After the review rev1 fixes (20:50Z, load 4.8): `test_console_agent_swap.py` `-n 4` | 44 passed, 2 failed |
+| After the review rev1 fixes: `test_console_runtime_ownership.py` `-n 4` | 96 passed, 1 xfailed |
+| After the review rev1 fixes: ruff F, `preflight.sh` | clean, all checks passed |
 
-The 2 failures are `test_stop_cancels_tree_and_persists_cancelled` and `test_stop_before_first_token_persists_cancelled_no_agent_run_failed`. They also fail in both unfixed runs.
+The 2 failures in both agent_swap runs are `test_stop_cancels_tree_and_persists_cancelled` and `test_stop_before_first_token_persists_cancelled_no_agent_run_failed`. They also fail in both unfixed runs.
 
 **Files:**
 - `Tests/conftest.py`
 - `Tests/UI/test_console_runtime_ownership.py`
-- `Tests/Chat/test_console_agent_swap.py`
 - `Tests/Chat/test_console_project_instruction_traces.py`

@@ -374,9 +374,6 @@ def _controller(tmp_path, scripts, *, child_scripts=(), enabled=True):
         model="test-model",
         agent_bridge=bridge,
         agent_runtime_enabled=enabled,
-        # Callers never shut the controller down, so its scratch lives and
-        # dies with this test's tmp_path (TASK-42112).
-        scratch_spaces=ConsoleScratchSpaceManager(temp_parent=tmp_path),
     )
     return controller, store, db
 
