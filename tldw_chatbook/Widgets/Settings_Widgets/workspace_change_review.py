@@ -185,9 +185,23 @@ class WorkspaceChangeReviewPanel(Vertical):
                         f"Preparing change history for {count} folder(s) in the background; chat and tools continue.",
                     )
                 if count := counts[RootReadinessState.FAILED]:
+                    from ...Workspaces.native_git import ACTIONABLE_REFUSALS
+
+                    # A refusal the user can fix (e.g. a selected Git filter)
+                    # names its cause and remedy (TASK-42101); others stay generic.
+                    causes = sorted(
+                        refusal
+                        for refusal in ACTIONABLE_REFUSALS
+                        if any(
+                            root.state is RootReadinessState.FAILED
+                            and refusal in root.reason
+                            for root in status.roots
+                        )
+                    )
                     self._row(
                         "failed",
-                        f"Change history preparation failed for {count} folder(s); chat and tools continue.",
+                        f"Change history preparation failed for {count} folder(s); chat and tools continue."
+                        + "".join(f" Cause: {cause}." for cause in causes),
                     )
                     can_retry = True
                 if count := counts[RootReadinessState.RESTART_REQUIRED]:

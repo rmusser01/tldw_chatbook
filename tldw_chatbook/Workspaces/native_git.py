@@ -78,6 +78,20 @@ def scrubbed_git_environment() -> dict[str, str]:
     return env
 
 
+# Refusals a user can act on. Authored text with no config names or paths, so
+# Settings and the turn's "change review skipped" row may show them (TASK-42101).
+GIT_TOO_OLD = "native change review requires Git >=2.36"
+PARTIAL_CLONE_CONFIGURED = (
+    "native change review unavailable: configured partial-clone remotes"
+)
+FILTERS_SELECTED = (
+    "native change review unavailable: configured filters selected by Git"
+    " attributes (remove the filter= attribute or its filter config)"
+)
+ACTIONABLE_REFUSALS = frozenset(
+    {GIT_TOO_OLD, PARTIAL_CLONE_CONFIGURED, FILTERS_SELECTED}
+)
+
 # Invocations that can hand work-tree content to a clean/smudge/process filter;
 # a configured driver a reachable path selects refuses them. Refusal decides the
 # outcome; it is not the guarantee -- every configured driver is also emptied for
@@ -193,7 +207,7 @@ def qualified_git_command(
             or match is None
             or tuple(map(int, match.groups())) < (2, 36)
         ):
-            raise unavailable("native change review requires Git >=2.36")
+            raise unavailable(GIT_TOO_OLD)
         config = run_process(
             [
                 *prefix,
@@ -218,9 +232,7 @@ def qualified_git_command(
     # Names stay private; even cat-file -e may lazily spawn a fetch.
     names = [name for name in config.stdout.split(b"\0") if name]
     if any(not name.startswith(b"filter.") for name in names):
-        raise unavailable(
-            "native change review unavailable: configured partial-clone remotes"
-        )
+        raise unavailable(PARTIAL_CLONE_CONFIGURED)
     if names and _filter_capable(args):
         drivers = {name[len(b"filter.") : name.rindex(b".")] for name in names}
         try:
@@ -234,10 +246,7 @@ def qualified_git_command(
         if selected is None:
             raise unavailable("native change-review Git configuration unavailable")
         if selected:
-            raise unavailable(
-                "native change review unavailable: configured filters selected by"
-                " Git attributes (remove the filter= attribute or its filter config)"
-            )
+            raise unavailable(FILTERS_SELECTED)
     if names:
         _neutralize_filters(
             env, {name[len(b"filter.") : name.rindex(b".")] for name in names}

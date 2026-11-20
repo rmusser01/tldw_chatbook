@@ -540,9 +540,16 @@ def test_actual_native_initializer_uses_helper_refusing_git(
         "add" in command or "update-index" in command or "cat-file" in command
         for command in commands
     )
-    assert (
-        h.service.status("init-workspace").roots[0].state is RootReadinessState.FAILED
+    root = h.service.status("init-workspace").roots[0]
+    assert root.state is RootReadinessState.FAILED
+    # TASK-42101: the turn's "change review skipped" row and Settings show this
+    # reason, so it names the actionable cause and its remedy.
+    expected = (
+        "configured filters selected by Git attributes (remove the filter= attribute"
+        if config_line.startswith("[filter")
+        else "configured partial-clone remotes"
     )
+    assert expected in root.reason, root.reason
     assert h.runtime.execution_capacity.snapshot().executions == ()
 
 
