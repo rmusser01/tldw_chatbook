@@ -28,4 +28,5 @@ Found in review of TASK-42028 (round 17). TASK-42028 makes quit wait, within the
 <!-- AC:BEGIN -->
 - [ ] #1 A quit that starts while a session close's cancelled wake delivery is still settling waits for that delivery, within the dispose deadline, before AgentRuns is retired
 - [ ] #2 A test drives a quit during that settlement window and fails without the fix
+- [ ] #3 A session close still releases its fence on a graceful close and still keeps no reference to a delivery that never settles; `test_session_fence_releases_uncooperative_delivery_task_reference` stays green
 <!-- AC:END -->
