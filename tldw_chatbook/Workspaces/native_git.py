@@ -78,10 +78,57 @@ def scrubbed_git_environment() -> dict[str, str]:
     return env
 
 
+# Commands that can hand work-tree content to a clean/smudge/process filter.
+# The others read only objects, the index or config (`show` and `diff` get
+# --no-textconv below; `cat-file` filters only when asked to).
+_FILTER_CAPABLE = frozenset({"add", "update-index", "rm", "commit", "diff"})
+
+
+def _filter_capable(args) -> bool:
+    if args[0] == "cat-file":
+        return any(arg in ("--filters", "--textconv") for arg in args)
+    return args[0] in _FILTER_CAPABLE
+
+
+def _selects_configured_filter(prefix, args, env, run_process, drivers, payload):
+    """True when a path this invocation can reach selects a configured driver.
+
+    Git decides selection itself (`check-attr`, macros included) over every
+    tracked and non-ignored untracked path, plus the exact paths an
+    ``update-index --stdin`` stages by name, which may be ignored (TASK-42101).
+    """
+    # ponytail: O(paths) per filter-capable invocation, and only when a filter
+    # is configured; never cached, because attributes can change between
+    # invocations the same way config can.
+    listing = run_process(
+        [*prefix, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        env,
+        binary=True,
+    )
+    paths = listing.stdout
+    if args[0] == "update-index" and "--stdin" in args and payload:
+        staged = payload.encode() if isinstance(payload, str) else payload
+        paths += staged if "-z" in args else staged.replace(b"\n", b"\0")
+    attributes = run_process(
+        [*prefix, "check-attr", "-z", "--stdin", "filter"],
+        env,
+        binary=True,
+        input_data=paths,
+    )
+    if listing.returncode or attributes.returncode:
+        return None
+    return any(value in drivers for value in attributes.stdout.split(b"\0")[2::3])
+
+
 def qualified_git_command(
-    executable, repository_prefix, args, env, run_process, unavailable
+    executable, repository_prefix, args, env, run_process, unavailable, payload=None
 ):
-    """Apply native Git version/config policy without exposing private config."""
+    """Apply native Git version/config policy without exposing private config.
+
+    A configured clean/process/smudge filter refuses the invocation only when a
+    path it can reach selects that driver (TASK-42101); partial-clone remotes
+    always refuse.
+    """
     allowed = {
         "init",
         "config",
@@ -139,15 +186,31 @@ def qualified_git_command(
         raise unavailable(
             "native change-review Git qualification unavailable"
         ) from error
-    if config.returncode == 0:
-        # Names stay private; even cat-file -e may lazily spawn a fetch.
-        if not any(name.startswith(b"filter.") for name in config.stdout.split(b"\0")):
-            raise unavailable(
-                "native change review unavailable: configured partial-clone remotes"
-            )
-        raise unavailable("native change review unavailable: configured filters")
-    if config.returncode != 1:
+    if config.returncode not in (0, 1):
         raise unavailable("native change-review Git configuration unavailable")
+    # Names stay private; even cat-file -e may lazily spawn a fetch.
+    names = [name for name in config.stdout.split(b"\0") if name]
+    if any(not name.startswith(b"filter.") for name in names):
+        raise unavailable(
+            "native change review unavailable: configured partial-clone remotes"
+        )
+    if names and _filter_capable(args):
+        drivers = {name[len(b"filter.") : name.rindex(b".")] for name in names}
+        try:
+            selected = _selects_configured_filter(
+                prefix, args, env, run_process, drivers, payload
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise unavailable(
+                "native change-review Git qualification unavailable"
+            ) from error
+        if selected is None:
+            raise unavailable("native change-review Git configuration unavailable")
+        if selected:
+            raise unavailable(
+                "native change review unavailable: configured filters selected by"
+                " Git attributes (remove the filter= attribute or its filter config)"
+            )
     if args[0] in {"diff", "show"}:
         args = (args[0], "--no-ext-diff", "--no-textconv", *args[1:])
     return [*prefix, *args]

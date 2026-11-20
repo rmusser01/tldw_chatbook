@@ -119,9 +119,17 @@ Both failed publication attempts expose an unresolved disposition, separate from
 physical retirement and any workflow acknowledgement (ADR-285).
 
 Native capture supports Git >=2.36 with per-invocation hooks, signing, fsmonitor,
-GC/maintenance and external diff/textconv suppression. Configured external
-clean/process/smudge filters and promisor/partial-clone remotes make capture visibly
-unavailable before helper-capable entry, including implicit object fetch.
+GC/maintenance and external diff/textconv suppression. Promisor/partial-clone
+remotes make capture visibly unavailable before helper-capable entry, including
+implicit object fetch. A configured external clean/process/smudge filter does the
+same only when a path the invocation can reach selects that driver through Git
+attributes (owner decision, TASK-42101, 2026-11-19). Before each filter-capable
+invocation (add, update-index, rm, commit, diff, and cat-file with --filters or
+--textconv), the same job asks `git check-attr filter` over the tracked and
+non-ignored untracked paths plus any exact paths staged from stdin. A driver no
+path selects, such as Git LFS installed in the user's global config for a
+workspace that tracks no LFS path, no longer refuses capture, and Git still never
+runs it.
 Configuration discovery stays private; global ignore/privacy rules, existing
 history/restore and user Git configuration remain unchanged. Known native opaque
 coordination does not isolate external OS configuration edits. The standalone

@@ -402,8 +402,9 @@ Pending snapshot admission retries on existing activity releases and actual tool
 slot releases/explicit limit increases through the existing publisher channel.
 Editing capacity settings on disk alone is observed at the next ordinary native
 admission; no settings poller was added. Native Git qualification requires >=2.36,
-refuses configured external filters and promisor/partial-clone remotes before
-helper-capable entry, and suppresses hooks,
+refuses promisor/partial-clone remotes, and refuses a configured external filter
+only when a reachable path selects it (TASK-42101), all before helper-capable entry.
+It also suppresses hooks,
 signing, fsmonitor, automatic GC/maintenance and external diff/textconv per command.
 Global ignores and old history/restore semantics remain intact. Source mismatch
 cannot fall back to standalone legacy capture. This qualification covers the

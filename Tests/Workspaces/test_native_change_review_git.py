@@ -279,3 +279,83 @@ def test_promisor_configuration_refuses_before_lazy_fetch_capable_entry(
     h.coordinator.cancel(reservation)
     assert not attempted, "unqualified cat-file can spawn a promisor fetch"
     assert "partial-clone" in reservation._handle.errors[str(h.root)]
+
+
+def _lfs_like_helper(tmp_path, name):
+    sentinel = tmp_path / f"{name}-entered"
+    helper = tmp_path / name
+    helper.write_text(f"#!/bin/sh\nprintf entered > '{sentinel}'\ncat\n")
+    helper.chmod(0o700)
+    return sentinel, helper
+
+
+def test_a_configured_filter_no_path_selects_does_not_refuse_capture(
+    private_git, tmp_path
+):
+    """TASK-42101: Git LFS installed globally must not refuse native capture.
+
+    `git lfs install` writes clean/smudge/process for `lfs` to the user's
+    global config. A workspace whose attributes never select `lfs` gives Git
+    nothing to run it on, so capture proceeds, and the driver still never runs.
+    """
+    h = private_git
+    sentinel, helper = _lfs_like_helper(tmp_path, "lfs")
+    (h.git_home / ".gitconfig").write_text(
+        f'[filter "lfs"]\nclean = {helper}\nsmudge = {helper}\n'
+        f"process = {helper}\nrequired = true\n"
+    )
+    (h.root / ".gitattributes").write_text("*.txt diff\n")
+    reservation = register(h)
+    assert reservation.await_baseline(5)
+    wait_for(lambda: reservation.baseline_completion.value != "pending")
+    assert reservation.baseline_completion.value == "observed", (
+        reservation._handle.errors
+    )
+    (h.root / "a.txt").write_text("after\n")
+    run_id = h.bridge._db.create_run(conversation_id="capture", agent_kind="primary")
+    h.coordinator.finalize(
+        reservation, run_id=run_id, kind="turn", touched_paths=[str(h.root / "a.txt")]
+    )
+    wait_for(lambda: reservation.completion.value != "pending")
+    assert reservation.completion.value == "published", reservation._handle.errors
+    rows = h.bridge._db.change_snapshots_for_run(run_id)
+    assert rows and not any(row["tracking_error"] for row in rows)
+    assert not sentinel.exists()
+
+
+def test_a_forced_ignored_path_that_selects_a_configured_filter_refuses(
+    private_git, tmp_path
+):
+    """TASK-42101: selection is checked on the exact paths staged from stdin.
+
+    A touched path inside an ignored directory is force-staged by name. Its
+    directory's attributes select the configured driver, so the invocation
+    refuses before Git can run it -- although no listed path selects it.
+    """
+    h = private_git
+    sentinel, helper = _lfs_like_helper(tmp_path, "private")
+    (h.git_home / ".gitconfig").write_text(f'[filter "private"]\nclean = {helper}\n')
+    (h.root / ".gitignore").write_text("ignored/\n")
+    ignored = h.root / "ignored"
+    ignored.mkdir()
+    (ignored / ".gitattributes").write_text("* filter=private\n")
+    reservation = register(h)
+    assert reservation.await_baseline(5)
+    wait_for(lambda: reservation.baseline_completion.value != "pending")
+    assert reservation.baseline_completion.value == "observed", (
+        reservation._handle.errors
+    )
+    (ignored / "touched.txt").write_text("agent wrote this\n")
+    run_id = h.bridge._db.create_run(conversation_id="capture", agent_kind="primary")
+    h.coordinator.finalize(
+        reservation,
+        run_id=run_id,
+        kind="turn",
+        touched_paths=[str(ignored / "touched.txt")],
+    )
+    wait_for(lambda: reservation.completion.value != "pending")
+    assert not sentinel.exists()
+    rows = h.bridge._db.change_snapshots_for_run(run_id)
+    assert len(rows) == 1 and "configured filters" in rows[0]["tracking_error"]
+    # The transcript row shows this text: it names the cause and the remedy.
+    assert "remove the filter= attribute" in rows[0]["tracking_error"]
