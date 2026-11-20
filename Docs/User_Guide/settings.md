@@ -418,7 +418,11 @@ QwenCloud's `<host>/v1` become `…/openai/v1`, `…/api/v1` and
 `…/compatible-mode/v1`. Any other address, including a gateway's and Google's
 `…/v1`, is left as it is. QwenCloud's Endpoint may be a pasted Responses endpoint
 (`…/compatible-mode/v1/responses`): the Console, **s** and its chats all read
-it as the base before `/responses`, which is what **s** saves. When **s**
+it as the base before `/responses`, which is what **s** saves. A QwenCloud
+address ending in `/models` is refused with the route refusal, as its chats
+refuse it. An inference cloud's Endpoint (Together, Fireworks and the other
+presets) or Z.AI's that names a request route, such as
+`https://api.z.ai/api/paas/v4/responses`, is refused the same way. When **s**
 refuses an endpoint, the save result and the Endpoint row's help give the
 reason, such as "Endpoint URL must include a valid host and port." or the
 route refusal above, and the row gives it as you type.

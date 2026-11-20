@@ -685,7 +685,8 @@ def test_custom_setup_mutation_persists_full_chat_url_for_all_input_forms(
         (
             "qwencloud",
             {"api_settings": {"qwencloud": {"api_base_url": "https://old.test/v1"}}},
-            "https://example.test/proxy/v1/models",
+            # TASK-42021: a QwenCloud /models base is refused, as its adapter does.
+            "https://example.test/proxy/v1/chat/completions",
             "api_base_url",
             "https://example.test/proxy/v1",
         ),

@@ -5092,6 +5092,43 @@ async def test_console_and_the_qwencloud_adapter_agree_on_a_pasted_responses_end
     )
 
 
+@pytest.mark.parametrize(
+    ("value", "refused"),
+    [
+        (f"{_QWENCLOUD_BASE}/models", True),
+        (f"{_QWENCLOUD_BASE}/models/", True),
+        (f"{_QWENCLOUD_BASE}/responses/models", True),
+        ("https://dashscope-intl.aliyuncs.com/models", True),
+        ("https://gw.example.com/qwen/v1/models", True),
+        (_QWENCLOUD_BASE, False),
+        (_QWENCLOUD_PASTED, False),
+        (f"{_QWENCLOUD_BASE}/chat/completions", False),
+    ],
+)
+def test_console_and_the_qwencloud_adapter_agree_on_a_models_endpoint(value, refused):
+    """TASK-42021: the QwenCloud adapter refuses a base ending in ``/models``
+    (``normalize_qwencloud_base_url``, pinned in ``test_qwencloud.py``), but
+    the contract dropped it as a pasted ``/models`` and read Ready. The
+    contract now refuses the same values with the route refusal, and the
+    Settings save with it."""
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+    from tldw_chatbook.LLM_Calls.qwencloud import normalize_qwencloud_base_url
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+        endpoint_refusal,
+    )
+
+    assert endpoint_refusal("qwencloud", value) == (ENDPOINT_ROUTE_REFUSAL if refused else "")
+    saved = persisted_endpoint_for_key("qwencloud", "api_base_url", value)
+    assert saved == (None if refused else _QWENCLOUD_BASE)
+    if refused:
+        with pytest.raises(ChatConfigurationError):
+            normalize_qwencloud_base_url(value)
+    else:
+        assert normalize_qwencloud_base_url(value) == _QWENCLOUD_BASE
+
+
 def test_the_shared_local_transport_keeps_its_recovery_wrapper():
     """Review r15ep-rev1 M-1: inserting the refusal helper between
     ``@_provider_recovery.unqualified`` and the transport moved the decorator

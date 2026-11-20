@@ -337,6 +337,10 @@ def _resolve_provider_endpoint(
     if any(segment in {".", ".."} for segment in segments):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
     segments = _read_v1_appended_path(provider_key, canonical_host, segments)
+    if provider_key == "qwencloud" and segments[-1:] == ("models",):
+        # TASK-42021: QwenCloud's adapter refuses a /models base before it
+        # strips /responses, so Console read Ready for a base it refused.
+        return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
     if provider_key == "qwencloud" and segments[-1:] == ("responses",):
         # TASK-41722: QwenCloud's adapter strips its own /responses from a
         # pasted endpoint (normalize_qwencloud_base_url), so this reads the
