@@ -20,6 +20,21 @@ from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryServ
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 
 
+@pytest.fixture(autouse=True)
+def _no_host_system_git_config(monkeypatch):
+    # The bootstrap profile isolates user Git config. GitHub's runners also
+    # install Git LFS filters in the SYSTEM config, which native change
+    # review refuses ("configured filters"); keep them out of these fixtures.
+    from tldw_chatbook.Workspaces import native_git
+
+    original = native_git.scrubbed_git_environment
+    monkeypatch.setattr(
+        native_git,
+        "scrubbed_git_environment",
+        lambda: {**original(), "GIT_CONFIG_NOSYSTEM": "1"},
+    )
+
+
 async def until(probe):
     async with asyncio.timeout(10):
         while not probe():
