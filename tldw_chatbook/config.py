@@ -2337,9 +2337,9 @@ def _load_settings_uncached(
         )
         for provider_key, toml_key, env_var in _LEGACY_PROVIDER_API_KEY_BRIDGE
     }
-    from tldw_chatbook.Utils.legacy_custom_2_endpoint import bridge_legacy_custom_2_api_key
-
-    bridge_legacy_custom_2_api_key(final_api_settings, api_section_legacy.get("custom_openai2_api_key"), _legacy_api_key_providers)
+    if legacy_custom_2_key := api_section_legacy.get("custom_openai2_api_key"):  # ADR-097: else off the boot path
+        from tldw_chatbook.Utils.legacy_custom_2_endpoint import bridge_legacy_custom_2_api_key
+        bridge_legacy_custom_2_api_key(final_api_settings, legacy_custom_2_key, _legacy_api_key_providers)
     openai_api_key = _bridged_provider_api_keys["openai"]
     anthropic_api_key = _bridged_provider_api_keys["anthropic"]
     cohere_api_key = _bridged_provider_api_keys["cohere"]
