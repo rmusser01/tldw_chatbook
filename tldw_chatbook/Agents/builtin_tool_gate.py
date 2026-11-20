@@ -1010,7 +1010,7 @@ def _gate_config_snapshot() -> tuple[dict, dict]:
     )
 
 
-def all_tool_gates() -> list[ToolGate]:
+def all_tool_gates(config: Mapping[str, Any] | None = None) -> list[ToolGate]:
     """Every ``[tools]``/``[console]`` registration gate, on or off.
 
     THE single source of truth for task-3240's MCP-hub gate affordance
@@ -1034,6 +1034,12 @@ def all_tool_gates() -> list[ToolGate]:
     ``[tools] full_agent_tools_enabled``, the switch that gives plain Console
     chat the full agent surface (``plain_chat_tool_surface``).
 
+    Args:
+        config: TASK-34100.13 -- a config mapping to read the ``[tools]`` and
+            ``[console]`` sections from instead of the loaded config, so the
+            first-run Summary describes the file it just re-read and the
+            Tools step the snapshot it is editing. ``None`` loads the config.
+
     Returns:
         Every gate in the order described above (the `_GATEABLE_BUILTINS`
         rows, then the local group's, then Full agent tools).
@@ -1049,7 +1055,13 @@ def all_tool_gates() -> list[ToolGate]:
     )
     from .tool_catalog import _GATEABLE_BUILTINS
 
-    tools_cfg, console_cfg = _gate_config_snapshot()
+    if config is None:
+        tools_cfg, console_cfg = _gate_config_snapshot()
+    else:
+        tools_cfg = config.get("tools")
+        console_cfg = config.get("console")
+        tools_cfg = tools_cfg if isinstance(tools_cfg, Mapping) else {}
+        console_cfg = console_cfg if isinstance(console_cfg, Mapping) else {}
     # task-35153: the ONE scope assignment (see `gate_effect_scopes`) --
     # rows read their scope from it, never from a per-row literal here.
     scopes = gate_effect_scopes()
@@ -1174,6 +1186,54 @@ def all_tool_gates() -> list[ToolGate]:
         )
     )
     return gates
+
+
+def _mcp_builtin_native_twins() -> dict[str, str]:
+    """Built-in MCP tools that duplicate a gated native tool -> that gate's key.
+
+    TASK-34100.13 (new-full-track-steps-02): the app's own MCP server
+    (``builtin:tldw_chatbook``) offers ``create_note`` and the ADR-183
+    character writes. With "Create note" left off in setup, the agent still
+    had ``mcp__tldw_chatbook__create_note`` -- a parallel tool with the same
+    effect, outside every gate. Reads (``list_characters``) have no twin.
+    """
+    from .local_tool_provider import CHARACTER_TOOLS_GATE_KEY
+
+    return {
+        "create_note": "create_note_enabled",
+        "create_character": CHARACTER_TOOLS_GATE_KEY,
+        "update_character": CHARACTER_TOOLS_GATE_KEY,
+    }
+
+
+def gated_off_mcp_builtin_twins(
+    gates: list[ToolGate] | None = None,
+) -> frozenset[str]:
+    """Raw names of built-in MCP tools whose native twin's gate is off.
+
+    Args:
+        gates: A pre-fetched ``all_tool_gates()`` batch, or ``None`` to read
+            the loaded config.
+
+    Returns:
+        The built-in server's raw tool names the agent catalog must drop.
+    """
+    if gates is None:
+        gates = all_tool_gates()
+    enabled = {gate.key: gate.enabled for gate in gates if gate.section == "tools"}
+    # The [console] master drops the whole local group, the native character
+    # tools included, so their twins go with it (TASK-34100.13 review F3).
+    if any(
+        gate.key == LOCAL_TOOLS_MASTER_KEY and not gate.enabled for gate in gates
+    ):
+        from .local_tool_provider import CHARACTER_TOOLS_GATE_KEY
+
+        enabled[CHARACTER_TOOLS_GATE_KEY] = False
+    return frozenset(
+        name
+        for name, gate_key in _mcp_builtin_native_twins().items()
+        if not enabled.get(gate_key, False)
+    )
 
 
 def _gate_key_pairs() -> list[tuple[str, str]]:

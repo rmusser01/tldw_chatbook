@@ -527,7 +527,6 @@ async def test_full_track_keyboard_walk_never_loses_focus(monkeypatch):
         await pilot.pause(0.2)
         _assert_focus_alive(app, "after the speech model check completed")
         await walk.next("tools")
-        await walk.next("notes")
         await walk.next("appearance")
         await walk.next("protect-keys")
         await walk.next("summary")
@@ -543,6 +542,5 @@ async def test_full_track_keyboard_walk_never_loses_focus(monkeypatch):
 
         await walk.back("protect-keys")
         await walk.back("appearance")
-        await walk.back("notes")
         await walk.back("tools")
         await walk.back("speech")

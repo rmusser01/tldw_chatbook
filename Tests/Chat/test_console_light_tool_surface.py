@@ -345,14 +345,17 @@ def test_a_real_mcp_provider_attributes_user_servers_but_not_the_builtin_source(
     from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
     from tldw_chatbook.Agents.plain_chat_tool_surface import user_mcp_tool_names
 
+    # TASK-34100.13 (rebased onto this): the built-in source's create_note
+    # is dropped while its native "Create note" gate is off (the default), so
+    # a built-in tool with no gated native twin stands in for it.
     service = FakeMCPService(
-        inventory={"tools": [_tool_dict("create_note", "Create a note.")]},
+        inventory={"tools": [_tool_dict("list_characters", "List characters.")]},
         catalog_records=[_catalog_record("weather", [_tool_dict("forecast")])],
     )
     provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
     _compose(provider)
 
-    assert provider.server_key_for("mcp__tldw_chatbook__create_note") == (
+    assert provider.server_key_for("mcp__tldw_chatbook__list_characters") == (
         BUILTIN_MCP_SERVER_KEY
     )
     assert user_mcp_tool_names(provider) == frozenset({"mcp__weather__forecast"})
@@ -622,9 +625,12 @@ async def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
     controller._agent_bridge = bridge
     controller.app = _fake_app(
         FakeMCPService(
+            # TASK-34100.13: list_characters, not create_note, is the
+            # built-in tool here -- create_note is dropped while its native
+            # gate is off, and search_notes is a Console exclusion.
             inventory={
                 "tools": [
-                    _tool_dict("create_note", "Create a note."),
+                    _tool_dict("list_characters", "List characters."),
                     _tool_dict("search_notes", "Search notes."),
                 ]
             },

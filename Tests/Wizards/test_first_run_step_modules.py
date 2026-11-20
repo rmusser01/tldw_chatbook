@@ -34,7 +34,6 @@ _STEP_MODULES = {
     "RagStep": "first_run_rag_step",
     "SpeechSetupStep": "first_run_speech_step",
     "ToolsStep": "first_run_tools_step",
-    "NotesSyncStep": "first_run_notes_step",
     "AppearanceStep": "first_run_appearance_step",
     "ProtectKeysStep": "first_run_protect_step",
     "SummaryStep": "first_run_summary_step",
@@ -138,7 +137,10 @@ def test_every_worker_method_is_still_a_worker_on_the_moved_class(
 #: class's own source, so a handler moved into a plain mixin, or one that lost
 #: its decorator, drops out of what they check and they still pass.
 _BASE_ON_HANDLERS = {
-    "WelcomeStep": ("open_backup_restore",),
+    # TASK-34100.13: Restore a backup moved below the nav bar (Tab reaches Next
+    # first), into WelcomeFooter, with its handler; see
+    # Tests/Wizards/test_first_run_welcome_copy.py for that class's handlers.
+    "WelcomeStep": (),
     "ProviderStep": (
         "_on_clear", "_on_detect_pressed", "_on_detected_endpoint_selected",
         "_on_endpoint_changed", "_on_keep", "_on_key_changed",
@@ -153,7 +155,9 @@ _BASE_ON_HANDLERS = {
         "_on_authentication_changed", "_on_omnivoice_install", "_on_preset",
         "_on_sample_changed", "_on_test_and_hear", "_on_voice_input_changed",
     ),
-    "RagStep": ("_on_model",),
+    # TASK-34100.13 rebuilt the step around one control: the embedding-model
+    # picker (`_on_model`) is gone with the legacy [embedding_config] write.
+    "RagStep": ("_on_auto_retrieve", "_on_copy_extras"),
     "SpeechSetupStep": (
         "_activation_requested", "_cancel_external_pressed",
         "_choose_transcribe_cpp_gguf_pressed", "_deletion_requested",
@@ -161,8 +165,10 @@ _BASE_ON_HANDLERS = {
         "_on_speech_precision_changed", "_retry_pressed",
         "_use_as_default_pressed", "_use_external_pressed",
     ),
+    # TASK-34100.13 removed the splash-card gallery (`_on_card`,
+    # `_on_show_all_cards`); the step gained a Reduce-motion handler.
     "AppearanceStep": (
-        "_on_card", "_on_show_all_cards", "_on_show_all_themes", "_on_theme",
+        "_on_reduce_motion", "_on_show_all_themes", "_on_theme",
     ),
     "ProtectKeysStep": ("_on_set_password",),
     "SummaryStep": (
@@ -235,7 +241,9 @@ _OLD_PUBLIC_NAMES = (
     "FirstRunSetupWizard",
     "GENERIC_DISCOVERY_FAILURE_CATEGORY",
     "ModelStep",
-    "NotesSyncStep",
+    # "NotesSyncStep" left with the Notes step itself (TASK-34100.13,
+    # fulltrack-05): the step configured nothing, so there is no class to
+    # import any more.
     "ProtectKeysStep",
     "ProviderChoiceList",
     "ProviderChoiceOption",
