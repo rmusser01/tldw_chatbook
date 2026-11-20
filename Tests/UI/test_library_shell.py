@@ -37064,7 +37064,11 @@ async def test_background_recompose_restores_focus_on_a_filtered_empty_media_lis
                     "#library-media-empty-import",
                     "#library-media-retry",
                 )
-            ),
+            )
+            # TASK-42013: the checks above also hold in a recompose's
+            # remove-then-mount gap; wait for the filter itself to be live.
+            and screen.query_one("#library-media-filter", Input).is_mounted
+            and not screen.query_one("#library-media-filter", Input)._pruning,
             message="the filter miss never reached its empty page",
         )
 
