@@ -19,7 +19,7 @@
 
 **Incident.** `test_removal_confirmation_names_the_profile_id_verbatim` (was `test_removal_confirmation_does_not_interpolate_the_profile_id`) replaced `push_screen_wait` with an `AsyncMock` whose `side_effect` asserted on the dialog's message. When 88ae92a234 changed the contract (the dialog renders literally, callers stop escaping), that assertion raised inside Settings' removal worker, which is `exit_on_error=False`: the worker ended silently before writing its result, and the test reported only `assert '' == 'Remove cancelled'`. Two rounds recorded it as red without naming the cause (TASK-36387 at dev, TASK-41526).
 
-**What to do.** In a stand-in that a worker awaits, record what it was given and assert after the run, on the test's own stack; an assertion inside the stand-in can only fail as a missing effect downstream. The file's two sibling removal tests asserted the dialog's type the same way and now check it after the run too.
+**What to do.** In a stand-in that a worker awaits, record what it was given and assert after the run, on the test's own stack; an assertion inside the stand-in can only fail as a missing effect downstream.
 
 ## A test's `monkeypatch.setattr` lives until after every autouse teardown, so a patched builtin breaks them (TASK-42028, 2026-11-20)
 
