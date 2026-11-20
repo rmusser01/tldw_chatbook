@@ -102,15 +102,14 @@ ADR required: yes (ADR-084 and ADR-285 amended in place).
     - a global `[filter "lfs"]` with a sentinel program and `required = true`.
   - **First run: the AC failed.** Enabling Change Review on a workspace whose `.gitattributes` selects `lfs` showed only "Change history preparation failed for 1 folder(s)". The turn showed only "⚠ change review skipped …: Change history preparation failed; this turn continues without it.". The refusal happens at preparation, before any capture, and `ChangeReviewConsentService` replaced every preparation error with that generic reason. The earlier capture-path test had pinned the text of a different path.
   - **Fix:**
-    - `native_git` exports its user-actionable refusals (`ACTIONABLE_REFUSALS`: Git too old, partial-clone remotes, filters selected by attributes). These are authored text with no config names or paths.
-    - `_complete` and `_fail` use `_failed_reason`, which names such a refusal and keeps every other error generic, so a private path in an arbitrary error still never shows.
-    - The Settings failed row appends "Cause: <refusal>.".
-  - **After the fix, live:**
-    - The turn row reads "⚠ change review skipped folder-…: Change history preparation failed: native change review unavailable: configured filters selected by Git attributes (remove the filter= attribute or its filter config). This turn continues without it."
-    - Settings reads "… failed for 1 folder(s); chat and tools continue. Cause: native change review unavailable: configured filters selected by Git attributes (remove the filter= attribute or its filter config)."
-    - Following the remedy (emptying the `filter=` line, then "Retry failed preparation") turned it to "Change history ready for 1 folder(s)".
-    - A second workspace whose files select nothing became ready at once, and its turn recorded a clean snapshot. In `agent_runs.db` that is `turn` 120adcd8→d2fa19d6, and the shadow log shows the mid-turn edit.
-    - The sentinel filter never ran in the whole session, and nothing under the real profile changed.
+    - `native_git.ACTIONABLE_REFUSALS` maps each user-actionable refusal (Git too old, partial-clone remotes, filters selected by attributes) to a plain sentence. The text is authored, with no config names or paths.
+    - `_complete` and `_fail` use `_failed_reason`, which shows that sentence and keeps every other error generic, so a private path in an arbitrary error still never shows.
+    - The Settings failed row appends the sentence.
+  - **After the fix, live** (first wording): both surfaces named the cause, and following it (empty the `filter=` line, then "Retry failed preparation") turned the folder ready. A second workspace whose files select nothing was ready at once and recorded a clean snapshot (`agent_runs.db` `turn` 120adcd8→d2fa19d6). The sentinel filter never ran in the whole session, and nothing under the real profile changed.
+  - **Review of that fix:**
+    - **Remedy wording (Important):** it told users to "remove the filter= attribute or its filter config". For a Git LFS repository that would store large files as ordinary blobs, or break LFS everywhere. The sentence now states the trade-off instead: "Files here use configured Git filters (such as Git LFS), which Change Review never runs. Removing their filter= attribute or configuration would let it prepare, but changes how Git stores those files." The exception text drops the remedy, and the turn row and Settings no longer show the internal "native change review unavailable:" jargon.
+    - **Git version (Minor):** "requires Git >=2.36" is now raised only for a parsed old version. A failing or unparseable `git --version` (e.g. the macOS developer-tools stub) gets the generic message.
+    - **User Guide (Minor):** the claim is scoped to preparation and capture, because Undo restores with Git's normal checkout (ADR-084 keeps that unchanged).
   - **Tests:** `test_actual_native_initializer_uses_helper_refusing_git` now pins the reason, for both filter and partial-clone. `test_a_selected_git_filter_names_its_cause_and_remedy` (Settings journey, real selected filter) pins the row. Both fail without the change.
   - **Follow-up:** TASK-42111. One post-restart turn showed no skipped row at all. Seen once, not traced.
 <!-- SECTION:NOTES:END -->

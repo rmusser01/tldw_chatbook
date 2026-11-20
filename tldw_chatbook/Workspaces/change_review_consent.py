@@ -629,12 +629,13 @@ class ChangeReviewConsentService:
         """Name an actionable Git refusal; anything else stays generic."""
         from .native_git import ACTIONABLE_REFUSALS
 
-        if error is not None and str(error) in ACTIONABLE_REFUSALS:
-            return (
-                f"Change history preparation failed: {error}. "
-                "This turn continues without it."
-            )
-        return cls._FAILED_REASON
+        sentence = ACTIONABLE_REFUSALS.get(str(error)) if error is not None else None
+        if sentence is None:
+            return cls._FAILED_REASON
+        return (
+            f"Change history preparation failed. {sentence} "
+            "This turn continues without it."
+        )
 
     def _discard_workspace_readiness_locked(self, workspace_id: str) -> None:
         for key in tuple(self._readiness):
