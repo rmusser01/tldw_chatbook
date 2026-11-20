@@ -133,6 +133,13 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # the worker waits for UI-ready before reading, then projects that hold.
         ("refresh", "console-emergency-stop"),
         ("_refresh_console_skill_candidates", "console-skill-discovery"),
+        # That mount discovery's skill-trust preparation: a coroutine worker
+        # (app_skill_wiring.py) whose build hops to the executor. Real boots
+        # have started it since 3e618d7119 (2026-10-15); this census saw it
+        # only once TASK-41642 removed a code-identity check that this probe's
+        # `_new_worker` patch failed, forcing the on-loop route. It lands in
+        # the window only sometimes: allowlisted, not asserted (TASK-42091).
+        ("ensure_local_skill_trust_service", "console-skill-trust-setup"),
         # The Character view owns its initial/resume context refresh.
         ("refresh_if_scope_changed", "console-character-context-refresh"),
         ("_refresh_console_persisted_rows_cache", "console-persisted-browser-cache"),
