@@ -681,6 +681,7 @@ _CREATED_FILE_OWNERS = frozenset(
         "research.local",
         "writing.local",
         "db.rag_indexing",
+        "tamagotchi.config",
     }
 )
 # The installed declaration class each created root, nested folder or file
@@ -728,6 +729,8 @@ _CREATED_OWNER_CLASSES = {
     "notifications.client": ("Notifications.recovery", "_NotificationsAdapter"),
     "runtime.event_state": ("Notifications.recovery", "_EventsAdapter"),
     "runtime.sync_state": ("Sync_Interop.recovery", "_SyncAdapter"),
+    # TASK-42000: the profile's pet files beside its config.
+    "tamagotchi.config": ("Widgets.Tamagotchi.recovery", "_ConfiguredPets"),
 }
 # Owners whose rows share a created owner's database file (TASK-41521).
 _CREATED_FILE_SHARERS = {"tts.profile_store": frozenset({"tts.references"})}

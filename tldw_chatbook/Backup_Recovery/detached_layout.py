@@ -493,6 +493,10 @@ def produce_detached_archive(
         for item in items
     ):
         report += ("Personal Context interview drafts stay on the original device.",)
+    if any(path.exists() for path in _pet_members(source, selected)[1]):
+        report += (
+            "Old shared pet files were not imported; this profile has its own.",
+        )
     manifest = _manifest_for(
         inventory,
         staged,
@@ -520,26 +524,36 @@ def produce_detached_archive(
     return DetachedImportResult(sealed.path, report)
 
 
-def _pet_members(source: Path) -> tuple[Path, ...]:
-    """Declare only the installed Windows pet file and exact dated backups."""
+def _pet_members(source: Path, selected: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """Return the pet files to import and the old roaming ones left behind.
+
+    TASK-42000: the profile's own files sit beside its config. A copy made
+    before pets were per-profile keeps them in the installed Windows roaming
+    folder; those are imported only when the profile has none of its own.
+    """
     from .native_files import pinned_directory
 
-    parent = source / "home" / "AppData" / "Roaming" / "tldw_chatbook"
-    canonical = parent / "tamagotchi_pets.json"
-    if not parent.exists():
-        return (canonical,)
-    with pinned_directory(parent) as descriptor:
-        names = os.listdir(descriptor)
-    if len(names) > 100000:
-        raise ValueError("detached_pet_inventory_limit")
-    return (
-        canonical,
-        *(
+    def members(parent):
+        canonical = parent / "tamagotchi_pets.json"
+        if not parent.exists():
+            return (canonical,), ()
+        with pinned_directory(parent) as descriptor:
+            names = os.listdir(descriptor)
+        if len(names) > 100000:
+            raise ValueError("detached_pet_inventory_limit")
+        dated = tuple(
             parent / name
             for name in sorted(names)
             if re.fullmatch(r"tamagotchi_pets\.backup_\d{8}_\d{6}\.json", name)
-        ),
-    )
+        )
+        marker = parent / "tamagotchi_pets.seeded"
+        return (canonical, *dated), (marker,) if marker.exists() else ()
+
+    own, marker = members(selected.parent)
+    roaming, _ = members(source / "home" / "AppData" / "Roaming" / "tldw_chatbook")
+    if any(path.exists() for path in (*own, *marker)):
+        return own + marker, roaming
+    return roaming, ()
 
 
 def _owner_items(source, selected, root, config, context, owners, normal, cancel):
@@ -826,12 +840,16 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
             (root if owner.location == "data" else selected.parent) / owner.leaf,
             tree=owner.tree,
         )
-    for path in _pet_members(source):
+    pets, left = _pet_members(source, selected)
+    for path in pets:
         add(
             "tamagotchi.config",
             path,
-            suffix="" if path.name == "tamagotchi_pets.json" else path.name,
+            suffix={"tamagotchi_pets.json": "", "tamagotchi_pets.seeded": "seeded"}.get(
+                path.name, path.name
+            ),
         )
+    original.update(left)
     add("chatbooks.registry", root / "tldw_chatbook_chatbooks.json")
     for owner_id, leaf in (
         ("runtime.source_state", "runtime_policy.json"),
@@ -1031,7 +1049,7 @@ def _declared_layout(source, selected, root, config, observation=None):
         root / ".generated_videos.capacity.lock",
     }
     known.update(_restored_cache_paths(config, root))
-    known.update(_pet_members(source))
+    known.update(path for paths in _pet_members(source, selected) for path in paths)
     known.update(
         Path(str(root / "tldw_chatbook_notes_sync_state.db") + suffix)
         for suffix in ("", "-wal", "-shm", "-journal")

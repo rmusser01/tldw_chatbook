@@ -117,12 +117,16 @@ lease, before namespace registration or publication. A pre-receipt interruption
 leaves an inert retained attempt; a completed outer marker resumes the existing
 receipt-bound operation. Malformed or ambiguous older pending states still refuse.
 
-The installed `tamagotchi.config` owner includes only the portable copied roaming
-canonical JSON and exact dated backups. Publication retains its existing shared-home
-owner policy inside the private attempt home. After committed profile validation,
-both fresh selection and launch derive portable home/roaming selectors from that
-attempt, ignoring inherited APPDATA. A subsequent move acquires those pet files
-again. Other files under the pet directory remain unsupported durable content.
+The installed `tamagotchi.config` owner (per-profile since TASK-42000) holds the
+profile's `tamagotchi_pets.json`, its exact dated backups and the
+`tamagotchi_pets.seeded` marker beside the selected config, and restores them
+beside the restored profile's config like its other settings files. A portable
+copy made before pets were per-profile keeps them in the roaming
+`tldw_chatbook` folder; detached import takes those only when the profile has
+no pet files of its own, and reports them as not imported otherwise. Other
+files under that roaming folder remain unsupported durable content. After
+committed profile validation, both fresh selection and launch derive portable
+home/roaming selectors from the attempt, ignoring inherited APPDATA.
 
 ## Prompt mix-in operational content (ADR-286)
 

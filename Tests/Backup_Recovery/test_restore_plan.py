@@ -658,11 +658,18 @@ def test_config_remaps_explicit_local_selector_and_freezes_fresh_profile(tmp_pat
     assert config_data["general"]["users_name"] != "original"
 
 
-def test_shared_alias_cannot_be_split_by_forged_independent_groups(tmp_path):
-    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+def _alias_archive(tmp_path, owner, *, synthetic=False):
+    """One file captured for two profiles: alias rows sharing one group.
+
+    ``synthetic`` gives each alias its own synthetic root, as capture writes a
+    single file's root.
+    """
 
     def aliases(doc):
         producer(doc)
+        for row in (*doc["producer_inventory"], *doc["owners"], *doc["files"]):
+            row["owner_id"] = owner
+        doc["directories"][0]["synthetic"] = synthetic
         doc["directories"].append(
             {
                 **doc["directories"][0],
@@ -684,14 +691,14 @@ def test_shared_alias_cannot_be_split_by_forged_independent_groups(tmp_path):
             [
                 {
                     "logical_id": "other-root",
-                    "owner_id": "ui.state",
+                    "owner_id": owner,
                     "status": "included_directory",
                     "dependencies": [],
                     "shared_group": None,
                 },
                 {
                     "logical_id": "alias",
-                    "owner_id": "ui.state",
+                    "owner_id": owner,
                     "status": "included",
                     "dependencies": ["other-root"],
                     "shared_group": "shared",
@@ -702,7 +709,21 @@ def test_shared_alias_cannot_be_split_by_forged_independent_groups(tmp_path):
             {"group_id": "alias-group", "members": ["alias"], "complete": True}
         )
 
-    archive = sealed(tmp_path, mutate=aliases)
+    return sealed(tmp_path, mutate=aliases)
+
+
+def _refusal(call):
+    try:
+        call()
+    except ValueError as error:
+        return str(error)
+    return None
+
+
+def test_shared_alias_cannot_be_split_by_forged_independent_groups(tmp_path):
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+
+    archive = _alias_archive(tmp_path, "ui.state")
     with pytest.raises(ValueError, match="shared_scope_expansion_required"):
         plan_restore(
             archive,
@@ -710,6 +731,49 @@ def test_shared_alias_cannot_be_split_by_forged_independent_groups(tmp_path):
             destinations={"root": tmp_path / "new"},
             target=None,
         )
+
+
+@pytest.mark.parametrize("owner", ["tamagotchi.config", "ui.state"])
+@pytest.mark.parametrize("folders", ["differ", "shared", "one-selected"])
+def test_only_pet_aliases_restore_into_each_profiles_own_folder(
+    tmp_path, owner, folders
+):
+    """TASK-42000: a backup of several profiles holds their once-shared pet
+    files as aliases, each in its own synthetic root as capture writes them.
+    With every alias selected, each restores into its own profile's folder;
+    sent into one shared folder, they are accepted as one deduplicated file,
+    as any owner's aliases are (every co-foldered profile is selected and the
+    bytes are identical). Selecting only some of them still refuses, so a
+    restore never overwrites a pet file another profile in that folder reads."""
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+
+    archive = _alias_archive(tmp_path, owner, synthetic=True)
+    destinations = {"root": tmp_path / "alpha"}
+    if folders != "one-selected":
+        destinations["other-root"] = tmp_path / (
+            "beta" if folders == "differ" else "alpha"
+        )
+    plans = []
+    refusal = _refusal(
+        lambda: plans.append(
+            plan_restore(
+                archive, mode="isolated", destinations=destinations, target=None
+            )
+        )
+    )
+    if folders == "one-selected":
+        assert refusal == "shared_scope_expansion_required"
+        return
+    if owner == "ui.state" and folders == "differ":
+        assert refusal == "shared_target_split"
+        return
+    assert refusal is None
+    restore = dict(plans[0].restore)
+    assert restore["file"] == tmp_path / "alpha" / "note.txt"
+    assert restore["alias"] == destinations["other-root"] / "note.txt"
+    if folders == "shared":
+        # Both aliases share the one deduplicated destination.
+        assert restore["alias"] == restore["file"]
 
 
 def test_empty_root_stages_supported_directory_metadata(tmp_path):

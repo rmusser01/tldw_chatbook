@@ -27,10 +27,14 @@ example #1 below.
   `CompactTamagotchi` with `id="footer-tamagotchi"`. Every screen composes an
   `AppFooterStatus`, so the pet follows the user around the app.
 * **Storage** — `ConfigFileStorage`, specifically. `Widgets/Tamagotchi/
-  recovery.py` registers *that* adapter's path
-  (`~/.config/tldw_chatbook/tamagotchi_pets.json` and its dated backups) as the
-  `tamagotchi.config` backup/recovery owner; any other adapter writes somewhere
-  backup/recovery has no locator for.
+  recovery.py` registers *that* adapter's path (`tamagotchi_pets.json` beside
+  the profile's `config.toml`, its dated backups and the
+  `tamagotchi_pets.seeded` marker) as the `tamagotchi.config` backup/recovery
+  owner; any other adapter writes somewhere backup/recovery has no locator for.
+  Pets are per-profile since TASK-42000: the first time the store runs in a
+  profile with no pet files, it copies the old shared
+  `~/.config/tldw_chatbook/tamagotchi_pets.json` once (read only) and writes the
+  marker, so pets removed later are never copied back.
 * **Messages** — `AppFooterStatus.on_tamagotchi_death` and
   `on_tamagotchi_stat_critical` turn the two alarms into `app.notify()` toasts.
   `TamagotchiStatCritical` is edge-triggered from `_check_critical_stats()` at

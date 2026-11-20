@@ -470,9 +470,14 @@ def test_actual_settings_writer_holds_independent_maintenance_until_close(
         work = lambda: source.merge_templates([("one", {"title": "One"})])
         target, name = json, "dump"
     else:
+        # TASK-42000: the pet file sits beside the profile's config.
+        monkeypatch.setattr(
+            config, "_get_effective_config_path", lambda: tmp_path / "config.toml"
+        )
         monkeypatch.setenv("HOME", str(tmp_path))
         source = ConfigFileStorage()
         selected = source.filepath
+        assert selected == tmp_path / "tamagotchi_pets.json"
         work = lambda: source.save("one", {"name": "One"})
         target, name = json, "dump"
     entered, finish = threading.Event(), threading.Event()

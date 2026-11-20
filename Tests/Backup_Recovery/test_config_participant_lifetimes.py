@@ -590,3 +590,96 @@ def test_reentrant_publication_from_derived_scope_refuses_all_effects(
     assert source.get_cli_config_path().read_bytes() == before
     assert source._CONFIG_CACHE is cache
     assert source._CONFIG_GENERATION == generation
+
+
+# TASK-42000: a Replace can retire a file the profile enrolled as its own
+# registered root (a settings file beside the config). Every absent root must
+# hold nothing: it never grants anything beneath it, and it never breaks the
+# next start's data-directory check.
+
+
+@pytest.mark.usefixtures("local_root")
+def test_an_absent_registered_root_grants_nothing_beneath_it(tmp_path, monkeypatch):
+    from tldw_chatbook.Backup_Recovery.control_records import (
+        admission_authority,
+        bind_profile,
+    )
+
+    root = bootstrap.default_bootstrap_root()
+    owned = tmp_path / "owned"
+    owned.mkdir(mode=0o700)
+    selector = tmp_path / "selected.toml"
+    selector.write_text('[general]\nusers_name="fixture"\n')
+    authority = admission_authority(root)
+    authority.register("core", (owned, selector))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
+    bind_profile(root, selector, ("core",), root / "admission")
+    owned.rmdir()
+    try:
+        contained = storage._contains_capture_path((owned,), owned / "x")
+    except OSError as error:
+        contained = error
+    assert contained is False
+    with pytest.raises(bootstrap.RecoveryRequired):
+        storage.acquire_storage(owned / "x")
+
+
+def _verified_data_directory(tmp_path, monkeypatch, roots):
+    """Run the start-up data-directory check against these enrolled roots."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery import config_participants
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+    selector = tmp_path / "config" / "config.toml"
+    source = SimpleNamespace(
+        _CONFIG_CACHE={
+            "general": {"users_name": "fixture"},
+            "paths": {"data_dir": str(tmp_path / "data")},
+        },
+        _CONFIG_CACHE_SOURCE=selector,
+    )
+    state = SimpleNamespace(
+        source=source,
+        companion_guard=object(),
+        selected=selector,
+        companion_roots=tuple(roots),
+    )
+    monkeypatch.setattr(raw._local, "operation", object(), raising=False)
+    monkeypatch.setattr(raw, "check", lambda operation: state)
+    try:
+        return config_participants.verified_user_data_directory(source)
+    except (OSError, bootstrap.RecoveryRequired) as error:
+        return error
+
+
+def _private_data_directory(tmp_path):
+    data = tmp_path / "data"
+    (data / "fixture").mkdir(parents=True)
+    for path in (data, data / "fixture"):
+        path.chmod(0o700)
+    return data / "fixture"
+
+
+def test_a_retired_settings_root_does_not_break_the_data_directory_check(
+    tmp_path, monkeypatch
+):
+    """A note-templates root a Replace retired, enrolled ahead of the data
+    directory's root, is skipped and the data directory is still found."""
+    selected = _private_data_directory(tmp_path)
+    retired = tmp_path / "config" / "note_templates.json"
+    result = _verified_data_directory(tmp_path, monkeypatch, (retired, selected))
+    assert result == selected
+
+
+def test_a_data_directory_check_with_every_root_absent_refuses(
+    tmp_path, monkeypatch
+):
+    _private_data_directory(tmp_path)
+    roots = (
+        tmp_path / "config" / "note_templates.json",
+        tmp_path / "data" / "retired",
+    )
+    result = _verified_data_directory(tmp_path, monkeypatch, roots)
+    assert isinstance(result, bootstrap.RecoveryRequired), result
+    assert str(result) == "config_directory_selection_changed"

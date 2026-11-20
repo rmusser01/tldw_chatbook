@@ -236,9 +236,6 @@ def host_environment(data: Path, attempt: str) -> None:
     home = data / WORK_NAME / attempt / "home"
     temporary = data / WORK_NAME / attempt / "tmp"
     _directory(temporary)
-    # Keep the pet publication parent disjoint from the bootstrap authority.
-    for parent in (home / "AppData", home / "AppData" / "Roaming"):
-        _directory(parent)
     os.environ.update(
         HOME=str(home),
         USERPROFILE=str(home),
@@ -396,11 +393,7 @@ def _resume_staged(attempt: Path) -> None:
         plan.mode != "isolated"
         or plan.target is not None
         or plan.retire
-        or any(
-            not path.is_relative_to(attempt / "profiles")
-            and not _pet_destination(attempt, path)
-            for _, path in targets
-        )
+        or any(not path.is_relative_to(attempt / "profiles") for _, path in targets)
     ):
         raise ValueError("portable_stage_plan_changed")
     document = _descriptor(candidate, plan)
@@ -423,20 +416,6 @@ def _resume_staged(attempt: Path) -> None:
         operation_id,
         Event(),
         initial_selectors=(Path(profiles[0].config),),
-    )
-
-
-def _pet_destination(attempt: Path, path: Path) -> bool:
-    """Allow only the installed pet container and its exact file family."""
-    parent = attempt / "home" / "AppData" / "Roaming" / "tldw_chatbook"
-    return (
-        path == parent
-        or path.parent == parent
-        and (
-            path.name == "tamagotchi_pets.json"
-            or re.fullmatch(r"tamagotchi_pets\.backup_\d{8}_\d{6}\.json", path.name)
-            is not None
-        )
     )
 
 

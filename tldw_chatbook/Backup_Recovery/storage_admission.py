@@ -714,9 +714,15 @@ class StorageLease:
 
 def _contains_owned_path(root: Path, selected: Path) -> bool:
     """Authorize exact objects or descendants of a declared directory, never parents."""
-    resolved_root = root.resolve(strict=True)
-    with bootstrap.pinned_directory(resolved_root.parent) as parent:
-        info = os.stat(resolved_root.name, dir_fd=parent, follow_symlinks=False)
+    try:
+        resolved_root = root.resolve(strict=True)
+        with bootstrap.pinned_directory(resolved_root.parent) as parent:
+            info = os.stat(resolved_root.name, dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError:
+        # An absent root holds nothing (TASK-42000: e.g. a registered file a
+        # Replace has since retired). Containment is only positive evidence,
+        # so absence grants nothing beneath the root.
+        return False
     resolved_selected = selected.resolve()
     if stat.S_ISDIR(info.st_mode):
         return (

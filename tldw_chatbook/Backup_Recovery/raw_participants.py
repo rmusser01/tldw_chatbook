@@ -887,7 +887,8 @@ def scope(
             paths += (temporary,)
         if route == "pet" and writing:
             temporary = selected.with_suffix(".tmp")
-            paths += (temporary,)
+            # TASK-42000: the seed-once marker, published from the temporary.
+            paths += (temporary, selected.with_suffix(".seeded"))
         parent = selected if directory_only else selected.parent
         missing = []
         anchor = parent

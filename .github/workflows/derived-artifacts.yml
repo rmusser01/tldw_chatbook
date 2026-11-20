@@ -2162,8 +2162,12 @@ jobs:
     # Round 16: TASK-41521's created-owner rollback file (sandboxed, five cases
     # of one backup and one restore each, 75-245 s per case at -n 4, load
     # 30-65; about 12 min of child time) follows the persona rollback file.
+    # Round 17: TASK-42000's per-profile pet roundtrip file (sandboxed: two
+    # profiles' backup, an isolated restore and fresh reads) follows the
+    # created-owner rollback file; its serial time is in the task's notes.
     # Round 17: TASK-41718's RAG indexing owner file (sandboxed, 8 tests,
-    # about 5 s at -n 4), red on dev in no lane until then.
+    # about 5 s at -n 4), red on dev in no lane until then, follows the data
+    # groups file.
     name: Backup_Recovery owner suites (push to dev)
     if: (github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TIERED_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.nightly)
     runs-on: ubuntu-latest
@@ -2187,6 +2191,7 @@ jobs:
             Tests/Backup_Recovery/test_builtin_later_snapshot.py \
             Tests/Backup_Recovery/test_created_persona_subtree_rollback.py \
             Tests/Backup_Recovery/test_created_owner_rollback.py \
+            Tests/Backup_Recovery/test_profile_pet_roundtrip.py \
             Tests/Backup_Recovery/test_complete_roundtrip.py \
             Tests/Backup_Recovery/test_later_rollback_credential_ui.py \
             Tests/Backup_Recovery/test_restore_plan.py \

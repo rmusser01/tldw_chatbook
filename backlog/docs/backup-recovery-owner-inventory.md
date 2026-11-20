@@ -907,9 +907,11 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleTranscript._append_paint_log | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/Console/console_session_switcher_modal.py | _native_backdrop_supported | open | 1 | external_input | installed Textual source, read-only shape check (PR #3536) |
 | tldw_chatbook/Widgets/Console/console_transcript.py | ConsoleTranscript._append_paint_log | write | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | ConfigFileStorage._prepare | write | 1 | generic_boundary | tamagotchi.config seed-once marker beside the profile config, published from the pet scope's temporary (TASK-42000) |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._create_backup | write | 1 | generic_boundary | tamagotchi.config phase8 exact default ConfigFileStorage; custom JSON ordinary; runtime composition pending |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | JSONStorage._write_data | dump | 1 | generic_boundary | tamagotchi.config phase8 exact default ConfigFileStorage; custom JSON ordinary; runtime composition pending |
 | tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | SQLiteStorage._connect | connect_private_sqlite | 2 | generic_boundary | tamagotchi.config-via-JSONStorage-or-dormant-custom-path |
+| tldw_chatbook/Widgets/Tamagotchi/tamagotchi_storage.py | _read_shared_pets | open | 2 | external_input | read-only one-time copy of the old shared pet file, never written (TASK-42000) |
 | tldw_chatbook/Widgets/audio_troubleshooting_dialog.py | AudioTroubleshootingDialog._apply_and_close | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/audio_troubleshooting_dialog.py | AudioTroubleshootingDialog._initialize_audio | write | 5 | unsupported | miscellaneous |
 | tldw_chatbook/Widgets/audio_troubleshooting_dialog.py | AudioTroubleshootingDialog._start_level_test | write | 1 | unsupported | miscellaneous |
@@ -1306,7 +1308,7 @@ optional raw files are unused, while unknown app-owned children block completene
 | subscriptions.assets | profile/briefing_audio, explicit tree topology and all present files | checked opaque bytes; complete DB file_path dependencies use exact profile IDs and staged candidates | historical generated audio; no synthesis, export or cleanup replay |
 | workspaces.change_tracking | profile/change_review, exact ShadowRepoService default | bounded no-follow topology, all retained Git bytes; no Git process during discovery/capture | commit/object/index/config/lock evidence never authorizes hooks, worktree restoration or stale-lock takeover |
 | agents.history | exact configured tool sandbox plus local_filesystem WorkspaceDB and retained AgentRuns change roots, dotted and legacy run_log_dir_name subtrees only | checked opaque bounded files; DB locators must qualify; no arbitrary workspace contents | run logs/manifests/segments remain evidence, never tool permission |
-| tamagotchi.config | ConfigFileStorage default .config/tldw_chatbook/tamagotchi_pets.json (APPDATA on Windows), exact timestamp backups | checked opaque bytes, 16MiB each; unknown siblings block | pet state and corrupt recovery backups; no constructor repair/replay |
+| tamagotchi.config | ConfigFileStorage tamagotchi_pets.json beside the profile config, exact timestamp backups and the tamagotchi_pets.seeded marker (TASK-42000; before it, the shared .config/tldw_chatbook or APPDATA folder) | checked opaque bytes, 16MiB each; other files beside the config belong to their own owners | pet state and corrupt recovery backups; no constructor repair/replay |
 
 Every owner above declares activation_required=True. `relocate` validates and
 preserves immutable evidence; it neither claims fresh live allocation nor applies

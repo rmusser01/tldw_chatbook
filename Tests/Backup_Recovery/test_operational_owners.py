@@ -744,26 +744,226 @@ def test_briefing_cleanup_cannot_mutate_owned_bytes_in_maintenance(
     assert not source.exists()
 
 
-def test_optional_pet_default_and_exact_backups_block_unknown_children(
-    tmp_path, monkeypatch
-):
+def test_pet_owner_discovers_only_its_files_beside_the_config(tmp_path):
+    """TASK-42000: the pet files are the profile's, beside its config; the
+    folder's other files belong to other owners and are not claimed."""
     from tldw_chatbook.Widgets.Tamagotchi.recovery import recovery_adapters
 
-    monkeypatch.setenv("HOME", str(tmp_path))
-    config = {
-        DISCOVERY_CONTEXT_KEY: DiscoveryContext(tmp_path / "config.toml", "fixture")
-    }
+    folder = tmp_path / "profile"
+    folder.mkdir()
+    config = {DISCOVERY_CONTEXT_KEY: DiscoveryContext(folder / "config.toml", "fixture")}
     adapter = recovery_adapters()[0]
-    assert adapter.discover(config)[0].status == "unused"
-    parent = tmp_path / ".config" / "tldw_chatbook"
-    parent.mkdir(parents=True)
-    (parent / "tamagotchi_pets.json").write_bytes(b"historical corrupt evidence")
-    (parent / "tamagotchi_pets.backup_20260101_121314.json").write_bytes(
-        b"older recovery bytes"
+    absent = adapter.discover(config)
+    assert [(item.path, item.status) for item in absent] == [
+        (folder / "tamagotchi_pets.json", "unused")
+    ]
+    assert absent[0].dependencies == ("profile:fixture:config",)
+    for name in (
+        "tamagotchi_pets.json",
+        "tamagotchi_pets.backup_20260101_121314.json",
+        "tamagotchi_pets.seeded",
+        "recent_emojis.json",
+        "unrecognized.sqlite",
+    ):
+        (folder / name).write_bytes(b"{}")
+    assert [(item.logical_id, item.status) for item in adapter.discover(config)] == [
+        ("profile:fixture:tamagotchi.config", "included"),
+        (
+            "profile:fixture:tamagotchi.config:"
+            "tamagotchi_pets.backup_20260101_121314.json",
+            "included",
+        ),
+        ("profile:fixture:tamagotchi.config:seeded", "included"),
+    ]
+
+
+def test_pet_owner_reports_a_missing_config_folder_as_no_pets(tmp_path):
+    """TASK-42000: before the profile's config folder exists, its pet file is
+    absent (unused), not an unreadable folder that blocks a backup."""
+    from tldw_chatbook.Widgets.Tamagotchi.recovery import recovery_adapters
+
+    folder = tmp_path / "not-yet"
+    config = {DISCOVERY_CONTEXT_KEY: DiscoveryContext(folder / "config.toml", "fixture")}
+    items = recovery_adapters()[0].discover(config)
+    assert [(item.path, item.status) for item in items] == [
+        (folder / "tamagotchi_pets.json", "unused")
+    ]
+
+
+def _pet_profile(tmp_path, monkeypatch, name="profile"):
+    """A profile config folder and the old shared pet folder (TASK-42000)."""
+    from tldw_chatbook import config
+
+    folder = tmp_path / name
+    folder.mkdir(mode=0o700)
+    home = tmp_path / "home"
+    monkeypatch.setattr(
+        config, "_get_effective_config_path", lambda: folder / "config.toml"
     )
-    assert [i.status for i in adapter.discover(config)] == ["included", "included"]
-    (parent / "unrecognized.sqlite").write_bytes(b"unknown state")
-    assert "unsupported" in {i.status for i in adapter.discover(config)}
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+    shared = (
+        home / "AppData" / "Roaming" if os.name == "nt" else home / ".config"
+    ) / "tldw_chatbook"
+    shared.mkdir(parents=True, mode=0o700)
+    return folder, shared
+
+
+def _pet_files(folder):
+    """Each file's bytes, inode and mtime: an unchanged folder keeps all three."""
+    return {
+        path.name: (path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns)
+        for path in folder.iterdir()
+    }
+
+
+def test_pet_store_copies_the_old_shared_pets_once(tmp_path, monkeypatch):
+    """TASK-42000 AC#4 and seed-once: a profile with no pet files starts from
+    one copy of the old shared pets; removing them later never brings them
+    back, and the shared files never change."""
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+
+    folder, shared = _pet_profile(tmp_path, monkeypatch)
+    pet = {"name": "Bit", "happiness": 70, "hunger": 30, "energy": 80, "health": 90}
+    (shared / "tamagotchi_pets.json").write_text(json.dumps({"bit": pet}))
+    (shared / "tamagotchi_pets.backup_20260101_000000.json").write_text("{}")
+    before = _pet_files(shared)
+    store = ConfigFileStorage()
+    assert store.filepath == folder / "tamagotchi_pets.json"
+    assert store.load("bit") == pet
+    # Only the current file is copied, and the copy is recorded.
+    assert sorted(path.name for path in folder.iterdir()) == [
+        "tamagotchi_pets.json",
+        "tamagotchi_pets.seeded",
+    ]
+    assert _pet_files(shared) == before
+    # The profile's pets are removed (by hand, or by a Replace from a backup
+    # without pets), and the app starts again.
+    for path in folder.glob("tamagotchi_pets*.json"):
+        path.unlink()
+    assert ConfigFileStorage().list_pets() == []
+    assert _pet_files(shared) == before
+
+
+@pytest.mark.parametrize("own", ["current", "dated", "marker"])
+def test_pet_store_never_copies_into_a_profile_with_pet_files(
+    tmp_path, monkeypatch, own
+):
+    """TASK-42000: a profile with pet files of its own, or one that already
+    took its copy, is never seeded from the old shared pets."""
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+
+    folder, shared = _pet_profile(tmp_path, monkeypatch)
+    (shared / "tamagotchi_pets.json").write_text('{"old": {"name": "Old"}}')
+    leaf = {
+        "current": "tamagotchi_pets.json",
+        "dated": "tamagotchi_pets.backup_20260101_000000.json",
+        "marker": "tamagotchi_pets.seeded",
+    }[own]
+    (folder / leaf).write_text('{"own": {"name": "Own"}}')
+    store = ConfigFileStorage()
+    assert store.filepath == folder / "tamagotchi_pets.json"
+    assert store.list_pets() == (["own"] if own == "current" else [])
+    assert (folder / "tamagotchi_pets.seeded").exists()
+
+
+@pytest.mark.parametrize("failure", ["unreadable", "publication"])
+def test_a_failed_pet_copy_writes_nothing_and_the_next_start_retries(
+    tmp_path, monkeypatch, failure
+):
+    """TASK-42000: a copy that fails half-way leaves the profile without pet
+    files or marker, so the next start copies again."""
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+
+    if failure == "unreadable" and (os.name == "nt" or os.geteuid() == 0):
+        pytest.skip("needs a file permission the user cannot override")
+    folder, shared = _pet_profile(tmp_path, monkeypatch)
+    old = shared / "tamagotchi_pets.json"
+    old.write_text('{"old": {"name": "Old"}}')
+    real = raw.replace
+    if failure == "unreadable":
+        old.chmod(0)
+    else:
+
+        def refuse(operation, temporary, destination, **kwargs):
+            if destination.name == "tamagotchi_pets.json":
+                raise OSError("publication failed")
+            return real(operation, temporary, destination, **kwargs)
+
+        monkeypatch.setattr(raw, "replace", refuse)
+    with pytest.raises(OSError):
+        ConfigFileStorage()
+    assert list(folder.iterdir()) == []
+    old.chmod(0o600)
+    monkeypatch.setattr(raw, "replace", real)
+    assert ConfigFileStorage().list_pets() == ["old"]
+
+
+def test_a_registered_file_a_replace_retired_contains_nothing(tmp_path):
+    """TASK-42000: a profile's registered roots can name a single file beside
+    its config; after a Replace retires that file, admission checks treat it
+    as containing nothing instead of failing every later write."""
+    from tldw_chatbook.Backup_Recovery.storage_admission import _contains_capture_path
+
+    retired = tmp_path / "tamagotchi_pets.json"
+    try:
+        contained = _contains_capture_path((retired,), tmp_path)
+    except OSError as error:
+        contained = error
+    assert contained is False
+
+
+def test_pet_store_persists_in_a_dot_named_config_folder(tmp_path, monkeypatch):
+    """TASK-42000 review: a profile whose config folder is dot-named
+    (TLDW_CONFIG_PATH=~/.tldw/config.toml) keeps its pets across starts."""
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+
+    folder, _ = _pet_profile(tmp_path, monkeypatch, ".tldw")
+    stores = []
+    for _ in range(2):
+        try:
+            stores.append(ConfigFileStorage())
+        except ValueError as error:
+            stores.append(error)
+    assert all(isinstance(store, ConfigFileStorage) for store in stores), stores
+    assert stores[0].filepath == folder / "tamagotchi_pets.json"
+    assert stores[0].save("bit", {"name": "Bit"})
+    assert stores[1].load("bit")["name"] == "Bit"
+
+
+@pytest.mark.timeout(60)
+def test_pet_store_copy_treats_a_fifo_as_nothing_to_copy(tmp_path, monkeypatch):
+    """TASK-42000 review: a FIFO at the old shared path never blocks the
+    copy; it counts as nothing to copy."""
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("no FIFOs on this platform")
+    folder, shared = _pet_profile(tmp_path, monkeypatch)
+    os.mkfifo(shared / "tamagotchi_pets.json")
+    store = ConfigFileStorage()
+    assert store.list_pets() == []
+    assert (folder / "tamagotchi_pets.seeded").exists()
+
+
+def test_pet_store_follows_no_link_out_of_place(tmp_path, monkeypatch):
+    """TASK-42000: the copy never follows a link at the old shared path, and a
+    pet file that resolves outside the profile's folder is refused."""
+    from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
+
+    folder, shared = _pet_profile(tmp_path, monkeypatch)
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"elsewhere": {"name": "Elsewhere"}}')
+    (shared / "tamagotchi_pets.json").symlink_to(outside)
+    store = ConfigFileStorage()
+    assert store.filepath == folder / "tamagotchi_pets.json"
+    assert store.list_pets() == []
+    store.filepath.unlink()
+    store.filepath.symlink_to(outside)
+    with pytest.raises(ValueError, match="outside the allowed directory"):
+        ConfigFileStorage()
+    assert outside.read_text() == '{"elsewhere": {"name": "Elsewhere"}}'
 
 
 def test_dormant_tamagotchi_path_constructors_have_no_installed_call_sites():
@@ -1013,6 +1213,13 @@ def test_real_pet_and_execution_history_writers_are_excluded(tmp_path, monkeypat
     from tldw_chatbook.MCP.execution_log import MCPExecutionLog
     from Tests.MCP.test_execution_log import _record
 
+    from tldw_chatbook import config
+
+    folder = tmp_path / "pets"
+    folder.mkdir()
+    monkeypatch.setattr(
+        config, "_get_effective_config_path", lambda: folder / "config.toml"
+    )
     monkeypatch.setenv("HOME", str(tmp_path))
     pet = ConfigFileStorage()
     assert pet.save("pet", {"name": "Retained pet"})

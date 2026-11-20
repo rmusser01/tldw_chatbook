@@ -173,8 +173,10 @@ enabled = false  # opt-in virtual pet in the footer status bar; off unless you a
 # true/yes/1 (or their negatives) -- including "on" -- leaves the pet off.
 # name = "Bit"  # 1-20 chars, letters/digits/space/-/_ only
 # personality = "balanced"  # balanced, energetic, lazy, needy, independent, playful
-# State lives in ~/.config/tldw_chatbook/tamagotchi_pets.json (backed up by the
-# "tamagotchi.config" backup/recovery owner). Nothing is created while disabled.
+# Each profile keeps its own pets in tamagotchi_pets.json beside this file, backed
+# up with Settings. The first time the pet runs in a profile that has none, it
+# copies the old shared ~/.config/tldw_chatbook/tamagotchi_pets.json once and
+# leaves that file as it is. Nothing is created while disabled.
 
 [appearance]
 character_expression_mode = "dynamic"  # Dynamic animates character expressions; Static changes poses without motion

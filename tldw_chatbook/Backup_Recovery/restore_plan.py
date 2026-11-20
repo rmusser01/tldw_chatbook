@@ -19,6 +19,13 @@ from .models import Inventory
 from .native_files import pinned_directory
 from .owner_registry import install_adapters
 
+#: TASK-42000: pet files were one folder every profile shared, so a backup of
+#: several profiles holds them as aliases. With every alias selected, each may
+#: restore into its own profile's folder: the group no longer binds one
+#: destination. A partial selection still refuses, as for any shared file, so a
+#: restore never overwrites a pet file another profile's config folder holds.
+_PER_PROFILE_ALIAS_OWNERS = frozenset({"tamagotchi.config"})
+
 
 @dataclass(frozen=True)
 class LocalSnapshotSource:
@@ -1120,7 +1127,12 @@ def plan_restore(
     shared_destinations = {}
     for key in selected:
         item = producer.get(key)
-        if item and item.shared_group and key in mapped:
+        if (
+            item
+            and item.shared_group
+            and item.owner_id not in _PER_PROFILE_ALIAS_OWNERS
+            and key in mapped
+        ):
             shared_destinations.setdefault(item.shared_group, set()).add(mapped[key])
     if any(len(paths) != 1 for paths in shared_destinations.values()):
         raise ValueError("shared_target_split")

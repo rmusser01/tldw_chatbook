@@ -58,15 +58,14 @@ elif route.startswith('video'):
  assert (item.status=='intentionally_excluded')==(route=='video_empty'),item
  assert not blocked_attempts()
 elif route.startswith('pets'):
+ # TASK-42000: the pet file sits beside the profile's config.
  from tldw_chatbook.Widgets.Tamagotchi.recovery import recovery_adapters
- parent=Path.home()/'.config'/'tldw_chatbook'
- if route!='pets_container_absent':parent.parent.mkdir(mode=0o700,exist_ok=True)
- if route=='pets_link': parent.symlink_to(data,target_is_directory=True)
- if route=='pets_file': parent.write_bytes(b'not a pet directory')
+ pet=selector.parent/'tamagotchi_pets.json'
+ if route=='pets_link':
+  (data/'elsewhere.json').write_text('{}');pet.symlink_to(data/'elsewhere.json')
  items=recovery_adapters()[0].discover(config)
- assert items[0].path==parent/'tamagotchi_pets.json'
- assert (items[0].status=='unused')==(route in ('pets_absent','pets_container_absent')),items
- if route in ('pets_absent','pets_container_absent'):assert not parent.exists()
+ assert items[0].path==pet,items
+ if route=='pets_absent':assert items[0].status=='unused' and not pet.exists(),items
  else:assert items[0].status in {'unavailable','unsupported'},items
 else: raise AssertionError(route)
 assert not blocked_attempts()
@@ -83,9 +82,7 @@ print('retired and reopened')
         "video_payload",
         "video_link",
         "pets_absent",
-        "pets_container_absent",
         "pets_link",
-        "pets_file",
     ],
 )
 def test_installed_owner_inventory_contract(tmp_path, route):
