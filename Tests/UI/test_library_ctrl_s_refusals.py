@@ -22,6 +22,7 @@ from types import MethodType, SimpleNamespace
 import Tests.UI._optional_module_stubs  # noqa: F401
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
 from tldw_chatbook.Library.library_notes_session import (
+    NoteFlushOutcomeKind,
     NoteSaveOutcome,
     NoteSaveOutcomeKind,
 )
@@ -454,3 +455,156 @@ async def test_an_older_analysis_save_never_clears_a_newer_saves_guard():
     released["B"].set()
     await save_b
     assert not fake._library_media_saving_analysis
+
+
+class _Sink:
+    """Stands in for every receiver seam a reset's method reaches but the
+    pin does not read: any attribute, call or ``await`` yields another sink."""
+
+    def __getattr__(self, _name):
+        return _Sink()
+
+    def __call__(self, *_args, **_kwargs):
+        return _Sink()
+
+    def __await__(self):
+        async def _done():
+            return _Sink()
+
+        return _done().__await__()
+
+    def __bool__(self) -> bool:
+        return False
+
+
+class _SinkReceiver(_Sink):
+    """A sink that holds a real media state plus the few seams a method must
+    see to reach its N-6 reset; every other attribute is a sink."""
+
+    def __init__(self, state: LibraryMediaState, **seams) -> None:
+        self._media_state = state
+        self._library_navigation_context_generation = 0
+        self.__dict__.update(seams)
+
+
+def _stranded_form_state() -> LibraryMediaState:
+    state = LibraryMediaState()
+    state.editing_analysis = True
+    state.saving_analysis = object()
+    return state
+
+
+def _assert_guard_cleared(state: LibraryMediaState) -> None:
+    assert state.saving_analysis is None
+    assert not state.editing_analysis
+
+
+def test_exiting_the_media_viewer_never_strands_the_analysis_save_guard():
+    """Review rb8 m-2 (N-6, H11): ``‹ Back`` / Escape from the plain viewer."""
+    state = _stranded_form_state()
+    fake = _SinkReceiver(
+        state, _library_media_editor_dirty=lambda: False, call_next=lambda *_a: None
+    )
+    LibraryMediaController._exit_library_media_viewer(fake)
+    _assert_guard_cleared(state)
+
+
+def test_the_viewer_back_key_never_strands_the_analysis_save_guard():
+    """Review rb8 m-2 (N-6, H12): Escape from the analysis form steps back."""
+    state = _stranded_form_state()
+    fake = _SinkReceiver(
+        state,
+        _library_media_editor_dirty=lambda: False,
+        _sync_library_media_viewer_or_recompose=lambda: None,
+    )
+    LibraryMediaController.action_library_media_viewer_back(fake)
+    _assert_guard_cleared(state)
+
+
+async def test_deleting_the_open_media_item_never_strands_the_analysis_save_guard():
+    """Review rb8 m-2 (N-6, H13): a successful trash of the open item."""
+    state = _stranded_form_state()
+
+    async def run_service_call(fn, **kwargs):
+        return None
+
+    fake = _SinkReceiver(
+        state,
+        app_instance=SimpleNamespace(
+            media_reading_scope_service=SimpleNamespace(delete_media_item=lambda **_kw: None)
+        ),
+        _required_library_media_backing_id=lambda _media_id: 7,
+        _run_library_service_call=run_service_call,
+        _library_media_browse_controller=SimpleNamespace(retained_items=()),
+        _local_source_records={"media": ()},
+        _local_source_counts={"media": 1},
+        _source_record_id=lambda record: "",
+        is_mounted=False,
+    )
+    await LibraryMediaController._delete_library_media_item(fake, "local:media:7")
+    _assert_guard_cleared(state)
+
+
+async def test_a_rail_press_never_strands_the_analysis_save_guard():
+    """Review rb8 m-2 (N-6, screen body): a rail-row press while source
+    admission is held resets the analysis form, and so its guard."""
+
+    class _Flushed:
+        kind = NoteFlushOutcomeKind.PERMITTED
+
+    async def flush_note():
+        return _Flushed()
+
+    async def permitted():
+        return True
+
+    state = _stranded_form_state()
+    fake = _SinkReceiver(
+        state,
+        _prompts_state=SimpleNamespace(mutation_in_flight=False, dirty=False),
+        _notes_state=SimpleNamespace(
+            source="", view="list", load_state="", selected_note_id=""
+        ),
+        _library_selected_row_id="",
+        _pending_library_source_open=None,
+        _library_note_session=SimpleNamespace(snapshot=None),
+        _flush_library_note_save=flush_note,
+        _flush_library_prompt_save=permitted,
+        _flush_library_skill_save=permitted,
+        _library_media_editor_dirty=lambda: False,
+        _try_switch_retained_library_notes_route=lambda _row_id: False,
+        _rail_switch_keeps_media_reader=lambda: False,
+        query_one=lambda *_a, **_kw: SimpleNamespace(region=SimpleNamespace(width=0)),
+        focused=None,
+    )
+    try:
+        await LibraryScreen._select_library_rail_row_after_source_admission(
+            fake, LIBRARY_ROW_BROWSE_SKILLS
+        )
+    except Exception:
+        pass  # the reset runs well before the tail the fake does not model
+    _assert_guard_cleared(state)
+
+
+async def test_opening_a_media_item_by_id_never_strands_the_analysis_save_guard():
+    """Review rb8 m-2 (N-6, screen body): the by-id open (Search/RAG Open)."""
+
+    class _Flushed:
+        kind = NoteFlushOutcomeKind.PERMITTED
+
+    async def flush_note():
+        return _Flushed()
+
+    state = _stranded_form_state()
+    fake = _SinkReceiver(
+        state,
+        _prompts_state=SimpleNamespace(mutation_in_flight=False),
+        _flush_library_note_save=flush_note,
+        _library_media_editor_dirty=lambda: False,
+        _library_media_reader_identity=lambda _record_id: None,
+    )
+    try:
+        await LibraryScreen._open_library_item_by_id(fake, "media", "local:media:7")
+    except Exception:
+        pass  # the reset runs well before the tail the fake does not model
+    _assert_guard_cleared(state)
