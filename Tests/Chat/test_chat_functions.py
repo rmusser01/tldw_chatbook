@@ -37,26 +37,6 @@ from tldw_chatbook.Chat.Chat_Deps import ChatAuthenticationError, ChatAPIError
 # --- Standalone Fixtures (No conftest.py) ---
 
 
-@pytest.fixture(autouse=True)
-def _owned_session_follows_a_stubbed_default(monkeypatch):
-    """Send ``create_owned_default_session`` to a stubbed ``create_default_session``.
-
-    TASK-41708: ``chat_with_openai`` builds its session with the owned
-    factory, and these tests stub only the default and pooled ones, so the
-    adapter built a real session and resolved ``api.openai.test``. A test
-    that leaves the default factory alone keeps the real owned one.
-    """
-    real_default = llm_api_calls_module.create_default_session
-    real_owned = llm_api_calls_module.create_owned_default_session
-
-    def owned(*args, **kwargs):
-        stub = llm_api_calls_module.create_default_session
-        factory = real_owned if stub is real_default else stub
-        return factory(*args, **kwargs)
-
-    monkeypatch.setattr(llm_api_calls_module, "create_owned_default_session", owned)
-
-
 @pytest.fixture
 def client_id():
     """Provides a consistent client ID for tests."""
@@ -690,6 +670,10 @@ class TestProviderRequestPayloads:
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ), raising=False)
@@ -729,6 +713,10 @@ class TestProviderRequestPayloads:
             },
         )
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
@@ -772,6 +760,10 @@ class TestProviderRequestPayloads:
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ), raising=False)
@@ -799,6 +791,10 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": "OK"}}]}
+            ), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": "OK"}}]}
             ), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
@@ -863,6 +859,10 @@ class TestProviderRequestPayloads:
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
             ), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(
+                captured, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
+            ), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(
                 captured, {"choices": [{"message": {"content": '{"answer":"ok"}'}}]}
             ), raising=False)
@@ -901,6 +901,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
 
         LLM_API_Calls.chat_with_openai(
@@ -927,6 +929,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
 
         LLM_API_Calls.chat_with_openai(
@@ -959,6 +963,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, {"output_text": "OK"}), raising=False)
 
         LLM_API_Calls.chat_with_openai(
@@ -1001,6 +1007,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, response_data), raising=False)
 
         response = LLM_API_Calls.chat_with_openai(
@@ -1046,6 +1054,8 @@ class TestProviderRequestPayloads:
             lambda: {"openai_api": {"api_base_url": "https://api.openai.test/v1"}},
         )
         monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(captured, response_events), raising=False)
+        # chat_with_openai builds its session with the owned factory (TASK-41708).
+        monkeypatch.setattr(LLM_API_Calls, "create_owned_default_session", lambda *a, **k: _CapturedSession(captured, response_events), raising=False)
         monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(captured, response_events), raising=False)
 
         stream = LLM_API_Calls.chat_with_openai(

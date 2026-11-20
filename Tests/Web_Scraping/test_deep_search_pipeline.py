@@ -536,21 +536,29 @@ def test_aggregate_multi_chunk_synthesizes_from_chunk_summaries(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_relevance_scrape_failure_keeps_result_with_fallback(
-    monkeypatch, unresolved_egress_dns  # TASK-41708: the egress check resolves kept.example
-):
+async def test_relevance_scrape_failure_keeps_result_with_fallback(monkeypatch):
     monkeypatch.setattr(
         WebSearch_APIs,
         "chat_api_call",
         _fake_chat(["Selected Answer: True\nReasoning: looks relevant"]),
     )
+    # The pre-scrape egress check resolves the result's host: answer with a
+    # public address, without a lookup, so the scrape (and its failure) runs
+    # (TASK-41708).
+    from tldw_chatbook.Utils import egress
+
+    monkeypatch.setattr(egress, "_resolve", lambda host: ["93.184.216.34"])
+
+    scraped = []
 
     async def failing_scrape(url, **k):
+        scraped.append(url)
         raise RuntimeError("scrape died")
 
     monkeypatch.setattr(WebSearch_APIs, "scrape_article", failing_scrape)
     results = [_std_result("Kept Title", "https://kept.example/", "snippet text")]
     out = await WebSearch_APIs.search_result_relevance(results, "q", [], "openai")
+    assert scraped == ["https://kept.example/"], "the scrape-failure path must run"
     assert len(out) == 1
     entry = next(iter(out.values()))
     assert entry["url"] == "https://kept.example/" and entry["title"] == "Kept Title"

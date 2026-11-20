@@ -55,6 +55,7 @@ unrestricted opt-in.
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 import threading
 from collections.abc import Sequence
@@ -150,6 +151,8 @@ _real_getaddrinfo = socket.getaddrinfo
 _socketpair_state = threading.local()
 
 _INET_FAMILIES = frozenset({socket.AF_INET, socket.AF_INET6})
+#: How ThreadPoolExecutor names its workers: `<thread_name_prefix>_<n>`.
+_POOL_WORKER = re.compile(r".+_\d+")
 _IPV4_LOOPBACK_NETWORK = ipaddress.ip_network("127.0.0.0/8")
 _IPV6_LOOPBACK_ADDRESS = ipaddress.IPv6Address("::1")
 
@@ -243,16 +246,16 @@ def describe_blocked_attempts(
         for (call, address), thread in zip(attempts, padded)
     )
     main = threading.main_thread().name
-    # `asyncio_N` is the event loop's default executor, where `loop.getaddrinfo`
-    # runs, almost always for the current test's own coroutine (TASK-41708).
-    executor = sorted({name for name in threads if name.startswith("asyncio_")})
-    foreign = sorted(
-        {name for name in threads if name != main and name not in executor}
-    )
-    if executor:
+    # ThreadPoolExecutor names its workers `<prefix>_N`: `asyncio_N` (the event
+    # loop's executor, where `loop.getaddrinfo` runs) and every product pool
+    # (`deep-search-dns-guard_N`, ...). A lookup there was submitted by the code
+    # under test, almost always the current test's (TASK-41708).
+    pool = sorted({name for name in threads if _POOL_WORKER.fullmatch(name)})
+    foreign = sorted({name for name in threads if name != main and name not in pool})
+    if pool:
         detail += (
-            f" ({', '.join(executor)}: the event loop's executor, where "
-            "loop.getaddrinfo runs; usually this test's own lookup)"
+            f" ({', '.join(pool)}: a thread-pool worker, where submitted lookups "
+            "such as loop.getaddrinfo run; usually this test's own)"
         )
     if not foreign:
         return detail

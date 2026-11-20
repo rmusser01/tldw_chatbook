@@ -509,13 +509,16 @@ def test_a_main_thread_attempt_is_not_blamed_on_an_earlier_test() -> None:
     assert "EARLIER test" not in message
 
 
-def test_an_executor_thread_lookup_is_not_blamed_on_an_earlier_test() -> None:
-    """``loop.getaddrinfo`` runs on the loop's executor, ``asyncio_N`` (TASK-41708)."""
+@pytest.mark.parametrize(
+    "worker", ["asyncio_0", "deep-search-dns-guard_2", "ThreadPoolExecutor-3_1"]
+)
+def test_a_thread_pool_lookup_is_not_blamed_on_an_earlier_test(worker) -> None:
+    """``loop.getaddrinfo`` and product pools resolve on ``<prefix>_N`` workers (TASK-41708)."""
     message = network_guard.describe_blocked_attempts(
-        (("socket.getaddrinfo", "example.test:None"),), ("asyncio_0",)
+        (("socket.getaddrinfo", "example.test:None"),), (worker,)
     )
-    assert "asyncio_0" in message
-    assert "event loop's executor" in message
+    assert worker in message
+    assert "thread-pool worker" in message
     assert "EARLIER test" not in message
 
 

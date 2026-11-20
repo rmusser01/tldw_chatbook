@@ -209,7 +209,7 @@ def _percent_message(call: ast.Call) -> str | None:
     if not (isinstance(message, ast.Constant) and isinstance(message.value, str)):
         return None
     text = message.value
-    arguments = len(call.args) - index - 1
+    arguments = len(call.args) - index - 1 + len(call.keywords)
     if not arguments or not _PERCENT_PLACEHOLDER.search(text):
         return None
     try:
@@ -217,7 +217,8 @@ def _percent_message(call: ast.Call) -> str | None:
         fields = sum(1 for _, name, _, _ in parsed if name is not None)
     except ValueError:
         fields = 0  # not a valid str.format template at all
-    # str.format drops positional arguments beyond its fields (TASK-41714).
+    # str.format drops arguments beyond its fields; keywords count, since a
+    # `%s` reaches no keyword either (TASK-41714).
     return text if fields < arguments else None
 
 
@@ -292,6 +293,19 @@ def test_the_loguru_scan_flags_a_mixed_brace_and_percent_call(tmp_path):
     )
 
     assert _percent_style_loguru_calls(planted) == [(2, "{} rows to %s")]
+
+
+def test_the_loguru_scan_flags_keyword_only_percent_calls(tmp_path):
+    """Keyword arguments are format arguments too; `%s` reaches none of them."""
+    planted = tmp_path / "keywords.py"
+    planted.write_text(
+        "from loguru import logger\n"
+        'logger.info("x %s", value=3)\n'
+        'logger.error("Failed: %s", exc_info=True)\n'
+        'logger.info("x {value}", value=3)\n'
+    )
+
+    assert _percent_style_loguru_calls(planted) == [(2, "x %s"), (3, "Failed: %s")]
 
 
 def test_no_loguru_call_uses_percent_style_with_arguments():
