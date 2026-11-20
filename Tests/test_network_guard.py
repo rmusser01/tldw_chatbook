@@ -519,6 +519,7 @@ def test_a_thread_pool_lookup_is_not_blamed_on_an_earlier_test(worker) -> None:
     )
     assert worker in message
     assert "thread-pool worker" in message
+    assert "may carry an earlier test's work" in message
     assert "EARLIER test" not in message
 
 

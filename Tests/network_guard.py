@@ -248,14 +248,16 @@ def describe_blocked_attempts(
     main = threading.main_thread().name
     # ThreadPoolExecutor names its workers `<prefix>_N`: `asyncio_N` (the event
     # loop's executor, where `loop.getaddrinfo` runs) and every product pool
-    # (`deep-search-dns-guard_N`, ...). A lookup there was submitted by the code
-    # under test, almost always the current test's (TASK-41708).
+    # (`deep-search-dns-guard_N`, ...). Code under test submitted the lookup, but
+    # a module-level pool outlives tests and can still be running an earlier
+    # test's work (TASK-41708).
     pool = sorted({name for name in threads if _POOL_WORKER.fullmatch(name)})
     foreign = sorted({name for name in threads if name != main and name not in pool})
     if pool:
         detail += (
-            f" ({', '.join(pool)}: a thread-pool worker, where submitted lookups "
-            "such as loop.getaddrinfo run; usually this test's own)"
+            f" ({', '.join(pool)}: a thread-pool worker; the lookup was submitted "
+            "by code under test, and a pool that outlives tests may carry an "
+            "earlier test's work)"
         )
     if not foreign:
         return detail
