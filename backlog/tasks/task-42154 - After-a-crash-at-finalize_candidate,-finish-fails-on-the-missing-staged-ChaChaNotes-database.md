@@ -4,7 +4,7 @@ title: "After a crash at finalize_candidate, finish fails on the missing staged 
 status: To Do
 assignee: []
 created_date: 2026-11-20 22:23
-updated_date: 2026-11-20 22:23
+updated_date: 2026-11-20 22:34
 labels:
 - follow-up
 - backup
@@ -32,7 +32,26 @@ What happens:
 
 `finish` is offered as a recovery action but cannot complete after this crash point.
 
-The probe script is `scratchpad/fu/pd-crash-probe.py` in the round's scratch folder; run it through `run.sh` with `finish` or `rollback`.
+Recipe (the round's scratch probe will be deleted; this is enough to write AC#1's test):
+1. Build the case on `Tests/Backup_Recovery/test_created_owner_rollback.py`'s `_SCENARIO`:
+   - `CASES={'control': {'groups': _PET_GROUPS, 'stores': (), 'extra': (), 'files': {}, 'delete': (), 'refusal': None}}`;
+   - `BOARD_INSERT=_BOARD_INSERT`;
+   - `LOCATION='separate'`, or `'default'` for the default-location variant.
+2. Insert the crash point into the scenario's target role, just before `restored=reviewed(service,`:
+   ```
+   from tldw_chatbook.Backup_Recovery import publication as crash_publication
+   crash_publication.finalize_candidate=lambda *args,**kwargs:os._exit(17)
+   ```
+   `replace()` imports `finalize_candidate` from `publication` inside the function, so the patch takes effect.
+3. Run the source role, then the target role, each in a child process with `test_home_citation_retirement._run`'s environment: `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `TLDW_CONFIG_PATH=<root>/config/config.toml` under the role's root, plus `TLDW_TEST_MODE=1`. The target exits with 17, after publication.
+4. In a fresh child with the target's environment:
+   ```
+   pending,_=bootstrap._records(bootstrap.default_bootstrap_root())
+   operation=pending[0]['operation_id']
+   recover_replacement(operation,control_root=Path.home()/'recovery-control',action=ACTION,rollback_password=b'rollback-test-password',cancel=Event())
+   ```
+   (from `tldw_chatbook.Backup_Recovery.replacement`).
+5. Check `bootstrap.startup_permission(selector, bootstrap.default_bootstrap_root())` afterwards. With `ACTION='finish'` this raises today and startup stays `(False, 'recovery_pending')`; with `ACTION='rollback'` it returns `rolled_back` and startup is `(True, 'startup_allowed')`.
 
 Priority medium: the app refuses to start until rollback is chosen, though rollback recovers it and nothing is lost.
 <!-- SECTION:DESCRIPTION:END -->

@@ -147,9 +147,10 @@ the safety copy retains the removed data.
 Pet settings are part of **Settings** and live in each profile's configuration
 folder, beside `config.toml`, so Replace treats them like the profile's other
 settings files. A backup's pets replace the profile's pets, and a backup from a
-profile without pets removes them. For a profile at the default configuration
-location (`~/.config/tldw_cli`), both of these currently refuse, with nothing
-changed, until a later fix. The pet's dated copies are its own rotating
+profile without pets removes them. At the default configuration location
+(`~/.config/tldw_cli`), a backup's pets are not yet restored into a profile
+there that has none, and a backup without pets does not yet remove a profile's
+pets; such a Replace refuses with nothing changed, until a later fix. The pet's dated copies are its own rotating
 backups, so a backup leaves them out and Replace leaves the profile's copies in
 place. A backup made before this change holds dated copies; a restore skips
 them and still restores the current pets. An older backup taken while every profile
