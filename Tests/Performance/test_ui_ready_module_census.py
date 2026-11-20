@@ -200,13 +200,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: card's offer sync, out of `chat_screen.py` for its size ratchet; it first
 #: runs on the UI thread just after ready (10 calls in the first second,
 #: measured), so a lazy import would land on that frame. Same-probe warm boot:
-#: dev 26b2e677dd 1039, this branch 1042 (+3). Its other three new residents
-#: (`LLM_Calls.chat_transport_retry`, `LLM_Calls.provider_reason`,
-#: `Provider_Contract.provider_setup_facts`) were deferred; see
-#: ABSENT_AT_READY_MODULES. Rebased 2026-11-19 onto dev a6df4d8d48: dev
-#: measures 1039 and this branch 1042, the same three residents (+3), so the
-#: limit stays dev's 1040 + 3. Dev's TASK-40300 readiness now loads
-#: `Provider_Contract.provider_setup_facts` at first paint itself (below).
+#: dev 26b2e677dd 1039, this branch 1042 (+3). Its send-time helpers
+#: `LLM_Calls.chat_transport_retry` and `LLM_Calls.provider_reason` are
+#: deferred; see ABSENT_AT_READY_MODULES.
+#: `Provider_Contract.provider_setup_facts` is resident at ready on dev
+#: itself: dev's readiness (TASK-40300's endpoint check) loads it before
+#: ready, so it left ABSENT_AT_READY_MODULES. Rebased 2026-11-19 onto dev
+#: a6df4d8d48: dev measures 1039 and this branch 1042, the same three
+#: residents (+3), so the limit stays dev's 1040 + 3.
 MAX_TLDW_MODULES_AT_UI_READY = 1043
 
 #: Modules a thread other than the UI loop imports during boot, so whether
