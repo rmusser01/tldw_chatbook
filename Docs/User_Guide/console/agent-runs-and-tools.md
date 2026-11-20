@@ -1772,8 +1772,10 @@ Automatic or Off, the next time anything in Console settles (for example
 after your next message). The time the agent waits here does not count
 toward its automatic-work time limit (`[agents] max_autowake_wall_seconds`,
 900 seconds by default, counted from its first automatic turn), so compacting
-long after the pause still lets it go on with the time it had left. Other
-waits, such as an approval card, still count. See
+long after the pause still lets it go on with the time it had left. If other
+automatic work under the same allowance starts meanwhile (for example a wake
+in a chat the agent started), the clock runs again from then, and the rest of
+the wait counts. Other waits, such as an approval card, still count. See
 [When a chat reaches its context limit](context-and-rag.md#when-a-chat-reaches-its-context-limit).
 
 **Exactly-once, by ledger.** Every sub-agent run has a durable
