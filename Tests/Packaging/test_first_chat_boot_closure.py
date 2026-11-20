@@ -122,11 +122,22 @@ print("FIRST_CHAT_APP_CLOSURE_OK")
 
 
 _READINESS_SNIPPET = """
+import sys
+
 from tldw_chatbook.Chat import console_session_settings as session_settings
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SEND_OUTCOMES,
     ConsoleSessionSettings,
     build_console_settings_readiness,
+)
+
+# Importing readiness and the ledger still leaves the setup facts unloaded:
+# dev's endpoint check loads them when readiness runs, not at import
+# (``_route_owning_presets`` imports them lazily).
+FACTS = "tldw_chatbook.Provider_Contract.provider_setup_facts"
+assert FACTS not in sys.modules, (
+    "importing console_session_settings already loads " + FACTS
+    + " -- keep that import inside the endpoint interpretation"
 )
 
 asked = []
@@ -201,7 +212,7 @@ def test_app_import_leaves_the_send_time_chat_helpers_unloaded(tmp_path: Path) -
     assert "FIRST_CHAT_APP_CLOSURE_OK" in result.stdout
 
 
-def test_readiness_with_no_recorded_window_leaves_setup_facts_unloaded(
+def test_readiness_with_no_recorded_window_never_interprets_the_endpoint(
     tmp_path: Path,
 ) -> None:
     """First-paint readiness does not interpret an endpoint it cannot use.
@@ -209,7 +220,8 @@ def test_readiness_with_no_recorded_window_leaves_setup_facts_unloaded(
     Since dev's TASK-40300 the setup facts are loaded at first paint by
     readiness's own endpoint check, so this counts the ledger's endpoint
     interpretations (none with an empty ledger) instead of reading
-    ``sys.modules``.
+    ``sys.modules`` after readiness runs. Importing readiness still leaves
+    the setup facts unloaded, and that is checked before it runs.
 
     Args:
         tmp_path: pytest fixture; isolated dir for the subprocess's HOME/XDG.
