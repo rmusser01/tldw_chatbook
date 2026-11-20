@@ -144,7 +144,8 @@ unresolved disposition. Task/phase durable settlement remains separately require
 Native capture requires Git >=2.36 and refuses promisor/partial-clone remotes
 before helper-capable entry (including implicit fetch from object lookup). It
 refuses a configured clean/process/smudge filter only when a path the invocation
-can reach selects that driver through Git attributes (TASK-42101; see ADR-084). Each invocation independently disables
+can reach selects that driver through Git attributes, and empties every configured
+driver for the command itself so that none can run (TASK-42101; see ADR-084). Each invocation independently disables
 hooks, signing, fsmonitor, automatic GC/maintenance and external diff/textconv.
 Private built-in version/config discovery and the actual command share the same
 finite opaque job. Global ignore rules, historical contents and restore semantics

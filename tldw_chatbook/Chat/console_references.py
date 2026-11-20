@@ -463,15 +463,16 @@ def run_git_reference(
         return subprocess.CompletedProcess(cmd, code, stdout, stderr)
 
     def run_at(root, args):
+        env = dict(environment)  # qualification adds this invocation's filter pins
         cmd = qualified_git_command(
             executable,
             ["-C", str(root)],
             args,
-            environment,
+            env,
             run_process,
             RuntimeError,
         )
-        result = run_process(cmd, environment)
+        result = run_process(cmd, env)
         if result.returncode:
             raise RuntimeError("git reference command failed")
         return result.stdout
