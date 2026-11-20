@@ -1431,6 +1431,12 @@ jobs:
     # not its `--print-occurrences` check, which is unlaned).
     # TASK-39153: the persistent terminal privacy boundary runs last; its one
     # bootstrap_profile node must not precede a sandboxed suite (TASK-32873).
+    # Round 18: 21 PR runs to 2026-11-20 took 6-11 min of the 20. TASK-42009
+    # adds the SQLite validation file (sandboxed, 82 tests, 55.5 s serially at
+    # load 31; its RAG nodes went red on dev unseen) before the ChaChaNotesDB
+    # files. TASK-42025 adds the logging-style scans (sandboxed, 10 tests,
+    # 6.2 s at load 28) and the network guard (sandboxed, 31 tests, 1.4 s at
+    # load 26) after it.
     name: Architecture guard contracts
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1491,6 +1497,9 @@ jobs:
             Tests/Architecture/test_console_review_selection_controller_boundary.py \
             Tests/Architecture/test_console_wave6_inventory.py \
             Tests/Backup_Recovery/test_restore_plan_excluded_directories.py \
+            Tests/Backup_Recovery/test_sqlite_validation.py \
+            Tests/test_stdlib_logging_format_style.py \
+            Tests/test_network_guard.py \
             Tests/ChaChaNotesDB/test_historical_bootstrap.py \
             Tests/ChaChaNotesDB/test_trigger_census.py \
             Tests/Architecture/test_persistent_terminal_privacy_boundary.py \
