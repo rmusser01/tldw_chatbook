@@ -49,13 +49,15 @@ from .screen_constants import (
 
 
 def _library_screen_is_current(screen: Any) -> bool:
-    """Reject delayed callbacks owned by a replaced Library screen."""
+    """Reject delayed callbacks owned by a replaced, detached or exiting Library screen.
+
+    TASK-42012: ``is_attached`` is False once shutdown sets ``App._exit``, and
+    an empty stack makes ``app.screen`` raise; neither screen is current.
+    """
     try:
-        runtime_app = screen.app
-        current_screen = getattr(runtime_app, "screen", screen)
+        return bool(screen.is_attached) and screen.app.screen is screen
     except Exception:
-        return True
-    return current_screen is screen
+        return False
 
 
 def library_note_persisted_title(raw_title: str) -> str:

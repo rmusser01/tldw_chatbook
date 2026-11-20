@@ -88,7 +88,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/DB/prompt_export.py": 241,
     # PR3346 pre-merge review: exact existing save and screen-derivation owners.
     "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
-    "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
+    # 2026-11-20, TASK-42012 (owner rule: raise by the change's own lines):
+    # 401 -> 403 (+2) -- the is-current helper is False past the exit fence.
+    "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 403,
     "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
     # 2026-11-19, TASK-41904 (owner rule: raise by the change's own lines):
     # 1567 -> 1571 (+4) -- a Send pressed during the first-send save waits.
