@@ -4997,6 +4997,52 @@ def test_a_cloud_base_ending_in_a_route_without_v1_is_refused(
     assert str(caught.value) == f"{name} API URL: {ENDPOINT_ROUTE_REFUSAL}"
 
 
+def _preset_keys():
+    from tldw_chatbook.provider_registry import ALL_RECORDS
+
+    return sorted(r.key for r in ALL_RECORDS if r.engine_driven and r.key != "custom-hosted")
+
+
+#: TASK-42020: request routes a base must not end in (TASK-41727's set).
+_PRESET_ROUTES = ("responses", "embeddings", "chat", "completions", "chat/completions/x")
+
+
+@pytest.mark.parametrize("provider", [*_preset_keys(), "zai"])
+def test_a_preset_or_zai_base_ending_in_a_route_is_refused(provider, monkeypatch):
+    """TASK-42020: TASK-41727 refused a route-ending path for the first-party
+    cloud keys, but the preset reading (TASK-34100.6) took any path as the
+    base, so Console and the save accepted Z.ai's ``.../v4/responses`` (read
+    as ``.../v4/responses/chat/completions``), which Z.ai's and the hosted
+    engine's own checks refuse at send. Every engine preset and Z.ai now
+    refuse it with the route refusal, and their adapters send nothing; the
+    documented base, with or without a pasted ``/chat/completions`` or
+    ``/models``, is still accepted."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+        endpoint_refusal,
+    )
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    base = RECORDS_BY_KEY[provider].default_base_url or "https://gw.example.com/v1"
+    for route in _PRESET_ROUTES:
+        assert endpoint_refusal(provider, f"{base}/{route}") == ENDPOINT_ROUTE_REFUSAL, route
+    for pasted in ("", "/chat/completions", "/models"):
+        assert endpoint_refusal(provider, base + pasted) == "", pasted
+    if provider not in {"together", "zai"}:
+        return
+    config = _cloud_config(("api_settings", provider), "api_base_url", {}, f"{base}/responses")
+    world = _cloud_world if provider == "zai" else _local_world
+    sent = world(monkeypatch, config)
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        _dispatch(provider)
+
+    assert sent == []
+    # Z.ai's resolver gives its own copy for any base the contract refuses.
+    assert _RESOLVER_REFUSALS.get(provider, ENDPOINT_ROUTE_REFUSAL) in str(caught.value)
+
+
 _QWENCLOUD_PASTED = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses"
 _QWENCLOUD_BASE = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 

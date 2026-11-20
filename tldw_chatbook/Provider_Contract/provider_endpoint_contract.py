@@ -350,6 +350,10 @@ def _resolve_provider_endpoint(
         provider_key
     )
     if preset is not None:
+        # TASK-42020: a route is not a preset's base either (Z.ai's
+        # .../v4/responses was sent as .../responses/chat/completions).
+        if _names_a_route(segments):
+            return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
         return _engine_preset_resolution(
             preset, provider_key, scheme, netloc, canonical_host, segments
         )
