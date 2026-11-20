@@ -4,7 +4,7 @@ title: "The Library is-current helper treats a detached screen as current"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 16:32
+updated_date: 2026-11-20 18:23
 labels:
 - follow-up
 - ui
@@ -62,3 +62,4 @@ A replaced or suspended screen got False before (another screen is on top) and s
 - **Size.** `screen_helpers.py` 401 -> 403; its `test_module_size_ratchet.py` row is raised by those 2 lines, with a dated comment.
 
 Files: `tldw_chatbook/UI/Library_Modules/screen_helpers.py`, `Tests/UI/test_screen_derivation_helpers.py`, `Tests/UI/test_library_skills_canvas.py`, `Tests/Architecture/test_module_size_ratchet.py`.
+- **Review r18lib-rev1.** Two places quoted the helper's old body: the Form B note in `library_skills_controller.py` (its line count is kept at 3170, so the library-modules size row holds) and `backlog/docs/library-decomposition-recipe.md`. Both now quote the new body.

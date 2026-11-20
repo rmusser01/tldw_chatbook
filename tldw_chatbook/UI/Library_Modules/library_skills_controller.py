@@ -158,9 +158,9 @@ scale.
      cancellation a silent, permanent no-op.
    - **Form B -- a shared shell helper, and the first one that actually
      shipped broken, caught only by the battery, not the static census.**
-     ``_library_screen_is_current(screen)`` (``screen_helpers.py``) reads
-     ``current_screen = getattr(screen.app, "screen", screen); return
-     current_screen is screen`` -- an identity check against the APP's
+     ``_library_screen_is_current(screen)`` (``screen_helpers.py``) returns
+     ``screen.is_attached and screen.app.screen is screen`` (TASK-42012)
+     -- an identity check against the APP's
      real current screen. FOUR candidates call it as a bare ``self``
      forward: ``handle_library_skills_import``, ``handle_library_skills_
      import_path_changed``, ``handle_library_skills_import_retry``,
