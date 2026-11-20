@@ -111,15 +111,36 @@ def test_indexing_native_lease_retires_on_owning_worker(tmp_path):
     assert observed
 
 
-def test_indexing_unknown_schema_is_rejected(tmp_path):
+@pytest.mark.parametrize(
+    "change",
+    [
+        "CREATE TABLE unknown_extension(value TEXT)",
+        # TASK-41718: the cache table without its index is no installed catalog.
+        "DROP INDEX idx_embedding_cache_created",
+    ],
+)
+def test_indexing_unknown_schema_is_rejected(tmp_path, change):
     from tldw_chatbook.Backup_Recovery.rag_indexing import recovery_adapters
 
     path = tmp_path / "index.db"
     owner = RAGIndexingDB(path)
     with owner.connection() as connection:
-        connection.execute("CREATE TABLE unknown_extension(value TEXT)")
+        connection.execute(change)
     owner.close()
     assert recovery_adapters()[0].validate(path) == ("unsupported_schema",)
+
+
+def test_indexing_catalog_from_before_the_embedding_cache_is_accepted(tmp_path):
+    """TASK-41718: an index made before TASK-34420 added embedding_cache, and
+    not opened since, keeps the older catalog; capture still accepts it."""
+    from tldw_chatbook.Backup_Recovery.rag_indexing import recovery_adapters
+
+    path = tmp_path / "index.db"
+    owner = RAGIndexingDB(path)
+    with owner.connection() as connection:
+        connection.execute("DROP TABLE embedding_cache")
+    owner.close()
+    assert recovery_adapters()[0].validate(path) == ()
 
 
 def test_idle_indexing_cache_retires_through_actual_caller_pause(tmp_path):

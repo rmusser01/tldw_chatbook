@@ -17,8 +17,7 @@ import pytest
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 # name: groups, operational stores (test_operational_owners.STORES), other
-# databases (module, class), databases built from their owner's installed
-# schema ("schema_dbs"), files {label: (folder, leaf, text)} where folder is
+# databases (module, class), files {label: (folder, leaf, text)} where folder is
 # data or config, databases the target deletes first, created databases a
 # writer then leaves -wal/-shm files beside ("wal"), whether a second
 # profile's config joins the config folder after the restore
@@ -116,9 +115,9 @@ _CASES = {
         "refusal": None,
     },
     # The MCP stores with their retained siblings, which keep their own IDs,
-    # the RAG pipeline file beside the config, and an indexing database built
-    # from the owner's installed schema (the current constructor adds a table
-    # that schema refuses, so capture would stop at unsupported_schema).
+    # the RAG pipeline file beside the config, and an indexing database made by
+    # RAGIndexingDB, as the app makes it (TASK-41718: capture refused its
+    # embedding_cache table as unsupported_schema).
     "tools": {
         # Indexing records depend on the Media, ChaChaNotes and Prompts
         # databases, so Library and Prompts come too.
@@ -139,8 +138,8 @@ _CASES = {
                 "DB.Library_Collections_DB",
                 "LibraryCollectionsDB",
             ),
+            ("db.rag_indexing", "DB.RAG_Indexing_DB", "RAGIndexingDB"),
         ),
-        "schema_dbs": ("db.rag_indexing",),
         "files": {
             "mcp.local": ("data", "local_mcp_store.json", '{"profiles": []}'),
             "mcp.targets": ("data", "mcp_server_targets.json", '{"targets": []}'),
@@ -242,17 +241,6 @@ if sys.argv[1]=='source':
         if hasattr(store,'_ensure_schema'):store._ensure_schema()
         for closer in ('close','close_connection'):
             if hasattr(store,closer):getattr(store,closer)();break
-        made[owner]=('data',paths[owner].relative_to(root).as_posix())
-    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
-    adapters={adapter.owner_id:adapter for adapter in install_adapters()}
-    for owner in case.get('schema_dbs',()):
-        import sqlite3
-        from contextlib import closing
-        statements=adapters[owner].schema_policy().schema_sql[0][1]
-        with closing(sqlite3.connect(paths[owner])) as db:
-            for sql in sorted(statements,key=lambda sql:not sql.startswith('CREATE TABLE')):db.execute(sql)
-            db.commit()
-        paths[owner].chmod(0o600)
         made[owner]=('data',paths[owner].relative_to(root).as_posix())
     for label,(folder,leaf,text) in case['files'].items():
         path=folders[folder]/leaf
