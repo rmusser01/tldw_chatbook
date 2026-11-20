@@ -1,8 +1,9 @@
 ---
 id: TASK-36949
 title: 'Work stream: CharactersRAGDB split by aggregate'
-status: To Do
+status: Done
 created_date: 2026-10-26 01:11
+updated_date: '2026-11-20 14:55'
 dependencies:
 - TASK-36942.1
 labels:
@@ -25,14 +26,14 @@ Source: architecture review 2026-10-25, `Docs/QA/architecture-review-2026-10-25/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every subtask of this stream is Done
-- [ ] #2 ChaChaNotes_DB.py has a size ratchet row that this stream lowers
+- [x] #1 Every subtask of this stream is Done
+- [x] #2 ChaChaNotes_DB.py has a size ratchet row that this stream lowers
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Closed 2026-11-20 on dev `d85e90bc9e`. AC #1: all six subtasks (TASK-36949.1 to .6) are Done. AC #2: TASK-36942.1 (`2e0adfee71`) added `ChaChaNotes_DB.py`'s size-ratchet row at 25,693. TASK-36949.2 (`9feb6e202b`) lowered it from 25,870 to 23,519. It is 22,544 now. The guard files `test_layer_direction.py`, `test_module_size_ratchet.py`, `test_app_string_lookup_census.py`, `test_agent_runtime_import_footprint.py` and `test_screen_size_ratchet.py` passed serially on dev `d85e90bc9e` through the scratch wrapper: 314 passed.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

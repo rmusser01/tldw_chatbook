@@ -1,8 +1,9 @@
 ---
 id: TASK-36941
 title: 'Work stream: defects surfaced by the 2026-10-25 architecture review'
-status: To Do
+status: Done
 created_date: 2026-10-26 01:05
+updated_date: '2026-11-20 14:55'
 labels:
 - architecture-review-2026-10-25
 - defect
@@ -22,13 +23,13 @@ Source: architecture review 2026-10-25, `Docs/QA/architecture-review-2026-10-25/
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every subtask of this stream is Done or explicitly closed with a recorded reason
+- [x] #1 Every subtask of this stream is Done or explicitly closed with a recorded reason
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Closed 2026-11-20 on dev `d85e90bc9e`. AC #1: all four subtasks (TASK-36941.1 to .4) are Done; none was closed with a reason instead.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
