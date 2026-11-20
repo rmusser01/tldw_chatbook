@@ -516,6 +516,8 @@ async def test_git_helpers_refuse_without_body(reference_host, key, value):
     h = reference_host
     git(h.root, "init", "-q")
     git(h.root, "add", "visible.txt")
+    # A filter refuses only when a path selects it (TASK-42101).
+    (h.root / ".gitattributes").write_text("visible.txt filter=fixture\n")
     git(h.root, "config", key, value)
     config = (h.root / ".git" / "config").read_bytes()
     assert (
@@ -527,6 +529,24 @@ async def test_git_helpers_refuse_without_body(reference_host, key, value):
         "configured" in row.content
         for row in h.store.messages_for_session(h.session.id)
     )
+
+
+async def test_a_configured_filter_no_path_selects_still_reads_staged(
+    reference_host,
+):
+    """TASK-42101: a filter no path selects (Git LFS installed) does not refuse."""
+    h = reference_host
+    git(h.root, "init", "-q")
+    git(h.root, "add", "visible.txt")
+    for part in ("clean", "process", "smudge"):
+        git(h.root, "config", f"filter.lfs.{part}", "never-start-this")
+    (h.root / ".gitattributes").write_text("*.bin filter=other\n")
+    config = (h.root / ".git" / "config").read_bytes()
+    assert (
+        await h.controller.submit_draft("read @staged", session_id=h.session.id)
+    ).accepted
+    await until(lambda: "VISIBLE-REFERENCE" in str(h.gateway.payloads))
+    assert (h.root / ".git" / "config").read_bytes() == config
 
 
 @pytest.fixture

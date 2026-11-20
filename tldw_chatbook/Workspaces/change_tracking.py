@@ -529,7 +529,7 @@ class ShadowRepo:
             env = self._env()
             if source is not None:
                 source.validate_root(self.root)
-                cmd = self._native_command(args, env)
+                cmd = self._native_command(args, env, input_data)
             try:
                 proc = self._run_process(cmd, env, input_data=input_data, binary=binary)
             except subprocess.TimeoutExpired as exc:
@@ -614,7 +614,7 @@ class ShadowRepo:
             )
         return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
 
-    def _native_command(self, args, env):
+    def _native_command(self, args, env, input_data=None):
         """Apply the shared native policy to this actual shadow repository."""
         from .native_git import qualified_git_command
 
@@ -625,6 +625,7 @@ class ShadowRepo:
             env,
             self._run_process,
             ChangeTrackingUnavailableError,
+            payload=input_data,
         )
 
     def _locked(self):

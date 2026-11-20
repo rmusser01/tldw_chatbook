@@ -422,7 +422,7 @@ def run_git_reference(
     )
     environment["GIT_TERMINAL_PROMPT"] = "0"
 
-    def run_process(cmd, env, *, binary=False):
+    def run_process(cmd, env, *, binary=False, input_data=None):
         if require_current is not None:
             require_current()
         if producer is None:
@@ -430,6 +430,7 @@ def run_git_reference(
                 cmd,
                 cwd=str(cwd),
                 env=env,
+                input=input_data,
                 capture_output=True,
                 timeout=timeout,
                 text=not binary,
@@ -449,7 +450,7 @@ def run_git_reference(
                     producer,
                     cmd,
                     env,
-                    None,
+                    input_data,
                     cwd=str(cwd),
                     timeout_seconds=timeout,
                 )
