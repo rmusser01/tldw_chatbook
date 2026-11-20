@@ -848,6 +848,10 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
             suffix={"tamagotchi_pets.json": "", "tamagotchi_pets.seeded": "seeded"}.get(
                 path.name, path.name
             ),
+            # TASK-42114: the store's dated copies are excluded, as capture
+            # lists them; a restore never recreates them.
+            exclude=path.name
+            not in {"tamagotchi_pets.json", "tamagotchi_pets.seeded"},
         )
     original.update(left)
     add("chatbooks.registry", root / "tldw_chatbook_chatbooks.json")

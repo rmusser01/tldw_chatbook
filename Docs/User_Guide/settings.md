@@ -2065,7 +2065,8 @@ copies of earlier states, so a change under one profile is not seen by another.
 Two profiles whose configuration files share one folder share their pets too.
 The pets are backed up and restored with **Settings**. The dated copies are the
 pet's own automatic backups, which it replaces as it saves, so a backup leaves
-them out; it holds the current pets and the first-run marker.
+them out; it holds the current pets and the first-run marker. A restore from an
+older backup that still holds dated copies restores only the current pets.
 
 Pets used to live in one folder that every profile shared
 (`~/.config/tldw_chatbook`, or `%APPDATA%\tldw_chatbook` on Windows). The first

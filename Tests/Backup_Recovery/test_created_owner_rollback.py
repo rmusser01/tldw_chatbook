@@ -209,6 +209,53 @@ _CASES.update(
             "extract": True,
             "refusal": None,
         },
+        # Archives made before TASK-42114 hold the store's dated copies. A
+        # restore never recreates them (the current pet file still restores),
+        # and a target's own same-named copy is left as it is (TASK-42114
+        # review).
+        "pets-legacy-dated": {
+            "groups": _PET_GROUPS,
+            "stores": (),
+            "extra": (),
+            "files": {
+                "pets": ("pets", "tamagotchi_pets.json", _PET),
+                "pets.dated": (
+                    "pets",
+                    "tamagotchi_pets.backup_20260101_000000.json",
+                    '{"dated": {"name": "Dated"}}',
+                ),
+            },
+            "legacy_dated_capture": True,
+            "uncaptured": ("pets.dated",),
+            "then": "later_rollback",
+            "delete": (),
+            "refusal": None,
+        },
+        "pets-legacy-dated-collision": {
+            "groups": _PET_GROUPS,
+            "stores": (),
+            "extra": (),
+            "files": {
+                "pets": ("pets", "tamagotchi_pets.json", _PET),
+                "pets.dated": (
+                    "pets",
+                    "tamagotchi_pets.backup_20260101_000000.json",
+                    '{"dated": {"name": "Dated"}}',
+                ),
+            },
+            "target_files": {
+                "own.dated": (
+                    "pets",
+                    "tamagotchi_pets.backup_20260101_000000.json",
+                    '{"own": {"name": "Own dated"}}',
+                ),
+            },
+            "legacy_dated_capture": True,
+            "uncaptured": ("pets.dated",),
+            "then": "later_rollback",
+            "delete": (),
+            "refusal": None,
+        },
         "pets-present": {
             "groups": _PET_GROUPS,
             "stores": (),
@@ -331,6 +378,14 @@ network_guard.install()
 for module in ('sounddevice','pyaudio'):sys.modules[module]=None
 case=json.loads(os.environ['CREATED_CASE'])
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
+if sys.argv[1]=='admit':
+    # A fresh start: startup permission, then startup admission.
+    from tldw_chatbook.Backup_Recovery import bootstrap
+    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+    permission=bootstrap.startup_permission(selector,bootstrap.default_bootstrap_root())
+    with acquire_storage():pass
+    print(json.dumps({'permission':list(permission)}))
+    raise SystemExit(0)
 if sys.argv[1]=='start':
     # TASK-42022: storage access after the restore, as a fresh app start
     # makes it: admission of the pet path, containment over the profile's
@@ -450,6 +505,14 @@ service=RecoveryService(default_control_root() if LOCATION=='default' else Path.
 try:
     if role=='source':
         made=produce('source')['made']
+        if case.get('legacy_dated_capture'):
+            # Capture as before TASK-42114: the store's dated copies included.
+            from dataclasses import replace as replaced
+            from tldw_chatbook.Widgets.Tamagotchi import recovery as pet_recovery
+            current=pet_recovery._ConfiguredPets.discover
+            pet_recovery._ConfiguredPets.discover=lambda self,config:tuple(
+                replaced(item,status='included') if item.owner=='tamagotchi.config' and item.status=='intentionally_excluded' else item
+                for item in current(self,config))
         preview=service.preview_backup((source,),options=backup_options)
         assert preview.complete,[(row.owner,row.status,row.logical_id) for row in preview.items if row.status in {'missing_required','unsupported','unavailable'}]
         succeeded(service,service.start_backup((source,),preview.scope_digest,Path.home()/'created.tldw-backup.zip',options=backup_options,password=None))
@@ -483,7 +546,11 @@ try:
             if folder=='pets':assert paths[label].read_text()==text,label
         for label in case.get('uncaptured',()):
             folder,leaf,_=case['files'][label]
-            assert not (Path(folders[folder])/leaf).exists(),'restore created '+label
+            kept=[text for own_folder,own_leaf,text in case.get('target_files',{}).values() if own_leaf==leaf]
+            if kept:
+                assert (Path(folders[folder])/leaf).read_text()==kept[0],'restore replaced the profile\'s own '+leaf
+            else:
+                assert not (Path(folders[folder])/leaf).exists(),'restore created '+label
         retired=[label for label in case.get('retired',()) if own[label][0].exists()]
         assert not retired,'restore kept '+repr(retired)
         assert snapshot(shared_pets)==shared_before,'restore changed the old shared pet folder'
@@ -548,9 +615,14 @@ try:
             assert not kept,'rollback kept created files: '+repr(sorted(kept))
             for label in case.get('retired',()):
                 assert own[label][0].read_text()==own[label][1],'rollback did not bring back '+label
+            for label,(path,text) in own.items():
+                if label not in case.get('retired',()):
+                    assert path.read_text()==text,'rollback changed the profile\'s own '+label
             assert snapshot(shared_pets)==shared_before,'rollback changed the old shared pet folder'
             sidecars=[str(path)+suffix for path in paths.values() for suffix in ('-wal','-shm') if Path(str(path)+suffix).exists()]
             assert not sidecars,sidecars
+            if case.get('then')=='later_rollback':
+                assert produce('admit')['permission'][0] is True
             if case.get('wal'):
                 # The post-restore board reached the new safety copy before the
                 # database retired (as test_later_created_destinations checks

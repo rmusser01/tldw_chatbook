@@ -6,7 +6,9 @@ the profile's other settings files. The archive rows are unchanged, so a backup
 taken while pets sat in the old shared folder restores into the profile too.
 TASK-42114: the dated copies are the store's own rotating backups; they are
 listed as intentionally excluded, so a backup neither captures them nor
-registers them as roots. Older archives that hold them still restore.
+registers them as roots. A restore skips the dated rows that archives made
+before TASK-42114 hold (``rotating_copy``), so it never recreates them and
+leaves a target's own copies as they are; the current pet file still restores.
 """
 
 import re
@@ -27,6 +29,16 @@ _MARKER = "tamagotchi_pets.seeded"
 
 
 class _ConfiguredPets(_RawDeclaration):
+    @staticmethod
+    def rotating_copy(relative_path: str) -> bool:
+        """The store's own dated copies, which a restore never recreates.
+
+        TASK-42114 review: archives made before TASK-42114 hold them; a restore
+        skips those rows, so it neither creates them nor collides with a
+        target's own copies, which discovery lists as excluded.
+        """
+        return _DATED.fullmatch(relative_path) is not None
+
     def _restore_path(self, profile, payload, root, config_target):
         """Map only native pet files in their own top-level synthetic root."""
         key = f"profile:{profile}:tamagotchi.config"
