@@ -1198,6 +1198,9 @@ MINIMUM_FILES = 2437
 # _focus_library_list_entry nodes at the tail. The floor is the measured
 # entry count.
 MINIMUM_FILES = 2439
+# TASK-42073 (2026-11-20): append the Library character-repair file at the
+# tail. The floor is the measured entry count.
+MINIMUM_FILES = 2440
 
 
 def read_census(path: Path) -> list[str]:

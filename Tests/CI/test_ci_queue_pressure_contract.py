@@ -1075,6 +1075,9 @@ ADMISSION_3_TARGETS = (
     # typed text painted at AA on every measurable theme (bootstrap_profile;
     # 89 themes in one app, about 45 s).
     "Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme",
+    # TASK-42073: the Library Skills import file (module bootstrap_profile,
+    # 49 tests, 54-58 s serially), on no lane before.
+    "Tests/Skills/test_skills_import.py",
 )
 
 #: Follow-ups burn-down lanes (owner decision 2026-11-18, "New job"): the

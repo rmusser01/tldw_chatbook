@@ -162,12 +162,16 @@ async def test_repair_continuation_reaches_every_candidate_and_restarts_after_mu
             dialog = LibraryCharacterRepairDialog(controller, context)
             await app.push_screen(dialog)
             await pilot.pause()
+            # TASK-42073: candidates load in a thread worker; one pause can
+            # return while it is still RUNNING (`assert 0 == 20`).
+            await app.workers.wait_for_complete()
             assert len(controller.candidates) == 20
             seen = {item.key.character_id for item in controller.candidates}
             next_button = dialog.query_one("#library-character-repair-next", Button)
             assert not next_button.disabled
             await pilot.click(next_button)
             await pilot.pause()
+            await app.workers.wait_for_complete()
             seen.update(item.key.character_id for item in controller.candidates)
             assert len(seen) == 40
             assert (
@@ -176,15 +180,18 @@ async def test_repair_continuation_reaches_every_candidate_and_restarts_after_mu
             )
             next_button.press()
             await pilot.pause()
+            await app.workers.wait_for_complete()
             seen.update(item.key.character_id for item in controller.candidates)
             assert seen == ids
             assert next_button.disabled
 
             await pilot.click("#library-character-repair-refresh")
             await pilot.pause()
+            await app.workers.wait_for_complete()
             new_id = db.add_character_card({"name": "AAAA inserted"})
             await pilot.click(next_button)
             await pilot.pause()
+            await app.workers.wait_for_complete()
             assert controller.candidates[0].key.character_id == new_id
             assert len(controller.candidates) == 20
             assert (
@@ -389,6 +396,9 @@ async def test_real_textual_pilot_shows_explicit_repair_and_stale_refresh(
             )
 
 
+# TASK-42073: `_build_test_app` reads config (`load_settings()`), refused under
+# the per-test redirect (RecoveryRequired raw_source_selection_changed).
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_library_refreshes_real_cas_version_then_retry_succeeds(
     tmp_path,
@@ -450,6 +460,10 @@ async def test_mounted_library_refreshes_real_cas_version_then_retry_succeeds(
                     break
             dialog = harness.screen
             assert isinstance(dialog, LibraryCharacterRepairDialog)
+            # TASK-42073: the candidate select stays disabled until the
+            # dialog's refresh worker lands.
+            await dialog.workers.wait_for_complete()
+            await pilot.pause()
             controller = screen._navigation_controller.repair_controller
             assert controller is not None
             select = dialog.query_one("#library-character-repair-candidate", Select)
@@ -466,6 +480,9 @@ async def test_mounted_library_refreshes_real_cas_version_then_retry_succeeds(
             await pilot.pause()
             assert str(apply.label) == "Confirm repair"
             apply.press()
+            # TASK-42073: let the press start the CAS worker before waiting,
+            # or the wait can return first and the app exits mid-repair.
+            await pilot.pause()
             await dialog.workers.wait_for_complete()
             await pilot.pause()
 
