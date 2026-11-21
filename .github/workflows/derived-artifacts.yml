@@ -1449,8 +1449,10 @@ jobs:
     # load 26) after it. TASK-42026 adds the Media DB diagnostics privacy file
     # (Tests/DB keeps the bootstrap profile, so after the sandboxed block, 9
     # tests, 1.3 s at load 18) before the last node. TASK-42147 adds the
-    # timer-path census (sandboxed, so before Tests/DB; 19 tests, ~37 s
-    # serially at load 10-17; red on dev unseen).
+    # timer-path census after the network guard (sandboxed, so before the
+    # ChaChaNotesDB and Tests/DB files, which keep the bootstrap profile by
+    # directory name; 19 tests, ~37 s serially at load 10-17; red on dev
+    # unseen).
     name: Architecture guard contracts
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1514,9 +1516,9 @@ jobs:
             Tests/Backup_Recovery/test_sqlite_validation.py \
             Tests/test_stdlib_logging_format_style.py \
             Tests/test_network_guard.py \
+            Tests/Architecture/test_timer_path_static_update_inventory.py \
             Tests/ChaChaNotesDB/test_historical_bootstrap.py \
             Tests/ChaChaNotesDB/test_trigger_census.py \
-            Tests/Architecture/test_timer_path_static_update_inventory.py \
             Tests/DB/test_client_media_debug_logging.py \
             Tests/Architecture/test_persistent_terminal_privacy_boundary.py \
             --timeout=180 \

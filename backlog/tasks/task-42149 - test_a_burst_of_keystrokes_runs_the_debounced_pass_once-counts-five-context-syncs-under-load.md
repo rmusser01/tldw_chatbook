@@ -4,7 +4,7 @@ title: "test_a_burst_of_keystrokes_runs_the_debounced_pass_once counts five cont
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 18:44
+updated_date: 2026-11-21 21:34
 labels:
 - follow-up
 - tests
@@ -44,5 +44,11 @@ The test counts context syncs during a fixed `pilot.pause(0.35)` after six keyst
 **Fix.** The test now counts the debounced pass itself: an instance attribute on the workspace controller wraps `_start_console_conversation_browser_search` (the keystroke's timer looks it up there). It asserts none ran and no context sync ran before the first await, then waits (bounded, 250 x 0.02 s) for the pass and asserts it ran once, for "alpha6". The context-sync bound is gone.
 
 **Evidence.** Negative control: `transition_browser_search` calling the pass at once instead of arming the timer fails `assert ['a', 'al', '...ha', 'alpha6'] == []`. Fixed test: 10 of 10 at `-n 4`, load 31-44, under a temporary `@private_profile_test` marker, removed afterwards (the plain test stops at the local `RecoveryRequired` trap). The file is in no PR lane, and this task asks for none.
+
+**Review rev1 (2026-11-21).** After the one pass lands, the test pauses 0.25 s more and asserts `passes == ["alpha6"]` again, so a late duplicate pass fails.
+- **Negative controls:**
+  - A second timer per keystroke at 0.35 s (a late duplicate pass) passes the first check and fails the re-check: `['alpha6', 'a', ...] == ['alpha6']`, 2 of 2.
+  - Leaving the superseded timers running fails the first check, 2 of 2.
+- **Green:** 10 of 10 at `-n 4`, load 19-22, under the temporary marker, removed afterwards.
 
 Files: `Tests/UI/test_console_rail_search_debounce.py`.

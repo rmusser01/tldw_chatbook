@@ -513,14 +513,15 @@ ARCHITECTURE_GUARD_TARGETS = (
     # (DNS refusal included), on no PR lane before (~6 s and ~1 s serially).
     "Tests/test_stdlib_logging_format_style.py",
     "Tests/test_network_guard.py",
+    # TASK-42147: the timer-path `.update(` census, red on dev in no PR lane
+    # (pure AST, sandboxed, so before the ChaChaNotesDB and Tests/DB files below).
+    "Tests/Architecture/test_timer_path_static_update_inventory.py",
     # TASK-41653 / TASK-41655 (2026-11-19): the ChaChaNotes historical bootstrap
-    # sweep (versions 4..86) and the trigger census, on no lane before; sandboxed,
-    # so before the bootstrap_profile node below (102 tests, 99 s serially).
+    # sweep (versions 4..86) and the trigger census, on no lane before (102
+    # tests, 99 s serially). Tests/conftest.py keeps the bootstrap profile for
+    # the ChaChaNotesDB directory by name, so they follow the sandboxed block.
     "Tests/ChaChaNotesDB/test_historical_bootstrap.py",
     "Tests/ChaChaNotesDB/test_trigger_census.py",
-    # TASK-42147: the timer-path `.update(` census, red on dev in no PR lane
-    # (pure AST, sandboxed, so before the Tests/DB file below).
-    "Tests/Architecture/test_timer_path_static_update_inventory.py",
     # TASK-42026: the Media DB diagnostics privacy file (Tests/DB keeps the
     # bootstrap profile, so after the sandboxed block; ~1 s serially).
     "Tests/DB/test_client_media_debug_logging.py",

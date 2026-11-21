@@ -238,6 +238,10 @@ async def test_a_burst_of_keystrokes_runs_the_debounced_pass_once():
                     break
                 await pilot.pause(0.02)
             assert passes == ["alpha6"]
+            # A second pass (a superseded timer left running) would land
+            # within one more debounce interval.
+            await pilot.pause(0.25)
+            assert passes == ["alpha6"]
 
         assert console._console_conversation_browser_query == "alpha6"
 
