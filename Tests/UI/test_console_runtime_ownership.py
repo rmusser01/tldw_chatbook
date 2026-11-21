@@ -576,6 +576,77 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
     assert app.app_config["console"]["onboarding"]["first_send_completed"] is True
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_tab_opened_after_the_first_reply_shows_no_setup_guidance() -> None:
+    """TASK-42141 (owner decision 2026-11-21): setup guidance leaves as soon
+    as the first send completes, on tabs opened later in the same ChatScreen
+    visit too. The screen kept its first read of the flag for its whole life,
+    and the runtime sets the flag only after the reply, so a new empty tab
+    still showed the Get started card."""
+    from textual.widgets import Button
+
+    from Tests.UI.test_console_native_chat_flow import (
+        CapturingGateway,
+        _build_console_send_test_app,
+        _select_llamacpp_console,
+        _wait_for_reply,
+    )
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+        _visible_text,
+    )
+    from tldw_chatbook.Chat.console_onboarding_state import (
+        CONSOLE_QUIET_EMPTY_COPY,
+        CONSOLE_SETUP_CARD_TITLE,
+    )
+
+    gateway = CapturingGateway()
+    app = _build_console_send_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        # The screen reads the flag before the first send, as a fresh visit does.
+        assert console._console_first_send_completed() is False
+        await _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("first message")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_reply(console, pilot)
+        onboarding = app.app_config["console"]["onboarding"]
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not onboarding.get(
+            "first_send_completed"
+        ):
+            await pilot.pause(0.05)
+        assert onboarding.get("first_send_completed") is True
+
+        store = console._ensure_console_chat_store()
+        first_tab = store.active_session_id
+        console.query_one("#console-new-chat-tab", Button).press()
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and store.active_session_id == first_tab:
+            await pilot.pause(0.05)
+        assert store.active_session_id != first_tab, "the new tab never opened"
+        # Wait for the new tab's empty transcript to show either form of it.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            text = _visible_text(console)
+            if CONSOLE_QUIET_EMPTY_COPY in text or CONSOLE_SETUP_CARD_TITLE in text:
+                break
+            await pilot.pause(0.05)
+        text = _visible_text(console)
+        mode = console._build_console_setup_card_state().mode
+
+    assert mode == "quiet"
+    assert CONSOLE_SETUP_CARD_TITLE not in text
+    assert CONSOLE_QUIET_EMPTY_COPY in text
+
+
 @pytest.mark.asyncio
 async def test_runtime_injects_its_scratch_manager_into_chat_controller():
     runtime = ConsoleRuntime(type("App", (), {})())

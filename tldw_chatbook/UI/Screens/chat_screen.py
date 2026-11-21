@@ -11838,8 +11838,13 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _console_first_send_completed(self) -> bool:
-        """Return the persisted global first-send flag (cached per screen)."""
-        if self._console_first_send_completed_cached is None:
+        """Return the global first-send flag; only a True read is cached.
+
+        TASK-42141 (owner, 2026-11-21): guidance leaves as soon as the first
+        send completes, on new tabs too. ``ConsoleRuntime`` sets the flag in
+        ``app_config`` after that reply, so a False read is not kept.
+        """
+        if not self._console_first_send_completed_cached:
             app_config = getattr(self.app_instance, "app_config", None)
             raw = None
             if isinstance(app_config, dict):
