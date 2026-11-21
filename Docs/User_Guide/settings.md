@@ -413,13 +413,21 @@ the start of its documented path is completed to that path: Groq's
 `…/openai/v1`, and Google's `https://generativelanguage.googleapis.com` as
 `…/v1beta`. On any other host a bare address gets `/v1`, except under Cohere,
 whose adapter adds its own `/v2/chat`. An earlier version saved some of these
-addresses with `/v1` added; on the provider's own host the app rewrites them
-to the documented address once when it loads your config, and **s** saves
-them that way too: Google's `…/v1beta/v1` becomes `…/v1beta`, Cohere's
-`https://api.cohere.com/v1` the bare host, and Groq's, OpenRouter's and
-QwenCloud's `<host>/v1` become `…/openai/v1`, `…/api/v1` and
-`…/compatible-mode/v1`, with or without a pasted `/chat/completions` or
-`/models` after them (QwenCloud: `/responses` or `/chat/completions`), and a port you typed is kept.
+addresses with `/v1` added. The app rewrites these once when it loads your
+config, and **s** saves them that way too:
+
+- Google's `https://generativelanguage.googleapis.com/v1beta/v1` becomes `…/v1beta`.
+- Cohere's `https://api.cohere.com/v1`, and `https://api.cohere.ai/v1` on its
+  older host, become the bare host.
+- Groq's `https://api.groq.com/v1` becomes `…/openai/v1`.
+- OpenRouter's `https://openrouter.ai/v1` becomes `…/api/v1`.
+- QwenCloud's `https://dashscope-intl.aliyuncs.com/v1`, and
+  `https://dashscope.aliyuncs.com/v1` on its China host, become
+  `…/compatible-mode/v1` on the same host.
+
+Each is rewritten with or without a pasted `/chat/completions` or `/models`
+after it (QwenCloud: `/responses` or `/chat/completions`), and the host and any
+port you typed are kept.
 Loading rewrites only the address as an earlier version saved it; one you edited by
 hand (capital letters in the host, a trailing slash) is rewritten the next time you
 save a change to that provider with **s** (change any of its fields, the Endpoint

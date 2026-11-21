@@ -113,6 +113,10 @@ _V1_APPENDED_PATHS = {
     "openrouter": ("v1",),
     "qwencloud": ("v1",),
 }
+#: TASK-42153 (owner decision 2026-11-21, "153 - yes"): a shape is also read on
+#: QwenCloud's China host and Cohere's old host, as on the provider's own host
+#: (the documented path on the host typed); config migration 3 keeps a copy.
+_V1_APPENDED_OTHER_HOSTS = {"qwencloud": "dashscope.aliyuncs.com", "cohere": "api.cohere.ai"}
 
 
 #: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
@@ -489,7 +493,8 @@ def _read_v1_appended_path(
     provider_key: str, host: str, segments: tuple[str, ...]
 ) -> tuple[str, ...]:
     """The documented path for a ``_V1_APPENDED_PATHS`` shape on the provider's
-    own host; any other path unchanged (TASK-42002).
+    own host or its ``_V1_APPENDED_OTHER_HOSTS`` host (TASK-42153); any other
+    path unchanged (TASK-42002).
 
     The shape may be followed by a tail the reading drops (a pasted
     ``/chat/completions`` or ``/models``, and QwenCloud's ``/responses``);
@@ -504,6 +509,8 @@ def _read_v1_appended_path(
         provider_key != "qwencloud" or tail != ("responses",)
     ):
         return segments
+    if _V1_APPENDED_OTHER_HOSTS.get(provider_key) == host:
+        host = urlsplit(RECORDS_BY_KEY[provider_key].default_base_url or "").hostname or host
     documented = _documented_own_path(provider_key, host)
     return segments if documented is None else documented + tail
 
@@ -511,9 +518,10 @@ def _read_v1_appended_path(
 def v1_appended_documented_base(provider: object, value: object) -> str | None:
     """The documented base a value saved with ``/v1`` wrongly appended reads as.
 
-    TASK-42002: the parity oracle for config migration 2, which keeps its own
-    frozen copy of ``_V1_APPENDED_PATHS`` (config is kernel). A save does not
-    call this; it resolves through ``_read_v1_appended_path``. The parity test
+    TASK-42002: the parity oracle for config migrations 2 and 3 (TASK-42153),
+    which keep their own frozen copy of ``_V1_APPENDED_PATHS`` (config is
+    kernel). A save does not call this; it resolves through
+    ``_read_v1_appended_path``. The parity test
     asserts the migration agrees with this on every spelling a save wrote
     (own host, an optional port, each tail); the migration leaves alone
     spellings no save wrote (a leading-zero port, an upper-case host, a

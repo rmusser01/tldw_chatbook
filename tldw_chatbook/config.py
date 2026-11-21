@@ -23,7 +23,7 @@ import sys
 from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from functools import lru_cache
+from functools import lru_cache, partial
 
 if sys.version_info < (3, 11):
     import tomli as tomllib
@@ -3972,15 +3972,21 @@ def format_config_key_report(findings: Sequence[ConfigKeyFinding]) -> str:
 #: carrying this version. An unversioned (pre-existing) file is treated as
 #: the baseline (0) and migrated forward, never rejected.
 CONFIG_SCHEMA_VERSION_KEY = "config_schema_version"
-_CURRENT_CONFIG_SCHEMA_VERSION = 2
+_CURRENT_CONFIG_SCHEMA_VERSION = 3
 #: TASK-42002: the path an earlier Settings saved with ``/v1`` appended on each
 #: provider's own (registry default) host. A migration is a frozen fix and
 #: config is kernel, so it keeps this copy instead of calling the endpoint
 #: contract (round-18 hotfix); a parity test pins it to the contract's rule.
 _V1_APPENDED_SHAPES = {"google": "/v1beta/v1", "cohere": "/v1", "groq": "/v1", "openrouter": "/v1", "qwencloud": "/v1"}
+#: TASK-42153 (owner decision 2026-11-21, "153 - yes"): migration 3 reads the
+#: same shapes on two hosts migration 2 left alone (frozen copy of the
+#: contract's table, pinned by the same parity test).
+_V1_APPENDED_OTHER_HOSTS = {"qwencloud": "dashscope.aliyuncs.com", "cohere": "api.cohere.ai"}
 
 
-def _migrate_v1_appended_provider_bases(config: Dict[str, Any]) -> Dict[str, Any]:
+def _migrate_v1_appended_provider_bases(
+    config: Dict[str, Any], hosts: Optional[Mapping[str, str]] = None
+) -> Dict[str, Any]:
     """Migration 2 (TASK-42002, owner decision 2026-11-19 "Migrate on load").
 
     Rewrites an ``api_base_url`` an earlier Settings saved with ``/v1``
@@ -3988,7 +3994,9 @@ def _migrate_v1_appended_provider_bases(config: Dict[str, Any]) -> Dict[str, Any
     to the base a save writes for it; those configs' project-instruction keys
     change once. Only a spelling a save wrote matches: the provider's own host,
     with or without the port typed (kept), so user info, a query or a fragment
-    never does.
+    never does. Migration 3 (TASK-42153) passes ``hosts``, the one host per
+    provider to read instead (``_V1_APPENDED_OTHER_HOSTS``); the documented
+    path goes on the host typed.
     """
     api_settings = config.get("api_settings")
     for provider, table in (api_settings.items() if isinstance(api_settings, dict) else ()):
@@ -3997,13 +4005,14 @@ def _migrate_v1_appended_provider_bases(config: Dict[str, Any]) -> Dict[str, Any
         if not isinstance(value, str):
             continue
         default = urlsplit(RECORDS_BY_KEY[provider].default_base_url)
+        own_host = default.hostname if hosts is None else hosts.get(provider)
         # QwenCloud's adapter refuses a /models base (TASK-42021), so it is kept.
         tails = ("", "/chat/completions", "/responses" if provider == "qwencloud" else "/models")
         scheme, _, rest = value.partition("://")
         netloc, slash, remainder = rest.partition("/")
         host, colon, port = netloc.partition(":")
         # Review rev1: a save kept a typed port (1-65535, no leading zero).
-        if (scheme in ("http", "https") and host == default.hostname
+        if (scheme in ("http", "https") and host == own_host
                 and (not colon or (re.fullmatch(r"[1-9][0-9]{0,4}", port) and int(port) < 65536))
                 and slash + remainder in {shape + tail for tail in tails}):
             table["api_base_url"] = documented = default._replace(scheme=scheme, netloc=netloc).geturl()
@@ -4015,7 +4024,10 @@ def _migrate_v1_appended_provider_bases(config: Dict[str, Any]) -> Dict[str, Any
 #: Numbered stepwise migrations: ``{target_version: fn(config) -> config}``.
 #: Each transforms a config AT (target-1) into (target), mirroring the DB
 #: migration pattern.
-_CONFIG_MIGRATIONS: Dict[int, Any] = {2: _migrate_v1_appended_provider_bases}
+_CONFIG_MIGRATIONS: Dict[int, Any] = {
+    2: _migrate_v1_appended_provider_bases,
+    3: partial(_migrate_v1_appended_provider_bases, hosts=_V1_APPENDED_OTHER_HOSTS),
+}
 
 
 def migrate_config_forward(

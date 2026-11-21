@@ -701,7 +701,8 @@ def test_propagation_follows_imports_not_names():
 # TASK-41145 (owner decision 2026-11-16): MLX-LM ships host and port, not an
 # unused api_url.
 # TASK-42002: a fresh config carries config schema version 2.
-_TEMPLATE_SHA256 = "38f4eab709eae70aeac1300e596da94632dbc3e906b72d3f08be5be36f21f67d"
+# TASK-42153: and now version 3 (config migration 3).
+_TEMPLATE_SHA256 = "2199410528eeca0e5de3fadd612c987867d87531d9db0c5c6fc0b9500d4448d9"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
