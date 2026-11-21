@@ -65,6 +65,13 @@ from Tests.UI.test_library_shell import (
 )
 from Tests.UI.test_library_skills_canvas import _CanvasHost, _two_row_state
 
+# TASK-42073: the mounted-Library tests build the app through
+# test_library_shell's `_build_test_app` (`load_settings()`), whose config reads
+# are refused under the per-test TLDW_CONFIG_PATH redirect (RecoveryRequired
+# raw_source_selection_changed). Keep the collection-time profile, as
+# test_library_shell.py does for the same harness.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "superpowers_skills"
 
@@ -147,6 +154,10 @@ async def _run_skills_import_via_ui(
     task-291 closed the residual stale-text false-pass: the success copy now
     carries the imported skill's NAME, so callers assert the name-specific
     line and a stale success from the previous import can never satisfy it.
+
+    TASK-42073: the first change can be the in-flight line
+    ("Inspecting/importing…"), so only a change painted after the import
+    left flight counts as the outcome.
     """
     status_widgets = list(screen.query("#library-skills-import-status"))
     assert status_widgets, "Skills import status did not mount"
@@ -161,7 +172,12 @@ async def _run_skills_import_via_ui(
         status_widgets = list(screen.query("#library-skills-import-status"))
         if status_widgets:
             status_text = str(status_widgets[0].renderable)
-            if status_text != previous:
+            # The in-flight line can grow a "· still working · Cancel" tail.
+            if (
+                status_text != previous
+                and not status_text.startswith("Inspecting/importing")
+                and not screen._library_skills_import_in_flight
+            ):
                 return status_text
         await pilot.pause(0.02)
     return status_text
@@ -2077,7 +2093,6 @@ async def test_import_row_url_routes_to_remote_install_and_primes_review(
             screen,
             pilot,
             "https://github.com/o/remote-skill",
-            deadline_seconds=2,
         )
         assert captured, (
             app.library_skill_import_coordinator.snapshot,

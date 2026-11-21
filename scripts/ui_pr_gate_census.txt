@@ -3564,3 +3564,9 @@ Tests/UI/test_screen_navigation.py::test_library_completions_after_the_exit_fenc
 # 2 passed in 3.2 s serially with the lane's flags (load ~10).
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_prefers_still_checked_row_in_select_mode
 Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_checked_row_preference_is_media_only
+# TASK-42073 (2026-11-20): the Library character-repair file, on no lane
+# before. Its mounted-Library node now carries bootstrap_profile, and its
+# worker-backed nodes wait for the dialog's async workers (each awaits
+# asyncio.to_thread). 15 passed in
+# 10.9-16.2 s serially with the lane's flags (13 runs, load 10-12).
+Tests/UI/test_library_character_repair.py
