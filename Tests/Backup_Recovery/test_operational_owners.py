@@ -1,5 +1,6 @@
 """Behavioral recovery evidence for installed operational owners."""
 
+import errno
 import os
 from pathlib import Path
 import subprocess
@@ -898,6 +899,40 @@ def test_a_failed_pet_copy_writes_nothing_and_the_next_start_retries(
     old.chmod(0o600)
     monkeypatch.setattr(raw, "replace", real)
     assert ConfigFileStorage().list_pets() == ["old"]
+
+
+@pytest.mark.parametrize("held", ["directory", "locked_file"])
+def test_a_windows_refusal_at_the_old_shared_pet_path(tmp_path, monkeypatch, held):
+    """TASK-42023: Windows refuses to open a directory with PermissionError,
+    as it refuses a file another process holds. A directory is nothing to
+    copy; a file that cannot be read is a failed read, so nothing is written
+    and the next start retries. The refusal is simulated on every platform."""
+    from tldw_chatbook.Widgets.Tamagotchi import tamagotchi_storage as storage
+
+    folder, shared = _pet_profile(tmp_path, monkeypatch)
+    old = shared / "tamagotchi_pets.json"
+    if held == "directory":
+        old.mkdir()
+    else:
+        old.write_text('{"old": {"name": "Old"}}')
+    real_open = os.open
+
+    def windows_open(path, flags, *args, **kwargs):
+        if Path(path) == old:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real_open(path, flags, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(storage.os, "open", windows_open)
+        if held == "directory":
+            assert storage.ConfigFileStorage().list_pets() == []
+            assert (folder / "tamagotchi_pets.seeded").exists()
+            return
+        with pytest.raises(PermissionError):
+            storage.ConfigFileStorage()
+    assert os.open is real_open
+    assert list(folder.iterdir()) == []
+    assert storage.ConfigFileStorage().list_pets() == ["old"]
 
 
 def test_a_registered_file_a_replace_retired_contains_nothing(tmp_path):

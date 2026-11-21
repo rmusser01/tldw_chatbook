@@ -45,6 +45,9 @@ from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
 async def main():
  app=TldwCli()
  try:
+  # This fixture explicitly selects a Research path; initialize its lazy store
+  # (TASK-42010: absent, the capture preview stopped at missing_required).
+  assert app.local_research_service.list_sessions()==[]
   note_id=app.chachanotes_db.add_note('Retained RAG note','Native note for retained supplied vectors.')
   note=app.chachanotes_db.get_note_by_id(note_id);assert note['id']==note_id
   user_root=get_user_data_dir();projection_root=user_root/'chromadb'
