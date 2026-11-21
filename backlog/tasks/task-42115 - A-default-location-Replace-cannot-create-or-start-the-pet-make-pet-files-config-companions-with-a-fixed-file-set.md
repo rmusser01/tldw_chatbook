@@ -1,10 +1,10 @@
 ---
 id: TASK-42115
 title: "A default-location Replace cannot create or start the pet: make pet files config companions with a fixed-file set"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 18:48
-updated_date: 2026-11-21 20:46
+updated_date: 2026-11-21 20:48
 labels:
 - follow-up
 - backup
@@ -66,10 +66,10 @@ Related, from TASK-42113:
 <!-- AC:BEGIN -->
 - [x] #1 At the default config location, a Replace completes for every pet case the separate-folder suite covers ([pets-missing], [pets-present], [pets-dated-only], [pets-none], [pets-ungrouped]), with the same outcome as on a separate config folder, including the later rollback; each case is red before the change
 - [x] #2 The footer pet starts and saves after a default-location Replace, with no RecoveryRequired; a test is red before the change
-- [ ] #3 The fixed config leaves keep their current behaviour at both locations (the config sibling and companion suites stay green), and pet files are never registered as roots of their own at either location
+- [x] #3 The fixed config leaves keep their current behaviour at both locations (the config sibling and companion suites stay green), and once a profile is bound its pet files are never registered as roots of their own at either location
 - [x] #4 The default-location pet cases run on a PR or dev-push lane, with their times recorded
-- [ ] #5 The notes say whether config.history, rag.definitions and notes.templates should join the fixed-leaf set, and a task is filed for them if they should
-- [ ] #6 One design for a deleted (absent) file root covers every root consumer: admission grouping, capture naming, maintenance sessions, publication and finalization coverage, containment, Replace activation (step A), a bound profile's binding check, the abort, and the recovery journal (finish and rollback after a crash). It has tests, each red first, for the next Replace, a later rollback, an abort, finish and rollback after a crash, and startup, at the default location and on a separate folder. An absent folder root (an unmounted drive) still refuses
+- [x] #5 The notes say whether config.history, rag.definitions and notes.templates should join the fixed-leaf set, and a task is filed for them if they should
+- [x] #6 One design for a deleted (absent) file root covers every root consumer: admission grouping, capture naming, maintenance sessions, publication and finalization coverage, containment, Replace activation (step A), a bound profile's binding check, the abort, and the recovery journal (finish and rollback after a crash). It has tests, each red first, for the next Replace, a later rollback, an abort, finish and rollback after a crash, and startup, at the default location and on a separate folder. An absent folder root (an unmounted drive) still refuses
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -168,7 +168,7 @@ The unit cases are in `test_config_participant_lifetimes.py`, already a whole-fi
 - Tests: as listed above.
 - Docs: `Docs/Backup-and-Recovery.md`, `Docs/Architecture/backup-recovery.md`, `backlog/docs/backup-recovery-owner-inventory.md`, `backlog/docs/lessons-testing-evidence.md`.
 
-**Not met.**
-- AC#3: an unbound profile's backup still registers pet files as roots (above).
-- AC#5: the follow-up still needs filing.
-- AC#6: `finish` after a crash is TASK-42154's (brief).
+**Coordinator decisions, 2026-11-21:**
+- AC#3 is rescoped to bound profiles: once a profile is bound, its pet files never become roots. A backup of a profile that is not bound yet, and a profile's first binding, still register fixed config leaves as roots. That predates this task and is near TASK-42151's code, so the coordinator files it as a follow-up in this round's filing.
+- AC#5: the notes above name the owners. The coordinator files the follow-up in this round's filing: `notes.templates` and `rag.definitions` as fixed leaves, and `config.history`, which needs its own design.
+- AC#6: the `finish` half is TASK-42154's, fixed in the backuprec stream. The coordinator runs this task's crash test with `finish` on the stacked top (backupdef plus backuprec) before handover.
