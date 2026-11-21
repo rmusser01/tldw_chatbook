@@ -812,6 +812,100 @@ async def test_preparing_mic_paints_cancel_whole_at_both_sizes(monkeypatch, size
         gate.set()
 
 
+#: TASK-33621.21 AC#1 (owner decision, 2026-11-20). Pinned literally so a
+#: build without the note fails on the missing note, not on an import.
+_STILL_PREPARING = "Still preparing… or Cancel"
+
+
+@pytest.mark.parametrize("ending", ["cancel", "ready"])
+@pytest.mark.parametrize("size", [(80, 24), (235, 52)], ids=["80x24", "235x52"])
+@pytest.mark.asyncio
+async def test_a_long_preparation_paints_still_preparing_until_it_ends(
+    monkeypatch, size, ending
+):
+    """AC#1: after N quiet minutes the chip says so; Cancel and success clear it.
+
+    Current adapters show no download progress (ADR-284), so nothing bounds a
+    quiet native load. The note is the owner's answer: it tells the user the
+    attempt is still going and how to leave it, without failing anything. It
+    must paint whole beside a whole Cancel at the smallest supported size, and
+    Cancel must behave exactly as it does without the note.
+    """
+    gate = threading.Event()
+    transcriber = _Transcriber(gate=gate)
+    service = _WarmableDictationService(transcriber=transcriber)
+    _patch_availability(monkeypatch)
+    _install_session(monkeypatch, service)
+    controller_type = voice_module.ConsoleVoiceInputController
+    monkeypatch.setattr(
+        controller_type, "WARMUP_PROGRESS_POLL_SECONDS", 0.05, raising=False
+    )
+    monkeypatch.setattr(
+        controller_type, "WARMUP_STILL_PREPARING_SECONDS", 0.3, raising=False
+    )
+    app, host = _ready_host()
+    notify = Mock()
+    app.notify = notify
+
+    def errors():
+        return [
+            call
+            for call in notify.call_args_list
+            if call.kwargs.get("severity") == "error"
+        ]
+
+    try:
+        async with host.run_test(size=size) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            chip = composer.query_one("#console-voice-status", Static)
+
+            await pilot.click("#console-dictation")
+            painted = await _wait_for_painted(chip, pilot, "Still preparing")
+            await pilot.pause()
+
+            assert painted == f"◐ {_STILL_PREPARING}", painted
+            assert _STILL_PREPARING in _painted_cells(console, chip)
+            mic = composer.query_one("#console-dictation", Button)
+            assert "Cancel" in _painted_cells(console, mic), _painted_cells(
+                console, mic
+            )
+            # A note, not a failure: still waiting, nothing recorded.
+            assert transcriber.entered.is_set()
+            assert service.calls == []
+            assert console._console_dictation_state == "starting"
+            assert errors() == []
+
+            if ending == "cancel":
+                await pilot.pause(0.5)  # let Button's 0.2 s -active class clear
+                assert await pilot.click("#console-dictation")
+                await _wait_for_mic_label(composer, pilot, "Dictate")
+                assert console._console_dictation_state == "idle"
+                assert _painted(chip) == ""
+                assert any(
+                    "cancel" in str(call.args[0]).lower()
+                    for call in notify.call_args_list
+                )
+                assert any(
+                    "background" in str(call.args[0]).lower()
+                    and "quit" in str(call.args[0]).lower()
+                    for call in notify.call_args_list
+                ), "Cancel lost its retained-preparation disclosure"
+                gate.set()
+                for _ in range(10):
+                    await pilot.pause(0.02)
+                assert console._console_dictation_state == "idle"
+                assert service.calls == []
+            else:
+                gate.set()
+                await _wait_for_mic_label(composer, pilot, "Dictating")
+                assert service.calls == ["start_dictation"]
+                assert "Still preparing" not in _painted(chip)
+            assert errors() == []
+    finally:
+        gate.set()
+
+
 _TTS_DESTINATION = ConsoleTTSDestination(
     fingerprint="sha256:" + "c" * 64,
     provider_label="Test Voice Cloud",

@@ -82,7 +82,9 @@ reply and the spoken version must fit the existing 5,000-character speech limit.
   running. With no TTS destination available, the dialog says replies will
   not be spoken.
 - **Starting…** means the speech model is still loading (minutes on a
-  first run); the mic button reads **Cancel** meanwhile. Leaving Hands-free
+  first run); the mic button reads **Cancel** meanwhile. After two minutes
+  the voice chip reads **Still preparing… or Cancel**: the load is still
+  running and nothing has failed. Leaving Hands-free
   then (**Esc**, the control, Ctrl+Shift+H or **Cancel**) cancels it:
   nothing is recorded. The load itself runs to the end in the background,
   and the capture it would have opened is discarded.
