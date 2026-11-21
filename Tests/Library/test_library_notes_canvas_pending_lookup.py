@@ -36,8 +36,14 @@ that remove their children themselves (``SettingsRegion`` and the Console
 tray's kept filter row). A forwarded press runs only the handlers whose
 selector the button matches on its own, so two more tests hold a press across
 the recompose of the two containers whose handlers were switched to a class
-on the button (``ExternalModelView``, ``SpeechTTSSettingsPanel``). The last
-test fails when an override removes children without the keeper.
+on the button (``ExternalModelView``, ``SpeechTTSSettingsPanel``).
+
+TASK-42150 moved the keeper again, to ``App._prune``, which every removal goes
+through: two more routes hold a press across a child swap that is not a
+recompose (``remove_children()`` or ``remove()``, then ``mount()``), the
+message tests hold a submit, toggle or selection across a recompose, a press
+below a popped screen still never reaches the App, and the last test pins
+the install.
 
 Fast lane: a bare Textual app (``run_test``), no product app boot; the
 fallback and recompose tests mount one ``LibraryNotesCanvas`` under the app
@@ -46,8 +52,8 @@ stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
 
 from __future__ import annotations
 
-import ast
 import asyncio
+import inspect
 from pathlib import Path
 from typing import ClassVar
 
@@ -60,12 +66,21 @@ from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+    Switch,
+)
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.Widgets.Library.test_library_notes_canvas import _editor_state
-import tldw_chatbook
-from tldw_chatbook import RECOMPOSE_PRESS_KEEPER
+from tldw_chatbook import QUEUED_MESSAGE_KEEPER
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
 from tldw_chatbook.STT.parakeet_sources import (
     ParakeetSourceKey,
@@ -404,8 +419,11 @@ async def test_a_press_queued_below_a_removed_canvas_child_still_reaches_the_scr
         assert screen.query_one("#opener") is not opener, "the canvas never recomposed"
 
 
-def _toolbar() -> Horizontal:
-    return Horizontal(Button("type", id="opener"), id="toolbar")
+def _toolbar(sender: Widget | None = None) -> Horizontal:
+    # Not ``sender or ...``: an unmounted ListView has no children, so it is falsy.
+    if sender is None:
+        sender = Button("type", id="opener")
+    return Horizontal(sender, id="toolbar")
 
 
 class _Container(Vertical):
@@ -450,6 +468,21 @@ def _awaited(container):
     return asyncio.ensure_future(container.recompose())
 
 
+async def _swap_children(container) -> None:
+    await container.remove_children()
+    await container.mount(_toolbar())
+
+
+async def _swap_child(container) -> None:
+    await container.query_one("#toolbar").remove()
+    await container.mount(_toolbar())
+
+
+def _on_its_pump(swap):
+    """A swap the container runs on its own pump, as its own method would."""
+    return lambda container: container.call_later(swap, container)
+
+
 # route: (the screen's children, the recomposing node (None: the screen),
 #         the child its recompose removes above the button, the trigger)
 _ROUTES = {
@@ -469,6 +502,19 @@ _ROUTES = {
     ),
     "console-kept-filter-row": (
         lambda: [_KeptRowTray(id="container")], "#container", "#toolbar", _recompose
+    ),
+    # TASK-42150: child swaps that are not recomposes.
+    "remove-children-then-mount": (
+        lambda: [_Container(id="container")],
+        "#container",
+        "#toolbar",
+        _on_its_pump(_swap_children),
+    ),
+    "remove-then-mount": (
+        lambda: [_Container(id="container")],
+        "#container",
+        "#toolbar",
+        _on_its_pump(_swap_child),
     ),
 }
 
@@ -501,10 +547,11 @@ class _RouteApp(App):
         return _RouteScreen(self._children)
 
 
-async def _hold_a_press_across(opener: Button, closing, trigger) -> None:
-    """Press ``opener`` while its pump is held, run ``trigger``, and release
-    the press only once ``closing`` (the child being removed above it) is
-    closing, so the order is driven, not timed."""
+async def _hold_a_press_across(opener: Widget, closing, trigger, act=None) -> None:
+    """Press ``opener`` (or run ``act``, another user action on it) while its
+    pump is held, run ``trigger``, and release the message only once
+    ``closing`` (the child being removed above it) is closing, so the order
+    is driven, not timed."""
     held = asyncio.Event()
     release = asyncio.Event()
 
@@ -516,7 +563,9 @@ async def _hold_a_press_across(opener: Button, closing, trigger) -> None:
     pending = None
     try:
         await asyncio.wait_for(held.wait(), timeout=5)
-        opener.press()  # queued in the button, behind ``hold``
+        acted = (act or opener.press)()  # queued in the sender, behind ``hold``
+        if inspect.isawaitable(acted):
+            await acted
         pending = trigger()
         deadline = asyncio.get_running_loop().time() + 5
         while not closing._closing:
@@ -539,14 +588,16 @@ async def _settle_until(pilot, done) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", sorted(_ROUTES))
-async def test_every_recompose_route_keeps_a_press_queued_below_a_removed_child(route):
-    """TASK-42014: no container's recompose drops a pending press.
+async def test_every_removal_route_keeps_a_press_queued_below_a_removed_child(route):
+    """TASK-42014/42150: no container's recompose or child swap drops a
+    pending press.
 
     Same hold as the canvas test above. Every route reaches the screen's
     ``#opener`` handler. A forwarded press matches only selectors the
     detached button matches alone: when the container's own pump runs the
     recompose, the button is detached before the container handles the
-    press, so ``#toolbar Button`` never runs. An ``awaited`` recompose runs on
+    press, so ``#toolbar Button`` never runs (the two swaps run on that pump
+    too, as a container's own method does). An ``awaited`` recompose runs on
     another task, so the container can handle the press before the button
     detaches, and the ancestor selector may run there; it is not pinned.
     """
@@ -562,10 +613,116 @@ async def test_every_recompose_route_keeps_a_press_queued_below_a_removed_child(
         )
         await _settle_until(pilot, lambda: screen.handled)
 
-        assert screen.handled == 1, f"the {route} recompose dropped the press"
+        assert screen.handled == 1, f"the {route} route dropped the press"
         if route != "awaited":
             assert screen.by_ancestor == 0, "an ancestor selector matched"
+        assert screen.query_one("#opener") is not opener, "nothing was rebuilt"
+
+
+# TASK-42150: the other user actions the app handles above their sender.
+# message: (the sender, the user's action on it)
+_MESSAGES = {
+    "Checkbox.Changed": (lambda: Checkbox("on", id="opener"), lambda sender: sender.toggle()),
+    "Input.Submitted": (lambda: Input("typed", id="opener"), lambda sender: sender.action_submit()),
+    "ListView.Selected": (
+        lambda: ListView(ListItem(Label("a")), id="opener"),
+        lambda sender: sender.action_select_cursor(),
+    ),
+    "Select.Changed": (
+        lambda: Select([("a", 1), ("b", 2)], value=1, id="opener"),
+        lambda sender: setattr(sender, "value", 2),
+    ),
+    "Switch.Changed": (lambda: Switch(id="opener"), lambda sender: sender.toggle()),
+}
+
+
+class _MessageContainer(Vertical):
+    def __init__(self, sender, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._sender = sender
+
+    def compose(self) -> ComposeResult:
+        yield _toolbar(self._sender())
+
+
+class _MessageScreen(Screen):
+    def __init__(self, sender) -> None:
+        super().__init__()
+        self._sender = sender
+        self.seen: list[tuple[str, Widget]] = []
+
+    def compose(self) -> ComposeResult:
+        yield _MessageContainer(self._sender, id="container")
+
+    @on(Checkbox.Changed, "#opener")
+    @on(Input.Submitted, "#opener")
+    @on(ListView.Selected, "#opener")
+    @on(Select.Changed, "#opener")
+    @on(Switch.Changed, "#opener")
+    def _record(self, event) -> None:
+        self.seen.append((type(event).__qualname__, event.control))
+
+
+class _MessageApp(App):
+    def __init__(self, sender) -> None:
+        super().__init__()
+        self._sender = sender
+
+    def get_default_screen(self) -> Screen:
+        return _MessageScreen(self._sender)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", sorted(_MESSAGES))
+async def test_a_user_message_queued_below_a_removed_child_is_kept(message):
+    """TASK-42150: a submit, toggle or selection queued below a removed child
+    reaches the screen once, as a press does. Same hold as the press routes."""
+    sender, act = _MESSAGES[message]
+    app = _MessageApp(sender)
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        opener = screen.query_one("#opener")
+        screen.seen.clear()
+        await _hold_a_press_across(
+            opener,
+            screen.query_one("#toolbar"),
+            lambda: _recompose(screen.query_one("#container")),
+            act=lambda: act(opener),
+        )
+        await _settle_until(pilot, lambda: any(c is opener for _, c in screen.seen))
+
+        mine = [name for name, control in screen.seen if control is opener]
+        assert mine == [message], f"the recompose dropped the {message}"
         assert screen.query_one("#opener") is not opener, "nothing recomposed"
+
+
+class _PoppedApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.handled = 0
+
+    @on(Button.Pressed)
+    def _count(self, event: Button.Pressed) -> None:
+        self.handled += 1
+
+
+@pytest.mark.asyncio
+async def test_a_press_queued_in_a_popped_screen_never_reaches_the_app():
+    """TASK-42150: every removal now reaches the keeper, a screen's included,
+    and a press below a removed screen is still never handed to the App."""
+    app = _PoppedApp()
+    async with app.run_test(size=(40, 8)) as pilot:
+        await app.push_screen(Screen())
+        await app.screen.mount(_toolbar())
+        await pilot.pause()
+        opener = app.screen.query_one("#opener", Button)
+        await _hold_a_press_across(
+            opener, app.screen.query_one("#toolbar"), app.pop_screen
+        )
+        await pilot.pause(0.2)
+
+        assert app.handled == 0, "a press from a removed screen reached the App"
 
 
 class _RemovedApp(App):
@@ -700,77 +857,8 @@ async def test_a_speech_credential_action_pressed_across_a_recompose_still_runs(
         )
 
 
-#: Removals a ``recompose`` override may make: ``x.remove()`` and
-#: ``x.remove_children()``.
-_REMOVALS = (".remove", ".remove_children")
-
-
-def _unkept_removals(source: str) -> list[str]:
-    """Each removal a ``recompose`` override makes before
-    ``keep_queued_presses``: a direct call, or a call to a method of the same
-    class that removes (one hop; deeper chains are not followed)."""
-    unkept = []
-    for cls in ast.walk(ast.parse(source)):
-        if not isinstance(cls, ast.ClassDef):
-            continue
-        methods = {
-            method.name: method
-            for method in cls.body
-            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        override = methods.get("recompose")
-        if not isinstance(override, ast.AsyncFunctionDef):
-            continue
-
-        def removes(name: str) -> bool:
-            if name.endswith(_REMOVALS):
-                return True
-            helper = methods.get(name.removeprefix("self."))
-            return (
-                name.startswith("self.")
-                and helper is not None
-                and helper is not override
-                and any(
-                    isinstance(call, ast.Call)
-                    and ast.unparse(call.func).endswith(_REMOVALS)
-                    for call in ast.walk(helper)
-                )
-            )
-
-        calls = [
-            (call.lineno, ast.unparse(call.func))
-            for call in ast.walk(override)
-            if isinstance(call, ast.Call)
-        ]
-        kept = [line for line, name in calls if name == "keep_queued_presses"]
-        unkept += [
-            f"{cls.name}.recompose:{line} {name}"
-            for line, name in calls
-            if removes(name) and not any(k < line for k in kept)
-        ]
-    return unkept
-
-
-_ONE_HOP = """
-class Pane:
-    async def recompose(self):
-        self._clear()
-        await super().recompose()
-
-    def _clear(self):
-        self.query_children("*").remove()
-"""
-
-
-def test_every_recompose_reaches_the_press_keeper():
-    """TASK-42014: ``Widget.recompose`` keeps presses, and no override in the
-    package removes children, directly or through a method of its own class,
-    before calling the keeper."""
-    assert getattr(Widget.recompose, RECOMPOSE_PRESS_KEEPER, False)
-    assert _unkept_removals(_ONE_HOP) == ["Pane.recompose:4 self._clear"]
-    unkept = []
-    for path in sorted(Path(tldw_chatbook.__file__).parent.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        if "def recompose(" in source:
-            unkept += [f"{path.name}: {row}" for row in _unkept_removals(source)]
-    assert unkept == []
+def test_every_removal_reaches_the_message_keeper():
+    """TASK-42150: the keeper sits on ``App._prune``, which every removal goes
+    through (a recompose, ``remove_children()``, ``remove()``, a query's
+    ``remove()``), so no override can remove children ahead of it."""
+    assert getattr(App._prune, QUEUED_MESSAGE_KEEPER, False)

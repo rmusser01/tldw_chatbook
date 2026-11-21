@@ -178,8 +178,8 @@ class PostRecomposeCallback:
     async def recompose(self) -> None:
         """Recompose, then re-wire and fire the queued callback.
 
-        A press queued below a removed child is kept by ``Widget.recompose``
-        (``tldw_chatbook.keep_queued_presses``, TASK-41703/TASK-42014).
+        A press queued below a removed child is kept by every removal
+        (``tldw_chatbook.keep_queued_messages``, TASK-41703/42014/42150).
         """
         await super().recompose()  # type: ignore[misc]
         callback = self._post_recompose_callback

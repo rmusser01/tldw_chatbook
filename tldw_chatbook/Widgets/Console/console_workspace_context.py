@@ -10,7 +10,6 @@ from functools import partial
 from typing import Any, Literal
 
 from rich.cells import cell_len
-from tldw_chatbook import keep_queued_presses
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual.app import ComposeResult
@@ -899,7 +898,6 @@ class _KeepsConversationFilterRow:
         # mechanism, made routine by this rebuild): make it wait.
         tray._fit_waits_for_layout = True
         async with tray.batch():
-            keep_queued_presses(tray)  # TASK-42014: this rebuild removes itself
             doomed = [
                 child
                 for child in tray.children

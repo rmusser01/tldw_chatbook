@@ -25,7 +25,6 @@ from weakref import WeakKeyDictionary
 
 from rich.cells import cell_len
 from rich.table import Table
-from tldw_chatbook import keep_queued_presses
 from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import on, work
@@ -3113,7 +3112,6 @@ class SettingsRegion(Vertical):
         async with self.batch():
             screen = self.screen
             focused = screen.focused
-            keep_queued_presses(self)  # TASK-42014: removes before super() does
             removal = self.query_children("*").exclude(".-textual-system").remove()
             self.focus_reset = (focused, screen.focused) if screen.focused is not focused else None
             await removal
