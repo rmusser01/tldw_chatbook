@@ -1208,6 +1208,9 @@ MINIMUM_FILES = 2441
 # (Console Undo All, the Review screen, commit and push) at the tail. The floor
 # is the measured entry count.
 MINIMUM_FILES = 2445
+# TASK-42140 (2026-11-21): append seven test_console_send_admission_off_pump.py
+# nodes at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2452
 
 
 def read_census(path: Path) -> list[str]:

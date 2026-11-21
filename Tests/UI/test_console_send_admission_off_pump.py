@@ -11,12 +11,12 @@ scratch space; live (Anthropic haiku, 160x45) a first send held keys for
   await in the send -- even a read moved to a worker thread -- kept the app
   pump from delivering the next key.
 
-The admission test holds the MCP read that admission makes (the real
-service, wrapped where ``capture_mcp_definition_maximum`` calls it) and types
-a key while it is held. On the parent build the read ran on the loop thread,
-so no key could be handled until the hold timed out. Negative controls (run
-by hand, TASK-33620.15 notes): sending from inside the app-pump callback, or
-reading the authority on the loop thread, turns it red.
+The admission test holds the MCP read that admission makes (the MCP
+permission read of the app's own, still stock, service: ``HeldNativeMcpRead``)
+and types a key while it is held. On the parent build the read ran on the
+loop thread, so no key could be handled until the hold timed out. Negative
+controls (run by hand, TASK-33620.15 notes): sending from inside the app-pump
+callback, or reading the authority on the loop thread, turns it red.
 
 The Send button and the Workbench send now take Enter's path, so the frame on
 screen when their send starts is the same "Sending…" acknowledgement.
@@ -60,6 +60,11 @@ class HeldMcpRead:
     call made by ``capture_mcp_definition_maximum`` (admission's capture, on
     whichever thread admission reads it) is held. Every other caller, such as
     the run's own catalog composition, passes straight through.
+
+    TASK-42140: replacing the method makes the service non-stock, and a send
+    through the app's Console runtime is then refused ("Console preparation
+    source unavailable; Send again.") before any MCP read, so the off-pump
+    tests hold ``HeldNativeMcpRead`` instead.
     """
 
     def __init__(self, service) -> None:
@@ -83,7 +88,14 @@ class HeldMcpRead:
 
 
 class HeldNativeMcpRead:
-    """Hold an admitted permission read without replacing the MCP service source."""
+    """Hold an admitted permission read without replacing the MCP service source.
+
+    This is the MCP read admission makes: ``_CapturedSources.
+    read_permission_payload`` for the app's own service, on whichever thread
+    admission reads it. Patched on the class, so the service stays stock.
+    """
+
+    READ = "_CapturedSources.read_permission_payload"
 
     def __init__(self, service, monkeypatch):
         from tldw_chatbook.MCP.console_snapshot import _CapturedSources
@@ -103,9 +115,25 @@ class HeldNativeMcpRead:
 
         monkeypatch.setattr(_CapturedSources, "read_permission_payload", read)
 
+    async def wait_entered(self) -> None:
+        """Wait for admission to enter the held read, or fail naming it.
+
+        TASK-42140: a hold whose read admission no longer makes used to fail
+        only as a timeout on ``Event.is_set``.
+        """
+        try:
+            await until(self.entered.is_set, timeout=ENTRY_SECONDS)
+        except AssertionError:
+            raise AssertionError(
+                f"admission never made the held MCP read ({self.READ} for the "
+                f"app's MCP service) within {ENTRY_SECONDS} s"
+            ) from None
+
 
 @pytest.mark.asyncio
-async def test_a_key_typed_while_admission_reads_mcp_is_handled_before_the_read_returns():
+async def test_a_key_typed_while_admission_reads_mcp_is_handled_before_the_read_returns(
+    monkeypatch,
+):
     """AC#2/#6: keys keep flowing while the send's admission reads its authority.
 
     The key is typed into the composer while admission's MCP read is held;
@@ -117,11 +145,11 @@ async def test_a_key_typed_while_admission_reads_mcp_is_handled_before_the_read_
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
             console, composer = await ready_console(host, pilot, gateway)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                await hold.wait_entered()
                 press(host, "x", "x")
                 await until(lambda: composer.draft_text().endswith("x"), timeout=10)
                 typed_while_held = not hold.release.is_set() and not hold.timed_out
@@ -194,7 +222,9 @@ async def test_the_workbench_send_paints_sending_before_its_send_starts():
 
 
 @pytest.mark.asyncio
-async def test_enter_during_admission_is_replayed_after_it_as_the_held_pump_did():
+async def test_enter_during_admission_is_replayed_after_it_as_the_held_pump_did(
+    monkeypatch,
+):
     """The repeated-Enter guard (dev parity): no duplicate, no lost text.
 
     Before the fix the app pump was busy for the whole admission, so a second
@@ -215,11 +245,11 @@ async def test_enter_during_admission_is_replayed_after_it_as_the_held_pump_did(
                 notices.append(str(message)),
                 real_notify(message, **kwargs),
             )
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                await hold.wait_entered()
                 press(host, "enter", "\r")
                 press(host, "y", "y")
                 press(host, "enter", "\r")
@@ -327,7 +357,9 @@ async def _settled(console, pilot) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_enter_deferred_behind_a_send_never_sends_another_tab_draft():
+async def test_an_enter_deferred_behind_a_send_never_sends_another_tab_draft(
+    monkeypatch,
+):
     """A deferred send request replays only in the chat it was made in.
 
     A second Enter during A's admission is deferred until A's send settles.
@@ -341,11 +373,11 @@ async def test_an_enter_deferred_behind_a_send_never_sends_another_tab_draft():
             console, _composer = await ready_console(host, pilot, gateway)
             session_a, session_b = await _second_tab(console, pilot, ready=True)
             store = console._ensure_console_chat_store()
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                await hold.wait_entered()
                 press(host, "enter", "\r")
                 press(host, "alt+2")
                 await until(lambda: store.active_session_id == session_b, timeout=10)
@@ -360,7 +392,9 @@ async def test_an_enter_deferred_behind_a_send_never_sends_another_tab_draft():
 
 
 @pytest.mark.asyncio
-async def test_leaving_a_tab_while_its_send_is_admitted_still_sends_it_there():
+async def test_leaving_a_tab_while_its_send_is_admitted_still_sends_it_there(
+    monkeypatch,
+):
     """The send's gate is read for its own chat, never the one switched to.
 
     The screen's send gate (provider readiness, archive, evidence, vision)
@@ -380,11 +414,11 @@ async def test_leaving_a_tab_while_its_send_is_admitted_still_sends_it_there():
                 notices.append(str(message)),
                 real_notify(message, **kwargs),
             )
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                await hold.wait_entered()
                 press(host, "alt+2")
                 await until(lambda: store.active_session_id == session_b, timeout=10)
             finally:
@@ -456,7 +490,9 @@ def _first_turn_done(host, console) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_an_enter_made_while_the_sent_draft_still_shows_never_takes_later_keys():
+async def test_an_enter_made_while_the_sent_draft_still_shows_never_takes_later_keys(
+    monkeypatch,
+):
     """Lead ruling: a deferred Enter sends only what the composer held then.
 
     Enter, then "y" and Enter while the first send is admitted, then "z". The
@@ -473,11 +509,11 @@ async def test_an_enter_made_while_the_sent_draft_still_shows_never_takes_later_
             console, composer = await ready_console(host, pilot, gateway)
             notices = _record_notices(host)
             tail = _hold_first_send_tail(console)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                await hold.wait_entered()
                 press(host, "y", "y")
                 press(host, "enter", "\r")
                 press(host, "z", "z")
@@ -580,7 +616,9 @@ async def test_a_second_enter_after_an_unknown_command_hint_sends_it_as_text():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("then_y", [False, True], ids=["alone", "then_y"])
-async def test_a_bare_second_enter_never_sends_a_committed_draft_again(then_y):
+async def test_a_bare_second_enter_never_sends_a_committed_draft_again(
+    then_y, monkeypatch
+):
     """A held repeat press is dropped once its draft has left the composer.
 
     The second Enter lands while the first send's draft is still in the
@@ -597,11 +635,11 @@ async def test_a_bare_second_enter_never_sends_a_committed_draft_again(then_y):
             console, composer = await ready_console(host, pilot, gateway)
             notices = _record_notices(host)
             tail = _hold_first_send_tail(console)
-            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            hold = HeldNativeMcpRead(host.app_instance.unified_mcp_service, monkeypatch)
             gateway.validation_release.set()
             try:
                 press(host, "enter", "\r")
-                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                await hold.wait_entered()
                 press(host, "enter", "\r")
                 await pilot.pause(0.2)
             finally:
@@ -619,7 +657,11 @@ async def test_a_bare_second_enter_never_sends_a_committed_draft_again(then_y):
             await _settled(console, pilot)
             session_id = console._console_chat_store.active_session_id
             if then_y:
-                await until(lambda: len(_sent_or_queued(console, session_id)) >= 2)
+                # TASK-42140: the "y" turn saves its user row before its run
+                # starts and reloads the composer; wait until it has answered.
+                await until(
+                    lambda: gateway.stream_calls == 2 and _first_turn_done(host, console)
+                )
             sent = [DRAFT, "y"] if then_y else [DRAFT]
             assert _sent_or_queued(console, session_id) == sent
             assert composer.draft_text() == ("z" if then_y else "")
@@ -658,41 +700,63 @@ async def test_enter_on_an_empty_composer_never_sends_text_typed_after_it(typed)
 
 
 @pytest.mark.asyncio
-async def test_an_image_only_enter_never_takes_text_typed_after_it():
+async def test_an_image_only_enter_never_takes_text_typed_after_it(monkeypatch):
     """An empty capture with an image staged sends the image and no text.
 
     The send read the live composer for its draft, so text typed after the
     Enter rode along with the image. Read as an image-only draft, it was
     still captured from the live composer for the send to commit: accepted,
     that would take the later text out of the composer unsent.
-    """
-    from tldw_chatbook.UI.Console_Modules.prompt_queue import (
-        ConsolePromptDispatchResult,
-        ConsolePromptDispatchStatus,
-    )
 
+    TASK-42140: the Enter takes the received-intent route
+    (``receive_console_visible_intent``), which never calls ``_hooks.dispatch``
+    and takes the turn's attachments from the store. The old stand-ins (a
+    screen ``_console_pending_image_attachment`` returning ``object()`` and a
+    stubbed ``_hooks.dispatch``) sent an empty draft with no image, which
+    ``_validated_draft`` refuses (an empty draft is allowed only beside an
+    image). The image is now staged in the store and the saved turn checked.
+    """
+    from tldw_chatbook.Chat import attachment_core, console_configuration_capture
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+
+    # The screen's Send gate and the turn's captured capability both ask.
+    for module in (attachment_core, console_configuration_capture):
+        monkeypatch.setattr(module, "is_vision_capable", lambda _p, _m: True)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
             console, composer = await ready_console(host, pilot, gateway)
             composer.load_draft("")
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            assert store.add_pending_attachment(
+                session_id,
+                PendingAttachment(
+                    file_path="/tmp/photo.png",
+                    display_name="photo.png",
+                    original_size=4,
+                    processed_size=4,
+                    file_type="image",
+                    insert_mode="attachment",
+                    data=b"\x89PNG",
+                ),
+            )
             await pilot.pause()
-            console._console_pending_image_attachment = lambda: object()
-            dispatched: list[tuple[str, object]] = []
-
-            async def hook_dispatch(draft, *, session_id, stash, dispatch):
-                dispatched.append((draft, stash.text if stash else None))
-                return ConsolePromptDispatchResult(
-                    ConsolePromptDispatchStatus.SENT, session_id
-                )
-
-            console._hooks.dispatch = hook_dispatch
+            gateway.validation_release.set()
             press(host, "enter", "\r")
             press(host, "h", "h")
             press(host, "i", "i")
-            await until(lambda: bool(dispatched) and composer.draft_text() == "hi")
+            await until(
+                lambda: gateway.stream_calls == 1 and composer.draft_text() == "hi"
+            )
             await _settled(console, pilot)
-            assert dispatched == [("", None)]
+            users = [
+                (message.content, message.image_data)
+                for message in store.messages_for_session(session_id)
+                if message.role.value == "user"
+            ]
+            assert users == [("", b"\x89PNG")]
+            assert gateway.stream_calls == 1
             assert composer.draft_text() == "hi"
 
 
