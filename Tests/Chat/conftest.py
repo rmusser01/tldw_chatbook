@@ -10,6 +10,8 @@ duplicating the fixture or importing across test modules.
 from __future__ import annotations
 
 import asyncio
+import functools
+import warnings
 
 import pytest
 import pytest_asyncio
@@ -49,6 +51,49 @@ async def owned_console_databases():
                 errors.append(error)
         if errors:
             raise BaseExceptionGroup("Console test-owner retirement failed", errors)
+
+
+@pytest_asyncio.fixture
+async def shut_down_console_controllers():
+    """Shut down every Console controller the test builds (TASK-42155).
+
+    A rig that builds a ``ConsoleChatController`` and never shuts it down
+    leaves its scratch directory and owned work behind. This records each
+    controller built while the test runs, shuts down the ones still open at
+    teardown, and fails the test if one is still open after that.
+
+    A shutdown that raises after it fenced the controller is reported as a
+    warning, not a failure: a test that leaves a dispatch checkpoint pending
+    on purpose makes ``_finish_begin_shutdown`` refuse to delete its
+    preparation's row ("Resolve pending dispatch before changing
+    conversation branches"), and that refusal is the product's.
+
+    Yields:
+        The controllers built so far, in build order.
+    """
+    built = []
+    real_init = ConsoleChatController.__init__
+
+    @functools.wraps(real_init)
+    def init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        built.append(self)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ConsoleChatController, "__init__", init)
+        yield built
+    for controller in reversed(built):
+        if controller._disposed:
+            continue
+        try:
+            await asyncio.wait_for(controller.shutdown(), 5)
+        except Exception as error:  # noqa: BLE001 - reported; the check is below
+            warnings.warn(
+                f"Console controller shutdown raised {type(error).__name__}: {error}",
+                stacklevel=1,
+            )
+    running = [controller for controller in built if not controller._disposed]
+    assert not running, f"{len(running)} Console controller(s) left running"
 
 
 class StreamingGateway:

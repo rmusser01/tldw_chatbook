@@ -44,7 +44,12 @@ from Tests.console_provider_doubles import provider_resolution
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
-pytestmark = pytest.mark.bootstrap_profile
+# TASK-42155: every controller a test or its rig builds is shut down at
+# teardown (Tests/Chat/conftest.py).
+pytestmark = [
+    pytest.mark.bootstrap_profile,
+    pytest.mark.usefixtures("shut_down_console_controllers"),
+]
 
 
 class ConsoleChatStore(_ConsoleChatStore):
