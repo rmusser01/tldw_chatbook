@@ -22,6 +22,7 @@ from tldw_chatbook.Tool_Packs.contracts import (
     canonical_json_bytes,
     strict_json_object,
 )
+from tldw_chatbook.Utils.file_durability import fsync_parent_directory
 
 
 RECEIPT_SCHEMA = "tldw.tool-pack-receipt/v1"
@@ -792,16 +793,10 @@ class ToolPackReceiptStore:
 
     @staticmethod
     def _fsync_directory(path: Path) -> None:
-        descriptor = -1
-        try:
-            descriptor = os.open(
-                path,
-                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-            )
-            os.fsync(descriptor)
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
+        # Windows cannot open a directory with os.open (PermissionError), which
+        # made every receipt store, and so every Tool Pack composition, fail
+        # there. The shared barrier skips Windows and unsupported filesystems.
+        fsync_parent_directory(path)
 
 
 __all__ = [

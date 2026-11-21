@@ -305,6 +305,10 @@ def test_capacity_uses_strictest_limit_across_store_instances(tmp_path: Path) ->
     second.reserve(301).release()
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows has no directory fsync; the shared barrier skips it, so there is no failure to inject",
+)
 def test_root_creation_directory_sync_failure_is_activation_failed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
