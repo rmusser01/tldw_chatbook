@@ -32,6 +32,94 @@ os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+# TASK-33621.113: the settings above disable tqdm's bars, but a disabled bar
+# still builds tqdm's process-wide write lock, and on macOS its
+# multiprocessing.RLock starts CPython's resource tracker with
+# ``sys.stderr.fileno()``. Inside the running app that is Textual's capture
+# (``-1``), so the first Hugging Face download from ANY feature raised
+# ``ValueError: bad value(s) in fds_to_keep`` and left tqdm's class lock held,
+# wedging every later download until restart. Give tqdm the thread-only lock
+# it already falls back to when a multiprocessing lock cannot be built
+# (``mp_lock = None``; nothing here shares bars across processes) as
+# ``tqdm.std`` is first imported, the same arming pattern as tiktoken above.
+# Nothing is imported here, so the boot import census is unchanged. Console
+# dictation keeps its own guard (``Utils/model_download_guard.py``), which
+# also repairs a lock that was wedged before this ran.
+_TQDM_LOCK_MODULE = "tqdm.std"
+
+
+def _decide_tqdm_write_lock(module: object) -> None:
+    """Pre-decide tqdm's lock as thread-only, unless tqdm already decided it."""
+    lock_type = getattr(module, "TqdmDefaultWriteLock", None)
+    if lock_type is not None and not hasattr(lock_type, "mp_lock"):
+        lock_type.mp_lock = None
+
+
+class _TqdmLockArmingLoader:
+    """Loader wrapper that decides tqdm's lock once ``tqdm.std`` has executed.
+
+    No bar can exist before ``exec_module`` returns, so deciding there comes
+    strictly before tqdm's first lock build.
+    """
+
+    def __init__(self, loader: object, finder: "_TqdmLockArmingFinder") -> None:
+        self._loader = loader
+        self._finder = finder
+
+    def create_module(self, spec: object) -> object:
+        return self._loader.create_module(spec)
+
+    def exec_module(self, module: object) -> None:
+        # A failed import leaves the finder armed for the next attempt.
+        self._loader.exec_module(module)
+        _decide_tqdm_write_lock(module)
+        self._finder.discard()
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._loader, name)
+
+
+class _TqdmLockArmingFinder:
+    """Meta-path finder that arms ``tqdm.std``'s first import, then retires."""
+
+    def find_spec(
+        self, fullname: str, path: object = None, target: object = None
+    ) -> object:
+        if fullname != _TQDM_LOCK_MODULE:
+            return None
+        # Ask the remaining finders, as the import system would after us.
+        for finder in tuple(sys.meta_path):
+            find_spec = getattr(finder, "find_spec", None)
+            if finder is self or find_spec is None:
+                continue
+            spec = find_spec(fullname, path, target)
+            if spec is not None:
+                break
+        else:
+            return None
+        if spec.loader is not None and hasattr(spec.loader, "exec_module"):
+            spec.loader = _TqdmLockArmingLoader(spec.loader, self)
+        return spec
+
+    def discard(self) -> None:
+        try:
+            sys.meta_path.remove(self)
+        except ValueError:
+            pass
+
+
+def _arm_tqdm_write_lock() -> None:
+    """Decide tqdm's lock now if tqdm is loaded, else at its first import."""
+    module = sys.modules.get(_TQDM_LOCK_MODULE)
+    if module is not None:
+        _decide_tqdm_write_lock(module)
+        return
+    if not any(isinstance(f, _TqdmLockArmingFinder) for f in sys.meta_path):
+        sys.meta_path.insert(0, _TqdmLockArmingFinder())
+
+
+_arm_tqdm_write_lock()
+
 # task-2119 (security): Loguru's `diagnose` option defaults to True and, on
 # any record logged via `logger.opt(exception=True)`, dumps every stack
 # frame's LOCAL VARIABLES alongside the traceback -- not just the source
