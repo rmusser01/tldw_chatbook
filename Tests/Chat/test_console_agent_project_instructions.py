@@ -1588,3 +1588,105 @@ async def test_preflight_without_chooser_callback_terminalizes_turn():
     assert result.visible_copy == "choose_binding"
     assert bridge.calls == 0
     _assert_turn_released(controller, store, session.id, "choose_binding")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["cancel", "disable"])
+async def test_declined_notice_blocks_the_turn_and_names_the_decline(
+    tmp_path, decision
+):
+    """TASK-33621.98: declining "Send project instructions?" said only "Response failed."
+
+    The user's own Cancel/Disable reached the bridge as an ordinary runtime
+    cancellation (AgentService returns RUN_CANCELLED for any non-proceed
+    answer; pinned by test_cancel_and_disable_abort_before_provider_and_discard_snapshot),
+    so the turn ended FAILED with no reason and ``blocker=-`` in the log.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleSubmitBlocker
+
+    (tmp_path / "AGENTS.md").write_text(SENTINEL)
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.db", client_id="instruction-decline")
+    )
+    registry.create_workspace(workspace_id="w1", name="Workspace 1")
+    registry.save_runtime_binding(_binding(tmp_path))
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=registry
+    )
+    session = store.create_session(workspace_id="w1")
+    sent = []
+
+    class Bridge:
+        def record_run_assistant_message(self, run_id, message_id):
+            pass
+
+        def run_reply(self, **kwargs):
+            candidate = kwargs["startup_instruction_candidate"]
+            if candidate is None:  # instructions off: nothing to confirm
+                sent.append(True)
+                return "run-1", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+            snapshot = InstructionSnapshot(
+                binding_id=candidate.binding_id,
+                binding_root=candidate.binding_root,
+                locator_fingerprint=candidate.locator_fingerprint,
+                dispatch_started_wall_ns=candidate.dispatch_started_wall_ns,
+                startup_source=candidate.source,
+                global_outcomes=candidate.outcomes,
+                primary_delivery=InstructionChainDelivery(
+                    source_digests=(candidate.source.digest,),
+                    outcomes=candidate.outcomes,
+                ),
+                warning_codes=(),
+            )
+            if kwargs["confirm_project_instruction_dispatch"](snapshot) == "proceed":
+                sent.append(True)
+                return "run-1", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
+            return "run-1", RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
+
+    class Gateway:
+        async def resolve_for_send(self, _selection):
+            return with_destination(
+                ConsoleProviderResolution(
+                    provider="OpenAI",
+                    base_url="https://api.example/v1",
+                    model="test-model",
+                    ready=True,
+                    readiness_key="openai",
+                    execution_key="openai",
+                    max_tokens=128,
+                )
+            )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        provider="openai",
+        model="test-model",
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+        confirm_project_instruction_dispatch=lambda _notice: decision,
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda callback: callback(),
+        workspace_registry_service=registry,
+    )
+
+    result = await controller.submit_draft("question")
+
+    assert sent == []
+    assert result.accepted is True
+    assert result.blocker is ConsoleSubmitBlocker.PROJECT_INSTRUCTIONS_DECLINED
+    state = controller.run_state_for(session.id)
+    assert state.status is ConsoleRunStatus.BLOCKED
+    assert state.visible_copy.startswith("Not sent: ")
+    rows = store.messages_for_session(session.id)
+    assert rows[-1].role is ConsoleMessageRole.SYSTEM
+    assert rows[-1].content == state.visible_copy
+    # A later send is not held by the declined turn, and the decline is not
+    # carried into it.
+    controller._confirm_project_instruction_dispatch = lambda _notice: "proceed"
+    again = await controller.submit_draft("question again")
+    assert again.accepted is True
+    if decision == "disable":
+        assert sent == [True]
+    assert controller.run_state_for(session.id).status is not ConsoleRunStatus.BLOCKED

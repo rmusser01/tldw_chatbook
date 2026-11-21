@@ -26794,7 +26794,9 @@ class ConsoleChatController:
         resolution: Any = None,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
+        from .console_project_dispatch import finalize_declined_notice, take_declined_notice
 
+        declined = take_declined_notice(session_id)  # TASK-33621.98: claim before any branch
         current = self._ensure_assistant_placeholder(assistant_message_id, session_id)
         # task-227 LOW-2 (+ AC3 follow-up): a Stop can land in the
         # ultra-narrow window after asyncio.to_thread returns an outcome
@@ -26880,6 +26882,8 @@ class ConsoleChatController:
                 True, True, current.content if current is not None else ""
             )
 
+        if outcome.status == RUN_CANCELLED and declined is not None:
+            return finalize_declined_notice(self, assistant_message_id, session_id, run_id, declined)
         if outcome.status == RUN_CANCELLED:
             return self._finalize_agent_cancelled(
                 assistant_message_id,
