@@ -1000,11 +1000,21 @@ def plan_restore(
             <= selected | preserved_snapshot.keys() | retained_items.keys()
         ):
             raise ValueError("dependency_group_incomplete")
+    # TASK-42114 review: an owner's own rotating copies (the pet store's dated
+    # files, held by archives made before TASK-42114) are never restored.
+    rotating = {
+        row.logical_id
+        for row in doc.files
+        if row.logical_id in selected
+        and getattr(owners[row.owner_id], "rotating_copy", lambda path: False)(
+            row.relative_path
+        )
+    }
     restore = tuple(
         sorted(
             (row.logical_id, destinations[row.root_id] / row.relative_path)
             for row in records
-            if row.logical_id in selected
+            if row.logical_id in selected and row.logical_id not in rotating
         )
     )
     producer = {row.logical_id: row for row in doc.producer_inventory}

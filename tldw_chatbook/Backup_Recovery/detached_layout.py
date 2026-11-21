@@ -493,7 +493,10 @@ def produce_detached_archive(
         for item in items
     ):
         report += ("Personal Context interview drafts stay on the original device.",)
-    if any(path.exists() for path in _pet_members(source, selected)[1]):
+    if any(
+        path.exists() and path.parent != selected.parent
+        for path in _pet_members(source, selected)[1]
+    ):
         report += (
             "Old shared pet files were not imported; this profile has its own.",
         )
@@ -530,6 +533,8 @@ def _pet_members(source: Path, selected: Path) -> tuple[tuple[Path, ...], tuple[
     TASK-42000: the profile's own files sit beside its config. A copy made
     before pets were per-profile keeps them in the installed Windows roaming
     folder; those are imported only when the profile has none of its own.
+    TASK-42114 review: the profile's pet file or marker decides that, never
+    its dated copies alone, which then stay behind (they are never restored).
     """
     from .native_files import pinned_directory
 
@@ -551,9 +556,9 @@ def _pet_members(source: Path, selected: Path) -> tuple[tuple[Path, ...], tuple[
 
     own, marker = members(selected.parent)
     roaming, _ = members(source / "home" / "AppData" / "Roaming" / "tldw_chatbook")
-    if any(path.exists() for path in (*own, *marker)):
+    if own[0].exists() or marker:
         return own + marker, roaming
-    return roaming, ()
+    return roaming, own[1:]
 
 
 def _owner_items(source, selected, root, config, context, owners, normal, cancel):
@@ -848,6 +853,10 @@ def _owner_items(source, selected, root, config, context, owners, normal, cancel
             suffix={"tamagotchi_pets.json": "", "tamagotchi_pets.seeded": "seeded"}.get(
                 path.name, path.name
             ),
+            # TASK-42114: the store's dated copies are excluded, as capture
+            # lists them; a restore never recreates them.
+            exclude=path.name
+            not in {"tamagotchi_pets.json", "tamagotchi_pets.seeded"},
         )
     original.update(left)
     add("chatbooks.registry", root / "tldw_chatbook_chatbooks.json")

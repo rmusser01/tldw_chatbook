@@ -747,7 +747,10 @@ def test_briefing_cleanup_cannot_mutate_owned_bytes_in_maintenance(
 
 def test_pet_owner_discovers_only_its_files_beside_the_config(tmp_path):
     """TASK-42000: the pet files are the profile's, beside its config; the
-    folder's other files belong to other owners and are not claimed."""
+    folder's other files belong to other owners and are not claimed.
+    TASK-42114: the dated copies are the store's own rotating backups, listed
+    as intentionally excluded so a backup never binds a root the store
+    deletes."""
     from tldw_chatbook.Widgets.Tamagotchi.recovery import recovery_adapters
 
     folder = tmp_path / "profile"
@@ -772,7 +775,7 @@ def test_pet_owner_discovers_only_its_files_beside_the_config(tmp_path):
         (
             "profile:fixture:tamagotchi.config:"
             "tamagotchi_pets.backup_20260101_121314.json",
-            "included",
+            "intentionally_excluded",
         ),
         ("profile:fixture:tamagotchi.config:seeded", "included"),
     ]

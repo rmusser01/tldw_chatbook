@@ -4,9 +4,15 @@ TASK-42000: pets live beside the profile's config (``tamagotchi_pets.json``, its
 dated copies and the seed-once marker), so they are captured and restored like
 the profile's other settings files. The archive rows are unchanged, so a backup
 taken while pets sat in the old shared folder restores into the profile too.
+TASK-42114: the dated copies are the store's own rotating backups; they are
+listed as intentionally excluded, so a backup neither captures them nor
+registers them as roots. A restore skips the dated rows that archives made
+before TASK-42114 hold (``rotating_copy``), so it never recreates them and
+leaves a target's own copies as they are; the current pet file still restores.
 """
 
 import re
+from dataclasses import replace
 
 from tldw_chatbook.Backup_Recovery.models import (
     OwnerAdapter,
@@ -23,6 +29,16 @@ _MARKER = "tamagotchi_pets.seeded"
 
 
 class _ConfiguredPets(_RawDeclaration):
+    @staticmethod
+    def rotating_copy(relative_path: str) -> bool:
+        """The store's own dated copies, which a restore never recreates.
+
+        TASK-42114 review: archives made before TASK-42114 hold them; a restore
+        skips those rows, so it neither creates them nor collides with a
+        target's own copies, which discovery lists as excluded.
+        """
+        return _DATED.fullmatch(relative_path) is not None
+
     def _restore_path(self, profile, payload, root, config_target):
         """Map only native pet files in their own top-level synthetic root."""
         key = f"profile:{profile}:tamagotchi.config"
@@ -77,7 +93,14 @@ class _ConfiguredPets(_RawDeclaration):
         # Other files beside the config belong to other owners.
         for name in names:
             if _DATED.fullmatch(name):
-                items.append(self._item(config, parent / name, name))
+                # TASK-42114: the store's own rotating copies are never
+                # captured, so a backup never binds a root the store deletes.
+                item = self._item(config, parent / name, name)
+                items.append(
+                    replace(item, status="intentionally_excluded")
+                    if item.status == "included"
+                    else item
+                )
             elif name == _MARKER:
                 items.append(self._item(config, parent / name, "seeded"))
         return tuple(items)

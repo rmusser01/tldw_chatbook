@@ -27,6 +27,9 @@ fixture=Path(os.environ['PET_FIXTURE'])
 shared=Path.home()/'.config'/'tldw_chatbook'
 def files(folder):
  return {p.name:p.read_bytes().hex() for p in folder.iterdir() if p.name.startswith('tamagotchi_pets')}
+def captured(names):
+ # TASK-42114: a backup leaves out the store's own dated copies.
+ return {name:value for name,value in names.items() if '.backup_' not in name}
 LEGACY=json.loads((fixture/'legacy.json').read_text())
 """
 
@@ -98,7 +101,10 @@ async def main():
   assert preview.complete,evidence
   # Each profile holds its own pet rows, never an alias of the other's.
   assert not any(item.shared_group for item in pets),evidence
-  assert {(item.path.parent.name,item.path.name) for item in pets}=={(label,name) for label in labels for name in before[label]['files']},evidence
+  # TASK-42114: the store's dated copies are listed but never captured.
+  assert {(item.path.parent.name,item.path.name) for item in pets}=={(label,name) for label in labels for name in before[label]['files'] if '.backup_' not in name},evidence
+  excluded={(item.path.parent.name,item.path.name) for item in preview.items if item.owner=='tamagotchi.config' and item.status=='intentionally_excluded'}
+  assert excluded=={(label,name) for label in labels for name in before[label]['files'] if '.backup_' in name} and excluded,evidence
   archive=fixture/'pets.tldw-backup.zip'
   captured=await asyncio.to_thread(capture,selectors,preview.scope_digest,archive,options=options,cancel=cancel)
   async with asyncio.timeout(10):
@@ -171,7 +177,7 @@ try:
   label=receipt['labels'][entry.source_profile]
   # Each profile's pets restore beside its own restored config (AC#3).
   assert Path(entry.config).parent==fixture/'restored'/label/'config',entry.config
-  assert files(Path(entry.config).parent)==json.loads((fixture/(label+'-pets.json')).read_text())['files']
+  assert files(Path(entry.config).parent)==captured(json.loads((fixture/(label+'-pets.json')).read_text())['files'])
   profiles.append({'profile_id':entry.profile_id,'label':label})
  (fixture/'pet-restored-profiles.json').write_text(json.dumps(profiles))
 finally:service.close()
@@ -193,7 +199,7 @@ folder=fixture/'restored'/label/'config'
 store=ConfigFileStorage()
 assert store.filepath==folder/'tamagotchi_pets.json',str(store.filepath)
 assert {key:store.load(key) for key in store.list_pets()}==before['values']
-assert files(folder)==before['files']
+assert files(folder)==captured(before['files'])
 assert not shared.exists()
 assert not blocked_attempts(),blocked_attempts()
 print('FRESH_PROFILE_PETS_READ',selected_profile)

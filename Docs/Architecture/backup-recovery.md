@@ -118,12 +118,22 @@ leaves an inert retained attempt; a completed outer marker resumes the existing
 receipt-bound operation. Malformed or ambiguous older pending states still refuse.
 
 The installed `tamagotchi.config` owner (per-profile since TASK-42000) holds the
-profile's `tamagotchi_pets.json`, its exact dated backups and the
-`tamagotchi_pets.seeded` marker beside the selected config, and restores them
-beside the restored profile's config like its other settings files. A portable
+profile's `tamagotchi_pets.json` and the `tamagotchi_pets.seeded` marker beside
+the selected config, and restores them beside the restored profile's config like
+its other settings files. Its exact dated backups are listed as intentionally
+excluded (TASK-42114): the store deletes them as it rotates, and a captured
+file is registered as an admission root of its own, so capturing them bound
+roots that later vanished, after which every admission refused. Archives made
+before that hold dated rows; plan time skips them (`restore_plan.plan_restore`,
+through the owner's `rotating_copy`), so a restore never recreates them, a
+target's own same-named copy is preserved without a collision, and a later
+rollback finds no created dated copy to retire. The current pet file still
+restores. Portable import lists the dated copies as excluded too
+(`detached_layout`). A portable
 copy made before pets were per-profile keeps them in the roaming
 `tldw_chatbook` folder; detached import takes those only when the profile has
-no pet files of its own, and reports them as not imported otherwise. Other
+neither its own pet file nor its marker (a dated copy alone does not count, and
+stays behind), and reports them as not imported otherwise. Other
 files under that roaming folder remain unsupported durable content. After
 committed profile validation, both fresh selection and launch derive portable
 home/roaming selectors from the attempt, ignoring inherited APPDATA.
