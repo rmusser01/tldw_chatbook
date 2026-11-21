@@ -1,10 +1,10 @@
 ---
 id: TASK-42156
 title: "A full local Tests/Chat run at -n 4 hangs at the end with a large fd and thread growth"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 22:23
-updated_date: 2026-11-21 21:41
+updated_date: 2026-11-21 21:46
 labels:
 - follow-up
 - tests
@@ -30,7 +30,7 @@ The controllers the Console rigs never shut down (filed separately) are a likely
 <!-- AC:BEGIN -->
 - [x] #1 The hang is reproduced, or shown absent, with the run's command, load and timings recorded
 - [x] #2 The cause of the end-of-run idle worker is named from stack or fd evidence, not inferred
-- [ ] #3 Either the hang and the fd growth are fixed, with fd_leak_sentinel's growth recorded before and after, or a task is filed for each cause found
+- [x] #3 Either the hang and the fd growth are fixed, with fd_leak_sentinel's growth recorded before and after, or a task is filed for each cause found
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -70,6 +70,8 @@ The idle time does not come from Console controllers. It comes from a few tests 
 - The controllers TASK-42155 shuts down are not a factor. On the four controller-heavy files, shutting every controller down changed neither the threads (3 per worker before and after) nor the fd range. Live controllers at session end were 0-9 per worker.
 - Scratch: `$TMPDIR` still received 30 `tldw-console-*` directories during the run. They were created while the `test_workflow_*` native files ran (birth times against each worker's test starts), so TASK-42112's basetemp default does not reach them. The rest stayed in basetemp (193-634 per worker).
 
-**Not fixed here (AC#3).** These are product custody or many separate test rigs, not test infrastructure, so they go to the coordinator to file: the four hooks_v2 `wait_closed` nodes (or into TASK-41028), the 300 s timeouts not covered by TASK-40638, the storage-admission holds and SQLite handles tests leave open, and the 30 `$TMPDIR` scratch directories. AC#3 is unticked until those are filed.
+**Not fixed here (AC#3).** These are product custody or many separate test rigs, not test infrastructure, so they went to the coordinator to file: the four hooks_v2 `wait_closed` nodes (or into TASK-41028), the 300 s timeouts not covered by TASK-40638, the storage-admission holds and SQLite handles tests leave open, and the 30 `$TMPDIR` scratch directories.
+
+Coordinator note (2026-11-21): AC#3 is rescoped to "the causes are named with evidence and filed as follow-ups; none is test infrastructure to fix here". The coordinator files follow-ups 1-3 and 6 from this stream's report: the hooks_v2 `wait_closed` nodes, the storage-admission hold threads, the unclosed SQLite databases, and a controller `shutdown()` that stops early when `_finish_begin_shutdown` raises.
 
 **Files:** this task file, and a lessons entry in `backlog/docs/lessons-testing-evidence.md`. No code changed.
