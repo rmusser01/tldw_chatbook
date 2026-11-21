@@ -20,6 +20,8 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
 
+from loguru import logger
+
 from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap, control_records
@@ -472,6 +474,7 @@ class _LocalPause:
                 raise bootstrap.RecoveryRequired("startup_reacquisition_required")
             _pause = None
             _changed.notify_all()
+        _restore_folder_pins()
 
 
 def local_pause_active() -> bool:
@@ -480,6 +483,67 @@ def local_pause_active() -> bool:
     Read-only; a pause requested by another process is not seen here.
     """
     return _pause is not None
+
+
+# TASK-40608 D1: on Windows the profile's data, config and recovery-bootstrap
+# folders are pinned while the app runs, so checked walks below them start at
+# the pin instead of the drive root (Utils/windows_files.py). Pins only speed
+# up checked walks: any failure leaves the full walk in place. A local pause
+# releases them, because backup and restore may replace these folders.
+
+
+def pin_profile_roots() -> None:
+    """Pin the current profile's data, config and recovery folders (Windows)."""
+    if sys.platform != "win32":
+        return
+    try:
+        from tldw_chatbook import config
+
+        from ..Utils.windows_files import set_pinned_roots
+
+        set_pinned_roots((
+            config.get_user_data_dir(),
+            effective_config_path().parent,
+            bootstrap.default_bootstrap_root(),
+        ))
+    except Exception as error:  # noqa: BLE001 - pins only speed up checked walks
+        logger.info("profile folder pins unavailable; error_type={}", type(error).__name__)
+
+
+def unpin_profile_roots() -> None:
+    """Release every profile folder pin (Windows only)."""
+    if sys.platform != "win32":
+        return
+    try:
+        from ..Utils.windows_files import set_pinned_roots
+
+        set_pinned_roots(())
+    except Exception as error:  # noqa: BLE001 - shutdown continues either way
+        logger.info("profile folder pin release failed; error_type={}", type(error).__name__)
+
+
+def _release_folder_pins() -> None:
+    """A paused profile may be backed up or replaced: drop Windows folder pins."""
+    if sys.platform != "win32":
+        return
+    try:
+        from ..Utils.windows_files import release_pinned_roots
+
+        release_pinned_roots()
+    except Exception as error:  # noqa: BLE001 - a held pin only refuses renames
+        logger.info("profile folder pin release failed; error_type={}", type(error).__name__)
+
+
+def _restore_folder_pins() -> None:
+    """Take the configured Windows folder pins again after a pause ends."""
+    if sys.platform != "win32":
+        return
+    try:
+        from ..Utils.windows_files import restore_pinned_roots
+
+        restore_pinned_roots()
+    except Exception as error:  # noqa: BLE001 - pins only speed up checked walks
+        logger.info("profile folder pins not restored; error_type={}", type(error).__name__)
 
 
 def _begin_local_pause() -> _LocalPause:
@@ -496,7 +560,10 @@ def _begin_local_pause() -> _LocalPause:
             if attempt.operation is None:
                 attempt.cancel.set()
         _changed.notify_all()
-        return pause
+    # Native handle closes stay off the coordinator lock; the pause owner only
+    # starts backup or restore work after this returns.
+    _release_folder_pins()
+    return pause
 
 
 class _StartupReacquisition(_Acquisition):
