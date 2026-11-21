@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 19:57
+updated_date: 2026-11-21 20:07
 labels:
 - follow-up
 - console
@@ -43,7 +43,7 @@ The checks are per root folder (`row.get("root")`), and a workspace can bind sev
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Each Undo All refusal that refers to a change snapshot's root names it as a folder, consistent with the User Guide's undo section
-- [x] #2 The run-active refusals in `change_revert.py`, `change_revert_ownership.py`, `git_workspace.py` and `COMMIT_RUN_ACTIVE_REFUSAL` use the same wording, so Console and the Review screen name the same thing the same way
+- [x] #2 The single-folder run-active refusals in `change_revert.py`, `git_workspace.py` and `COMMIT_RUN_ACTIVE_REFUSAL` share one engine sentence, and the whole-turn recheck (`_UndoCall.revalidate` in `change_revert_ownership.py`) shares Console Undo All's whole-turn sentence, so Console and the Review screen name the same thing the same way (amended 2026-11-21 by the coordinator, review rev2: the original text listed `change_revert_ownership.py` with the three single-folder sites, which no longer holds after review rev1 moved its whole-turn recheck to Console's sentence)
 - [x] #3 Tests that pin the old wording are updated, and a test pins each new notice
 - [x] #4 Where `Docs/User_Guide/console/agent-runs-and-tools.md` quotes these notices, it quotes them as they now read, including the commit refusal quoted verbatim at lines 1229-1230
 - [x] #5 (2026-11-21, coordinator) The files that pin this copy run on a PR lane, with times recorded
@@ -133,3 +133,8 @@ Every refusal that meant a snapshot's root folder said "workspace". It now says 
   - Serially with the UI lane's flags: the Review screen 61 in 249.0 s, Undo All 16 in 29.4 s.
   - The new native card test: 18.4 s serially.
   - preflight passed; `ruff --select F` clean; `ruff_gate.py` rc 0; size ratchets 234 passed; the three Tests/CI lane/census pin files 316 passed.
+
+**Review rev2 (2026-11-21)**
+- AC #2 amended with a dated coordinator note (authorized in review rev2) to match the code after rev1.
+- One click helper: the native tests' `click_modal_button` (its failure message names the region) moved into `Tests/UI/test_change_review_screen.py`, with `selector="#change-revert-yes"` as its default. `test_native_confirmed_undo.py` (14 calls) and `test_console_turn_undo_all.py` (4 calls) import it. The Review module's own copy and the one rev1 added are gone.
+- Rev2 checks (wrapper, load 26-36): the native Undo, Console Undo All and Review screen files at -n 4, 112 passed in each of 2 runs; preflight passed.

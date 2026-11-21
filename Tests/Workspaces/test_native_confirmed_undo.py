@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from Tests.UI.test_change_review_screen import _Harness, _record_turn, _wait_for
+from Tests.UI.test_change_review_screen import (
+    _Harness,
+    _record_turn,
+    _wait_for,
+    click_modal_button,
+)
 from tldw_chatbook.Agents.execution_capacity import WorkOrigin, current_execution_owner
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -73,25 +78,6 @@ async def open_confirmation(h, pilot):
         "confirmation controls",
     )
     return screen
-
-
-async def click_modal_button(pilot, selector="#change-revert-yes"):
-    """Click a confirmation button once the modal has laid it out.
-
-    TASK-41505: `pilot.click` aims at the region the button has when it is
-    called. A mounted button has an empty region until the modal's next
-    layout, so an earlier click lands at (0, 0) and the Undo never runs.
-    """
-
-    def placed():
-        screen = pilot.app.screen
-        if not isinstance(screen, ChangeRevertConfirmModal):
-            return False
-        return any(button.region for button in screen.query(selector))
-
-    await _wait_for(pilot, placed, f"{selector} laid out on the confirmation")
-    region = pilot.app.screen.query_one(selector).region
-    assert await pilot.click(selector), f"the click at {region} missed {selector}"
 
 
 async def confirm_and_settle(pilot, screen):

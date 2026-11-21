@@ -13,7 +13,7 @@ from textual.widgets import Button, Static
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Console_Modules import review_selection
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_change_review_screen import _click_modal_button
+from Tests.UI.test_change_review_screen import click_modal_button
 from Tests.UI.test_console_narrow_layout import _compositor_text
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -480,7 +480,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
         )
         assert "edited.txt" in warning and "overwrites" in warning
 
-        await _click_modal_button(pilot, "#change-revert-no")
+        await click_modal_button(pilot, "#change-revert-no")
         await _wait_for(
             pilot,
             lambda: undo if not undo.disabled else None,
@@ -498,7 +498,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
             ),
             "second Undo All confirmation",
         )
-        await _click_modal_button(pilot, "#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(
             pilot,
             lambda: target.read_text() == "before\n" or None,
@@ -661,7 +661,7 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
             ),
             "partial-failure confirmation",
         )
-        await _click_modal_button(pilot, "#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(
             pilot,
             lambda: undo if not undo.disabled else None,
@@ -686,7 +686,7 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
             ),
             "provider-failure confirmation",
         )
-        await _click_modal_button(pilot, "#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(
             pilot,
             lambda: undo if not undo.disabled else None,

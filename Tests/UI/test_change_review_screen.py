@@ -206,22 +206,26 @@ async def _wait_for(pilot, predicate, what: str, timeout: float = 8.0):
     raise AssertionError(f"timed out waiting for {what}")
 
 
-async def _click_modal_button(pilot, selector: str) -> None:
+async def click_modal_button(pilot, selector="#change-revert-yes"):
     """Click a confirmation button once the modal has laid it out.
 
-    TASK-42137 (the TASK-41505 shape): the modal is on the stack before its
-    buttons have a region, so an early click missed or raised NoMatches and
-    the revert never ran.
+    TASK-41505: `pilot.click` aims at the region the button has when it is
+    called. A mounted button has an empty region until the modal's next
+    layout, so an earlier click lands at (0, 0) and the Undo never runs.
+    TASK-42137 moved it here from the native Undo tests, so every
+    confirmation click in the Review, Console Undo All and native Undo
+    tests shares one copy.
     """
 
     def placed():
         screen = pilot.app.screen
-        return isinstance(screen, ChangeRevertConfirmModal) and any(
-            button.region for button in screen.query(selector)
-        )
+        if not isinstance(screen, ChangeRevertConfirmModal):
+            return False
+        return any(button.region for button in screen.query(selector))
 
     await _wait_for(pilot, placed, f"{selector} laid out on the confirmation")
-    assert await pilot.click(selector), f"the click missed {selector}"
+    region = pilot.app.screen.query_one(selector).region
+    assert await pilot.click(selector), f"the click at {region} missed {selector}"
 
 
 def _reads(path: Path, text: str) -> bool:
@@ -510,7 +514,7 @@ async def test_u_reverts_the_focused_file_through_the_confirm(review_fixture):
         assert "edit.txt" in str(
             modal.query_one("#change-revert-confirm").children[0].renderable
         )
-        await _click_modal_button(pilot, "#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(
             pilot,
             lambda: _reads(root / "edit.txt", "before\n") or None,
@@ -565,7 +569,7 @@ async def test_revert_preflight_and_apply_run_off_the_ui_thread(
             ),
             "confirm modal",
         )
-        await _click_modal_button(pilot, "#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(
             pilot,
             lambda: _reads(root / "edit.txt", "before\n") or None,
@@ -645,7 +649,7 @@ async def test_revert_refusal_during_active_run_reaches_the_user(review_fixture)
             ),
             "confirm modal",
         )
-        await _click_modal_button(pilot, "#change-revert-yes")
+        await click_modal_button(pilot)
         await pilot.pause()
         await pilot.pause()
         assert (root / "edit.txt").read_text() == "after\n", (
