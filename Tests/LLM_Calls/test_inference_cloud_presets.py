@@ -3,13 +3,12 @@
 Preset-cost: three registry records + three dispatch entries are the ENTIRE
 implementation -- no per-provider ``LLM_Calls`` module may ship for them.
 
-Allowances reality (Task 2 outcome): this environment holds no provider
-keys, so NO cloud fixtures exist. Every preset therefore ships EMPTY
-allowance sets behind a PROVISIONAL PENDING FIRST LIVE CAPTURE comment;
-Task 7's live probes capture real envelopes and reconcile the sets (amend,
-never silent). Memory-not-evidence (fixture-unproven, recorded in the
-registry comment only): Together a top-level ``prompt`` string plus
-choice-level ``logprobs``; Cerebras a top-level ``time_info`` object.
+Allowances: TASK-34367.3-.5 (3e618d7119) replaced the provisional empty sets
+with ones taken from each provider's official schema (the reconciliation note
+above ``TOGETHER`` in the registry names each source; offline contracts, live
+qualification stays with TASK-33640). Two sets are proved by live capture
+instead and keep their fixture citations: Together's choice ``logprobs`` and
+Fireworks' tool call ``{index, name}`` (TASK-42132).
 
 Live captures of these (and every other engine preset) replay under their
 record in ``Tests/LLM_Calls/test_live_capture_replay.py`` (TASK-33640).
@@ -87,9 +86,32 @@ def test_settings_defaults_carry_no_model_key(key: str) -> None:
     }
 
 
-# --- allowances: empty + provisional (Task 2 fixture reality) ---
+# --- allowances: the registry's doc-sourced contract plus captured sets ---
 
 
+# What each provider's official schema documents (TASK-34367.3-.5; the
+# registry's reconciliation note above TOGETHER names the source, below).
+_DOCUMENTED_ALLOWANCES = {
+    "together": {
+        "response": frozenset({"prompt", "warnings"}),
+        "choice": frozenset({"seed", "top_logprobs", "text"}),
+        "message": frozenset({"reasoning"}),
+    },
+    "fireworks": {
+        "response": frozenset({"perf_metrics", "prompt_token_ids"}),
+        "choice": frozenset({"logprobs", "raw_output"}),
+    },
+    "cerebras": {
+        "response": frozenset({"time_info", "service_tier", "service_tier_used"}),
+        "choice": frozenset({"logprobs", "reasoning_logprobs"}),
+        "message": frozenset({"reasoning"}),
+    },
+}
+_ALLOWANCE_SOURCES = {
+    "together": "docs.together.ai/reference/chat-completions",
+    "fireworks": "docs.fireworks.ai/api-reference/post-chatcompletions",
+    "cerebras": "inference-docs.cerebras.ai/api-reference/chat-completions",
+}
 # Allowances a live capture proved, with the fixture that proves them.
 _CAPTURED_CHOICE_ALLOWANCES = {
     "together": frozenset({"logprobs"}),  # cloud_live/together.json (TASK-34362)
@@ -100,24 +122,37 @@ _CAPTURED_TOOL_CALL_ALLOWANCES = {
 
 
 @pytest.mark.parametrize("key", PRESET_KEYS)
-def test_allowances_ship_empty_pending_first_capture(key: str) -> None:
+def test_allowances_are_the_documented_contract_plus_captured_sets(key: str) -> None:
+    """TASK-42132: each family is the documented set plus any captured set,
+    and every family neither names is empty. A captured set stays apart from
+    the documented one, so its fixture citation is not lost."""
     record = RECORDS_BY_KEY[key]
-    assert record.response_allowances == frozenset()
-    assert record.choice_allowances == _CAPTURED_CHOICE_ALLOWANCES.get(key, frozenset())
-    assert record.message_allowances == frozenset()
-    assert record.tool_call_allowances == _CAPTURED_TOOL_CALL_ALLOWANCES.get(key, frozenset())
+    captured = {
+        "choice": _CAPTURED_CHOICE_ALLOWANCES.get(key, frozenset()),
+        "tool_call": _CAPTURED_TOOL_CALL_ALLOWANCES.get(key, frozenset()),
+    }
+    for family in ("response", "choice", "message", "tool_call"):
+        documented = _DOCUMENTED_ALLOWANCES[key].get(family, frozenset())
+        proved = captured.get(family, frozenset())
+        assert not documented & proved, family
+        assert getattr(record, f"{family}_allowances") == documented | proved, family
 
 
-def test_registry_carries_the_provisional_allowance_comment() -> None:
-    """The empty sets must not be mistaken for fixture-proven cleanliness:
-    the registry source itself marks them provisional so Task 7's live
-    probes (amend, never silent) are discoverable from the data site."""
+@pytest.mark.parametrize("key", PRESET_KEYS)
+def test_registry_reconciliation_note_names_each_presets_schema_source(key: str) -> None:
+    """TASK-42132: the doc-sourced sets above must stay traceable from the
+    data site, so the registry's TASK-34367.3-.5 note (which replaced the
+    PROVISIONAL PENDING FIRST LIVE CAPTURE comment) names each preset's
+    official schema."""
     registry_source = (
         Path(__file__).resolve().parents[2]
         / "tldw_chatbook"
         / "provider_registry.py"
     ).read_text(encoding="utf-8")
-    assert "PROVISIONAL PENDING FIRST LIVE CAPTURE" in registry_source
+    # The note runs to the first blank comment line (later paragraphs cite
+    # the same pages for other facts).
+    note = registry_source.split("# TASK-34367.3-.5:", 1)[1].split("\n#\n", 1)[0]
+    assert _ALLOWANCE_SOURCES[key] in note
 
 
 # --- fireworks: proprietary reasoning ---

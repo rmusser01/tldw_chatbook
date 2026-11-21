@@ -282,6 +282,10 @@ FAST_LANE_TARGETS = (
     "Tests/LLM_Calls/test_summarization_credential_source.py",
     "Tests/Chat/test_legacy_api_key_credential_source.py",
     "Tests/LLM_Calls/test_dispatch_local_argument_routing.py",
+    # TASK-42132: the inference-cloud presets' allowances pinned to the
+    # registry's doc-sourced contract; no lane ran the file, so four stale
+    # nodes went unnoticed. Registry reads only, ~1 s serial.
+    "Tests/LLM_Calls/test_inference_cloud_presets.py",
     # Current-dev startup/shutdown riders remain exact members after backlog integration.
     "Tests/Chat/test_console_shutdown_after_done_finalization.py",
     "Tests/Utils/test_startup_errors.py",
