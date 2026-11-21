@@ -1045,16 +1045,18 @@ not enable automatic routing or establish savings by themselves.
 
 ### Change review — reviewing a turn's file changes
 
-When an agent turn edits files, the transcript shows a **turn file card**
+When an agent turn edits files in a workspace with Change Review enabled
+(**Settings ▸ Workspaces**), the transcript shows a **turn file card**
 directly under that turn instead of a plain summary line: a header with the
-counts ("✎ Edited 3 files  +92 −468"), an **expand/collapse-all** toggle, a
-**Review** button, then one row per changed file. Press **Enter** or click
-a row to expand its diff in place — expanding is per-row and the diff
-loads (and is cached) the first time you open it, so collapsing and
-reopening a row is instant. Long paths are middle-elided to fit the row
+counts ("✎ Edited 3 files  +92 −468"), an **expand/collapse-all** toggle,
+**Undo All** and **Review** buttons, then one row per changed file. Press
+**Enter** or click a row to expand its diff in place — expanding is per-row
+and the diff loads (and is cached) the first time you open it, so collapsing
+and reopening a row is instant. Long paths are middle-elided to fit the row
 (the start and end stay visible, with `…` in between); the row's tooltip
-always shows the full, un-elided path. The card never mutates anything
-directly; there is no undo or revert control on it.
+always shows the full, un-elided path. **Undo All** is the card's only
+control that changes files, and it asks first; see [Reviewing or undoing a
+turn's changed files](#reviewing-or-undoing-a-turns-changed-files).
 
 The header's chevron toggle expands or collapses every row at once. The
 first expand-all loads whatever diffs aren't cached yet one at a time (not
@@ -1066,9 +1068,9 @@ Click **Review** (or press **`v`**, unchanged from before the card
 shipped) to open the full **Review** screen scoped to *this card's own
 turn* — no need to reselect it once the screen opens. Reach the same
 screen from the selected transcript row or the run inspector's **Review
-changes** action. Revert-all and the other destructive actions live only
-on that screen, behind a confirm, never as a one-keystroke action in the
-transcript.
+changes** action. That screen can also revert one file (**`u`**) or the
+whole turn (**`U`**), behind the same confirmation the card uses. Nothing
+in the transcript reverts files on a single keystroke.
 
 #### Leaving feedback on a hunk
 
@@ -1115,12 +1117,12 @@ it from the stored snapshot.
 **`[console] turn_file_cards`** in `config.toml` (default `true`) is a pure
 presentation kill switch: set it to `false` to fall back to the original
 plain-text marker row (`` ✎ Edited N files  +A −D — review with `v` ``,
-byte-identical to the pre-card behavior) — no card, no note UI, no Review
-button, no expand-all. `v` and the inspector's Review changes action work
-identically either way. Turning the switch off does **not** lose any
-feedback you already queued: notes created while the card was on still
-auto-attach and deliver on your next agent send, disclosure row included,
-exactly as if the switch had stayed on.
+byte-identical to the pre-card behavior) — no card, no note UI, no Undo
+All, no Review button, no expand-all. `v` and the inspector's Review changes
+action work identically either way. Turning the switch off does **not**
+lose any feedback you already queued: notes created while the card was on
+still auto-attach and deliver on your next agent send, disclosure row
+included, exactly as if the switch had stayed on.
 
 The "✎ A sub-agent edited N files after this turn" row (see [Parallel
 sub-agents](#parallel-sub-agents-the-fleet) below) renders a card too, and
@@ -1128,44 +1130,35 @@ by design it covers the same run's full set of tracked changes — turn and
 post-turn windows alike — the same union the `v` Review screen shows for
 that run. It supports notes and Review exactly like a turn's own card.
 
-#### The rail's Changed-files section
+#### Reviewing or undoing a turn's changed files
 
-Turn file cards only show one turn at a time. To see everything a
-conversation has changed, look for the **Changed files** section in the
-Inspector (right rail) — a quiet-framed section sitting between the
-retrieval Scope row and the run inspector. It lists the conversation's
-changed files across **every** turn, one row per file, latest state only:
-status glyph, cell-elided path, that file's `+A −D`, and a `✎ N` badge
-when the file carries notes.
+Each agent turn that edited files keeps its card in the transcript. It is
+the quickest place to see what that turn did: expand one file or all of
+them, read the diffs, leave notes, or choose **Review** for the full Change
+Review screen. The card stays after an undo, so you can still see what the
+agent changed.
 
-The header names the honesty rule directly — `Changed files (N) · latest
-turn deltas +A −D` — because the per-row and header counts are each
-file's **newest** covering turn's own deltas, never a cumulative total
-across the conversation. The list caps at 12 rows; past that, a
-`+N more — open Review` tail line names the rest instead of growing the
-rail without bound. If retention pruned a turn's snapshot history, a dim
-`history pruned for N turns` line appears below the list rather than
-hiding the gap. A conversation that hasn't touched a file yet renders no
-header and no empty box at all.
+Choose **Undo All** to restore every file the turn changed. The button stays
+disabled until the card's file rows have loaded. It opens the same
+confirmation the Review screen uses, "Undo all N files from this turn?",
+with **Revert** and **Cancel**. If a file changed after the turn, the
+confirmation lists it under "⚠ Changed since this turn (reverting
+overwrites that work)". From your press until the undo finishes, is
+refused or is cancelled, the button reads **Undoing…**. Cancel leaves your
+files as they are and makes Undo All available again; a complete undo
+relabels the button **Undone** and keeps the rows and **Review**. If some
+files could not be reverted, a notice counts them and names the first five,
+and the button returns to **Undo All** so you can try again.
 
-The section is never computed on the rail's regular sync tick — the same
-cached-summary discipline the dictionary/world-book rail sections already
-use. An off-thread worker recomputes only when the conversation switches
-or a new turn's marker message appears (an in-memory check, no DB read),
-and it re-derives incrementally, so only turns it hasn't already read
-cost a fresh git call. Saving or deleting a note anywhere — the card or
-the Review screen below — also forces one refresh so a stale `✎ N` badge
-never lingers.
-
-Set **`[console] changed_files_section`** in `config.toml` to `false` to
-turn the section off (default `true`): it's a pure presentation switch —
-off renders nothing and skips the recompute worker entirely.
-
-**Click a row** (or press Enter on it) to open the Review screen already
-focused on that exact file: its newest covering turn is selected and that
-file's diff loads immediately, pinned to the specific snapshot the row's
-counts came from — so two windows of the same run that happen to touch
-the same path never open to the wrong one.
+Undo All refuses while a run is active in any of the turn's folders, when
+change tracking failed for any of them, and when files change while the
+confirmation is open (open **Review** and try again). A turn can also hold
+two change windows for the same folder, for example the turn's own and a
+sub-agent's that kept editing after the turn. The card cannot order those
+safely, so it opens **Review** instead, where you revert files one labeled
+window at a time. A turn that changed files in several folders is undone in
+one step; file names in the confirmation and notices then start with the
+folder's name, or its full path when two folders share a name.
 
 #### Leaving feedback on a diff line or the whole file
 
@@ -1463,45 +1456,79 @@ oversize entry with a note and keeps your draft so you can shorten it.
 The **primary** agent has no steering input — you steer it by talking to
 it — and inline (non-fleet) sub-agents cannot be steered at all.
 
-#### Queued child progress
+#### Queued progress from sub-agents
 
-Children can report findings for the supervisor to collect. **Read progress**
-shows complete reports without consuming them; navigation shows pending counts
-without report bodies. Discard removes only the selected report IDs and does
-not stop a child or erase copies already collected into a conversation.
-While discard saves its change, inspection and navigation keep showing the
-last committed queue. Closing the progress view does not cancel that discard.
-Closing the chat revokes child sending immediately. A discard already in
-progress can finish during chat close; other saved reports remain available
-when the chat is reopened. Navigation remains responsive while a saved report
-change finishes during chat close, restore or app shutdown.
+A live fleet child can call `report_to_supervisor` with a finding or a
+question of up to 2,000 characters. The receipt says **queued**: the report
+is in this chat's progress queue, not read. The supervisor collects reports
+with `read_agent_messages`, up to four whole reports per call, and
+collecting removes them from the queue. Neither step proves that a model
+understood or acted on a report. The supervisor can pass a finding to
+another child with `send_to_agent`; children can also message live siblings
+(see [Messages between live siblings](#messages-between-live-siblings)).
 
-Saved chats retain pending reports across close, reopen, and app restart.
-Reports belong to that chat's local database, including when detailed trace
-capture is off. Reopening restores the queue and grants a fresh supervisor
-reader; it never restores child send authority. Automatic collection includes
-only reports from the current work chain. A manual reader may collect older
-reports explicitly.
+A report does not interrupt a provider request, `wait_agents`, or an
+approval wait. Children are told to keep working or finish with a blocked
+result, and to repeat essential findings in their final result.
 
-Temporary chats keep reports in memory. **Save** commits the chat and its
-pending reports together; cancelling or failing Save keeps the original queue.
-Closing an unsaved chat or restarting the app loses its reports. Existing queue
-limits apply without evicting older reports. When the live cache is full, saved
-reports stay in the database and navigation still shows their count. Close
-another chat to free capacity, then reopen **Read progress** to load them.
-If a collection checkpoint becomes
-uncertain, collection stops instead of replaying reports automatically.
+**Inspecting the queue.** Open **Agent → Progress: N queued** for the
+**Queued progress** view. Arrow keys highlight a report and show its full
+text; Space or a click checks it for discard, and the detail pane says
+whether the highlighted report is checked. Opening or inspecting the view
+collects nothing and wakes nothing. It works with agent mode off and after
+finished children leave the panel, and it refreshes while open.
 
-When automatic wakes are enabled, pending child progress can request a
-supervisor turn after the current primary finishes. Progress and completed
-results share the same finite automatic-work budget, coalescing window,
-manual-send priority and run slots. The notice lists report IDs and asks the
-supervisor to call `read_agent_messages`; it never includes report bodies or
-grants approval. Reading or discarding before admission cancels that report's
-wake request. An accepted report can wake once while remaining manually
-readable, and interrupted attempts wait for review after restart. After saving
-a temporary chat that already received a progress wake, a restart also requires
-review before that chain can wake again. Its saved reports remain readable.
+**Discard selected (N)** removes only the checked reports. Reports that
+arrive meanwhile stay queued, as do other chats' reports. Discard frees
+queue space but does not refund the child's lifetime allowance of 32
+messages, stop a child, or erase copies already collected into the
+conversation. While a discard is saving, the view and navigation show the
+last saved queue, and closing the view does not cancel it. If the chat
+closes or changes while the view is open, the view reports it unavailable;
+reopen it from the current chat.
+
+Conversation navigation shows **Progress: N** on each chat with pending
+reports, unsaved chats included; the **[N Sub-Agents]** badge still counts
+historical runs. If a report is refused because a queue is full, check
+those counts: other chats may hold part of the shared capacity, and a
+per-child or per-chat limit can also refuse it. Discarding reports frees
+space.
+
+**Saved and temporary chats.** A saved chat keeps its pending reports in
+its local database across close, reopen and app restart, whether or not
+detailed trace capture is on. Reopening restores the queue and a fresh
+supervisor reader, never a child's ability to send. Closing a chat revokes
+child sending at once; a discard already under way can still finish. A
+temporary chat keeps reports in memory. **Save** stores the chat and its
+pending reports together and keeps an open view and its checks; a cancelled
+or failed Save keeps the original queue; closing the unsaved chat or
+restarting the app loses the reports. When the in-memory cache is full,
+saved reports stay in the database and navigation still counts them; close
+another chat, then reopen the view to load them. A turn that runs on its
+own, such as an automatic wake or a goal's next iteration, collects only its
+own work chain's reports; a message you send can also collect older ones. If
+a collection checkpoint becomes uncertain, collection stops rather than
+replay reports.
+
+**Automatic wakes.** With `[agents] autowake_enabled` on (the default; see
+[auto-wake](#when-a-background-sub-agent-finishes--auto-wake)), pending
+reports can request a supervisor turn after the current primary turn
+finishes. Reports and finished results share the same automatic-work
+budget, coalescing window, manual-send priority and run slots. The notice
+lists report IDs and asks the supervisor to call `read_agent_messages`; it
+never includes report text or grants approval. Reading or discarding a
+report before its wake is admitted cancels that wake. An accepted report
+can wake the supervisor once and stays readable. After a restart,
+interrupted attempts wait for review, and so does a chain whose temporary
+chat was saved after it received a progress wake; its saved reports stay
+readable.
+
+Collected reports may also be in run capture, in an answer, or in the
+supervisor's private provider continuation history
+([ADR-063](../../../backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md)),
+even with full run capture off. Inspection and discard do not delete those
+copies. Agent names and report text are shown literally; reports grant no
+permissions and never count as your approval.
 
 #### Messages between live siblings
 
@@ -2979,11 +3006,6 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   review](#change-review--reviewing-a-turns-file-changes) above, or the
   original plain-text marker row (default `true`, card on). No Settings UI
   switch.
-- **`[console] changed_files_section`** in `config.toml` — whether the
-  Inspector rail's cross-turn [Changed-files
-  section](#the-rails-changed-files-section) renders at all (default
-  `true`, on). A pure presentation switch: `false` renders nothing and
-  skips its off-thread recompute worker entirely. No Settings UI switch.
 - [Library ▸ Skills](../library/skills.md) — create, import, review, and
   approve skills.
 - [Settings ▸ Tools & MCP](../mcp.md) — servers, tools, and permissions.

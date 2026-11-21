@@ -1,9 +1,11 @@
 ---
 id: TASK-32907
 title: Two TTS tests issue real network calls and stall the suite
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-09-22 00:15'
+updated_date: '2026-11-20 17:35'
 labels:
   - tier2-review
   - review-testing
@@ -69,8 +71,22 @@ Source: tier-2 code review 2026-09-21, found while gating TASK-32894.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The two parametrisations assert against a stubbed transport and make no outbound request
-- [ ] #2 They pass, rather than failing on `assert provider_id == "alltalk"` after a timeout
-- [ ] #3 `Tests/TTS/` runs to completion in a normal working time, and the actual cost of `Tests/Subscriptions/` + `Tests/Utils/` is measured rather than assumed
-- [ ] #4 If other tests are found connecting to unroutable hosts, they are fixed the same way -- identified by observation, not by grepping for hostnames
+- [x] #1 The two parametrisations assert against a stubbed transport and make no outbound request
+- [x] #2 They pass, rather than failing on `assert provider_id == "alltalk"` after a timeout
+- [x] #3 `Tests/TTS/` runs to completion in a normal working time, and the actual cost of `Tests/Subscriptions/` + `Tests/Utils/` is measured rather than assumed
+- [x] #4 If other tests are found connecting to unroutable hosts, they are fixed the same way -- identified by observation, not by grepping for hostnames
 <!-- AC:END -->
+
+## Implementation Notes
+
+Closed by TASK-42027 on 2026-11-20, at dev d85e90bc9e, with no code change. Every run below went through the scratch-profile wrapper with the network guard that, since TASK-41708, refuses and reports any `socket.getaddrinfo` of a non-local name.
+
+- **AC #1.** `test_alltalk_uses_immutable_leased_default_for_actual_request` has replaced the backend's client with `httpx.AsyncClient(transport=httpx.MockTransport(handle))` and asserted `requested == [f"{configured}/v1/audio/speech"]` since 8b0048751d (2026-08-13), which added the test, before this task was filed. Both nodes recorded no lookup. Negative control: with the `MockTransport` line removed (temporary edit, reverted), both failed, the guard naming `socket.getaddrinfo -> b'leased-default.example':9443` and `...leased-runtime.example:9444` at teardown.
+- **AC #2.** Under a temporary `@private_profile_test` (removed): 2 passed in 4.6 s (2.0 s and 1.9 s). Plain, on this machine, both fail after 10.0 s each (21.6 s for the pair, the figures this task reported) with `RecoveryRequired: raw_source_selection_changed`, raised in `AllTalkTTSBackend.__init__` -> `build_httpx_async_client` -> config read. That is the local recovery trap, not a timeout. `assert provider_id == "alltalk"` appears in that traceback only as the line above the `>` marker in `manager_factory`'s frame; it passed. Where the 10 s goes was not traced (it is not the legacy host's 10 s shutdown drain: lowering that to 1 s left both at 10.0 s).
+- **AC #3.** The description reports two separate stalls: `Tests/TTS` killed at 17 minutes, and `Tests/Subscriptions` + `Tests/Utils` killed at 20 minutes, both with no output. Both were measured here; neither reproduced as a stall.
+  - `pytest Tests/TTS -n 4 --timeout-method=signal`: completed in 563 s wall (load average 20 to 33), 5,168 passed, 272 failed, 99 errors, 21 skipped; no test reached the 300 s timeout and the guard recorded no egress. Most failures are the local trap (239 `raw_source_selection_changed`, 21 `storage_scope_not_enrolled`). Neither the 17-minute stall nor the "wedged at 97% on a TTS lock test" mode appeared.
+  - `pytest Tests/Subscriptions Tests/Utils -n 4 --timeout-method=signal`: completed in 1,368 s wall (22:40 in pytest), 2,979 passed, 312 failed, 10 errors, 22 skipped, no egress. 1,200 s of that is four tests in `Tests/Subscriptions/test_briefing_cast.py` that each hit the 300 s timeout: `test_a_concurrent_cast_for_the_same_briefing_is_refused`, `test_row_scoped_exclude_sweeps_a_same_briefing_zombie_while_sparing_the_live_row` and `test_row_scoped_exclude_still_sweeps_a_same_briefing_zombie_once_the_id_lands` start `generate_script(...)` as a task, and `test_a_concurrent_kept_cast_for_the_same_kept_briefing_is_refused` starts `generate_script_from_text(...)`; each then does `await entered.wait()` with no bound (lines 865, 929, 1072, 1472). Locally the task dies on `RecoveryRequired` before it calls the chat stub, so the event never fires (log: "Task exception was never retrieved ... RecoveryRequired('raw_source_selection_changed')"). Plain with `--timeout=30`: 4 failed on the timeout; with the file temporarily marked `bootstrap_profile` (reverted): 4 passed in 7.7 s and the whole file ran in 12.7 s (65 passed, 2 failed). The four ran back to back on one worker, so without them the two directories take about 3 minutes (1,360 s less 1,200 s).
+  - This does not explain the reported 20-minute stall. The 300 s timeout was already configured when this task was filed (`timeout = 300` is in `pyproject.toml` at 7ca0a35232, the commit that filed this task, and has been since 5e17413653, 2025-06-25), and in this run each timed-out test printed its `F` as it ended, about every 5 minutes, so the run was never silent for 20 minutes. The four waits only show what such a stall would cost if those tests hung.
+  - While diagnosing I sent SIGABRT to xdist worker gw2 of the `Tests/Subscriptions Tests/Utils` run above. Its last test directory was created at 08:41:17 local time (`Tests/Utils/test_workspace_name_validation.py`); it created none after that, showed 0% CPU every time I looked from 08:44 until I aborted it at about 08:58, and `sample` showed its main thread waiting on a lock and a reader thread blocked on a pipe read, which is how an xdist worker waits for its next test. It was idle, not stalled: worker gw0 held the four timed-out tests. xdist reported no crashed test.
+- **AC #4.** TASK-41708 swept all 5,816 test files under the guard by observation, not by host-name grep, and fixed every test it saw resolve a name (listed in its notes). Both runs above recorded 0 egress attempts.
+- **Left over, not in this task's criteria:** the four unbounded `entered.wait()` calls turn any early failure of the code under test into a 300 s hang; proposed as a follow-up by TASK-42027.
