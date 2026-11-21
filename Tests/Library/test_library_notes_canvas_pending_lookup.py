@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -104,6 +105,9 @@ from tldw_chatbook.UI.Watchlists_Modules.briefing_preset_modal import (
 )
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
+)
+from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+    ConsoleHooksReviewModal,
 )
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     _CONVERSATION_FILTER_ROW_ID,
@@ -972,10 +976,10 @@ def test_every_removal_reaches_the_message_keeper():
 # act on whatever row holds that position now.
 
 
-async def _press_a_stale_row_across(pilot, stale: Button, first: Button, closing) -> None:
-    """The user's second press (``stale``) is still in transit when their
-    first press (``first``) rebuilds the rows: hold it in its button until the
-    rebuild is closing ``closing``, then let it go."""
+async def _press_a_stale_row_across(pilot, stale: Button, rebuild, closing) -> None:
+    """A press (``stale``) is still in transit when ``rebuild`` (the user's
+    earlier press, or an update) rebuilds the rows: hold it in its button
+    until the rebuild is closing ``closing``, then let it go."""
     held, release = asyncio.Event(), asyncio.Event()
 
     async def hold() -> None:
@@ -986,7 +990,7 @@ async def _press_a_stale_row_across(pilot, stale: Button, first: Button, closing
     try:
         await asyncio.wait_for(held.wait(), timeout=5)
         stale.press()
-        first.press()
+        rebuild()
         deadline = asyncio.get_running_loop().time() + 5
         while not closing._closing:
             assert asyncio.get_running_loop().time() < deadline, "no rebuild"
@@ -1016,7 +1020,7 @@ async def test_a_stale_bench_target_remove_never_unstages_another_target(
         await _press_a_stale_row_across(
             pilot,
             screen.query_one("#evals-bench-target-remove-1", Button),
-            screen.query_one("#evals-bench-target-remove-0", Button),
+            screen.query_one("#evals-bench-target-remove-0", Button).press,
             screen.query_one("#evals-bench-targets-body"),
         )
 
@@ -1053,7 +1057,7 @@ async def test_a_stale_bench_target_add_never_stages_the_rebuilt_pickers_default
         await _press_a_stale_row_across(
             pilot,
             screen.query_one("#evals-bench-add-target-button", Button),
-            screen.query_one("#evals-bench-target-remove-0", Button),
+            screen.query_one("#evals-bench-target-remove-0", Button).press,
             screen.query_one("#evals-bench-targets-body"),
         )
 
@@ -1082,9 +1086,72 @@ async def test_a_stale_briefing_speaker_remove_never_removes_another_speaker(tmp
         await _press_a_stale_row_across(
             pilot,
             modal.query_one("#bpm-speaker-remove-1", Button),
-            modal.query_one("#bpm-speaker-remove-0", Button),
+            modal.query_one("#bpm-speaker-remove-0", Button).press,
             modal.query_one("#bpm-dialog"),
         )
 
         names = [speaker["name"] for speaker in modal._speakers]
         assert names == ["B", "C"], "a stale Remove removed another speaker"
+
+
+def _hook_snapshot(*names: str) -> SimpleNamespace:
+    """A review snapshot of approved, enabled hooks (only what the modal reads)."""
+    rows = tuple(
+        SimpleNamespace(
+            entry=SimpleNamespace(
+                key=name, source="hook", index=index, spec=None, error=None, enabled=True
+            ),
+            state="approved",
+            change="Unchanged",
+        )
+        for index, name in enumerate(names)
+    )
+    section = {"hook": [{"name": name} for name in names]}
+    return SimpleNamespace(
+        rows=rows,
+        config=SimpleNamespace(section=section),
+        store_revision=("rev", 1),
+        blocked_reason=None,
+        notice=None,
+        ready=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stale_hook_revoke_never_revokes_another_hook():
+    """A Revoke for hook "b" (row 1) is in transit when an update drops hook
+    "a" and the rows are rebuilt; row 1 is then "c". "c" must not be revoked."""
+    revoked: list[str] = []
+
+    async def revoke(snapshot, key):
+        revoked.append(key)
+        return snapshot
+
+    async def unused(*_args):
+        raise AssertionError("not part of this review")
+
+    modal = ConsoleHooksReviewModal(
+        snapshot=_hook_snapshot("a", "b", "c"),
+        waiting_for_send=False,
+        approve=unused,
+        revoke=revoke,
+        disable=unused,
+        recover=unused,
+        reset=unused,
+        on_cancel=lambda: None,
+    )
+    modal._all = True  # approved hooks show their Revoke only under "All hooks"
+    app = App()
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(modal)
+        await _settle_until(pilot, lambda: modal.query("#hook-review-revoke-1"))
+        await _press_a_stale_row_across(
+            pilot,
+            modal.query_one("#hook-review-revoke-1", Button),
+            lambda: modal.update_runtime_projection(
+                SimpleNamespace(snapshot=_hook_snapshot("b", "c"), busy=False)
+            ),
+            modal.query_one("#hook-review-row-0"),
+        )
+
+        assert revoked == [], "a stale Revoke revoked another hook"

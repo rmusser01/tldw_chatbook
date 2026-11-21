@@ -16,6 +16,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Checkbox, Static
 
+from tldw_chatbook import rendered_target
 from tldw_chatbook.Constants import TAB_SETTINGS
 from tldw_chatbook.UI.Console_Modules.hooks import HookReviewResult, in_worker_task
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
@@ -82,6 +83,10 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         self.hook_review_projection = runtime_projection
         self._generation = 0
         self._answer: asyncio.Future[HookReviewResult] | None = None
+        #: Each Revoke/Disable button to the hook key it was rendered for, a
+        #: new map per row render (TASK-42150): a late press from an earlier
+        #: render resolves to nothing, not to the row now at its index.
+        self._row_actions: dict[Button, str] = {}
 
     def update_runtime_projection(
         self, projection: ConsoleHookReviewProjection
@@ -234,6 +239,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         }
 
     def _rows(self) -> ComposeResult:
+        self._row_actions = {}
         visible = [
             row
             for row in self.snapshot.rows
@@ -306,21 +312,25 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                     )
                 with Horizontal(classes="hook-review-controls"):
                     if row.state == "approved":
-                        yield Button(
+                        revoke = Button(
                             "Revoke now",
                             id=f"hook-review-revoke-{index}",
                             classes="hook-review-action",
                         )
+                        self._row_actions[revoke] = entry.key
+                        yield revoke
                     if (
                         entry.source == "hook"
                         and entry.enabled is not False
                         and isinstance(raw, dict)
                     ):
-                        yield Button(
+                        disable = Button(
                             "Disable now",
                             id=f"hook-review-disable-{index}",
                             classes="hook-review-action",
                         )
+                        self._row_actions[disable] = entry.key
+                        yield disable
 
     async def _render_rows(self) -> None:
         self._selected.clear()
@@ -421,13 +431,21 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         elif action == "console-hooks-ready" and self.snapshot.ready:
             self._submit_result(HookReviewResult("ready", self.snapshot))
         else:
+            key = None
+            if action.startswith(("hook-review-revoke-", "hook-review-disable-")):
+                # The hook this button was rendered for, never the index in
+                # its id: a late press from an earlier render would name
+                # whichever hook now holds that row.
+                key = rendered_target(self._row_actions, event.button)
+                if key is None:
+                    return
             self._busy = True
             self._sync_actions()
             self.run_worker(
-                self._mutate(action), group="hook-review-write", exclusive=True
+                self._mutate(action, key), group="hook-review-write", exclusive=True
             )
 
-    async def _mutate(self, action: str) -> None:
+    async def _mutate(self, action: str, key: str | None = None) -> None:
         generation = self._generation
         try:
             if action == "console-hooks-retry":
@@ -452,15 +470,13 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                     return
                 updated = await self._reset(self.snapshot)
             elif action.startswith(("hook-review-revoke-", "hook-review-disable-")):
-                index = int(action.rsplit("-", 1)[-1])
-                entry = self.snapshot.rows[index].entry
-                assert entry is not None
+                assert key is not None
                 mutate = (
                     self._revoke
                     if action.startswith("hook-review-revoke-")
                     else self._disable
                 )
-                updated = await mutate(self.snapshot, entry.key)
+                updated = await mutate(self.snapshot, key)
             elif action in {"console-hooks-allow-all", "console-hooks-allow-selected"}:
                 keys = (
                     self._pending()
