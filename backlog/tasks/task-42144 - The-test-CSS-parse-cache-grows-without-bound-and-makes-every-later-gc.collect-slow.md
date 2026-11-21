@@ -4,7 +4,7 @@ title: "The test CSS parse cache grows without bound and makes every later gc.co
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 19:35
+updated_date: 2026-11-21 19:59
 labels:
 - follow-up
 - tests
@@ -54,5 +54,5 @@ TASK-42073 measured it: after the theme-contrast node's 89 themes, the process h
 - **Test (AC#3).** New `Tests/CI/test_css_parse_cache.py`, which the fast lane runs through its `Tests/CI` target (no census edit). `test_a_repeat_with_the_same_variables_hits_the_cache` parses a unique CSS twice on two fresh `Stylesheet`s with the same variables and expects one real `parse()`, and a second one for other variables. `test_only_the_latest_variable_sets_are_kept` parses K+1 sets and expects the newest to hit and the oldest to parse again.
   - Red: the base cache plus the constant alone failed the second test with `the oldest variable set is dropped`. A temporary always-miss lookup failed both: `assert 2 == 1` and `the newest variable set is kept`. Both reverted.
   - Green: 2 passed.
-- **Left alone.** The comments in `.github/workflows/derived-artifacts.yml` (admission-sensitive suites 3) and `Tests/CI/test_ci_queue_pressure_contract.py` (`ADMISSION_3_TARGETS`) still give the unbounded cache as the reason the Skills file runs first. The brief does not allow workflow edits, so this is proposed as a follow-up.
-- Files: `Tests/UI/css_cache.py`, `Tests/CI/test_css_parse_cache.py`.
+- **Lane comments (coordinator-authorized follow-up).** The comments on admission-sensitive suites 3 in `.github/workflows/derived-artifacts.yml` and on `ADMISSION_3_TARGETS` in `Tests/CI/test_ci_queue_pressure_contract.py` gave the unbounded cache as the reason the Skills file runs first. They now say the cache is bounded, so the order no longer matters for teardown cost. Only comments changed; the target order stays as measured. Tests/CI at -n 4: 1815 passed, 2 skipped.
+- Files: `Tests/UI/css_cache.py`, `Tests/CI/test_css_parse_cache.py`, and comments in `.github/workflows/derived-artifacts.yml` and `Tests/CI/test_ci_queue_pressure_contract.py`.

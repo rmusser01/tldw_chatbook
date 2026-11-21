@@ -1086,9 +1086,10 @@ ADMISSION_2_TARGETS = (
 #: them hit its 35-min cap at 99% on PR #3334's run 41169081459.
 ADMISSION_3_TARGETS = (
     # TASK-42073: the Library Skills import file (module bootstrap_profile,
-    # 49 tests), on no lane before. First, because after the theme node every
-    # test's per-test gc.collect() walks ~10.6M cached parsed-CSS objects.
-    # First, 88 s of the step's 780 s locally (serial, load 17-21); last, 497 s.
+    # 49 tests), on no lane before. Put first while the theme node left ~10.6M
+    # cached parsed-CSS objects for every later per-test gc.collect() to walk.
+    # TASK-42144 bounded that cache, so the order no longer matters for
+    # teardown cost; it stays as measured.
     "Tests/Skills/test_skills_import.py",
     # Roleplay frame B2b (TASK-33910.4, owner decision D7, 2026-10-26): the
     # one Import picker, mounted on real stores (bootstrap_profile; 44 cases,

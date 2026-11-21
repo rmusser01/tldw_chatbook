@@ -868,11 +868,12 @@ jobs:
       # bootstrap_profile suites, kept out of a sandboxed invocation for the
       # reason pr-fast-lane-admission's note gives (TASK-32873): Roleplay
       # frame B2b's mounted suites (Tests/CI's ADMISSION_3_TARGETS names them).
-      # TASK-42073 puts the Library Skills import file (module
-      # bootstrap_profile, 49 tests, on no lane before) first: after the theme
-      # node, Tests/UI/css_cache.py holds ~10.6M parsed-CSS objects and every
-      # test's per-test gc.collect() then costs ~5-9 s. First, it took 88 s of
-      # this step's 780 s locally (serial, load 17-21); last, 497 s.
+      # TASK-42073 put the Library Skills import file (module
+      # bootstrap_profile, 49 tests, on no lane before) first, when the theme
+      # node left ~10.6M parsed-CSS objects in Tests/UI/css_cache.py and each
+      # later per-test gc.collect() cost ~5-9 s. TASK-42144 bounded that cache
+      # (0.27-0.73 s teardowns after the node), so the order no longer matters
+      # for teardown cost; it stays as measured.
       - name: Run admission-sensitive suites 3
         run: |
           pytest \
