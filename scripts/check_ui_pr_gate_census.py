@@ -1246,6 +1246,10 @@ MINIMUM_FILES = 2472
 # tail, one per test function, by parameter where a function ran over 30 s.
 # The floor is the measured entry count.
 MINIMUM_FILES = 2520
+# TASK-33620.7, TASK-33620.15.25 (2026-11-21): append the staged-evidence
+# sessions file and the typing-after-Enter node at the tail. The floor is the
+# measured entry count.
+MINIMUM_FILES = 2528
 
 
 MINIMUM_FILES = 2038
@@ -1341,6 +1345,8 @@ MINIMUM_FILES = 2766
 MINIMUM_FILES = 2769
 MINIMUM_FILES = 2778
 MINIMUM_FILES = 2785
+# 2026-11-22: re-counted after rebasing onto dev fe8c87e3e2. The floor is the measured entry count.
+MINIMUM_FILES = 2787
 def read_census(path: Path) -> list[str]:
     """Read the census, dropping comments and blank lines.
 

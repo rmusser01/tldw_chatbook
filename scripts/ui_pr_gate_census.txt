@@ -3991,3 +3991,12 @@ Tests/UI/test_console_library_auto_outcome.py::test_shelf_action_on_a_timed_out_
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[retry-library-search]
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[send-once-without-library]
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[cancel-send]
+# TASK-33620.7, TASK-33620.15.25 (2026-11-21): the staged-evidence sessions
+# file, on no lane before (3 of 26 red on dev dc371f0842: its reply wait
+# counted footers a sourceless reply no longer mounts, and one revision
+# expectation predated the press's move to the received route). 26 passed in
+# 54.1 s and 78.6 s serially with the lane's flags (load 18-19), 56.6 s under
+# the plain command. The typing-after-Enter node: 1 passed in 12.9 s with the
+# lane's flags (load 11).
+Tests/UI/test_console_staged_evidence_sessions.py
+Tests/UI/test_console_received_intent_feedback.py::test_keys_typed_onto_the_shown_draft_after_enter_keep_the_send
