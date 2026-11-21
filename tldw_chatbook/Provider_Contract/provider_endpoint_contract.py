@@ -103,8 +103,8 @@ _BARE_BASE_ANY_HOST_KEYS = frozenset({"cohere"})
 #: TASK-42002 (owner decision 2026-11-19, "Migrate on load"): the paths an
 #: earlier Settings saved with ``/v1`` wrongly appended to a first-party base.
 #: On the provider's own host each reads as its documented path, so a save
-#: writes that base (TASK-42019) and config load rewrites a saved one
-#: (``config._migrate_v1_appended_provider_bases``). Google's ``/v1`` is a
+#: writes that base (TASK-42019); config load rewrites a saved one with its own
+#: frozen copy (``config._V1_APPENDED_SHAPES``). Google's ``/v1`` is a
 #: real Gemini API version, so it is not here.
 _V1_APPENDED_PATHS = {
     "google": ("v1beta", "v1"),
@@ -511,8 +511,13 @@ def _read_v1_appended_path(
 def v1_appended_documented_base(provider: object, value: object) -> str | None:
     """The documented base a value saved with ``/v1`` wrongly appended reads as.
 
-    TASK-42002: config load rewrites such a saved base with this, the rule a
-    save resolves through (``_V1_APPENDED_PATHS``).
+    TASK-42002: the parity oracle for config migration 2, which keeps its own
+    frozen copy of ``_V1_APPENDED_PATHS`` (config is kernel). A save does not
+    call this; it resolves through ``_read_v1_appended_path``. The parity test
+    asserts the migration agrees with this on every spelling a save wrote
+    (own host, an optional port, each tail); the migration leaves alone
+    spellings no save wrote (a leading-zero port, an upper-case host, a
+    trailing slash), which this still reads.
 
     Args:
         provider: Provider key.
@@ -520,7 +525,7 @@ def v1_appended_documented_base(provider: object, value: object) -> str | None:
 
     Returns:
         The base a save writes for the value (the documented base on its own
-        scheme and host, any pasted tail dropped), or None for any other
+        scheme, host and port, any pasted tail dropped), or None for any other
         value, including one the contract refuses (user info, a query or a
         fragment never reach the result).
     """

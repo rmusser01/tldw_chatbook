@@ -969,7 +969,12 @@ _BUDGETS: dict[str, int] = {
     # step skips the lock; the migration's host pre-filter is gone.
     # 2026-11-20, review r18-rev2: 8884 -> 8883 (-1) -- the unused
     # RECORDS_BY_KEY import the pre-filter needed is gone.
-    "tldw_chatbook/config.py": 8883,
+    # 2026-11-21, round-18 hotfix of TASK-42002: 8883 -> 8895 (+12) -- config
+    # migration 2 keeps its own frozen shape table instead of importing the
+    # endpoint contract (kernel must not import domain; layer map).
+    # 2026-11-21, its review rev1: 8895 -> 8901 (+6) -- a port a save kept on
+    # the provider's own host matches too.
+    "tldw_chatbook/config.py": 8901,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

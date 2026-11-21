@@ -32,6 +32,7 @@ else:
 import os
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 import toml
 import portalocker
 from typing import (
@@ -64,6 +65,7 @@ from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from tldw_chatbook.provider_registry import (  # noqa: F401 - normalize_provider_config_key is re-exported
     ALL_RECORDS,
     CLOUD_PROVIDER_CONFIG_KEYS,
+    RECORDS_BY_KEY,
     _ENGINE_CONFIG_KEY_ALIASES,
     normalize_provider_config_key,
 )
@@ -3971,24 +3973,40 @@ def format_config_key_report(findings: Sequence[ConfigKeyFinding]) -> str:
 #: the baseline (0) and migrated forward, never rejected.
 CONFIG_SCHEMA_VERSION_KEY = "config_schema_version"
 _CURRENT_CONFIG_SCHEMA_VERSION = 2
+#: TASK-42002: the path an earlier Settings saved with ``/v1`` appended on each
+#: provider's own (registry default) host. A migration is a frozen fix and
+#: config is kernel, so it keeps this copy instead of calling the endpoint
+#: contract (round-18 hotfix); a parity test pins it to the contract's rule.
+_V1_APPENDED_SHAPES = {"google": "/v1beta/v1", "cohere": "/v1", "groq": "/v1", "openrouter": "/v1", "qwencloud": "/v1"}
 
 
 def _migrate_v1_appended_provider_bases(config: Dict[str, Any]) -> Dict[str, Any]:
     """Migration 2 (TASK-42002, owner decision 2026-11-19 "Migrate on load").
 
     Rewrites an ``api_base_url`` an earlier Settings saved with ``/v1``
-    appended (Google ``.../v1beta/v1``), a pasted tail included, to the base a
-    save writes for it, by the endpoint contract's rule; those configs'
-    project-instruction keys change once. The contract is already in the boot
-    import set (ADR-097).
+    appended (``_V1_APPENDED_SHAPES``), a pasted tail a save drops included,
+    to the base a save writes for it; those configs' project-instruction keys
+    change once. Only a spelling a save wrote matches: the provider's own host,
+    with or without the port typed (kept), so user info, a query or a fragment
+    never does.
     """
-    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import v1_appended_documented_base
-
     api_settings = config.get("api_settings")
     for provider, table in (api_settings.items() if isinstance(api_settings, dict) else ()):
-        value = table.get("api_base_url") if isinstance(table, dict) else None
-        if (documented := v1_appended_documented_base(provider, value)) is not None:
-            table["api_base_url"] = documented
+        shape = _V1_APPENDED_SHAPES.get(provider)
+        value = table.get("api_base_url") if shape and isinstance(table, dict) else None
+        if not isinstance(value, str):
+            continue
+        default = urlsplit(RECORDS_BY_KEY[provider].default_base_url)
+        # QwenCloud's adapter refuses a /models base (TASK-42021), so it is kept.
+        tails = ("", "/chat/completions", "/responses" if provider == "qwencloud" else "/models")
+        scheme, _, rest = value.partition("://")
+        netloc, slash, remainder = rest.partition("/")
+        host, colon, port = netloc.partition(":")
+        # Review rev1: a save kept a typed port (1-65535, no leading zero).
+        if (scheme in ("http", "https") and host == default.hostname
+                and (not colon or (re.fullmatch(r"[1-9][0-9]{0,4}", port) and int(port) < 65536))
+                and slash + remainder in {shape + tail for tail in tails}):
+            table["api_base_url"] = documented = default._replace(scheme=scheme, netloc=netloc).geturl()
             logger.info("Config migration: api_settings.{}.api_base_url had /v1 appended "
                         "by an earlier version; now its documented base {}.", provider, documented)
     return config
