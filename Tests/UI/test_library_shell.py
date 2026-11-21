@@ -24391,9 +24391,10 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
 
         save_note = session._port.save_note
         flush = screen._flush_library_note_save
+        wait_for_pending_save = session.wait_for_pending_save
         committed = asyncio.Event()
         acknowledge = asyncio.Event()
-        back_started = asyncio.Event()
+        back_waiting_for_save = asyncio.Event()
         back_finished = asyncio.Event()
 
         async def hold_save_reply(note_id, expected_version, payload):
@@ -24403,14 +24404,18 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
                 await acknowledge.wait()
             return reply
 
+        async def observe_pending_save():
+            back_waiting_for_save.set()
+            await wait_for_pending_save()
+
         async def observe_back(**kwargs):
-            back_started.set()
             outcome = await flush(**kwargs)
             back_finished.set()
             return outcome
 
         if save_order != "normal":
             monkeypatch.setattr(session._port, "save_note", hold_save_reply)
+            monkeypatch.setattr(session, "wait_for_pending_save", observe_pending_save)
             monkeypatch.setattr(screen, "_flush_library_note_save", observe_back)
         if save_order == "held-past-bound":
             monkeypatch.setattr(
@@ -24458,8 +24463,13 @@ async def test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
                     )
             _press_note_back(screen)
             if save_order != "normal":
-                await asyncio.wait_for(back_started.wait(), timeout=3)
+                await asyncio.wait_for(back_waiting_for_save.wait(), timeout=3)
                 assert screen._notes_state.session_blank_id == note_id
+            if save_order == "held-reply":
+                assert await real_service.get_note_detail(
+                    scope="local_note", note_id=note_id, user_id="default_user"
+                ) == detail
+                assert not back_finished.is_set()
             if save_order == "held-past-bound":
                 await asyncio.wait_for(back_finished.wait(), timeout=3)
                 assert screen._notes_state.view == "editor"
@@ -24710,21 +24720,20 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_swi
 
         # Leave via a rail-row press (not Back/Escape) without ever typing.
         screen.query_one("#library-row-browse-media").press()
-        for _ in range(150):
-            if (
-                await app.notes_scope_service.count_notes(
-                    scope="local_note", user_id="default_user"
-                )
-                == 0
-            ):
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                "The untouched blank note was never GC'd from the real DB "
-                "via a rail-row switch."
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._library_selected_row_id == "browse-media"
+                and bool(screen.query("#library-media-canvas"))
+            ),
+            message="The rail switch never mounted the Media canvas.",
+        )
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
             )
-        assert screen._library_selected_row_id == "browse-media"
+            == 0
+        ), "The rail switch left the untouched blank note in the real DB."
 
 
 @pytest.mark.asyncio
