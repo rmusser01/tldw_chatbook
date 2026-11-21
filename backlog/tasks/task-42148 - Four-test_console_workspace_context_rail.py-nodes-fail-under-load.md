@@ -4,7 +4,7 @@ title: "Four test_console_workspace_context_rail.py nodes fail under load"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 20:23
+updated_date: 2026-11-21 20:42
 labels:
 - follow-up
 - tests
@@ -73,6 +73,52 @@ The f1 control is the one the old wait could pass by accident: a late startup sy
   - The other failed only `test_conversation_row_renders_custom_icon_in_right_action_slot` (`assert 1 == 2` row controls). That test calls `_set_console_rail_preference(left_open=True)` after the startup wait, and then pushes its rows without the hold: the same post-startup refresh race.
   - It was not in the four nodes or in the coordinator's list. Holding every push site in the file needs a check per test, because some tests depend on a later production sync (for example the star-toggle tests), so it is proposed as a follow-up.
   - Before the zero_result hold, the selector-only version also ran the whole file twice: 51 of 51 in one run, zero_result failing in the other.
+
+**Push-site audit (coordinator decision 2026-11-21, second follow-up).** I read every mounted test in the file and asked one question: does it rely on a later production sync updating the rows it pushed? None of the tests that push state does. The tests that do rely on production syncs never push state, so they have nothing to hold. All 25 push sites, in 24 tests, now go through `_hold_workspace_state`.
+
+| Test | Push | Decision | Why |
+|---|---|---|---|
+| test_flat_conversations_has_no_cross_owner_starred_aggregate | tray | held | asserts on the pushed rows only |
+| test_console_workspace_context_mounts_native_tree_without_legacy_groups | tray | held | asserts on controls the mount renders |
+| test_console_f1_exposes_full_selected_tree_label_and_complete_grammar | rail | held | pushed tree, then F1; nothing later |
+| test_console_f1_renders_markup_looking_selected_label_literally | rail | held | same shape as above |
+| test_console_f1_tolerates_missing_tree_context_snapshot | rail | held (round 1) | see above |
+| test_zero_result_workspace_search_stays_editable_and_initializes_without_echo | rail | held (round 2) | asserts on the pushed query |
+| test_expanded_chats_section_capped_row_marker_surfaces_on_header | tray | held (round 1) | header from the pushed rows |
+| test_expanded_chats_section_visible_row_marker_has_no_header_echo | tray | held | header from the pushed rows |
+| test_collapsed_chats_section_header_shows_aggregate_unchanged | tray | held (round 1) | header from the pushed rows |
+| test_rail_title_budget_scales_with_terminal_width | tray x2 | held | the budget comes from rail width; the resize's on_resize sync now republishes the same state |
+| test_on_resize_alone_regrows_wrap_budget_within_one_pause | tray | held | pins the tray's own on_resize fit pass; the screen's on_resize sync can no longer recompose the tray mid-measure |
+| test_sync_state_schedules_exactly_one_deferred_fit_pass | tray | held | its assertions run synchronously after its own push |
+| test_console_conversation_star_uses_recognizable_star_glyphs | tray | held | asserts on the pushed rows' glyphs |
+| test_console_conversation_star_press_confirms_the_toggle | tray | held | asserts on the toast after the star write, not on rows updating |
+| test_console_conversation_star_confirms_an_untitled_conversation | tray | held | asserts on the write and the toast only |
+| test_row_actions_stay_reachable_when_local_marks_are_unavailable | tray | held | asserts on the pushed rows' openers |
+| test_console_workspace_context_search_controls_keep_stable_ids | tray | held | asserts on the pushed query's controls |
+| test_conversation_row_shows_placeholder_when_no_active_conversation | tray | held | asserts on the pushed empty session |
+| test_conversation_row_renders_custom_icon_in_right_action_slot | tray | held | asserts on the pushed rows' icons |
+| test_conversation_right_action_geometry_stays_contained | tray | held | geometry of the pushed row |
+| test_conversation_action_ascii_mode_substitutes | tray | held | labels of the pushed rows |
+| test_unpersisted_native_row_keeps_combined_menu_available | tray | held | the pushed native row's control |
+| test_combined_menu_change_appearance_opens_picker_with_saved_identity | tray | held (round 1) | the pushed row's menu |
+| test_conversation_browser_renders_date_dividers | tray | held | dividers of the pushed rows |
+| test_narrow_details_rail_truncates_cleanly_and_keeps_the_full_value | none | left | renders the screen's own details |
+| test_console_left_rail_splits_staged_context_from_workspace_context | none | left | asserts on the screen's own defaults |
+| test_console_workspace_context_exposes_new_conversation_for_default_workspace | none | left | asserts on the screen's own defaults |
+| test_console_workspace_selector_is_compact_plain_status_row | none | left; poll fixed | the screen's own row; it polls `query()` now |
+| test_session_tray_shows_workspace_scope_and_new_button | none | left | a registry workspace that the production sync renders |
+| test_console_workspace_context_renders_active_workspace | none | left | rendered from the registry by a production sync |
+| test_console_workspace_context_renders_server_readiness_handoff_and_acp_contracts | none | left | rendered from the registry and app state by a production sync |
+| test_console_workspace_context_renders_markup_titles_literally | none | left | rendered from the registry by a production sync |
+| test_console_change_workspace_switches_active_context_and_conversation_rows | none | left | relies on the production sync after a workspace switch |
+
+I had expected the star-toggle tests to need a production sync. They do not: they assert on the toast and the durable write, never on rows changing.
+
+- **Whole file after the audit, `-n 4`:** 51 of 51 in each of 11 runs.
+  - 5 runs one after another, load 13-18.
+  - 6 runs as two concurrent loops of 3 (8 workers at once), load 16-29.
+  - The machine was quieter than in the earlier rounds (which ran at load 30-60), so the concurrent pair was added to raise the load.
+- **Custom-icon negative control:** the row action control always gets the placeholder glyph, so the saved appearance is never rendered. The test fails `assert '🧪' in '💬'` (pytest prints the escaped `'#x1F9EA' in '#x1F4AC'`), 2 of 2 at load 16-17.
 
 TASK-38204 (To Do) names the same cause for `test_console_workspace_tray_recompose_guard.py`, which this task does not touch. Its AC #3 asks for one shared settle helper, and other files can import this one.
 

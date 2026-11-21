@@ -461,7 +461,9 @@ async def test_flat_conversations_has_no_cross_owner_starred_aggregate(request) 
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state())
+        )
         await pilot.pause()
 
         # The old cross-owner Starred aggregate is retired. The flat row does
@@ -515,7 +517,9 @@ async def test_console_workspace_context_mounts_native_tree_without_legacy_group
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state())
+        )
         await pilot.pause()
 
         assert len(console.query("#console-workspace-tree")) == 1
@@ -548,7 +552,9 @@ async def test_console_f1_exposes_full_selected_tree_label_and_complete_grammar(
                 ),
             ),
         )
-        rail.sync_workspace_context(state)
+        rail.sync_workspace_context(
+            _hold_workspace_state(console, state)
+        )
         await pilot.pause()
         tree = console.query_one(ConsoleWorkspaceTree)
         tree.move_cursor(tree.workspace_nodes["workspace-1"])
@@ -588,14 +594,17 @@ async def test_console_f1_renders_markup_looking_selected_label_literally(
         await _wait_for_selector(console, pilot, "#console-workspace-tree")
         rail = console.query_one("#console-left-rail")
         rail.sync_workspace_context(
-            replace(
-                _base_grouped_workspace_state(),
-                workspace_tree=(
-                    WorkspaceTreeWorkspace(
-                        workspace_id="workspace-1",
-                        label=raw,
-                        conversations=(),
-                        next_cursor=None,
+            _hold_workspace_state(
+                console,
+                replace(
+                    _base_grouped_workspace_state(),
+                    workspace_tree=(
+                        WorkspaceTreeWorkspace(
+                            workspace_id="workspace-1",
+                            label=raw,
+                            conversations=(),
+                            next_cursor=None,
+                        ),
                     ),
                 ),
             )
@@ -815,11 +824,14 @@ async def test_expanded_chats_section_visible_row_marker_has_no_header_echo(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
         tray.sync_state(
-            _base_grouped_workspace_state(
-                rows=_chat_rows_with_marker_at(
-                    2,  # well within the cap
-                    "●",
-                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+            _hold_workspace_state(
+                console,
+                _base_grouped_workspace_state(
+                    rows=_chat_rows_with_marker_at(
+                        2,  # well within the cap
+                        "●",
+                        count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                    ),
                 ),
             )
         )
@@ -890,13 +902,17 @@ async def test_rail_title_budget_scales_with_terminal_width(request) -> None:
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state())
+        )
         await pilot.pause()
         narrow_budget = tray._browser_title_budget()
 
         await pilot.resize_terminal(260, 60)
         await pilot.pause()
-        tray.sync_state(_base_grouped_workspace_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state())
+        )
         await pilot.pause()
         wide_budget = tray._browser_title_budget()
 
@@ -940,7 +956,9 @@ async def test_on_resize_alone_regrows_wrap_budget_within_one_pause(request) -> 
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state())
+        )
         await pilot.pause()
 
         narrow_row_width = tray._row_content_width
@@ -1038,7 +1056,9 @@ async def test_sync_state_schedules_exactly_one_deferred_fit_pass(
         monkeypatch.setattr(tray, "call_later", _call_later_spy)
         monkeypatch.setattr(tray, "set_timer", _set_timer_spy)
 
-        tray.sync_state(_base_grouped_workspace_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state())
+        )
 
         # No call_later fan-out and no set_timer scroll-restore hop -- the
         # old two-hop-plus-timer shape this pins against regressing to.
@@ -1076,7 +1096,9 @@ async def test_console_conversation_star_uses_recognizable_star_glyphs(request):
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state())
+        )
         await pilot.pause()
 
         for star in console.query(".console-conversation-star"):
@@ -1102,7 +1124,9 @@ async def test_console_conversation_star_press_confirms_the_toggle(request):
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state())
+        )
         await pilot.pause()
 
         # TASK-23200 replaced the per-row star button with an asterisk that
@@ -1163,7 +1187,9 @@ async def test_console_conversation_star_confirms_an_untitled_conversation(reque
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state())
+        )
         await pilot.pause()
 
         # See the sibling test: the star button became the row action menu's
@@ -1228,7 +1254,11 @@ async def test_row_actions_stay_reachable_when_local_marks_are_unavailable(
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state(marks_available=False))
+        tray.sync_state(
+            _hold_workspace_state(
+                console, _base_grouped_workspace_state(marks_available=False)
+            )
+        )
         await pilot.pause()
 
         openers = list(console.query(".console-conversation-actions"))
@@ -1261,7 +1291,11 @@ async def test_console_workspace_context_search_controls_keep_stable_ids(
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state(query="planning"))
+        tray.sync_state(
+            _hold_workspace_state(
+                console, _base_grouped_workspace_state(query="planning")
+            )
+        )
         await pilot.pause()
 
         search = console.query_one("#console-workspace-conversation-search", Input)
@@ -1742,7 +1776,9 @@ async def test_conversation_row_shows_placeholder_when_no_active_conversation(
         # active conversation.
         state = _base_grouped_workspace_state()
         assert state.scope_label == ""
-        tray.sync_state(state)
+        tray.sync_state(
+            _hold_workspace_state(console, state)
+        )
         await pilot.pause()
 
         assert not console.query("#console-active-scope"), (
@@ -2294,7 +2330,11 @@ async def test_conversation_row_renders_custom_icon_in_right_action_slot(request
         # open it so the row geometry is actually laid out.
         console._set_console_rail_preference(left_open=True)
         await pilot.pause()
-        tray.sync_state(_base_grouped_workspace_state(rows=(decorated, plain)))
+        tray.sync_state(
+            _hold_workspace_state(
+                console, _base_grouped_workspace_state(rows=(decorated, plain))
+            )
+        )
         await pilot.pause()
 
         controls = list(console.query(".console-conversation-actions"))
@@ -2359,7 +2399,9 @@ async def test_conversation_right_action_geometry_stays_contained(request):
         # open it so the row geometry is actually laid out.
         console._set_console_rail_preference(left_open=True)
         await pilot.pause()
-        tray.sync_state(_base_grouped_workspace_state(rows=(row,)))
+        tray.sync_state(
+            _hold_workspace_state(console, _base_grouped_workspace_state(rows=(row,)))
+        )
         await pilot.pause()
 
         screen_width = console.size.width
@@ -2417,7 +2459,11 @@ async def test_conversation_action_ascii_mode_substitutes(request):
             tray = console.query_one(
                 "#console-workspace-context", ConsoleWorkspaceContextTray
             )
-            tray.sync_state(_base_grouped_workspace_state(rows=(decorated, plain)))
+            tray.sync_state(
+                _hold_workspace_state(
+                    console, _base_grouped_workspace_state(rows=(decorated, plain))
+                )
+            )
             await pilot.pause()
 
             labels = {
@@ -2454,7 +2500,11 @@ async def test_unpersisted_native_row_keeps_combined_menu_available(request):
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state(rows=(native,)))
+        tray.sync_state(
+            _hold_workspace_state(
+                console, _base_grouped_workspace_state(rows=(native,))
+            )
+        )
         await pilot.pause()
 
         control = console.query_one("#console-conversation-actions-0", Button)
@@ -2568,7 +2618,9 @@ async def test_conversation_browser_renders_date_dividers(request) -> None:
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_divider_browser_state())
+        tray.sync_state(
+            _hold_workspace_state(console, _divider_browser_state())
+        )
         await pilot.pause()
 
         assert _static_plain(
