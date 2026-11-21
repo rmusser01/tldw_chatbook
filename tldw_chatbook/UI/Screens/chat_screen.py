@@ -11856,37 +11856,6 @@ class ChatScreen(BaseAppScreen):
             )
         return self._console_first_send_completed_cached
 
-    def _record_console_first_send(self) -> None:
-        """Persist the one-time global first-send flag and refresh guidance."""
-        if self._console_first_send_completed():
-            return
-        self._console_first_send_completed_cached = True
-        app_config = getattr(self.app_instance, "app_config", None)
-        if isinstance(app_config, dict):
-            console_cfg = app_config.get("console")
-            if not isinstance(console_cfg, dict):
-                console_cfg = {}
-                app_config["console"] = console_cfg
-            onboarding_cfg = console_cfg.get("onboarding")
-            if not isinstance(onboarding_cfg, dict):
-                onboarding_cfg = {}
-                console_cfg["onboarding"] = onboarding_cfg
-            onboarding_cfg["first_send_completed"] = True
-        self._save_console_onboarding_flag()
-        self._sync_console_transcript_guidance()
-
-    @work(thread=True)
-    def _save_console_onboarding_flag(self) -> None:
-        """Persist the first-send flag without blocking the UI thread."""
-        try:
-            save_setting_to_cli_config(
-                "console.onboarding",
-                "first_send_completed",
-                True,
-            )
-        except Exception as exc:
-            logger.warning("Failed to persist Console onboarding flag: {}", exc)
-
     def _console_fleet_coachmark_seen(self) -> bool:
         """Return the persisted one-time fleet coach-mark flag (fleet-UX F2, task-1232).
 

@@ -19,6 +19,10 @@ store is unbound, so a Send without MCP tools is never silent.
 TASK-41900: the ordinary send also runs with the agent runtime on (the
 Console default). Unbound, the turn's native sources refused it with
 `mcp_source_not_installed`; a bound store keeps its source proofs.
+TASK-42016: so do the draft-snapshot sends.
+
+TASK-42018: the launcher for the probes that show an unseen receipt never
+reaches the next bootstrap-profile test lives here, in a laned file.
 """
 
 from __future__ import annotations
@@ -72,14 +76,14 @@ class _ToolRecordingGateway(CapturingGateway):
             yield chunk
 
 
-def _record_mcp_maximum(monkeypatch) -> list:
-    """Record the MCP definition maximum each owned turn capture froze."""
+def _record_captures(monkeypatch) -> list:
+    """Record the configuration snapshot each owned turn capture froze."""
     captured: list = []
     real = preparation.capture_console_turn_configuration
 
     def capture(*args, **kwargs):
         result = real(*args, **kwargs)
-        captured.append(dict(result.mcp_definition_maximum))
+        captured.append(result)
         return result
 
     monkeypatch.setattr(preparation, "capture_console_turn_configuration", capture)
@@ -193,7 +197,7 @@ async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
     elif profile == "non-default-data-dir":
         kwargs["user_data_dir"] = tmp_path
     gateway = _ToolRecordingGateway()
-    maximums = _record_mcp_maximum(monkeypatch)
+    captures = _record_captures(monkeypatch)
     app = _build_console_send_test_app(**kwargs)
     sources = (
         _turn_on_agent_runtime(app, monkeypatch) if runtime == "agent" else []
@@ -229,8 +233,8 @@ async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
     assert replies == ["accepted"]
     # A bound store freezes its MCP definitions (the built-in server's tools);
     # an unbound one freezes none, and the provider is offered no tools.
-    assert len(maximums) == 1
-    assert bool(maximums[0]) is (profile == "bound")
+    assert len(captures) == 1
+    assert bool(captures[0].mcp_definition_maximum) is (profile == "bound")
     assert gateway.offered_tools == [None]
     # The agent runtime really ran the turn: it pinned the turn's sources.
     assert len(sources) == (runtime == "agent")
@@ -341,6 +345,7 @@ async def test_unbound_store_with_a_replaced_mcp_reader_is_still_refused(monkeyp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("runtime", ["gateway", "agent"])
 @pytest.mark.parametrize("profile", ["no-pinned-io", "non-default-data-dir"])
 @pytest.mark.parametrize(
     "scenario",
@@ -351,19 +356,36 @@ async def test_unbound_store_with_a_replaced_mcp_reader_is_still_refused(monkeyp
     ],
 )
 async def test_draft_snapshot_sends_without_a_bound_mcp_store(
-    monkeypatch, tmp_path, profile, scenario
+    monkeypatch, tmp_path, profile, scenario, runtime
 ):
+    """TASK-42016: also with the agent runtime on, as TASK-41900 did for the
+    ordinary send."""
     if profile == "no-pinned-io":
         _bind_without_pinned_io(monkeypatch)
-    else:
-        build = _build_console_send_test_app
+    build = _build_console_send_test_app
+    sources: list = []
 
-        def build_elsewhere(*args, **kwargs):
-            return build(*args, user_data_dir=tmp_path, **kwargs)
+    def build_for_profile(*args, **kwargs):
+        if profile == "non-default-data-dir":
+            kwargs["user_data_dir"] = tmp_path
+        app = build(*args, **kwargs)
+        if runtime == "agent":
+            sources.append(_turn_on_agent_runtime(app, monkeypatch))
+        return app
 
-        for module in (draft_snapshot, acknowledgement):
-            monkeypatch.setattr(module, "_build_console_send_test_app", build_elsewhere)
+    for module in (draft_snapshot, acknowledgement):
+        monkeypatch.setattr(module, "_build_console_send_test_app", build_for_profile)
+    captures = _record_captures(monkeypatch)
     await getattr(draft_snapshot, scenario)(monkeypatch)
+
+    # The send's capture froze the runtime as set: saved after the build
+    # without a reload, it never reaches the Console (TASK-41900's lesson).
+    flags = {c.tool_configuration.get("agent_runtime_enabled") for c in captures}
+    assert flags == {runtime == "agent"}
+    # Only the spoken send runs its turn here (the queued one waits, the armed
+    # one's acceptance is replaced); with the runtime on, it pinned its sources.
+    ran = scenario == "test_spoken_send_sends_its_capture_and_keeps_text_typed_after_it"
+    assert [len(built) for built in sources] == ([int(ran)] if runtime == "agent" else [])
 
 
 def _mcp_row_text(console) -> str | None:
@@ -535,3 +557,22 @@ async def test_unbound_live_work_mcp_row_fits_the_section_at_full_screen(tmp_pat
     assert card_rows == demand == 17
     assert demand <= cap == 20
     assert hint_shown is False
+
+
+def test_an_unseen_console_receipt_never_reaches_the_next_bootstrap_test(tmp_path):
+    """TASK-42018: the shared database's unseen receipts are cleared between
+    bootstrap-profile tests, as their config is (``Tests/conftest.py``), and
+    a file at that path that is not a database is left alone, with no
+    teardown error for that test or the next.
+
+    Runs TASK-36478's child pytest process, so each planting probe and the
+    reading probe after it share one process in file order.
+    """
+    from Tests.test_bootstrap_profile_config_reset import _run_probes
+
+    result = _run_probes(tmp_path, "probe_g or probe_h or probe_i or probe_j")
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output[-6000:]
+    assert "4 passed" in output, output[-6000:]
+    assert "error" not in output.strip().splitlines()[-1], output[-6000:]

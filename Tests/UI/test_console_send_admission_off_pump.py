@@ -564,7 +564,16 @@ async def test_a_second_enter_after_an_unknown_command_hint_sends_it_as_text():
             finally:
                 tail.set()
             await _settled(console, pilot)
+            # The flight ends when the replayed send is handed to the runtime;
+            # its user row and the composer's clear come with the turn's
+            # durable acceptance, over 1 s later on a loaded host (TASK-42017).
             session_id = console._console_chat_store.active_session_id
+            try:
+                await until(lambda: _first_turn_done(host, console))
+            except AssertionError as error:
+                error.add_note(f"sent {_sent_or_queued(console, session_id)}")
+                error.add_note(f"draft {composer.draft_text()!r}")
+                raise
             assert _sent_or_queued(console, session_id) == [UNKNOWN]
             assert composer.draft_text() == ""
 
