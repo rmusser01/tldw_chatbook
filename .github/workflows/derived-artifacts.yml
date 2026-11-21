@@ -921,6 +921,8 @@ jobs:
     # spawn trace capture and pre-run cleanup 0.5). recovered-suites, the
     # first candidate home, measured 15.4-19.6 of its 20 min over the ten PR runs before
     # this, and admission lanes 1-3 up to 27, 33 and 20 of 35.
+    # TASK-33621.6 (2026-11-21): + the mounted trace-recovery-after-429 file
+    # (11 tests, about 2.3 min serially at load ~50).
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission-3, and its own pytest process and bootstrap
@@ -970,6 +972,7 @@ jobs:
             Tests/Chat/test_console_fleet_wake_view_mark.py \
             Tests/Chat/test_console_fleet_wake_staleness.py \
             Tests/Agents/test_native_legacy_hooks.py::test_prompt_hook_runs_while_the_submit_task_holds_its_agent_admission \
+            Tests/UI/test_console_trace_recovery_after_provider_error.py \
             --timeout=300 \
             --tb=short
 
