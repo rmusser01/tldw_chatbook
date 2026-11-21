@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 19:05
+updated_date: 2026-11-21 19:57
 labels:
 - follow-up
 - console
@@ -61,7 +61,7 @@ The checks are per root folder (`row.get("root")`), and a workspace can bind sev
 Every refusal that meant a snapshot's root folder said "workspace". It now says "folder"; the copy change is all this task does.
 
 **New wording**
-- Engine and Review screen, one sentence at all four sites: "a run is active in this folder — finish or stop the run first". The sites are `Workspaces/change_revert.py:185`, `Workspaces/change_revert_ownership.py:382`, `Workspaces/git_workspace.py:924` and `COMMIT_RUN_ACTIVE_REFUSAL` (`UI/Screens/change_review_screen.py:100`). Each check is per root (`run_active_for_root`, or the commit's repository root).
+- Engine and Review screen, one sentence at all four sites: "a run is active in this folder — finish or stop the run first". The sites are `Workspaces/change_revert.py:185`, `Workspaces/change_revert_ownership.py:382`, `Workspaces/git_workspace.py:924` and `COMMIT_RUN_ACTIVE_REFUSAL` (`UI/Screens/change_review_screen.py:100`). Each check is per root (`run_active_for_root`, or the commit's repository root). Review rev1 later moved `change_revert_ownership.py`'s whole-turn recheck to the Console sentence (see below).
 - Console Undo All (`UI/Console_Modules/review_selection.py`):
   - "Undo All is unavailable because a change snapshot has no folder."
   - "This turn has multiple change windows for the same folder." (the same sentence starts `MULTI_WINDOW_UNDO_REFUSAL`)
@@ -111,3 +111,25 @@ Every refusal that meant a snapshot's root folder said "workspace". It now says 
   - The other six files were green as they were.
 - Not verified: a completed Linux CI run for the newly laned files (local macOS only).
 - Checks after laning (wrapper, load 46-53): `Tests/CI` at -n 4 1811 passed, 2 skipped; preflight passed (census 2445, floor 2445); `ruff --select F` clean; `ruff_gate.py` rc 0; module and screen size ratchets 234 passed.
+
+**Review rev1 (2026-11-21), against AC #2**
+- On macOS and Linux, Console Undo All takes the native path: `run_console_turn_undo` → `undo.apply` → `_UndoCall.run_entered` → `revalidate()`. A run that started while the confirmation was open was refused there, before `apply_console_turn_undo`. The card therefore showed the engine's "a run is active in this folder — …" instead of its own whole-turn sentence, which is vague on a multi-folder card.
+- `revalidate` now raises "A run is active in a folder this turn changed — finish or stop the run first.", the Console sentence. It always covers one confirmed turn's rows, so it is also true for Review's `u` and `U`.
+- AC #2's engine sentence ("a run is active in this folder — …") now stays at the three single-folder sites: `change_revert.py`, `git_workspace.py` and `COMMIT_RUN_ACTIVE_REFUSAL`. Each refuses for one root.
+- Pins:
+  - `test_native_confirmed_undo.py::test_recheck_after_confirmation_names_the_turns_folders` (renamed) expects the whole-turn sentence.
+  - New `test_console_card_run_started_during_confirmation_names_the_turns_folders` drives the real Console card on the native path. A run starts in the card's folder while the confirmation is open (the controller's `run_active_for_workspace` turns true). The test asserts the card's only notice is the whole-turn sentence and the file is untouched.
+  - The new test was red first: "a run is active in this folder — …" != the whole-turn sentence. The earlier Console pin calls `apply_console_turn_undo` directly, so it covers only the path without native undo (Windows).
+- `UI/Screens/change_review_screen.py` `_land_commit_refused`'s docstring quotes "a run is active in this folder…".
+- Laning blocker found while running the affected files at -n 4 (load 31-52):
+  - `test_change_review_screen.py::test_u_reverts_the_focused_file_through_the_confirm` and `::test_revert_preflight_and_apply_run_off_the_ui_thread` failed in 2 of 3 runs.
+  - The captured cause is `FileNotFoundError` on `root/edit.txt`. The wait predicate read the file while the revert's `git checkout -- <path>` (`change_tracking.py:1206`) had unlinked it to rewrite it.
+  - It is a test-only race and the product is unchanged. A `_reads` helper now treats an absent file as "not yet", and both waits use it.
+  - After that fix, one of three -n 4 runs still failed `test_revert_preflight_and_apply_run_off_the_ui_thread` with "timed out waiting for disk restored to baseline". That is the TASK-41505 shape: the confirm click landed before the modal laid out its button, so the revert never ran.
+  - `_click_modal_button`, which waits for the laid-out button and asserts the click landed, now lives in `test_change_review_screen.py`. Its three confirmation clicks use it, and `test_console_turn_undo_all.py` imports it instead of keeping its own copy.
+- Rev1 checks (wrapper, load 26-61):
+  - The four affected files at -n 4: 139 passed.
+  - The Review screen and Undo All files together at -n 4: 77 passed in each of 4 runs.
+  - Serially with the UI lane's flags: the Review screen 61 in 249.0 s, Undo All 16 in 29.4 s.
+  - The new native card test: 18.4 s serially.
+  - preflight passed; `ruff --select F` clean; `ruff_gate.py` rc 0; size ratchets 234 passed; the three Tests/CI lane/census pin files 316 passed.

@@ -878,7 +878,8 @@ ADMISSION_TARGETS = (
     # TASK-42137 (2026-11-21): native confirmed Undo, including its
     # post-confirmation run-active recheck copy, on no lane before
     # (bootstrap_profile module; 34 tests in 195.8 s serially with this
-    # step's flags at load 48).
+    # step's flags at load 48, and review rev1's real Console card test
+    # 18.4 s more at load 52).
     "Tests/Workspaces/test_native_confirmed_undo.py",
 )
 

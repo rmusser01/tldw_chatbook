@@ -1973,8 +1973,8 @@ class ChangeReviewScreen(Screen):
         """A commit the engine DECLINED to run: report its reason verbatim.
 
         Only ``CommitRefusedError``/``GitWorkspaceError`` reaches here --
-        the engine's own honest preconditions ("a run is active on this
-        workspace…", "no files selected to commit", "commit message must
+        the engine's own honest preconditions ("a run is active in this
+        folder…", "no files selected to commit", "commit message must
         not be blank"). An unexpected exception goes to
         :meth:`_land_commit_error` instead, so the two can never read
         alike (the push side has said this since T8).

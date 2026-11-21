@@ -378,8 +378,10 @@ class _UndoCall:
             s.validate_row(row)
             self.validate_root(row["root"])
             if s.provider.run_active_for_root(str(row["root"])):
+                # One confirmed turn's rows: Console Undo All's own sentence.
                 raise RevertRefusedError(
-                    "a run is active in this folder — finish or stop the run first"
+                    "A run is active in a folder this turn changed — "
+                    "finish or stop the run first."
                 )
             current = preflight_revert(s.service, row, paths)
             if (

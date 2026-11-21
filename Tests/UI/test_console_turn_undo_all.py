@@ -13,6 +13,7 @@ from textual.widgets import Button, Static
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Console_Modules import review_selection
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_change_review_screen import _click_modal_button
 from Tests.UI.test_console_narrow_layout import _compositor_text
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -345,23 +346,6 @@ async def _wait_for(pilot, predicate, description: str, attempts: int = 150):
             return value
         await pilot.pause(0.02)
     raise AssertionError(f"timed out waiting for {description}")
-
-
-async def _click_modal_button(pilot, selector: str) -> None:
-    """Click a confirmation button once the modal has laid it out.
-
-    TASK-42137 (the TASK-41505 shape): the modal is on the stack before its
-    buttons mount, so a click right after it appears raised NoMatches.
-    """
-
-    def placed():
-        screen = pilot.app.screen
-        return isinstance(screen, ChangeRevertConfirmModal) and any(
-            button.region for button in screen.query(selector)
-        )
-
-    await _wait_for(pilot, placed, f"{selector} laid out on the confirmation")
-    assert await pilot.click(selector), f"the click missed {selector}"
 
 
 def _record_real_turn(db, tracker, root: Path, run_id: str) -> None:

@@ -295,8 +295,8 @@ async def test_writer_admitted_after_modal_refuses_whole_undo(undo_host):
                 claim.settle(durable=True)
 
 
-async def test_recheck_after_confirmation_names_the_active_run_folder():
-    """TASK-42137: the recheck is per root folder, so its refusal says folder."""
+async def test_recheck_after_confirmation_names_the_turns_folders():
+    """TASK-42137: the recheck covers one confirmed turn's root folders."""
     from tldw_chatbook.Workspaces.change_revert_ownership import _UndoCall
 
     row = {"root": "/confirmed/folder"}
@@ -310,7 +310,7 @@ async def test_recheck_after_confirmation_names_the_active_run_folder():
     with pytest.raises(RevertRefusedError) as raised:
         call.revalidate()
     assert str(raised.value) == (
-        "a run is active in this folder — finish or stop the run first"
+        "A run is active in a folder this turn changed — finish or stop the run first."
     )
 
 
@@ -1012,6 +1012,101 @@ async def test_real_console_card_uses_native_confirmation_and_original_provider(
             )
             assert (root / "edit.txt").read_text() == "before\n"
             assert '"edit.txt"' in db.change_snapshots_for_run(run)[0]["reverted"]
+    finally:
+        if runtime is not None:
+            await runtime.dispose()
+        app.chachanotes_db.close_connection()
+
+
+async def test_console_card_run_started_during_confirmation_names_the_turns_folders(
+    tmp_path, monkeypatch
+):
+    """TASK-42137 review rev1: native Undo All's post-confirmation recheck
+    (`_UndoCall.revalidate`) refuses before `apply_console_turn_undo` runs,
+    so its sentence is the one the card shows on macOS and Linux."""
+    from textual.widgets import Button
+
+    from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
+
+    app = _build_test_app()
+    app.chachanotes_db = CharactersRAGDB(tmp_path / "card-chat.db", "native-undo-card")
+    notices = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, **kwargs: notices.append(str(message))
+    )
+    host = ConsoleHarness(app)
+    runtime = None
+    try:
+        async with host.run_test(size=(160, 48)) as pilot:
+            screen = host.screen_stack[-1]
+            await _wait_for_selector(screen, pilot, "#console-native-composer")
+            store = screen._ensure_console_chat_store()
+            session = store.create_session()
+            store.persist_session_if_needed(session.id)
+            controller = screen._ensure_console_chat_controller()
+            bridge = screen._ensure_console_agent_bridge()
+            runtime = app.console_runtime
+            tracker, db = bridge._change_tracker, bridge._db
+            tracker.service = ShadowRepoService(tmp_path / "card-shadow")
+            root = tmp_path / "card-root"
+            root.mkdir()
+            (root / "edit.txt").write_text("before\n")
+            run = db.create_run(
+                conversation_id=session.persisted_conversation_id, agent_kind="primary"
+            )
+            _record_turn(
+                db,
+                tracker,
+                root,
+                run,
+                lambda: (root / "edit.txt").write_text("after\n"),
+            )
+            store.append_message(
+                session.id,
+                role=ConsoleMessageRole.TOOL,
+                content="Edited 1 file",
+                change_review_run_id=run,
+            )
+            await screen._sync_native_console_chat_ui()
+            card = await _wait_for(
+                pilot,
+                lambda: next(iter(screen.query(ConsoleTurnFileCard)), None),
+                "real turn card",
+            )
+            button = card.query_one(".console-turn-file-undo-all-btn", Button)
+            await _wait_for(pilot, lambda: not button.disabled, "card Undo")
+            card.scroll_visible(animate=False)
+            await pilot.pause()
+            assert await pilot.click(button), "actual card button was not hit"
+            await _wait_for(
+                pilot,
+                lambda: isinstance(host.screen, ChangeRevertConfirmModal),
+                "card confirmation",
+            )
+            # A run in the card's folder starts while the confirmation is open.
+            monkeypatch.setattr(controller, "run_active_for_workspace", lambda _root: True)
+            await click_modal_button(pilot)
+            await _wait_for(
+                pilot,
+                lambda: str(button.label) == "Undo All" and notices,
+                "the refused card's notice",
+            )
+            await _wait_for(
+                pilot,
+                lambda: not runtime._change_revert_native.pending,
+                "card worker retirement",
+            )
+            assert notices == [
+                "A run is active in a folder this turn changed — "
+                "finish or stop the run first."
+            ]
+            assert (root / "edit.txt").read_text() == "after\n"
     finally:
         if runtime is not None:
             await runtime.dispose()

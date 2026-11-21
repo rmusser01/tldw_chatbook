@@ -21,6 +21,7 @@ from textual.widgets import Button, Input, Select, Static, Tree
 from Tests.UI.test_console_narrow_layout import _compositor_text
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
+    ChangeRevertConfirmModal,
     ChangeReviewDiffPane,
     ChangeReviewScreen,
     _hunk_containing_line,
@@ -203,6 +204,36 @@ async def _wait_for(pilot, predicate, what: str, timeout: float = 8.0):
             return result
         await pilot.pause(0.05)
     raise AssertionError(f"timed out waiting for {what}")
+
+
+async def _click_modal_button(pilot, selector: str) -> None:
+    """Click a confirmation button once the modal has laid it out.
+
+    TASK-42137 (the TASK-41505 shape): the modal is on the stack before its
+    buttons have a region, so an early click missed or raised NoMatches and
+    the revert never ran.
+    """
+
+    def placed():
+        screen = pilot.app.screen
+        return isinstance(screen, ChangeRevertConfirmModal) and any(
+            button.region for button in screen.query(selector)
+        )
+
+    await _wait_for(pilot, placed, f"{selector} laid out on the confirmation")
+    assert await pilot.click(selector), f"the click missed {selector}"
+
+
+def _reads(path: Path, text: str) -> bool:
+    """Whether ``path`` holds ``text``; absent counts as not yet.
+
+    TASK-42137: the revert's ``git checkout`` unlinks and rewrites the file,
+    so a wait that read it mid-restore raised FileNotFoundError.
+    """
+    try:
+        return path.read_text() == text
+    except FileNotFoundError:
+        return False
 
 
 def _tree_labels(tree: Tree) -> list[str]:
@@ -479,10 +510,10 @@ async def test_u_reverts_the_focused_file_through_the_confirm(review_fixture):
         assert "edit.txt" in str(
             modal.query_one("#change-revert-confirm").children[0].renderable
         )
-        await pilot.click("#change-revert-yes")
+        await _click_modal_button(pilot, "#change-revert-yes")
         await _wait_for(
             pilot,
-            lambda: (root / "edit.txt").read_text() == "before\n" or None,
+            lambda: _reads(root / "edit.txt", "before\n") or None,
             "disk restored to baseline",
         )
 
@@ -534,10 +565,10 @@ async def test_revert_preflight_and_apply_run_off_the_ui_thread(
             ),
             "confirm modal",
         )
-        await pilot.click("#change-revert-yes")
+        await _click_modal_button(pilot, "#change-revert-yes")
         await _wait_for(
             pilot,
-            lambda: (root / "edit.txt").read_text() == "before\n" or None,
+            lambda: _reads(root / "edit.txt", "before\n") or None,
             "disk restored to baseline",
         )
 
@@ -614,7 +645,7 @@ async def test_revert_refusal_during_active_run_reaches_the_user(review_fixture)
             ),
             "confirm modal",
         )
-        await pilot.click("#change-revert-yes")
+        await _click_modal_button(pilot, "#change-revert-yes")
         await pilot.pause()
         await pilot.pause()
         assert (root / "edit.txt").read_text() == "after\n", (
