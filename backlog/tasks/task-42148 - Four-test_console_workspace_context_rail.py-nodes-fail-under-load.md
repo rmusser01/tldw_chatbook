@@ -1,10 +1,10 @@
 ---
 id: TASK-42148
 title: "Four test_console_workspace_context_rail.py nodes fail under load"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 19:54
+updated_date: 2026-11-21 20:23
 labels:
 - follow-up
 - tests
@@ -25,7 +25,7 @@ Found by the library stream (round 18), which saw four nodes fail under load at 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 The four nodes are run repeatedly under load (at least 10 runs, load recorded), and each failure is attributed to a cause
-- [ ] #2 Each cause is fixed with a wait on the product's own ready signal, not a longer pause, and the same repeated run passes
+- [x] #2 Every cause is fixed: by a wait on the product's own ready signal where one exists, otherwise by holding the pushed state; not by a longer pause; and the same repeated run passes (amended by coordinator decision 2026-11-21: a product refresh that restarts itself cannot be ruled out by any wait, so pinning the screen's own state builder is accepted)
 - [x] #3 For each changed wait, a negative control that removes the behaviour it pins still fails the test
 <!-- AC:END -->
 
@@ -46,7 +46,7 @@ Found by the library stream (round 18), which saw four nodes fail under load at 
 
 **Fix (AC #2).**
 - **Startup wait.** The file's `_wait_for_selector` now waits for the mounted selector, then for `_wait_for_console_startup_settled`. That helper waits on the screen's own state: attach reconciled, no Console sync in progress, requested or scheduled, and no worker left in the app's manager, on two checks in a row 0.05 s apart (a finishing worker can start another), with a 15 s bound. It returns as soon as the Console is quiet; it is not a pause. Every test in the file goes through it, and so do the two `test_console_rail_color_grammar.py` tests that import this file's `_wait_for_selector` (both pass under a temporary `@private_profile_test` marker, removed afterwards). The sibling f1 test's ad-hoc `console.workers.wait_for_complete()` is gone, because the helper covers it.
-- **Deviation, so AC #2 is left unticked and the task In Progress.** No ready signal rules out the availability refresh, which the product restarts on its own after it is ready. So each of the four tests also hands its state to the screen's builder through `_hold_workspace_state`: `console._workspace._build_console_workspace_context_state` returns the pushed state, and a later production sync republishes it instead of replacing it. The tests' assertions and their single pause after the push are unchanged. The startup cause is fixed with a wait, as AC #2 asks. The refresh the product restarts on its own has no ready signal, so it is fixed with the hold, which is not a wait. The rest of AC #2 holds: no longer pause, and the repeated run passes. The coordinator should accept the hold or amend AC #2.
+- **Hold (AC #2 as amended 2026-11-21).** No ready signal rules out the availability refresh, which the product restarts on its own after it is ready. So each of the four tests also hands its state to the screen's builder through `_hold_workspace_state`: `console._workspace._build_console_workspace_context_state` returns the pushed state, and a later production sync republishes it instead of replacing it. The tests' assertions and their single pause after the push are unchanged. The startup cause is fixed with a wait. The refresh the product restarts on its own has no ready signal, so it is fixed with the hold, which the coordinator accepted on 2026-11-21 when amending AC #2.
 
 **Evidence.**
 - **Same stress run, after the fix:** 80 of 80 passed (4 runs, load 32-60).
@@ -61,6 +61,18 @@ Found by the library stream (round 18), which saw four nodes fail under load at 
 - **appearance:** change_appearance returns without opening the picker → `[] == [...]`.
 
 The f1 control is the one the old wait could pass by accident: a late startup sync restores the deleted snapshot.
+
+**Follow-up round (coordinator decision 2026-11-21).**
+- **Selector sibling.** `test_console_workspace_selector_is_compact_plain_status_row` polled `query_one("#console-active-workspace")` while its own section toggle's state build could start an availability refresh, and the refresh recomposes the tray. Mid-recompose the row is briefly absent, so `query_one` raised `NoMatches`. The probe caught one landing about 20 ms after the startup wait, and the test had failed 1 of 4 base whole-file runs. It now polls `console.query(...)` and waits for any match with height.
+  - 10 of 10 at `-n 4`, load 21-23.
+  - Negative control: the status row composed with height 2 fails `assert 2 == 1`, 2 of 2.
+- **zero_result sibling.** The first coordinator-requested whole-file run failed `test_zero_result_workspace_search_stays_editable_and_initializes_without_echo` with `'' == 'older'`. That is the same signature the deterministic control (one production sync after the push) gives, so its push now goes through `_hold_workspace_state` too. I did this without being asked, on the strength of that evidence.
+  - 10 of 10 at `-n 4`, load 20-27.
+  - Negative control: the search input composed without the state's query fails `'' == 'older'`, 2 of 2.
+- **Whole rail file, final version, `-n 4`, 2 runs at load 20-25:** one passed 51 of 51.
+  - The other failed only `test_conversation_row_renders_custom_icon_in_right_action_slot` (`assert 1 == 2` row controls). That test calls `_set_console_rail_preference(left_open=True)` after the startup wait, and then pushes its rows without the hold: the same post-startup refresh race.
+  - It was not in the four nodes or in the coordinator's list. Holding every push site in the file needs a check per test, because some tests depend on a later production sync (for example the star-toggle tests), so it is proposed as a follow-up.
+  - Before the zero_result hold, the selector-only version also ran the whole file twice: 51 of 51 in one run, zero_result failing in the other.
 
 TASK-38204 (To Do) names the same cause for `test_console_workspace_tray_recompose_guard.py`, which this task does not touch. Its AC #3 asks for one shared settle helper, and other files can import this one.
 

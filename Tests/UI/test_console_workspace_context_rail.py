@@ -684,7 +684,9 @@ async def test_zero_result_workspace_search_stays_editable_and_initializes_witho
             workspace_query="older",
         )
 
-        console.query_one("#console-left-rail").sync_workspace_context(state)
+        console.query_one("#console-left-rail").sync_workspace_context(
+            _hold_workspace_state(console, state)
+        )
         await pilot.pause()
 
         search = console.query_one("#console-workspace-search", Input)
@@ -1652,7 +1654,11 @@ async def test_console_workspace_selector_is_compact_plain_status_row(request) -
         if not console._current_console_rail_state().workspace_open:
             console._toggle_console_rail_section("workspace")
         for _ in range(100):
-            if console.query_one("#console-active-workspace").region.height:
+            # TASK-42148: the toggle's state build can start a files-
+            # availability refresh, whose sync recomposes this tray; mid-
+            # recompose the row is briefly absent, which query_one raised on.
+            rows = console.query("#console-active-workspace")
+            if any(row.region.height for row in rows):
                 break
             await pilot.pause(0.01)
 
