@@ -11497,12 +11497,10 @@ class ConsoleChatController:
                     resolved_destination=turn_context.resolved_destination,
                     reconstructability=ConsoleDispatchReconstructability(
                         attachments_reconstructable=True,
+                        # TASK-33621.70: frozen "nothing staged" is exact.
                         evidence_reconstructable=not bool(
                             prepared_continuation is not None
-                            and (
-                                prepared_continuation.staged_evidence_frozen
-                                or prepared_continuation.staged_evidence is not None
-                            )
+                            and prepared_continuation.staged_evidence is not None
                         ),
                         prefill_reconstructable=(
                             prefill is None and not prefill_from_one_shot

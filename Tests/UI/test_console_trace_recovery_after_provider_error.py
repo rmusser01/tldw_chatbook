@@ -266,8 +266,7 @@ async def test_an_unknown_delivery_reads_as_local_and_blocks_the_header(
     so the panel never says "on the source device", and the header chip
     says Blocked with the composer, rail and Inspect handle. (Its Retry
     anyway's busy state is pinned in ``test_console_dispatch_recovery.py``;
-    here Retry anyway is unavailable because the send's Library evidence was
-    frozen, which is not this task's subject.)
+    pressing it is the next test.)
     """
     async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
         posts: list[str] = []
@@ -294,6 +293,55 @@ async def test_an_unknown_delivery_reads_as_local_and_blocks_the_header(
         assert project_console_send_authority(
             h.console._build_console_inspector_state(None)
         ).run.startswith("Blocked")
+
+
+@pytest.mark.asyncio
+async def test_retry_anyway_redispatches_a_genuine_unknown_delivery(
+    tmp_path, monkeypatch
+):
+    """.6 AC#5 / .70 AC#1, AC#3: Retry anyway after a 429 and an unknown delivery.
+
+    The composer send staged no evidence, so its request can be rebuilt
+    exactly and Retry anyway is offered enabled. Pressing it re-dispatches
+    the same turn once and the reply arrives.
+    """
+    async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
+        posts: list[str] = []
+        real_provider_adapter(h, monkeypatch)
+        answer_http(monkeypatch, [429, 200], posts)
+        fail_the_retry_reservation(h, monkeypatch, "dispatch_unknown")
+        await _send(h, DRAFT)
+        await _until(
+            h.pilot,
+            lambda: h.store.dispatch_recovery_for_presentation(h.session.id)
+            is not None,
+            timeout=30.0,
+            what=f"no unknown-delivery owner: {h.controller.run_state}",
+        )
+        await h.console._sync_native_console_chat_ui()
+        await h.pilot.pause(0.3)
+        assert len(posts) == 1, posts  # only the 429 went out
+
+        retry = h.console.query_one("#console-dispatch-recovery-retry_anyway", Button)
+        assert retry.display and not retry.disabled, visible_text(h)
+        assert "cannot be reconstructed exactly" not in visible_text(h)
+        retry.focus()
+        await h.pilot.pause(0.2)
+        await h.pilot.press("enter")
+        await _until(
+            h.pilot,
+            lambda: h.controller.run_state.status is ConsoleRunStatus.COMPLETED,
+            timeout=30.0,
+            what=f"Retry anyway did not complete: {h.controller.run_state}",
+        )
+        await h.console._sync_native_console_chat_ui()
+        await h.pilot.pause(0.3)
+
+        assert len(posts) == 2, posts
+        assert _assistant_texts(h) == [HTTP_REPLY]
+        assert h.store.dispatch_recovery_for_presentation(h.session.id) is None
+        assert "delivery status is unknown" not in visible_text(h)
+
 
 
 @pytest.mark.asyncio

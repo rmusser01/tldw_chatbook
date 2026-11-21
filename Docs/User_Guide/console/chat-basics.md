@@ -87,7 +87,10 @@ no actions here.
 Use the recovery controls above the composer. **Retry anyway** may send a
 duplicate request because the previous delivery cannot be confirmed. (If the
 request was accepted but never sent, the card reads **Response accepted;
-waiting for dispatch.** and offers **Retry response** instead.) A retry streams
+waiting for dispatch.** and offers **Retry response** instead.) The retry is
+unavailable only when the send used a one-shot prefill or Library evidence you
+staged for it, which cannot be rebuilt exactly; an ordinary message can always
+be retried. A retry streams
 the reply into the same pending response. Pressing **Retry anyway** or
 **Discard** disables both buttons at once and shows "Retrying…" (or
 "Discarding…") until the outcome arrives. **Discard** keeps your user message

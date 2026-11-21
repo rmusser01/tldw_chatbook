@@ -456,6 +456,59 @@ async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("ephemeral", [False, True])
+async def test_frozen_nothing_staged_keeps_checkpoint_reconstructable(
+    tmp_path,
+    owned_durable_controllers,
+    ephemeral,
+) -> None:
+    """TASK-33621.70: freezing "nothing staged" froze no evidence.
+
+    Every composer send freezes its staged-evidence decision (TASK-34352).
+    With nothing staged the request is rebuilt exactly, so neither the
+    durable checkpoint nor a temporary chat's in-memory one may disable
+    Retry anyway the way staged evidence (above) does.
+    """
+    state: dict[str, object] = {"launch": None, "released": []}
+    retrieval = _real_retrieval_controller_for_launch(state)
+    db = CharactersRAGDB(tmp_path / "nothing-staged.sqlite", "task33621-70")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
+    session = store.create_session(session_id="session-1", ephemeral=ephemeral)
+    gateway = _StreamingFence()
+    captured: list[bool] = []
+    original_stream = gateway.stream_chat
+
+    async def observe_checkpoint(*args: Any, **kwargs: Any):
+        if ephemeral:
+            recovery = store._dispatch_recoveries_by_session[session.id]
+            captured.append(recovery.checkpoint.reconstructability.evidence_reconstructable)
+        else:
+            row = (
+                db.get_connection()
+                .execute("SELECT reconstructability_json FROM console_dispatch_checkpoints")
+                .fetchone()
+            )
+            assert row is not None
+            captured.append(json.loads(row["reconstructability_json"])["evidence_reconstructable"])
+        async for chunk in original_stream(*args, **kwargs):
+            yield chunk
+
+    gateway.stream_chat = observe_checkpoint
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        **_retrieval_evidence_owner(retrieval),
+    )
+    owned_durable_controllers(db, controller)
+
+    result = await controller.submit_draft("no evidence", session_id=session.id)
+
+    assert result.accepted is True
+    assert captured == [True]
+
+
+@pytest.mark.asyncio
 @pytest.mark.timeout(1800)
 async def test_success_cleanup_drops_content_and_bounds_minimal_tombstones(
     tmp_path,

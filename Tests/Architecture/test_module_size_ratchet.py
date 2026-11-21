@@ -336,6 +336,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-24: re-measured after rebasing onto dev 9fa2bf1b1d (owner rule:
     # exact measurement): dev measures 28,763 + the same 14 lines of TASK-33621.46
     # = 28,777 (28773 -> 28777).
+    # 2026-11-21, TASK-33621.70: exact measurement on dev dc371f0842 plus this
+    # branch (-2: the temporary-chat checkpoint no longer reads a frozen
+    # "nothing staged" as unreconstructable): 28764 -> 28756.
     "tldw_chatbook/Chat/console_chat_controller.py": 28777,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no

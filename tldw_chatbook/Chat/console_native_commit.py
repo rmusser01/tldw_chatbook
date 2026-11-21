@@ -728,13 +728,11 @@ async def _controller_accept_durable_turn(
         resolved_destination=turn_context.resolved_destination,
         reconstructability=_source_controller.ConsoleDispatchReconstructability(
             attachments_reconstructable=True,
+            # TASK-33621.70: a frozen "nothing staged" decision is exact.
             evidence_reconstructable=not hook_context
             and not bool(
                 prepared_continuation is not None
-                and (
-                    prepared_continuation.staged_evidence_frozen
-                    or prepared_continuation.staged_evidence is not None
-                )
+                and prepared_continuation.staged_evidence is not None
             ),
             prefill_reconstructable=(prefill is None and not prefill_from_one_shot),
             opaque_reference=f"opaque:{preparation.preparation_id}",
