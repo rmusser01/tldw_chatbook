@@ -158,11 +158,11 @@ class _WakeRig:
         self.chain = self.runs_db.automatic_work.create_chain(
             self.cid, root_submission_id=uuid4().hex
         )
+        self.finish_a_child_of_the_chain("Saved research result")
+
+    def finish_a_child_of_the_chain(self, result: str) -> None:
         _parent, self.child = _terminal_subagent_run(
-            self.runs_db,
-            self.cid,
-            result="Saved research result",
-            work_chain_id=self.chain,
+            self.runs_db, self.cid, result=result, work_chain_id=self.chain
         )
         self.controller.fleet_wake.on_fleet_drained(
             _drain(self.cid, _survivor(self.child, session_id=_SESSION))
@@ -294,6 +294,88 @@ async def test_compacting_the_chat_lets_the_paused_wake_go_on_once(rig) -> None:
         assert rig.runs_db.get_run(rig.child)["wake_delivered_at"]
         assert rig.attempts() == ["aborted", "completed"]
         assert rig.runs_db.automatic_work.snapshot(rig.chain).status == "active"
+    finally:
+        await rig.close()
+
+
+@pytest.mark.asyncio
+async def test_a_long_ask_hold_does_not_spend_the_chains_time_limit(rig) -> None:
+    """TASK-33621.153: time held at the Ask trigger is not counted.
+
+    A chain's clock starts at its first accepted wake. A later wake of that
+    chain pauses at the Ask trigger, and the user runs /compact long after the
+    chain's time limit would have passed. Owner decision 2026-11-12: the wake
+    goes on, and the limit keeps counting only the time the work ran. Before,
+    the retry was refused (wall_budget) and the fleet section changed from
+    'Paused: context limit' to 'Paused: time limit'.
+
+    The first wake runs under Off: a delivered wake's notice ends the chat's
+    compactable units (a unit holds only user, assistant and tool rows;
+    TASK-33621.155), so the history /compact can summarize has to come
+    before it.
+    """
+
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
+    from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
+
+    waited = [0.0]
+    ledger = AutomaticWorkLedger(
+        rig.runs_db,
+        wall_clock=lambda: time.time() + waited[0],
+        monotonic_clock=lambda: time.monotonic() + waited[0],
+    )
+    rig.runs_db.automatic_work = ledger
+    try:
+        await rig.over_the_ask_trigger()
+        rig.store.set_session_context_policy_overrides(_SESSION, _OFF)
+        wake = rig.controller.fleet_wake
+        rig.chain = ledger.create_chain(
+            rig.cid,
+            root_submission_id=uuid4().hex,
+            limits=AutomaticWorkLimits(wall_seconds=600),
+        )
+        rig.finish_a_child_of_the_chain("First research result")
+        assert await _settle(lambda: not wake.has_pending(rig.cid)), (
+            rig.attempts(),
+            wake.pause_reason(rig.cid),
+        )
+        assert await _settle(lambda: not wake._active)
+        assert rig.attempts() == ["completed"]
+        assert ledger.snapshot(rig.chain).started_at is not None, "clock started"
+        waited[0] += 300.0  # the chain's work runs 300 s of its 600 s
+
+        rig.store.set_session_context_policy_overrides(_SESSION, _ASK)
+        before_the_hold = time.time()
+        rig.finish_a_child_of_the_chain("Saved research result")
+        assert await rig.wake_paused(), (rig.attempts(), wake.pause_reason(rig.cid))
+        held = ledger.snapshot(rig.chain)
+        assert (held.status, held.pause_reason) == ("paused", "compaction_ask")
+        streams = rig.gateway.stream_calls
+
+        waited[0] += 1200.0  # twice the chain's limit passes during the hold
+        compacted, copy = await rig.controller.compact_context_now(_SESSION)
+
+        assert compacted is True, copy
+        assert await _settle(lambda: not wake.has_pending(rig.cid)), (
+            rig.attempts(),
+            wake.pause_reason(rig.cid),
+        )
+        assert await _settle(lambda: not wake._active)
+        assert wake.pause_reason(rig.cid) is None, "not 'Paused: time limit'"
+        assert rig.gateway.stream_calls == streams + 1, "the wake replied once"
+        assert "Saved research result" in rig.wake_notices()[-1]
+        assert rig.runs_db.get_run(rig.child)["wake_delivered_at"]
+        assert rig.attempts() == ["completed", "aborted", "completed"]
+        assert rig.failed_rows() == []
+        resumed = ledger.snapshot(rig.chain)
+        assert resumed.status == "active"
+        moved = resumed.deadline_at - held.deadline_at
+        assert 1200.0 <= moved <= 1200.0 + (time.time() - before_the_hold), (
+            "only the hold stays out"
+        )
+        assert resumed.deadline_at - (time.time() + waited[0]) < 300.0, (
+            "the 300 s the work ran before the hold still count"
+        )
     finally:
         await rig.close()
 
