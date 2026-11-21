@@ -39,7 +39,10 @@ Rig notes:
 from __future__ import annotations
 
 import asyncio
+import gc
 import time
+import weakref
+from types import SimpleNamespace
 
 import pytest
 
@@ -811,6 +814,98 @@ async def test_quit_settles_an_in_flight_launch_wake_before_retiring_agent_runs(
         f"still settling its attempt: {unsettled_at_retire!r}"
     )
     app._console_runtime_shutdown_task.result()
+
+
+@pytest.mark.asyncio
+async def test_quit_settles_a_wake_delivery_a_session_close_cancelled_before_retiring_agent_runs(
+    tmp_path, monkeypatch
+):
+    """TASK-42074: closing the session fences and cancels the launch wake's
+    delivery, and `fence_conversation` drops it from `_delivery_tasks`, so
+    the quit's drain (TASK-42028) never saw it and retired AgentRuns under
+    its settlement. The settlement is held until the quit starts, plus
+    0.5 s; the quit must wait for it."""
+    from tldw_chatbook.Chat import console_activity_receipts
+    from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
+
+    conversation_id, _run_id, rows = await _seed_a_finished_background_job(tmp_path)
+    app, _marks, gateway = _launch_app(
+        tmp_path, tree=_fixture_tree(conversation_id, rows)
+    )
+    gateway.stall_stream = True
+    quit_started = asyncio.Event()
+    dispose = ConsoleFleetWakeCoordinator.dispose
+    settle = ConsoleFleetWakeCoordinator._finish_attempt
+
+    def recording_dispose(self):
+        quit_started.set()
+        dispose(self)
+
+    async def held_settle(self, authorization, returned):
+        await quit_started.wait()
+        await asyncio.sleep(0.5)
+        await settle(self, authorization, returned)
+
+    monkeypatch.setattr(ConsoleFleetWakeCoordinator, "dispose", recording_dispose)
+    monkeypatch.setattr(ConsoleFleetWakeCoordinator, "_finish_attempt", held_settle)
+    retire = console_activity_receipts.retire_agent_runs_db
+    deliveries: tuple = ()
+    unsettled_at_retire: list = []
+
+    async def recording_retire(database):
+        unsettled_at_retire.append([task for task in deliveries if not task.done()])
+        return await retire(database)
+
+    monkeypatch.setattr(
+        console_activity_receipts, "retire_agent_runs_db", recording_retire
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        assert await _settle(pilot, gateway.entered_stream.is_set)
+        runtime = app.console_runtime
+        controller = runtime.chat_controller
+        wake = controller.fleet_wake
+        deliveries = tuple(wake._delivery_tasks)
+        (session_id,) = wake.delivering_session_ids()
+        await runtime.close_session(
+            session_id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=session_id
+            ).revision,
+        )
+        assert deliveries and not wake._delivery_tasks, (
+            "precondition: the close fenced the delivery and dropped it"
+        )
+        assert not any(task.done() for task in deliveries), (
+            "precondition: the cancelled delivery is still settling at quit"
+        )
+    assert unsettled_at_retire and unsettled_at_retire[0] == [], (
+        "the quit retired AgentRuns while the wake delivery a session close "
+        f"cancelled was still settling its attempt: {unsettled_at_retire!r}"
+    )
+    app._console_runtime_shutdown_task.result()
+
+
+@pytest.mark.asyncio
+async def test_session_fence_keeps_only_a_weak_handle_on_a_cancelled_delivery():
+    """TASK-42074: quit can still join a delivery a session close cancelled,
+    but the fence never keeps that delivery alive (see
+    `test_session_fence_releases_uncooperative_delivery_task_reference`)."""
+    from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
+
+    coordinator = ConsoleFleetWakeCoordinator(SimpleNamespace())
+    task = asyncio.create_task(asyncio.Event().wait())
+    coordinator._delivery_tasks[task] = "closing"
+
+    coordinator.fence_conversation("closing", generation=1)
+
+    assert set(coordinator._fenced_delivery_tasks) == {task}
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    handle = weakref.ref(task)
+    del task
+    await asyncio.sleep(0)  # drop the loop handle that resumed this await
+    gc.collect()
+    assert handle() is None, "the fence kept a strong reference to its delivery"
 
 
 # ---------------------------------------------------------------------------
