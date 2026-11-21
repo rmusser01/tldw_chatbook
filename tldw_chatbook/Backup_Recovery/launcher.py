@@ -269,11 +269,18 @@ def startup_preflight() -> tuple[str | None, str | None]:
     except PrivatePathError as exc:
         if exc.result.reason == "shared_writable_parent":
             return CONFIG_SHARED_PARENT_REASON, None
-        if exc.result.reason == "missing_parent":
-            # No config folder yet is a fresh profile, as FileNotFoundError is:
-            # Linux's walk reports it this way, and refusing it stopped every
-            # new Linux install at startup (TASK-42172). The config loader
-            # creates the folder under its own private-path checks.
+        if (
+            exc.result.reason == "missing_parent"
+            and not os.environ.get("TLDW_CONFIG_PATH")
+            and bootstrap.lexical_path(selector)
+            == bootstrap.lexical_path(bootstrap.default_config_path())
+        ):
+            # No default config folder yet is a fresh profile, as
+            # FileNotFoundError is: Linux's walk reports it this way, and
+            # refusing it stopped every new Linux install at startup
+            # (TASK-42172). Same scope as the config loader, which creates
+            # only the app-owned default folder (application_owned_config_
+            # directory); a custom TLDW_CONFIG_PATH parent stays refused.
             return None, None
         return "configuration_unavailable", None
     except (OSError, ValueError, RuntimeError):

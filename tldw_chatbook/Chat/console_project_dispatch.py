@@ -15,11 +15,13 @@ from tldw_chatbook.Chat.console_project_instructions import (
     project_instruction_notice_key,
 )
 
-#: Session id -> the user's own "cancel"/"disable" answer to the notice, held
-#: until the run it ended is finalized (TASK-33621.98). An automatic cancel
-#: (the selection drifted, or the chat was already accepted) is not recorded
-#: and stays an ordinary cancellation.
-_DECLINED: dict[str, str] = {}
+#: Session id -> (assistant message id, the user's own "cancel"/"disable"
+#: answer to the primary send's notice), held until that reply is finalized
+#: (TASK-33621.98). Keyed to the reply so a record a Stop or an exception left
+#: unclaimed can never label another turn; each new run's callbacks clear it.
+#: An automatic cancel (the selection drifted, or the chat was already
+#: accepted) and a review destination's notice are not recorded.
+_DECLINED: dict[str, tuple[str, str]] = {}
 
 _DECLINED_COPY = {
     "cancel": (
@@ -33,9 +35,10 @@ _DECLINED_COPY = {
 }
 
 
-def take_declined_notice(session_id: str) -> str | None:
-    """Claim the decline that ended this session's run, if one did."""
-    return _DECLINED.pop(session_id, None)
+def take_declined_notice(session_id: str, assistant_message_id: str) -> str | None:
+    """Claim the decline recorded for exactly this reply, if there is one."""
+    reply, decision = _DECLINED.pop(session_id, (None, None))
+    return decision if reply == assistant_message_id else None
 
 
 def finalize_declined_notice(
@@ -48,8 +51,9 @@ def finalize_declined_notice(
     """End a turn whose project-instructions notice was declined (TASK-33621.98).
 
     It used to end like any runtime cancellation: a failed reply reading only
-    "Response failed." and ``blocker=-`` in the log. The turn is BLOCKED with
-    a "Not sent" row naming the decline; Retry on the turn sends it again.
+    "Response failed." and ``blocker=-`` in the log. The failed reply now
+    carries the "Not sent" copy naming the decline (Retry on it sends the turn
+    again) and the turn is BLOCKED, as ``_finalize_agent_cancelled`` shapes it.
     """
     from .console_chat_controller import ConsoleSubmitResult
     from .console_chat_models import (
@@ -60,9 +64,11 @@ def finalize_declined_notice(
 
     copy = _DECLINED_COPY[decision]
     if controller._ensure_assistant_placeholder(assistant_message_id, session_id):
+        controller.store.append_stream_chunk(assistant_message_id, copy)
         failed = controller.store.mark_message_failed(assistant_message_id)
-        controller._record_run_assistant_message(run_id, failed)
-    controller._append_failure_system_row(session_id, copy)
+    else:
+        failed = controller._append_failed_assistant(session_id, copy)
+    controller._record_run_assistant_message(run_id, failed)
     controller._set_run_state(ConsoleRunState.blocked(copy), session_id=session_id)
     return ConsoleSubmitResult(
         True,
@@ -92,6 +98,7 @@ def build_project_dispatch_callbacks(
 
     project_owner_loop = asyncio.get_running_loop()
     expected_project_state = state
+    _DECLINED.pop(session_id, None)  # a new run: no unclaimed decline survives
 
     def on_owning_loop(callback):
         # Retained review authority may run on its captured app loop.
@@ -180,8 +187,9 @@ def build_project_dispatch_callbacks(
         if decision not in {"proceed", "cancel", "disable"}:
             decision = "cancel"
         committed = on_owning_loop(lambda: commit_and_record(decision))
-        if committed == decision != "proceed":
-            _DECLINED[session_id] = committed
+        reply = controller._active_assistant_message_ids.get(session_id)
+        if committed == decision != "proceed" and target_resolution is None and reply:
+            _DECLINED[session_id] = (reply, committed)
         return committed
 
     return (
