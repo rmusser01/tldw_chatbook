@@ -1108,6 +1108,9 @@ class ConsoleSubmitBlocker(StrEnum):
     #: chosen (the picker was cancelled or unavailable) or instructions were
     #: turned off from the picker.
     PROJECT_SETUP = "project_setup"
+    #: The user declined the "Send project instructions?" notice (Cancel,
+    #: Disable, Escape or its timeout); the turn was not sent (TASK-33621.98).
+    PROJECT_INSTRUCTIONS_DECLINED = "project_instructions_declined"
     #: Any other check that blocked the turn without naming its own code (a
     #: hook, the private scratch space, the context check); ``submit_draft``
     #: applies it so a blocked send never logs without one.

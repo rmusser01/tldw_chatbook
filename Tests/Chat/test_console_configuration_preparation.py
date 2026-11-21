@@ -873,3 +873,77 @@ async def test_controller_capture_snapshot_refuses_a_per_instance_impostor(
     else:
         with pytest.raises(RecoveryRequired, match="console_snapshot_owner_changed"):
             await captured
+
+
+
+@pytest.mark.asyncio
+async def test_installed_skill_trust_read_runs_outside_the_workspace_operation(
+    runtime_case, tmp_path, monkeypatch
+):
+    """#3347: a user-installed skill made every Console send die before submit.
+
+    The trust read (`SkillTrustService.status_for_skill`) takes its own storage
+    operation on the skills and trust roots. Capture held the Workspace DB's
+    repository operation around it, so storage admission refused the nested
+    path (`operation_path_outside_scope`) and the turn ended with no message.
+    A built-in-only catalog never reads trust, and the trust-service-less test
+    mode never takes storage, so neither showed it.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        capture_console_turn_configuration_owned,
+        standard_console_configuration_sources,
+    )
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Library.library_rag_state import library_rag_profile_top_k
+    from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
+    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+    from tldw_chatbook.Skills_Interop.skill_trust_store import (
+        FileSkillTrustGenerationMarkerStore,
+        SkillTrustStore,
+    )
+    from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
+
+    case = runtime_case
+    case.app.workspace_registry_service = LocalWorkspaceRegistryService(
+        WorkspaceDB(
+            config.get_user_data_dir() / "installed-skill-capture.sqlite",
+            client_id="installed-skill-capture",
+        )
+    )
+    root = tmp_path / "skills"
+    trust = SkillTrustService(
+        skills_dir=root / "skills",
+        trust_store=SkillTrustStore(
+            store_dir=root / "trust",
+            marker_store=FileSkillTrustGenerationMarkerStore(
+                root / "marker.json", store_dir=root
+            ),
+        ),
+    )
+    local = LocalSkillsService(store_dir=root, trust_service=trust)
+    await local.import_skill(
+        name="release-notes",
+        content="---\nname: release-notes\ndescription: Draft release notes\n---\nBody.\n",
+    )
+    monkeypatch.setattr(case.app, "local_skills_service", local, raising=False)
+    assert standard_console_configuration_sources(
+        case.app, case.store, case.controller, session_id=case.session.id
+    )
+
+    captured = await capture_console_turn_configuration_owned(
+        case.app,
+        case.store,
+        case.session.id,
+        selection=_selection(case),
+        creator=case.controller,
+        reads=case.controller._preparation_reads,
+        observers=(case.runtime._preparation_reads,),
+        require_current=lambda: None,
+    )
+
+    skills = captured.skill_context_maximum
+    listed = {row["name"] for row in (*skills["available_skills"], *skills["blocked_skills"])}
+    assert "release-notes" in listed
+    # The RAG profile read was refused the same way and fell back silently.
+    assert captured.rag_defaults["top_k"] == library_rag_profile_top_k() != 5

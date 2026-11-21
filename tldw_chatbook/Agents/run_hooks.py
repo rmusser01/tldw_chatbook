@@ -1325,7 +1325,16 @@ class RunHooksEngine:
     ) -> HookOutcome:
         """Async face of `fire` (same args plus the R18 `cwd` override)."""
         try:
-            return await asyncio.to_thread(self.fire, event, cwd=cwd, **kwargs)
+            fire = self.fire
+            if self._native_attached:
+                # A Console submit holds its agent admission across the turn;
+                # to_thread copies it, and the guard refuses a copied admission,
+                # so no UserPromptSubmit hook ran (TASK-42173). Admit afresh in
+                # the worker, as hooks_v2 does.
+                from .activation import worker_guard
+
+                fire = worker_guard()(fire)
+            return await asyncio.to_thread(fire, event, cwd=cwd, **kwargs)
         except Exception as exc:  # noqa: BLE001 - engine must never raise to callers
             # fire() already never raises; this guards to_thread machinery and
             # argument-binding errors from the in-thread call site. Degrade with
