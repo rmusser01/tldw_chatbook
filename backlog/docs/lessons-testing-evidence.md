@@ -27,6 +27,12 @@
 
 **What to do.** Treat every pytest invocation in this repo, `--version`, `--help` and `--collect-only` included, as a process that imports `tldw_chatbook`, and run it through the wrapper. To check the pytest version without the app, use `python -c "import pytest; print(pytest.__version__)"`.
 
+## A "nothing keeps it alive" check right after `await task` sees the task alive: the loop handle that resumed the await holds it (TASK-42074, 2026-11-20)
+
+**Incident.** TASK-42074's pin that a session fence keeps only a weak handle on the delivery it cancels did `await task`, `del task`, `gc.collect()`, then expected its `weakref.ref` to be dead. It failed with the `WeakSet` already in place. `gc.get_referrers` named the holder: the event loop's `Handle(Task.task_wakeup, (task,))`, the very handle running the test's step, which `BaseEventLoop._run_once` keeps in a local until that step yields.
+
+**What to do.** After dropping the last reference, `await asyncio.sleep(0)` before `gc.collect()`, so the resuming handle is released. Then prove the pin with a negative control that does keep a strong reference (TASK-42074 swapped the `WeakSet` for a `set` and saw the assertion fail).
+
 ## A test's `monkeypatch.setattr` lives until after every autouse teardown, so a patched builtin breaks them (TASK-42028, 2026-11-20)
 
 **Incident.** Two tests in `test_console_first_send_import_cycles.py` replaced `builtins.__import__` with a one-argument fake through `monkeypatch.setattr` (since e75333c318, 2026-11-02) and passed until TASK-41507 put `test_console_launch_wake.py` (which imports helpers from `test_console_fleet_wake_wiring.py`) in their UI shard; then all six ended in teardown ERRORs (`import_module() takes 1 positional argument but 5 were given`). `--setup-plan` shows why: an autouse fixture (`_console_gateway_http_client_is_offline`) requests `monkeypatch` first, so the test shares that instance and its undo runs after every other autouse teardown. `drain_test_app_user_data_dirs` tears down earlier and, only when the wiring module is loaded, runs `from Tests.conftest import ...` under the fake. That module was loaded by an import from another file, not by a test of its own in the shard.

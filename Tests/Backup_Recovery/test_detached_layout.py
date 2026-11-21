@@ -698,17 +698,27 @@ def _portable_pets(source, where):
     return folder, files
 
 
-@pytest.mark.parametrize("layout", ["profile", "roaming", "both", "roaming-unknown"])
+@pytest.mark.parametrize(
+    "layout", ["profile", "roaming", "both", "roaming-unknown", "profile-dated-only"]
+)
 def test_portable_pets_import_from_the_profile_or_an_older_roaming_copy(
     tmp_path, layout
 ):
     """TASK-42000: a portable copy's own pet files are imported; an older
     copy's roaming pet files are imported only when the profile has none, and
-    unknown roaming files still refuse."""
+    unknown roaming files still refuse. TASK-42114 review: only the
+    profile's pet file or its marker means it has pets of its own; a dated
+    copy alone does not, so the roaming pets are imported."""
     source, _root, _old = _base_profile(tmp_path)
     captured = {}
     if layout in ("profile", "both"):
         _, captured = _portable_pets(source, "profile")
+    if layout == "profile-dated-only":
+        folder = source / "home" / ".config" / "tldw_cli"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "tamagotchi_pets.backup_20250101_000000.json").write_text(
+            '{"own": {"name": "Dated only"}}'
+        )
     if layout != "profile":
         roaming, files = _portable_pets(source, "roaming")
         if layout != "both":
@@ -731,9 +741,19 @@ def test_portable_pets_import_from_the_profile_or_an_older_roaming_copy(
                 for row in manifest["files"]
                 if row["owner_id"] == "tamagotchi.config"
             ]
+            # TASK-42114: the store's dated copies are listed as excluded and
+            # carry no payload; a restore never recreates them.
             assert {
                 row["relative_path"]: archive.read(row["payload"]) for row in rows
-            } == captured
+            } == {
+                name: data for name, data in captured.items() if ".backup_" not in name
+            }
+            assert sorted(
+                row["status"]
+                for row in manifest["producer_inventory"]
+                if row["owner_id"] == "tamagotchi.config"
+                and row["logical_id"].endswith(".backup_20260101_121314.json")
+            ) == ["intentionally_excluded"]
         assert (
             "Old shared pet files were not imported; this profile has its own."
             in result.review_lines
@@ -820,7 +840,10 @@ assert not (control.parent/'home'/'AppData'/'Roaming'/'tldw_chatbook').exists()
 assert not Path(sys.argv[3]).exists()
 print('FRESH_PRIVATE_PET_READ',flush=True)
 """
-    expected = json.dumps({name: data.hex() for name, data in before.items()})
+    # TASK-42114: the roaming dated copy is excluded and not restored.
+    expected = json.dumps(
+        {name: data.hex() for name, data in before.items() if ".backup_" not in name}
+    )
     host_probe = tmp_path / "must never write inherited roaming"
     for iteration in range(2):
         result = subprocess.run(
