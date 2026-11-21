@@ -89,5 +89,7 @@ So `O_BINARY` ships in the same change. The triage's C4 makes the same fix in `p
 - Symlink rejection on Windows was not live-tested, because this host cannot create symlinks.
 - Inspect → import → remove end to end with the real receipt store still waits on PR #3684.
 
-`./scripts/preflight.sh`: see the PR description.
+**`./scripts/preflight.sh`** (python3.13.3, Windows): every check passes except "Canvas Mermaid generated assets".
+- That check fails on a clean `dev` worktree too: there it reports "use the pinned Python build version". In this worktree, `core.autocrlf=true` gives `canvas_shell.css` CRLF, so it reports an integrity mismatch first.
+- This change touches none of its inputs.
 <!-- SECTION:NOTES:END -->
