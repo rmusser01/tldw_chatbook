@@ -414,7 +414,17 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-16, TASK-41114 review r15ac-rev2 (same rule): a persona Actor Pack
     # creation refused by the stuck import names it and shows the notice (+3,
     # 16,889 -> 16,892).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16892,
+    # 2026-11-06 owner decision (expand limits, never contort code; B2b
+    # follow-up burn-down PR 4, stacked on #3427): TASK-33910.41's
+    # `_switch_mode` and `_apply_mode`'s `await_read` (a user's kind switch
+    # reads in the list's worker, off the caller's pump) and TASK-33910.39's
+    # prevented Input.Changed on the search clear: +46.
+    # 2026-11-12: rebased onto #3427's rebased head; row set to the
+    # measurement at this head (16,878 + 46 = 16,924).
+    # 2026-11-19: rebased onto dev a6df4d8d48 (#3427 merged, plus the
+    # TASK-40322/40304/41114 rows above); row set to the measurement at this
+    # head (16,892 + 46 = 16,938).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16938,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
     # limits"), applied 2026-10-09: the final-review fix that puts a name and a
