@@ -25,6 +25,8 @@ import os as _os
 import platform
 import stat as _stat
 import struct
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -51,6 +53,7 @@ _WRITE_THROUGH = 2
 _REPARSE = 0x400
 _DIRECTORY = 0x10
 _SHARE_ALL = 7
+_SHARE_READ_WRITE = 3  # no FILE_SHARE_DELETE: the folder chain cannot move
 _FILE_RENAME_REPLACE_IF_EXISTS = 0x00000001
 _FILE_RENAME_POSIX_SEMANTICS = 0x00000002
 _FILE_RENAME_INFORMATION_EX = 65
@@ -535,6 +538,7 @@ class _Native:
         metadata=False,
         extra_access=0,
         _metadata_record=None,
+        share=_SHARE_ALL,
     ):
         access = _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE | extra_access
         if directory:
@@ -580,7 +584,7 @@ class _Native:
                 C.byref(status),
                 None,
                 0x80,
-                _SHARE_ALL,
+                share,
                 disposition,
                 options,
                 None,
@@ -642,6 +646,202 @@ class _Native:
             self.kernel.CloseHandle(value)
 
 
+# --- Pinned directory roots (TASK-40608 D1) ----------------------------------
+# On Windows a directory handle opened without FILE_SHARE_DELETE stops that
+# directory and every ancestor from being renamed, replaced or deleted while it
+# is held. Files and child folders inside stay fully usable (measured on
+# Windows 10, 2026-11-20). A walk below a pinned root therefore starts from its
+# handle instead of reopening every folder from the drive root: the chain it
+# skips cannot change while the pin is held. Pins are an optimization only; a
+# failed or released pin falls back to the full walk.
+
+
+class _Pin:
+    __slots__ = ("handle", "borrowers", "released")
+
+    def __init__(self, handle):
+        self.handle = handle
+        self.borrowers = 0
+        self.released = False
+
+
+_pin_lock = threading.Lock()
+_pin_roots: tuple[str, ...] = ()
+_pins: dict[tuple[str, ...], _Pin] = {}
+# A pinned folder is stat'ed through its own handle on every call, so it is
+# always fresh. Its strict ancestors keep their identity while the pin is held,
+# and their stat results (every field, including size and times) are reused
+# for up to this long: an owner or permission change on an ancestor is seen
+# within this window (owner decision O3, 2026-11-20).
+_PINNED_STAT_SECONDS = 1.0
+_pinned_stats: dict[tuple[str, ...], tuple[float, object]] = {}
+# Bumped whenever pins are released, so an ancestor stat computed before a
+# release is never stored after it.
+_pin_generation = 0
+
+
+def _pin_key(drive, parts):
+    # Exact component spelling. NTFS matches names with its own upcase table
+    # (or exactly, in case-sensitive folders), which str.casefold() does not
+    # reproduce: "Strasse" would match a pinned "Straße". Another spelling of
+    # a pinned folder (ASCII case, 8.3 name) simply misses the pin and takes
+    # the full walk.
+    return (drive.upper(), *parts)
+
+
+def _split_local(path):
+    absolute = ntpath.abspath(_os.fspath(path))
+    drive, tail = ntpath.splitdrive(absolute)
+    if len(drive) != 2 or drive[1] != ":" or not drive[0].isalpha() or not tail.startswith("\\"):
+        raise ValueError("local_absolute_drive_path_required")
+    return drive, [_component(part) for part in tail.split("\\") if part]
+
+
+def _close_pin_locked(pin):
+    pin.released = True
+    if pin.borrowers == 0 and pin.handle is not None:
+        _native().kernel.CloseHandle(pin.handle)
+        pin.handle = None
+
+
+def _pin_one(path):
+    drive, parts = _split_local(path)
+    if not parts:
+        return None
+    native = _native()
+    with _parent(path) as (parent, leaf):
+        handle = native.open_handle(leaf, parent=parent, directory=True, share=_SHARE_READ_WRITE)
+    try:
+        if not native.info(handle).attributes & _DIRECTORY:
+            raise NotADirectoryError(errno.ENOTDIR, "pinned_root_not_directory", _os.fspath(path))
+    except BaseException:
+        native.kernel.CloseHandle(handle)
+        raise
+    return _pin_key(drive, parts), _Pin(handle)
+
+
+def set_pinned_roots(paths) -> None:
+    """Pin exactly these folders (Windows only), releasing any previous pins.
+
+    Args:
+        paths: Absolute local folder paths, for example the profile data and
+            config folders. An empty sequence releases every pin.
+    """
+    global _pin_roots
+    release_pinned_roots()
+    with _pin_lock:
+        _pin_roots = tuple(_os.fspath(path) for path in paths)
+    restore_pinned_roots()
+
+
+def release_pinned_roots() -> None:
+    """Close every pin (a backup or restore may replace these folders)."""
+    global _pin_generation
+    with _pin_lock:
+        for pin in _pins.values():
+            _close_pin_locked(pin)
+        _pins.clear()
+        _pinned_stats.clear()
+        _pin_generation += 1
+
+
+def _covers_strictly_locked(key):
+    return any(
+        len(pin_key) > len(key)
+        and pin_key[: len(key)] == key
+        and not pin.released
+        and pin.handle is not None
+        for pin_key, pin in _pins.items()
+    )
+
+
+def _pinned_stat(path, compute):
+    """Stat a pinned folder, or reuse a recent stat of an ancestor of one.
+
+    A pinned folder is stat'ed through its pin handle on every call (no open,
+    always fresh). A strict ancestor of a pinned folder reuses its last full
+    walk for up to ``_PINNED_STAT_SECONDS``.
+
+    Returns None when ``path`` is neither, so the caller runs its ordinary walk.
+    """
+    if not _pins:
+        return None
+    try:
+        drive, parts = _split_local(path)
+    except ValueError:
+        return None
+    key = _pin_key(drive, parts)
+    now = time.monotonic()
+    with _pin_lock:
+        exact = _pins.get(key)
+        if exact is not None and not exact.released and exact.handle is not None:
+            exact.borrowers += 1
+        else:
+            exact = None
+            if not _covers_strictly_locked(key):
+                return None
+            cached = _pinned_stats.get(key)
+            if cached is not None and now - cached[0] < _PINNED_STAT_SECONDS:
+                return cached[1]
+            generation = _pin_generation
+    if exact is not None:
+        try:
+            return compute(exact.handle)
+        finally:
+            _return_pin(exact)
+    result = compute(None)
+    with _pin_lock:
+        if generation == _pin_generation and _covers_strictly_locked(key):
+            _pinned_stats[key] = (now, result)
+    return result
+
+
+def restore_pinned_roots() -> None:
+    """Take the configured pins again; a folder that cannot be pinned is skipped."""
+    with _pin_lock:
+        roots = _pin_roots
+    for root in roots:
+        try:
+            pinned = _pin_one(root)
+        except (OSError, ValueError):
+            continue
+        if pinned is None:
+            continue
+        key, pin = pinned
+        with _pin_lock:
+            if root not in _pin_roots or key in _pins:
+                _close_pin_locked(pin)
+                continue
+            _pins[key] = pin
+
+
+def pinned_roots() -> tuple[str, ...]:
+    """Return the currently held pin keys, for diagnostics and tests."""
+    with _pin_lock:
+        return tuple("\\".join(key) for key, pin in _pins.items() if not pin.released)
+
+
+def _borrow_pin(drive, parts):
+    """Return ``(pin, depth)`` for the deepest held pin covering ``parts``."""
+    if not _pins:
+        return None
+    with _pin_lock:
+        for depth in range(len(parts), 0, -1):
+            pin = _pins.get(_pin_key(drive, parts[:depth]))
+            if pin is not None and not pin.released and pin.handle is not None:
+                pin.borrowers += 1
+                return pin, depth
+    return None
+
+
+def _return_pin(pin):
+    with _pin_lock:
+        pin.borrowers -= 1
+        if pin.released and pin.borrowers == 0 and pin.handle is not None:
+            _native().kernel.CloseHandle(pin.handle)
+            pin.handle = None
+
+
 @functools.lru_cache(maxsize=1)
 def _native():
     return _Native()
@@ -665,15 +865,24 @@ def _parent(path, dir_fd=None):
     ):
         raise ValueError("local_absolute_drive_path_required")
     parts = [_component(part) for part in tail.split("\\") if part]
-    handle = native.open_handle("\\??\\" + drive + "\\", directory=True)
+    # Start below the deepest pinned root when one covers this parent chain.
+    borrowed = _borrow_pin(drive, parts[:-1])
+    if borrowed is None:
+        handle, start, owned = native.open_handle("\\??\\" + drive + "\\", directory=True), 0, True
+    else:
+        handle, start, owned = borrowed[0].handle, borrowed[1], False
     try:
-        for part in parts[:-1]:
+        for part in parts[start:-1]:
             successor = native.open_handle(part, parent=handle, directory=True)
-            native.kernel.CloseHandle(handle)
-            handle = successor
+            if owned:
+                native.kernel.CloseHandle(handle)
+            handle, owned = successor, True
         yield handle, parts[-1] if parts else None
     finally:
-        native.kernel.CloseHandle(handle)
+        if owned:
+            native.kernel.CloseHandle(handle)
+        if borrowed is not None:
+            _return_pin(borrowed[0])
 
 
 class _AdmissionMetadataHandle:
@@ -776,6 +985,18 @@ class WindowsOS:
     def stat(self, path, *, dir_fd=None, follow_symlinks=True):
         if isinstance(path, int):
             return self.fstat(path)
+        if dir_fd is None and _pins:
+            pinned = _pinned_stat(
+                path,
+                lambda handle: self._stat_handle(handle)
+                if handle is not None
+                else self._walk_stat(path, follow_symlinks=follow_symlinks),
+            )
+            if pinned is not None:
+                return pinned
+        return self._walk_stat(path, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+
+    def _walk_stat(self, path, *, dir_fd=None, follow_symlinks=True):
         native = _native()
         with _parent(path, dir_fd) as (parent, leaf):
             if leaf is None:

@@ -215,7 +215,11 @@ class LifecycleMixin:
         if getattr(self, "_backup_maintenance_monitor_task", None) is not None:
             return
         from .Backup_Recovery.runtime_maintenance import monitor_app
+        from .Backup_Recovery.storage_admission import pin_profile_roots
 
+        # TASK-40608 D1: pin the profile folders before the monitor (the only
+        # producer of a local pause) can run, so pins are never taken mid-pause.
+        pin_profile_roots()
         self._backup_maintenance_monitor_task = asyncio.create_task(
             monitor_app(self), name="backup-maintenance-monitor"
         )
@@ -1064,14 +1068,22 @@ class LifecycleMixin:
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
 
-        # Settle boot-owned native work before any other owner can advance.
-        actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
-        # Do not close Notes or arm forced-exit cleanup while its worker is live.
-        await self._shutdown_workflow_session()
-        recovery_cleanup_cancellation = await TldwCli._shutdown_recovery_service(self)
-        monitor_cleanup_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
-        self._speech_initialization_closed = True
-        speech_cleanup_cancellation = await self._settle_speech_initialization()
+        from .Backup_Recovery.storage_admission import unpin_profile_roots
+
+        try:
+            # Settle boot-owned native work before any other owner can advance.
+            actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
+            # Do not close Notes or arm forced-exit cleanup while its worker is live.
+            await self._shutdown_workflow_session()
+            recovery_cleanup_cancellation = await TldwCli._shutdown_recovery_service(self)
+            monitor_cleanup_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
+            self._speech_initialization_closed = True
+            speech_cleanup_cancellation = await self._settle_speech_initialization()
+        finally:
+            # TASK-40608 D1: drop the process-global Windows profile folder
+            # pins. Normally this follows the maintenance monitor's stop; if a
+            # step above raised, it still runs, possibly before that stop.
+            unpin_profile_roots()
         speech_cleanup_cancellation = (
             actor_recovery_cancellation
             or recovery_cleanup_cancellation
