@@ -4,7 +4,7 @@ title: "Queued messages other than a button press are still dropped when a conta
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 21:30
+updated_date: 2026-11-21 22:29
 labels:
 - follow-up
 - ui
@@ -31,10 +31,12 @@ Each loses a user action that arrived just before the rebuild. This builds on TA
 - [x] #1 The notes list which message types and which child-swap routes (recompose, `remove_children()` then `mount()`) can drop a queued user message, and where each occurs in the app
 - [x] #2 Each listed case either keeps its queued message (delivered to the nearest staying ancestor, as TASK-42014 does for presses) or is recorded as safe with the reason
 - [x] #3 For each case that keeps its message, a pilot fails without the change
-- [x] #4 Handlers that read a position from the sender's id, and whose sender sits below a child that a rebuild removes (so the keeper can hand them a press from an earlier rebuild), resolve their target from the sender instance of the current rebuild; each destructive or state-changing one has a pilot that fails without the change, and each non-destructive one (navigation, rerun) is recorded with the reason
+- [x] #4 Handlers that read a position from the sender's id, and whose sender sits below a child that a rebuild removes (so the keeper can hand them a press from an earlier rebuild), resolve their target from the sender instance of the current rebuild; so do handlers of `Input.Submitted` and `ListView.Selected` that read their target from current state (a static id plus `self.<current>`). Each one that writes has a pilot that fails without the change, and each of the rest (navigation, rerun, fixed target) is recorded with the reason
 <!-- AC:END -->
 
 AC#4 added 2026-11-21 (coordinator decision, review r19rc-rev1): round 18's TASK-42014 exposed these handlers on the recompose route, and this task's swap routes widen the exposure.
+
+AC#4 amended 2026-11-21 (coordinator decision, review r19rc-rev2): the audit had only looked for positions decoded from ids, but the newly kept `Input.Submitted` reached `LibraryMediaViewer._handle_speaker_rename_submitted`, which read the item from the viewer's current selection and renamed another item's speaker. Handlers of the two newly kept messages that read their target from current state are now in scope.
 
 Coordinator note 2026-11-21 (review r19rc-rev1): `Select.Changed`, `Checkbox.Changed` and `Switch.Changed` are not kept. A mount echo or a programmatic `value =` posts the same message, so forwarding one from a removed generation could deliver a stale echo as if the user had acted. Keeping them needs a user-origin signal; they stay listed under follow-ups. The keeper keeps `Button.Pressed`, `Input.Submitted` and `ListView.Selected`.
 
@@ -51,6 +53,11 @@ Review r19rc-rev1 (2026-11-21):
 7. Resolve the target of an index-from-id handler from the sender instance of the current generation: a shared `rendered_target(targets, sender)` helper next to the keeper, and per-widget button maps. First `BenchEditor` (remove and add), with a pilot from the reviewer's probe, red first.
 8. Audit the remaining index-from-id handlers below a rebuilt child: fix each destructive or state-changing one by identity with a pilot, and record each navigation-only one with the reason.
 9. Reword the lock-order pilot's docstring; add the identity rule to the TASK-41703 lesson.
+
+Review r19rc-rev2 (2026-11-21):
+10. Bind each `LibraryMediaViewer` legend Input to the item and speaker it was composed for (a per-compose map, `rendered_target`), with a pilot from the reviewer's probe, red first.
+11. Audit the `Input.Submitted` and `ListView.Selected` handlers that read their target from current state; probe `FirstRunSetupWizard._advance_on_input_submit`; fix any that write, record the rest.
+12. Record the five non-destructive position-from-sender handlers the review named; extend the lesson's identity rule to submits.
 
 ## Implementation Notes
 
@@ -124,6 +131,27 @@ Recorded, not changed:
 - Never runs for a forwarded press: `WorkspaceCreateModal._remove_folder` selects through an ancestor (TASK-42014).
 - Never forwarded, because its rows are direct children of the list it swaps: `ConsoleReactionPickerModal._row_pressed`. A press that reaches it after a re-filter still resolves by position; proposed follow-up.
 
+**AC#4, review r19rc-rev2: submits and selections that read their target from current state.**
+- *Fixed.* `LibraryMediaViewer._handle_speaker_rename_submitted` took the speaker from the Input's id, but the item from `speaker_rename_media_id` when it ran. Selecting another item sets that id and recomposes the viewer (`library_media_controller.py`), so a kept Enter from item A's "S1" field renamed "S1" on item B and persisted the change to the transcript, `meeting.json` and the DB.
+  - `_compose_speaker_legend` now maps each legend Input to the (item, speaker) it was composed for, a new map per compose, and the handler resolves the sender through `rendered_target`. A submit from an earlier render is dropped.
+  - Pilot `test_a_stale_speaker_rename_never_renames_another_items_speaker` comes from the reviewer's probe and is driven by a real Enter. (A renamed, B renamed) was (False, True) without the map and is (False, False) with it, as on dev.
+- *`FirstRunSetupWizard._advance_on_input_submit`: safe, with evidence.* The wizard changes steps by toggling the `hidden` class (`BaseWizard.show_step`), not by removing them.
+  - The only step that recomposes (`SpeechSetupStep`) holds no Input. The model step's `remove_children()` removes radio buttons only. A failed step renders only Buttons.
+  - A temporary `_prune` probe over `Tests/Wizards` (1660 passed) saw 4501 removals inside the wizard. Two held an Input, both in `test_partial_retry_failure_rolls_back_and_next_retry_succeeds`: the retry rollback removing a hidden replacement step the user never saw.
+  - So the keeper never hands a swapped-out step's Enter to this handler. A late Enter during an advance meets the `_advancing` guard, as on dev.
+- *Cleared by the review:* the scheduling `_commit_*_edit` handlers (guarded by `_editing_task`), `ConsoleAgentSteeringBar`, `ChatQuestionCard`, `ConsoleTurnFileCard` and the change-review comment inputs, the Meetings and `LibraryMediaCanvas` legends, the Console model popover, and all 12 `ListView.Selected` handlers.
+- *The rest of the 92 `Input.Submitted` handlers,* from a scan of each handler's reads and writes:
+  - *A fixed target.* Some modals and dialogs are built for one target: the session, workspace and note-folder rename/name modals, the watchlist, TTS-profile and RAG-profile name modals, fork chat, save markdown, feedback comment, git commit, the skill-trust passphrase modals, the password and plugin-authority dialogs, the Kanban new card, Dreams goals, generate image, and the exchange and trace export dialogs. Settings fields write the message's value, or the panel's own fields, to a fixed key: Dreams model and region, session summary, splash duration and speed.
+  - *The Input is never below a removed child.* `ModelSearchPicker`, `ConsoleSessionSwitcherModal` and `ConsoleCharacterPickerModal` remove only their result lists; `PersonasPreviewPane` removes only transcript lines; `MCPToolsMode` never rebuilds its workspace-root field. In each, the handler goes with the Input whenever the host itself is removed.
+  - *One form, not a selection.* `LibraryIngestController`'s path submit drives the controller's single ingest form (a cleared path returns early). `WorkspaceCreateModal`'s name submit drives the modal's own form, which it stashes across its recomposes.
+  - *Search and filter submits:* navigation.
+- *Position-from-sender handlers, recorded (non-destructive), as the review asked:*
+  - `library_rag_search_controller.py` `_trailing_index` (rerun a past query, select or open an evidence row);
+  - `UI/Workflows_Modules/editor.py` `workflow-overview-{i}` (`show_step`, navigation);
+  - `console_staged_context.py` `source_row_index` (toggle a detail, open a source);
+  - `console_workspace_switcher_modal.py` (the modal never rebuilds);
+  - `console_rewind_modal.py` (the prompt rows never rebuild; only the action row is re-rendered).
+
 **Cost.** The keeper's own time per removal is measured with a probe that recomposes a container of N rows, each `Horizontal(Static, Button, Button, Checkbox, Input)`, 20 times. At 120 nodes it takes 0.10 ms. At 1200 nodes it takes 2.60 ms, and 0.86 ms when the rows hold Statics only; TASK-42014's Button-only walk took 0.44-0.62 ms on the same tree. The whole recompose took 0.7-3.1 s under load 34-60, so the keeper is about 0.1-0.4% of a removal. A removed screen skips the walk. Boot budget (`bootbudget.sh`, the CI step's seven files, serial): 34 passed; module counts, headroom and the ui-ready snapshot drift (+1/-0) match round 18's logs, and preimport LOC is 2 lower.
 
 **Runs** (all through the wrapper; the machine was at load 34-65 throughout).
@@ -146,8 +174,16 @@ Recorded, not changed:
 - `Tests/Architecture`, serial: 3 failed and 1489 passed, the same three dev-red nodes as round 1 (module-size and code-identity ratchets included).
 - Preflight passes.
 
-**Size.** `tldw_chatbook/__init__.py` 590 -> 626 (no row; 609 before rev1); `bench_editor.py` 1557 -> 1560, `briefing_preset_modal.py` 685 -> 695, `console_hooks_review_modal.py` 698 -> 714, `personal_context_review_modal.py` 938 -> 944 (no rows); `settings_screen.py` 34980 -> 34978 (budget 34993); `console_workspace_context.py` -2 (no row); `library_canvas_sync.py` unchanged in lines.
+**Runs after review r19rc-rev2** (load 7-24).
+- The lane file: 30 passed in each of 3 runs at `-n 4`.
+- `Tests/Wizards`, the media-viewer rename files and `test_first_run_wizard_live_contract.py` at `-n 4`: 1746 passed, 55 failed. Every `Tests/Wizards` test passed.
+  - 54 of the failures come from the local `RecoveryRequired` trap (47 in the live-contract file, 7 in the media rename files), including `test_rerun_over_settings_start_chatting_navigates_to_chat`, which fails 2 of 2 with dev's source too.
+  - `test_speaker_legend_submit_renames_and_refreshes_preview` (`LibraryMediaCanvas`, a widget this branch does not touch) fails 2 of 2 with dev's source as well.
+- `ruff check --select F` on every touched Python file and `Tests/lint/ruff_gate.py` pass.
+- `Tests/Architecture`, serial: 3 failed and 1489 passed, the same three dev-red nodes. Preflight passes.
 
-Files: `tldw_chatbook/__init__.py`, `tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/Widgets/Console/console_workspace_context.py`, `tldw_chatbook/Widgets/Library/library_canvas_sync.py` (docstring), and since rev1 `tldw_chatbook/UI/Evals/bench_editor.py`, `tldw_chatbook/UI/Watchlists_Modules/briefing_preset_modal.py`, `tldw_chatbook/Widgets/Console/console_hooks_review_modal.py`, `tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py`; `Tests/Library/test_library_notes_canvas_pending_lookup.py`; `backlog/docs/lessons-textual.md` (the TASK-41703 entry: where the keeper lives, why the three `Changed` types are not kept, the swap-route incident, the identity rule, the real-input hold, the falsy unmounted `ListView`).
+**Size.** `tldw_chatbook/__init__.py` 590 -> 626 (no row; 609 before rev1); `bench_editor.py` 1557 -> 1560, `briefing_preset_modal.py` 685 -> 695, `console_hooks_review_modal.py` 698 -> 714, `personal_context_review_modal.py` 938 -> 944, `library_media_viewer.py` 1752 -> 1761 (no rows); `settings_screen.py` 34980 -> 34978 (budget 34993); `console_workspace_context.py` -2 (no row); `library_canvas_sync.py` unchanged in lines.
 
-**Not this task's list.** `Select.Changed` 170, `Checkbox.Changed` 65 and `Switch.Changed` 13 handlers above the sender are left out by the r19rc-rev1 decision; they need a user-origin signal. The same scan finds other actions handled above their sender: `RadioSet.Changed` 20, `OptionList.OptionSelected` 30, `DataTable.RowSelected` 23 and `CellSelected` 7, `Tree.NodeSelected` 6, `SelectionList.SelectedChanged` 5, `Collapsible.Toggled` 12, `TabbedContent.TabActivated` 1, `RadioButton.Changed` 1. The mechanism drops them the same way; keeping one is a tuple entry and a pilot. A custom message that a widget posts from its own press handler is dropped too, when that widget sits below a removed child. `Input.Changed` and `TextArea.Changed` echo a removed widget's own text, which goes with it. These are proposed as follow-ups, not kept here. Also proposed: `ConsoleReactionPickerModal._row_pressed` resolves a late press by position (AC#4); handlers on index-id Checkboxes (`PersonalContextReviewModal.handle_checkbox_changed`, `ConsolePromptMixinsView._toggle`) still resolve a late `Changed` by position, though the keeper no longer forwards one; and a static-id action (Delete, Save) acts on whatever is current when a press from an earlier rebuild lands.
+Files: `tldw_chatbook/__init__.py`, `tldw_chatbook/UI/Screens/settings_screen.py`, `tldw_chatbook/Widgets/Console/console_workspace_context.py`, `tldw_chatbook/Widgets/Library/library_canvas_sync.py` (docstring), and since rev1 `tldw_chatbook/UI/Evals/bench_editor.py`, `tldw_chatbook/UI/Watchlists_Modules/briefing_preset_modal.py`, `tldw_chatbook/Widgets/Console/console_hooks_review_modal.py`, `tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py`, and since rev2 `tldw_chatbook/Widgets/Library/library_media_viewer.py`; `Tests/Library/test_library_notes_canvas_pending_lookup.py`; `backlog/docs/lessons-textual.md` (the TASK-41703 entry: where the keeper lives, why the three `Changed` types are not kept, the swap-route incident, the identity rule, the real-input hold, the falsy unmounted `ListView`).
+
+**Not this task's list.** `Select.Changed` 170, `Checkbox.Changed` 65 and `Switch.Changed` 13 handlers above the sender are left out by the r19rc-rev1 decision; they need a user-origin signal. The same scan finds other actions handled above their sender: `RadioSet.Changed` 20, `OptionList.OptionSelected` 30, `DataTable.RowSelected` 23 and `CellSelected` 7, `Tree.NodeSelected` 6, `SelectionList.SelectedChanged` 5, `Collapsible.Toggled` 12, `TabbedContent.TabActivated` 1, `RadioButton.Changed` 1. The mechanism drops them the same way; keeping one is a tuple entry and a pilot. A custom message that a widget posts from its own press handler is dropped too, when that widget sits below a removed child. `Input.Changed` and `TextArea.Changed` echo a removed widget's own text, which goes with it. These are proposed as follow-ups, not kept here. Also proposed: `ConsoleReactionPickerModal._row_pressed` resolves a late press by position (AC#4); handlers on index-id Checkboxes (`PersonalContextReviewModal.handle_checkbox_changed`, `ConsolePromptMixinsView._toggle`) still resolve a late `Changed` by position, though the keeper no longer forwards one; and a static-id action (Delete, Save) acts on whatever is current when a press from an earlier rebuild lands. One example: `ConsoleRewindModal`'s Restore/Summarize buttons are direct children of the action row it re-renders, so the keeper never forwards them, but a late press acts on `self._selected` (a dev-timing case).
