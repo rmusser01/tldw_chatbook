@@ -342,6 +342,7 @@ import json
 import os
 import sys
 import threading
+from functools import partial
 from types import SimpleNamespace
 
 os.environ["TLDW_IDLE_HEAP_REFREEZE"] = "1"
@@ -398,7 +399,14 @@ class Console:
     def __init__(self):
         self._console_send_flight = SimpleNamespace(tasks=set(), deferred=None)
         self.app = SimpleNamespace(
-            screen=self, _screen_preimport_thread=threading.current_thread()
+            screen=self,
+            _screen_preimport_thread=threading.current_thread(),
+            _initial_screen_preimport_thread=None,
+        )
+        # The Console asks through the app's public accessor (the app
+        # string-lookup census), so the real one reads the running pass.
+        self.app.screen_preimport_running = partial(
+            cls.screen_preimport_running, self.app
         )
         self.timers = []
 

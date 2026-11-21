@@ -5460,6 +5460,15 @@ class TldwCli(
             return
         self._screen_preimport_thread = thread
 
+    def screen_preimport_running(self) -> bool:
+        """Whether the initial-route or whole-registry pre-import pass runs.
+
+        The Console's idle heap maintenance waits while one does, so no runtime
+        re-freeze counts a pass's modules as growth (TASK-33620.15.57).
+        """
+        passes = (self._screen_preimport_thread, self._initial_screen_preimport_thread)
+        return any(thread is not None and thread.is_alive() for thread in passes)
+
     def _start_preimport_thread(self, thread: threading.Thread) -> bool:
         """Start a pre-import thread; report whether it is running.
 

@@ -280,6 +280,10 @@ def _warm_first_send(app: Any, on_complete: Callable[[], None]) -> None:
             "First-send manifest warm-up failed (error_type={})", type(exc).__name__
         )
     _pause(app, 0.0)  # the completion re-freezes on the UI loop: a step's wait
-    if getattr(app, "_shutting_down", False):
+    try:
+        shutting_down = app._shutting_down
+    except AttributeError:
+        shutting_down = False
+    if shutting_down:
         return
     app.call_from_thread(on_complete)

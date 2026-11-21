@@ -89,7 +89,6 @@ handlers.
 from __future__ import annotations
 
 import asyncio
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -574,12 +573,17 @@ def _console_heap_busy(screen: Any) -> bool:
 
 
 def _preimport_pass_running(app: Any) -> bool:
-    """Whether the app's initial-screen or whole-registry pre-import thread runs."""
-    for name in ("_screen_preimport_thread", "_initial_screen_preimport_thread"):
-        thread = getattr(app, name, None)
-        if isinstance(thread, threading.Thread) and thread.is_alive():
-            return True
-    return False
+    """Whether the app's initial-screen or whole-registry pre-import pass runs.
+
+    Asks the app's public ``screen_preimport_running`` rather than reading
+    its pre-import threads by name. An app-like owner without the accessor
+    (a test double, a host with no passes) runs none.
+    """
+    try:
+        running = app.screen_preimport_running
+    except AttributeError:
+        return False
+    return bool(running())
 
 
 def _console_foreground_busy(screen: Any) -> bool:

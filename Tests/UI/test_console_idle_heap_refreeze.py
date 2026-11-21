@@ -19,6 +19,7 @@ import asyncio
 import gc
 import threading
 import weakref
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -513,6 +514,19 @@ def test_a_new_chat_gaining_its_conversation_id_is_not_a_switch(
     )
 
 
+def _with_preimport_passes(app: SimpleNamespace) -> SimpleNamespace:
+    """Give a fake app the real ``TldwCli.screen_preimport_running``, no pass started.
+
+    The Console asks the app through that public accessor, not by reading
+    its pre-import threads by name (the app string-lookup census).
+    """
+    from tldw_chatbook.app import TldwCli
+
+    app._screen_preimport_thread = app._initial_screen_preimport_thread = None
+    app.screen_preimport_running = partial(TldwCli.screen_preimport_running, app)
+    return app
+
+
 @pytest.mark.parametrize(
     "pass_thread", ["_screen_preimport_thread", "_initial_screen_preimport_thread"]
 )
@@ -536,7 +550,7 @@ def test_a_running_pre_import_pass_holds_idle_maintenance_off(pass_thread) -> No
     release = threading.Event()
     thread = threading.Thread(target=release.wait, daemon=True)
     screen = BusyScreen()
-    setattr(screen.app, pass_thread, thread)
+    setattr(_with_preimport_passes(screen.app), pass_thread, thread)
     assert not console_transcript._console_heap_busy(screen), (
         "an unstarted pass held it"
     )
@@ -619,7 +633,7 @@ def test_the_warm_ups_end_freezes_its_modules_before_the_next_send(
     console = WarmUpConsole()
     release = threading.Event()
     pass_thread = threading.Thread(target=release.wait, daemon=True)
-    console.app._screen_preimport_thread = pass_thread
+    _with_preimport_passes(console.app)._screen_preimport_thread = pass_thread
     console_transcript.request_console_heap_refreeze(console, "conversation_painted")
     painted_timer = console.timers[-1][1]
     if console_state == "covered":
@@ -631,6 +645,7 @@ def test_the_warm_ups_end_freezes_its_modules_before_the_next_send(
     )
     pass_thread.start()
     try:
+        assert console_transcript._console_heap_busy(console), "the pass held nothing"
         TldwCli._finish_first_send_warmup(app)
     finally:
         release.set()
