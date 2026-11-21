@@ -2664,6 +2664,18 @@ def _mounted_first_chat_projection(console: ChatScreen) -> dict[str, object]:
     }
 
 
+async def _capture_synced_first_chat_projection(
+    console: ChatScreen, pilot
+) -> dict[str, object]:
+    # A competing sync can return before projecting the restored session.
+    async with asyncio.timeout(10):
+        while not await console._sync_native_console_chat_ui():
+            await pilot.pause(0.05)
+    console._focus_console_composer_if_needed(force=True)
+    await pilot.pause()
+    return _mounted_first_chat_projection(console)
+
+
 async def _wait_for_first_chat_projection(
     console: ChatScreen,
     pilot,
@@ -4108,13 +4120,10 @@ async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
             has_user_work=True,
         )
         store.restore_state(sessions=[prior], active_session_id=prior.id)
-        await console._sync_native_console_chat_ui()
-        console._focus_console_composer_if_needed(force=True)
-        await pilot.pause()
+        mounted_before = await _capture_synced_first_chat_projection(console, pilot)
         sessions_before = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
-        mounted_before = _mounted_first_chat_projection(console)
         old_intent = ConsoleFirstChatIntent(
             "mounted-old-target",
             "llama_cpp",
@@ -4206,13 +4215,10 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_reserved_ui
             has_user_work=True,
         )
         store.restore_state(sessions=[prior], active_session_id=prior.id)
-        await console._sync_native_console_chat_ui()
-        console._focus_console_composer_if_needed(force=True)
-        await pilot.pause()
+        mounted_before = await _capture_synced_first_chat_projection(console, pilot)
         sessions_before = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
-        mounted_before = _mounted_first_chat_projection(console)
         intent = ConsoleFirstChatIntent(
             "mounted-failed-ack-target",
             "llama_cpp",
@@ -4279,13 +4285,10 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_refresh_ui(
             canonical_settings_baseline=prior_settings,
         )
         store.restore_state(sessions=[target], active_session_id=target.id)
-        await console._sync_native_console_chat_ui()
-        console._focus_console_composer_if_needed(force=True)
-        await pilot.pause()
+        mounted_before = await _capture_synced_first_chat_projection(console, pilot)
         sessions_before = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
-        mounted_before = _mounted_first_chat_projection(console)
         intent = ConsoleFirstChatIntent(
             target.id,
             "llama_cpp",
@@ -4405,16 +4408,13 @@ async def test_mounted_first_chat_ack_exception_during_resume_restores_ui(
             has_user_work=True,
         )
         store.restore_state(sessions=[prior], active_session_id=prior.id)
-        await console._sync_native_console_chat_ui()
-        console._focus_console_composer_if_needed(force=True)
-        await pilot.pause()
+        mounted_before = await _capture_synced_first_chat_projection(console, pilot)
         prior_focused_widget = console.app.focused
         assert prior_focused_widget is not None
         assert prior_focused_widget.is_mounted is True
         sessions_before = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
-        mounted_before = _mounted_first_chat_projection(console)
         intent = ConsoleFirstChatIntent(
             "mounted-on-resume-exception-target",
             "llama_cpp",

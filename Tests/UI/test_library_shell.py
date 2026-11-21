@@ -24016,20 +24016,17 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back(
 
         # Leave without typing anything -- Back must GC the untouched row.
         _press_note_back(screen)
-        for _ in range(150):
-            if (
-                await app.notes_scope_service.count_notes(
-                    scope="local_note", user_id="default_user"
-                )
-                == 0
-            ):
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                "The untouched blank note was never GC'd from the real DB."
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.view == "list",
+            message="Back never returned to the notes list.",
+        )
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
             )
-        assert screen._notes_state.view == "list"
+            == 0
+        ), "Back left the untouched blank note in the real DB."
         assert screen._notes_state.pending_blank_gc_id is None
 
 
@@ -24250,22 +24247,17 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
         )
 
         _press_note_back(screen)
-        for _ in range(150):
-            if (
-                await app.notes_scope_service.count_notes(
-                    scope="local_note", user_id="default_user"
-                )
-                == 0
-            ):
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                "A blank note typed into and then emptied out again was "
-                "not GC'd -- an empty 'Untitled' row survived, exactly "
-                "what AC#5 forbids."
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.view == "list",
+            message="Back never returned to the notes list.",
+        )
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
             )
-        assert screen._notes_state.view == "list"
+            == 0
+        ), "Back left the emptied session blank note in the real DB."
         assert screen._notes_state.session_blank_id is None
 
 
