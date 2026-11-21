@@ -716,6 +716,44 @@ async def test_recovery_host_explains_unlock_problems_without_backup_restore(rea
         assert isinstance(app.screen, BackupRestoreScreen)
 
 
+@pytest.mark.parametrize("shape", ["real_missing_folders", "linux_missing_parent"])
+def test_fresh_profile_without_a_config_folder_starts_normally(
+    monkeypatch, tmp_path, shape
+):
+    """TASK-42172: a new Linux account has no ~/.config/tldw_cli yet.
+
+    Linux's private-path walk reports the absent folder as PrivatePathError
+    (missing_parent) where macOS raises FileNotFoundError. Both mean "no config
+    yet"; the preflight refused the first one, so every fresh Linux install
+    opened on "Recovery required: configuration_unavailable".
+    """
+    from tldw_chatbook.Backup_Recovery import bootstrap, launcher, storage_admission
+    from tldw_chatbook.Utils.private_paths import (
+        PrivatePathError,
+        PrivatePathResult,
+        PrivatePathStatus,
+    )
+
+    selector = tmp_path / "home" / ".config" / "tldw_cli" / "config.toml"
+    monkeypatch.setattr(bootstrap, "startup_permission", lambda *args: (True, None))
+    monkeypatch.setattr(bootstrap, "effective_config_path", lambda: selector)
+    if shape == "linux_missing_parent":
+
+        def missing_parent(_owner, path, *, max_bytes):
+            raise PrivatePathError(
+                PrivatePathResult(
+                    path,
+                    PrivatePathStatus.UNSAFE_PARENT,
+                    "missing_parent",
+                    offender_path=tmp_path / "home",
+                )
+            )
+
+        monkeypatch.setattr(storage_admission, "_read_recovery_file", missing_parent)
+
+    assert launcher.startup_preflight() == (None, None)
+
+
 async def test_shared_config_parent_refusal_shows_private_path_guidance(monkeypatch):
     from textual.widgets import Static
 
