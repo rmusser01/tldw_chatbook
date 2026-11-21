@@ -269,6 +269,12 @@ def startup_preflight() -> tuple[str | None, str | None]:
     except PrivatePathError as exc:
         if exc.result.reason == "shared_writable_parent":
             return CONFIG_SHARED_PARENT_REASON, None
+        if exc.result.reason == "missing_parent":
+            # No config folder yet is a fresh profile, as FileNotFoundError is:
+            # Linux's walk reports it this way, and refusing it stopped every
+            # new Linux install at startup (TASK-42172). The config loader
+            # creates the folder under its own private-path checks.
+            return None, None
         return "configuration_unavailable", None
     except (OSError, ValueError, RuntimeError):
         return "configuration_unavailable", None
