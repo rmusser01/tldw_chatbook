@@ -430,3 +430,59 @@ async def test_a_stop_cleared_elsewhere_lets_the_next_send_through(
         assert await _until(pilot, lambda: "Held" not in _header_status(chat))
         chips = chat.query_one("#console-status-chips", ConsoleStatusChips)
         assert not chips.segment_visible("estop")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (160, 45)], ids=["80x24", "160x45"])
+async def test_send_reads_held_at_every_width_and_send_again_once_lifted(
+    tmp_path, persisted_stop: Path, size
+) -> None:
+    """TASK-33620.1 AC#3 and TASK-33620.1.3 (owner decision 2026-11-20).
+
+    The decision: "Send button reads Held". At 80 columns the reason strip
+    beside Send has no legible budget (TASK-24415), so "Send held — emergency
+    stop is on" was hidden and the button read a greyed-out "Send" (live
+    2026-10-29, bd5/U02 fix-21). Now Send itself reads "Held" at every width
+    while the stop is active; the status strip's chip names the stop. A held
+    Send sends nothing, by click or Enter, and keeps the draft. Lifting the
+    stop puts Send back.
+    """
+    app, gateway = _console_app(tmp_path)
+    async with app.run_test(size=size, notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        assert await _until(pilot, lambda: "Held" in _header_status(chat))
+        send = chat.query_one("#console-send-message", Button)
+        assert await _until(
+            pilot, lambda: str(send.label) == "Held"
+        ), f"Send reads {str(send.label)!r} at {size} during an active stop"
+        composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        composer.load_draft("say held")
+        await pilot.pause(0.2)
+        assert str(send.label) == "Held", "a typed draft turned Held back into Send"
+        assert send.disabled
+        assert "emergency stop" in str(send.tooltip), send.tooltip
+        # The chip beside it names the stop, on the strip's visible start.
+        chips = chat.query_one("#console-status-chips", ConsoleStatusChips)
+        assert chips.segment_text("estop") == STRIP_HOLD
+        line = chat.query_one("#console-status-text", ConsoleStatusText)
+        spans = {name: (start, end) for name, start, end in line.segment_spans}
+        assert spans["estop"][1] <= line.scrollable_content_region.width
+        # A held Send sends nothing: not by click, not by Enter.
+        await pilot.click("#console-send-message")
+        composer.focus()
+        await pilot.pause(0.1)
+        await pilot.press("enter")
+        await pilot.pause(0.5)
+        assert gateway.payloads == []
+        assert composer.draft_text() == "say held"
+        assert await _until(pilot, lambda: str(send.label) == "Held")
+        # Lifting the stop puts Send back, enabled for the kept draft.
+        await _click_strip_clear(chat, pilot)
+        assert await _until(pilot, lambda: "Held" not in _header_status(chat))
+        assert await _until(
+            pilot, lambda: str(send.label).startswith("Send")
+        ), f"Send reads {str(send.label)!r} after the stop was lifted"
+        assert not send.disabled
+        assert gateway.payloads == []
+    assert not read_emergency_stop(persisted_stop).active

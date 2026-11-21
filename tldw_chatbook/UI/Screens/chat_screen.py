@@ -376,6 +376,7 @@ from ...Provider_Contract import (
     ChatRateLimitError,
 )
 from ...Chat.console_display_state import (
+    CONSOLE_EMERGENCY_STOP_SEND_LABEL,
     CONSOLE_EMERGENCY_STOP_SEND_REASON,
     CONSOLE_BLOCKER_ARCHIVE_INFLIGHT,
     CONSOLE_BLOCKER_LIBRARY_EVIDENCE,
@@ -21575,7 +21576,9 @@ class ChatScreen(BaseAppScreen):
                 else ""
             ),
             ephemeral=self._console_active_session_is_ephemeral(),
-            send_label=(
+            send_label=CONSOLE_EMERGENCY_STOP_SEND_LABEL  # owner decision 2026-11-20
+            if held_reason
+            else (
                 queue_presentation.send_label
                 if queue_presentation is not None
                 else "Send"

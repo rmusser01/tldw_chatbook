@@ -289,6 +289,8 @@ CONSOLE_EMERGENCY_STOP_HEADER_SHORT_LABEL = "Held"
 CONSOLE_EMERGENCY_STOP_STRIP_LABEL = "Emergency stop: runs and schedules held"
 CONSOLE_EMERGENCY_STOP_CLEAR_LABEL = "Clear"
 CONSOLE_EMERGENCY_STOP_SEND_REASON = "Send held — emergency stop is on"
+#: Owner decision 2026-11-20: Send itself reads this, at every width.
+CONSOLE_EMERGENCY_STOP_SEND_LABEL = "Held"
 
 
 @dataclass(frozen=True, slots=True)

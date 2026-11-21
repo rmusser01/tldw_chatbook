@@ -1637,9 +1637,12 @@ than proceeding. While it is active the Console shows it until it is
 cleared, not just in the five-second toast: the header badge reads
 **Held · emergency stop** (just **Held** in a narrow window) instead of
 Ready, the status strip starts with **Emergency stop: runs and schedules
-held · Clear**, Send is disabled with the reason "Send held — emergency stop
-is on", and an empty chat says the stop is active. A send you try anyway is
-refused with a notice that names `/emergency-stop clear`. A stop still
+held · Clear**, the Send button reads **Held** and is disabled at every
+window width (where there is room beside it, the reason "Send held —
+emergency stop is on" shows too), and an empty chat says the stop is active.
+Pressing **Held** does nothing; Enter is refused with a notice that names
+`/emergency-stop clear`, and your draft stays. Once the stop is cleared the
+button reads **Send** again. A stop still
 active from an earlier session is announced once when the Console opens.
 Choose **Clear** on the status strip, or run `/emergency-stop clear`, to
 resume at once; no restart is needed. If the stop can't be saved (for

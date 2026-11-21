@@ -123,7 +123,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 2,884, plus this branch's
     # +31, exact: 2,915.
-    "tldw_chatbook/Chat/console_display_state.py": 2915,
+    # 2026-11-21, TASK-33620.1 AC#3 (owner rule: raise by the change's own
+    # lines): 2884 -> 2886 (+2), Send's "Held" label (owner decision 2026-11-20).
+    # 2026-11-24 rebase onto dev 9fa2bf1b1d: dev's 2,915 plus this branch's +2, exact.
+    "tldw_chatbook/Chat/console_display_state.py": 2917,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 244 -> 257 (+13), TASK-38585 renders labels literally, not as markup.
