@@ -380,15 +380,23 @@ def remove_sandbox_at_exit(root: Path) -> None:
     exit hooks (``storage_admission``'s shutdown rewrites the admission
     registry into the dead sandbox). The signal handler removes the root, then
     dies of the same signal, as before. ``SIGKILL`` and ``os._exit`` cannot be
-    caught.
+    caught. A fork child inherits both but owns no root, so only the
+    registering process removes it (terminating a fork child must not delete
+    its parent's live sandbox).
 
     Args:
         root: The sandbox root this process created and owns.
     """
-    atexit.register(shutil.rmtree, root, ignore_errors=True)
+    owner = os.getpid()
+
+    def remove() -> None:
+        if os.getpid() == owner:
+            shutil.rmtree(root, ignore_errors=True)
+
+    atexit.register(remove)
 
     def remove_then_die(signum: int, _frame: object) -> None:
-        shutil.rmtree(root, ignore_errors=True)
+        remove()
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 

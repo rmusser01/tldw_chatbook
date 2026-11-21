@@ -539,7 +539,12 @@ def _ui_conftest(monkeypatch):
 
 
 def _run_ui_bootstrap(monkeypatch, *, real_home, root, home, tempdir):
-    """Execute Tests/UI/conftest.py's module code as a run rooted there would."""
+    """Execute Tests/UI/conftest.py's module code as a run rooted there would.
+
+    Returns the module namespace and the roots it handed to
+    ``remove_sandbox_at_exit``, which is recorded instead of run: the real
+    one would register an exit removal and signal handlers in this worker.
+    """
     _sandbox_env(
         monkeypatch,
         (
@@ -555,7 +560,10 @@ def _run_ui_bootstrap(monkeypatch, *, real_home, root, home, tempdir):
     monkeypatch.setenv("TLDW_TEST_CONFIG_ROOT", str(root))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(tempfile, "tempdir", str(tempdir))
-    return runpy.run_path(str(REPO_ROOT / "Tests" / "UI" / "conftest.py"))
+    removals: list[Path] = []
+    monkeypatch.setattr(guard, "remove_sandbox_at_exit", removals.append)
+    namespace = runpy.run_path(str(REPO_ROOT / "Tests" / "UI" / "conftest.py"))
+    return namespace, removals
 
 
 @pytest.mark.parametrize(
@@ -576,15 +584,18 @@ def test_the_ui_conftest_bootstrap_moves_home_into_a_sandbox_away_from_the_real_
         "root-is-the-real-home": (real_home, real_home),
         "root-holds-the-real-home": (tmp_path, real_home),
     }[case]
-    namespace = _run_ui_bootstrap(
+    namespace, removals = _run_ui_bootstrap(
         monkeypatch, real_home=real_home, root=root, home=home, tempdir=fresh
     )
     used_root = Path(namespace["_BOOTSTRAP_CONFIG_ROOT"]).resolve()
     if case == "home-beside-the-root":
         assert used_root == sandbox
+        assert removals == [], "an inherited root is not this process's to remove"
     else:  # never the real home or a directory that holds it
         assert fresh in used_root.parents
         assert namespace["_OWNS_BOOTSTRAP_CONFIG_ROOT"] is True
+        # TASK-42145: the fresh root it owns goes at exit, whatever the exit.
+        assert removals == [namespace["_BOOTSTRAP_CONFIG_ROOT"]]
         assert os.environ["TLDW_TEST_CONFIG_ROOT"] == str(
             namespace["_BOOTSTRAP_CONFIG_ROOT"]
         )
@@ -611,10 +622,11 @@ def test_ui_bootstrap_uses_parent_snapshot_without_real_home_metadata(
         return original_resolve(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "resolve", contained_resolve)
-    namespace = _run_ui_bootstrap(
+    namespace, removals = _run_ui_bootstrap(
         monkeypatch, real_home=home, root=sandbox, home=sandbox / "home", tempdir=fresh
     )
     assert namespace["_BOOTSTRAP_CONFIG_ROOT"] == sandbox
+    assert removals == []
 
 
 def test_the_ui_conftest_session_end_keeps_tldw_config_path(monkeypatch, tmp_path):
