@@ -22,7 +22,6 @@ from tldw_chatbook.Tool_Packs.contracts import (
     canonical_json_bytes,
     strict_json_object,
 )
-from tldw_chatbook.Utils.file_durability import fsync_parent_directory
 
 
 RECEIPT_SCHEMA = "tldw.tool-pack-receipt/v1"
@@ -793,10 +792,35 @@ class ToolPackReceiptStore:
 
     @staticmethod
     def _fsync_directory(path: Path) -> None:
-        # Windows cannot open a directory with os.open (PermissionError), which
-        # made every receipt store, and so every Tool Pack composition, fail
-        # there. The shared barrier skips Windows and unsupported filesystems.
-        fsync_parent_directory(path)
+        # The directory barrier is mandatory and every failure propagates
+        # (TASK-26069): an unsupported directory fsync is not success here.
+        if os.name == "nt":
+            # Windows refuses os.open on a directory (PermissionError), which
+            # made every receipt store, and so every Tool Pack composition,
+            # fail there. Flush it through the native facade instead, as
+            # MCP/permission_store.py does (TASK-33422).
+            from tldw_chatbook.Utils import file_durability
+            from tldw_chatbook.Utils.platform_files import os as native_os
+
+            descriptor = native_os.open(
+                path,
+                native_os.O_RDONLY | native_os.O_DIRECTORY | native_os.O_NOFOLLOW,
+            )
+            try:
+                file_durability.flush_directory(descriptor)
+            finally:
+                native_os.close(descriptor)
+            return
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                path,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            os.fsync(descriptor)
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
 
 
 __all__ = [
