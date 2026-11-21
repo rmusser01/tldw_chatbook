@@ -285,20 +285,43 @@ async def owned_preflight_tool_surface(
             getattr(gateway, "prepare_chat_request", None), prepare
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
+        from .console_run_start_tools import (
+            keep_preview_switch,
+            preview_switch_anchor,
+            proven_preview_switch,
+        )
 
-        def read():
-            try:
-                with service._producer_lifetime.operation():
-                    captured.permission_owner()
-                    return not bool(service.get_kill_switch())
-            except Exception:  # noqa: BLE001 - the original switch reader treats failure as engaged.
-                return False
+        # TASK-33620.15.52 (owner, 2026-11-06): a read the permission file's
+        # stamp proves current answers here, on the loop, without the hop --
+        # only while the service's producers are admitted: paused, the hop's
+        # read meets the same refusal it always met.
+        try:
+            with service._producer_lifetime.operation():
+                engaged = proven_preview_switch(captured.permission)
+        except RecoveryRequired:
+            engaged = None
+        if engaged is not None:
+            current()
+            available = not engaged
+        else:
 
-        available = await preparation_native_runner(
-            controller,
-            session_id,
-            require_current=current,
-        )(read)
+            def read():
+                try:
+                    with service._producer_lifetime.operation():
+                        anchor = preview_switch_anchor(
+                            service, captured.permission_owner()
+                        )
+                        engaged = bool(service.get_kill_switch())
+                        keep_preview_switch(anchor, engaged)
+                        return not engaged
+                except Exception:  # noqa: BLE001 - the original switch reader treats failure as engaged.
+                    return False
+
+            available = await preparation_native_runner(
+                controller,
+                session_id,
+                require_current=current,
+            )(read)
     try:
         return bridge.preview_tool_surface(
             resolution, **kwargs, _prepared=(prefix, available)

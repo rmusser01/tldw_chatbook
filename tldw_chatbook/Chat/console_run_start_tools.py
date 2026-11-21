@@ -33,7 +33,13 @@ a subclass (a plugin provider) composes from more than the key covers.
 A run start with nothing to reuse (no kept composition, or a run that
 freezes its definition ceiling at composition and so never reuses) takes no
 fingerprint before it composes (TASK-33620.15.38): there it decides nothing
-for the run, and a live Console send always composed after it. Such a run
+for the run. Live sends reach both halves of this: since the ordinary tree
+captures a send's MCP definitions before run start (064d5cb014), an ordinary
+send does not freeze its ceiling at composition, so a stock profile's first
+send anchors and keeps its composition pending, its second send's
+fingerprint (the worker read below) proves and reuses it, and later sends
+reuse after that fingerprint -- in a new chat and in a temporary chat alike
+(live markers, TASK-33620.15.66). Such a run
 over stock sources (the installed stores and the default manifest provider)
 takes an anchor instead -- the store files' stamps, the admission epoch and
 the selected sources, before the composition reads -- and keeps the
@@ -43,6 +49,13 @@ same sources, every file still at its anchored stamp and settled before the
 anchor, the epoch unmoved. Only then does that fingerprint's identity become
 the kept identity; anything else refuses the pending composition and the run
 composes from the stores.
+
+The tool-surface preview's kill-switch read is proven by the same file stamp
+(TASK-33620.15.52): a preview's real read keeps its answer with the permission
+file's stamp taken just before it, and the next preview answers from it,
+without a store read or a worker hop, while the same store and installed
+identity are selected, the admission epoch has not moved and the file still
+has that stamp (``proven_preview_switch``). It is an estimate only.
 """
 
 from __future__ import annotations
@@ -201,10 +214,11 @@ _entry: _Entry | None = None
 
 
 def forget() -> None:
-    """Drop the kept composition (tests; a new service never matches)."""
-    global _entry
+    """Drop the kept composition and switch read (tests; a new service never matches)."""
+    global _entry, _switch_proof
     with _lock:
         _entry = None
+        _switch_proof = None
 
 
 def _identity(fingerprint: tuple) -> tuple:
@@ -317,7 +331,8 @@ def _proven(entry: _Entry, fingerprint: tuple, service: Any) -> _Entry | None:
     that composition read only if the same sources were read, every store
     file kept the stamp anchored before the composition, and no admission or
     activation record was written in between. (``_keep`` kept the pending
-    composition only if those stamps were settled at the anchor.)
+    composition only if those stamps were settled at the anchor.) Live, a
+    stock profile's second send runs this (TASK-33620.15.66).
     """
     anchor = entry.anchor
     try:
@@ -554,6 +569,114 @@ def _keep(
             composition=None if engaged else provider.composition(),
             anchor=anchor,
         )
+
+
+@dataclass(frozen=True)
+class _SwitchProof:
+    """A preview's kill-switch read, kept for the next preview (TASK-33620.15.52)."""
+
+    permission: Any  # weakref.ref to the permission store it read through
+    identity: tuple  # that store's installed identity, the store itself left out
+    stamp: tuple | None  # its file's stamp before the read (None: no file)
+    epoch: Any  # the admission epoch before the read
+    engaged: bool
+
+
+_switch_proof: _SwitchProof | None = None
+
+
+def _permission_identity(permission: Any) -> tuple:
+    """Type, path, binding, config and selected generation, never a file read."""
+    from tldw_chatbook.MCP.console_snapshot import _source_identity
+
+    return _source_identity(permission)[1:]
+
+
+def preview_switch_anchor(service: Any, permission: Any) -> tuple | None:
+    """What a preview's real kill-switch read is proven by, taken just before it.
+
+    Drops any kept read first: this one replaces it. Returns None (keep
+    nothing) when the store is not installed or cannot be stamped.
+    """
+    global _switch_proof
+    with _lock:
+        _switch_proof = None
+    try:
+        return (
+            weakref.ref(service),
+            permission,
+            _permission_identity(permission),
+            _stamp(permission.path),
+            time.time_ns(),
+            _admission_epoch(),
+        )
+    except Exception:  # noqa: BLE001 -- an unstamped store is read every time
+        return None
+
+
+def keep_preview_switch(anchor: tuple | None, engaged: bool) -> None:
+    """Keep a preview's switch read that returned, for the next preview.
+
+    Kept only when its anchor can vouch for it, as TASK-33620.15.38's anchor
+    vouches for a pending catalog: the file was last changed ``SETTLE_NS``
+    before the anchor (so a later write changes its stamp), and the admission
+    epoch and the store's installed identity did not move during the read,
+    and the read went through the anchored store (the service still selects
+    it). The epoch and identity re-checks here are defence in depth: the
+    proof compares both again before it answers.
+    """
+    global _switch_proof
+    if anchor is None:
+        return
+    service, permission, identity, stamp, observed_at, epoch = anchor
+    try:
+        if (
+            not _settled(((permission.path, stamp),), observed_at)
+            or vars(service()).get("_permission_store") is not permission
+            or _admission_epoch() != epoch
+            or _permission_identity(permission) != identity
+        ):
+            return
+        proof = _SwitchProof(
+            weakref.ref(permission), identity, stamp, epoch, bool(engaged)
+        )
+    except Exception:  # noqa: BLE001 -- not keeping is always safe
+        return
+    with _lock:
+        _switch_proof = proof
+
+
+def proven_preview_switch(permission: Any) -> bool | None:
+    """The kept read's answer while it is provably current, else None.
+
+    Current means: the same store object, with the same installed identity
+    (path, binding, config, selected generation), the admission epoch
+    unmoved, its file at the stamp anchored before that read -- one ``stat``,
+    no admission scope and no hop -- and no in-process state in which a real
+    read would be refused (a local storage pause, the store's participant
+    admission closed, an unretired uncertain write of it:
+    ``raw_participants.refused_in_process``). The caller holds the MCP
+    service's producer lifetime open around this, so paused producers defer
+    to the hop too. The answer is the preview's estimate only: run start and
+    every tool call read the switch themselves.
+    """
+    from tldw_chatbook.Backup_Recovery import raw_participants
+
+    with _lock:
+        proof = _switch_proof
+    if proof is None or permission is None or proof.permission() is not permission:
+        return None
+    try:
+        if (
+            _admission_epoch() != proof.epoch
+            or _permission_identity(permission) != proof.identity
+            or raw_participants.refused_in_process(permission) is not None
+            or _stamp(permission.path) != proof.stamp
+        ):
+            return None
+    except Exception:  # noqa: BLE001 -- the hop reads it then
+        return None
+    return proof.engaged
 
 
 def local_tools_kill_switch(

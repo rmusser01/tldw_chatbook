@@ -9,6 +9,12 @@ a run never reuses, so the fingerprint decided nothing; on a first send there
 is nothing kept to compare it with either. At load1 ~120 that check held run
 start's UI loop 80-200 ms (task notes).
 
+Since the ordinary-tree integration (064d5cb014) an ordinary send captures
+its MCP definitions before run start, so it no longer freezes its ceiling at
+composition: live on origin/dev a6df4d8d48, a stock profile's first send
+anchors and keeps its composition, and the second send's fingerprint proves
+and reuses it, in a new chat and in a temporary chat (TASK-33620.15.66).
+
 Such a run start now takes an anchor instead -- the store files' stamps, the
 admission epoch and the selected sources, before the composition reads --
 and keeps its composition pending. The next run start's own fingerprint

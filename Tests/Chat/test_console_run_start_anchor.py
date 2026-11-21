@@ -7,6 +7,11 @@ stores; none reused or kept a catalog. A live send freezes its MCP definition
 ceiling at composition (``mcp_definition_capture == "composition"``), and
 such a run never reuses a kept catalog, so its fingerprint decided nothing.
 
+Since the ordinary-tree integration (064d5cb014) an ordinary send captures
+its MCP definitions before run start and can reuse: live on origin/dev
+a6df4d8d48 a stock profile's first send anchors and keeps its composition,
+the second send's fingerprint proves and reuses it (TASK-33620.15.66).
+
 These run the stock route a live send takes (installed stores, the default
 manifest provider, the shared preparation) with nothing replaced on it; the
 fingerprint is counted on the service instance, which no stock check reads.
@@ -89,7 +94,7 @@ def _names(provider) -> list[str]:
 async def test_a_run_that_freezes_its_ceiling_at_composition_takes_no_fingerprint(
     stock_case, monkeypatch
 ):
-    """A live send's run never reuses, so it takes no fingerprint."""
+    """A run that freezes its ceiling at composition never reuses: no fingerprint."""
     case = stock_case
     fingerprints = Fingerprints(case.service, monkeypatch)
     loop = asyncio.get_running_loop()
