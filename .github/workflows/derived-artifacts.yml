@@ -520,6 +520,8 @@ jobs:
             Tests/Canvas/test_canvas_kill_switch.py \
             Tests/Chat/test_provider_usage.py \
             Tests/Chat/test_trajectory_projection.py \
+            Tests/Workspaces/test_change_revert.py \
+            Tests/Workspaces/test_git_workspace_commit.py \
             --timeout=180 \
             --tb=short
 
@@ -617,6 +619,7 @@ jobs:
             Tests/Backup_Recovery/test_canvas_policy_worker.py::test_stock_canvas_poll_leaves_the_retired_read_callback_handoff \
             Tests/Backup_Recovery/test_canvas_policy_worker.py::test_identity_releases_unissued_read_and_accepts_unchanged_install \
             Tests/Backup_Recovery/test_canvas_policy_worker.py::test_stock_canvas_policy_poll_declines_busy_config_lock \
+            Tests/Workspaces/test_native_confirmed_undo.py \
             --timeout=300 \
             --tb=short
 

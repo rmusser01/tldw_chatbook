@@ -347,6 +347,11 @@ FAST_LANE_TARGETS = (
     # projection's child-call rows (92 pure tests, 8 s serially).
     "Tests/Chat/test_provider_usage.py",
     "Tests/Chat/test_trajectory_projection.py",
+    # TASK-42137 (2026-11-21): the revert and commit engines' run-active
+    # refusal copy, on no lane before (real git; 11 tests in 31.3 s and 20 in
+    # 9.6 s serially with this step's flags at load 46-49).
+    "Tests/Workspaces/test_change_revert.py",
+    "Tests/Workspaces/test_git_workspace_commit.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
@@ -870,6 +875,11 @@ ADMISSION_TARGETS = (
     "Tests/Backup_Recovery/test_canvas_policy_worker.py::test_stock_canvas_poll_leaves_the_retired_read_callback_handoff",
     "Tests/Backup_Recovery/test_canvas_policy_worker.py::test_identity_releases_unissued_read_and_accepts_unchanged_install",
     "Tests/Backup_Recovery/test_canvas_policy_worker.py::test_stock_canvas_policy_poll_declines_busy_config_lock",
+    # TASK-42137 (2026-11-21): native confirmed Undo, including its
+    # post-confirmation run-active recheck copy, on no lane before
+    # (bootstrap_profile module; 34 tests in 195.8 s serially with this
+    # step's flags at load 48).
+    "Tests/Workspaces/test_native_confirmed_undo.py",
 )
 
 #: The second admission-sensitive job's invocation, exactly, in order

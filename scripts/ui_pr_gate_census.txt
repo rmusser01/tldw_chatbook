@@ -3575,3 +3575,14 @@ Tests/UI/test_library_character_repair.py
 # escaping into ConfirmationDialog). 30 private-profile tests, 190.5 s serially
 # with the lane's flags at load 20-27.
 Tests/UI/test_settings_tool_profiles.py
+# TASK-42137 (2026-11-21): the files that pin Change Review's Undo All and
+# run-active refusal copy, on no lane before. The Undo All file's three mounted
+# nodes now carry bootstrap_profile and click the confirmation's buttons once
+# they are laid out (the TASK-41505 shape; one raised NoMatches before).
+# Serially with the lane's flags at load 40-52: Undo All 16 passed in
+# 47.7-55.8 s (3 runs), the Review screen 61 in 273.9 s, commit 27 in 68.8 s,
+# push 33 in 70.9 s.
+Tests/UI/test_console_turn_undo_all.py
+Tests/UI/test_change_review_screen.py
+Tests/UI/test_change_review_commit_ui.py
+Tests/UI/test_change_review_push_ui.py

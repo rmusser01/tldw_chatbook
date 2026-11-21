@@ -347,6 +347,23 @@ async def _wait_for(pilot, predicate, description: str, attempts: int = 150):
     raise AssertionError(f"timed out waiting for {description}")
 
 
+async def _click_modal_button(pilot, selector: str) -> None:
+    """Click a confirmation button once the modal has laid it out.
+
+    TASK-42137 (the TASK-41505 shape): the modal is on the stack before its
+    buttons mount, so a click right after it appears raised NoMatches.
+    """
+
+    def placed():
+        screen = pilot.app.screen
+        return isinstance(screen, ChangeRevertConfirmModal) and any(
+            button.region for button in screen.query(selector)
+        )
+
+    await _wait_for(pilot, placed, f"{selector} laid out on the confirmation")
+    assert await pilot.click(selector), f"the click missed {selector}"
+
+
 def _record_real_turn(db, tracker, root: Path, run_id: str) -> None:
     handle = tracker.begin_turn([root])
     handle.await_baseline()
@@ -366,6 +383,7 @@ def _record_real_turn(db, tracker, root: Path, run_id: str) -> None:
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thread(
     tmp_path,
@@ -478,7 +496,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
         )
         assert "edited.txt" in warning and "overwrites" in warning
 
-        await pilot.click("#change-revert-no")
+        await _click_modal_button(pilot, "#change-revert-no")
         await _wait_for(
             pilot,
             lambda: undo if not undo.disabled else None,
@@ -496,7 +514,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
             ),
             "second Undo All confirmation",
         )
-        await pilot.click("#change-revert-yes")
+        await _click_modal_button(pilot, "#change-revert-yes")
         await _wait_for(
             pilot,
             lambda: target.read_text() == "before\n" or None,
@@ -516,6 +534,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
         assert revert_threads and all(tid != main_thread for tid in revert_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_duplicate_root_undo_refuses_inline_and_routes_to_review(
     tmp_path,
@@ -587,6 +606,7 @@ async def test_mounted_duplicate_root_undo_refuses_inline_and_routes_to_review(
         assert undo.disabled is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retry(
     tmp_path,
@@ -657,7 +677,7 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
             ),
             "partial-failure confirmation",
         )
-        await pilot.click("#change-revert-yes")
+        await _click_modal_button(pilot, "#change-revert-yes")
         await _wait_for(
             pilot,
             lambda: undo if not undo.disabled else None,
@@ -682,7 +702,7 @@ async def test_mounted_partial_and_provider_failures_name_problem_and_allow_retr
             ),
             "provider-failure confirmation",
         )
-        await pilot.click("#change-revert-yes")
+        await _click_modal_button(pilot, "#change-revert-yes")
         await _wait_for(
             pilot,
             lambda: undo if not undo.disabled else None,

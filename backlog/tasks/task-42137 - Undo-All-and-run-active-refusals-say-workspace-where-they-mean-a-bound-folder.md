@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 18:29
+updated_date: 2026-11-21 19:05
 labels:
 - follow-up
 - console
@@ -46,6 +46,7 @@ The checks are per root folder (`row.get("root")`), and a workspace can bind sev
 - [x] #2 The run-active refusals in `change_revert.py`, `change_revert_ownership.py`, `git_workspace.py` and `COMMIT_RUN_ACTIVE_REFUSAL` use the same wording, so Console and the Review screen name the same thing the same way
 - [x] #3 Tests that pin the old wording are updated, and a test pins each new notice
 - [x] #4 Where `Docs/User_Guide/console/agent-runs-and-tools.md` quotes these notices, it quotes them as they now read, including the commit refusal quoted verbatim at lines 1229-1230
+- [x] #5 (2026-11-21, coordinator) The files that pin this copy run on a PR lane, with times recorded
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -65,6 +66,7 @@ Every refusal that meant a snapshot's root folder said "workspace". It now says 
   - "Undo All is unavailable because a change snapshot has no folder."
   - "This turn has multiple change windows for the same folder." (the same sentence starts `MULTI_WINDOW_UNDO_REFUSAL`)
   - "A run is active in a folder this turn changed — finish or stop the run first." at :406 and :466. These two checks cover every root of the turn (`_console_turn_undo_run_active`), so "this folder" would not say which folder on a multi-folder card. The sentence matches the guide's "refuses while a run is active in any of the turn's folders". Both surfaces now name the thing "folder".
+- Docstrings (coordinator decision 2026-11-21): `Workspaces/change_review_provider.py` `revert` and `commit_selected` now say the run is active in the row's root folder and in the repository's folder, so code and copy agree.
 - User Guide: the commit refusal quote in "Commit and push from the working tree" now reads as the product does, and its lead-in says "active in that repository's folder". No other page quotes these notices.
 
 **Tests**
@@ -81,7 +83,7 @@ Every refusal that meant a snapshot's root folder said "workspace". It now says 
 - Red/green:
   - With the base source, 9 pins failed on assertions (all of the above; the new Console test's first assertion: 'has no workspace.' != 'has no folder.'). All were green after the change.
   - The new test's second half was not reached in that red run, so a negative control checked it: line 466 reverted to "on this workspace" made it fail on the apply assertion. Reverted afterwards.
-- None of the seven touched test files runs in a PR lane (not in `scripts/ui_pr_gate_census.txt` or `derived-artifacts.yml`). No census edit, since the criteria ask for none; proposed as a follow-up.
+- None of the seven touched test files ran in a PR lane. AC #5 (added by the coordinator) lanes them; see "Laning" below.
 
 **Runs** (through the wrapper, load average about 14 on 18 CPUs)
 - The seven touched files at -n 4: 199 passed and 3 failed.
@@ -89,3 +91,23 @@ Every refusal that meant a snapshot's root folder said "workspace". It now says 
 - Module and screen size ratchets: 234 passed (serial).
 - `ruff --select F`: clean. `ruff_gate.py`: rc 0.
 - `check_markup_interpolation.py`: OK. The changed notices are static text.
+
+**Laning (AC #5, coordinator decision 2026-11-21)**
+- UI census tail (`scripts/ui_pr_gate_census.txt`, `MINIMUM_FILES` 2441 -> 2445); no re-deal. Each was run serially with the UI lane's flags (`-p no:xdist --timeout=180 --durations=0`) through the wrapper:
+
+  | File | Tests | Time | Load |
+  | --- | --- | --- | --- |
+  | `Tests/UI/test_console_turn_undo_all.py` | 16 passed | 47.7, 55.8, 52.1 s (3 runs) | 40-44 |
+  | `Tests/UI/test_change_review_screen.py` | 61 passed | 273.9 s | 45-52 |
+  | `Tests/UI/test_change_review_commit_ui.py` | 27 passed | 68.8 s | 48-52 |
+  | `Tests/UI/test_change_review_push_ui.py` | 33 passed | 70.9 s | 45-47 |
+- `derived-artifacts.yml`, with `Tests/CI/test_ci_queue_pressure_contract.py` pins updated:
+  - `Tests/Workspaces/test_change_revert.py` (11 in 31.3 s) and `test_git_workspace_commit.py` (20 in 9.6 s) join the sandboxed "Run fast PR contract" step (`FAST_LANE_TARGETS`). Both were measured with that step's flags at load 46-49.
+  - `Tests/Workspaces/test_native_confirmed_undo.py` is a `bootstrap_profile` module, so it joins pr-fast-lane-admission (`ADMISSION_TARGETS`): 34 in 195.8 s at load 48, `--timeout=300`. That job ran 15.5-19.2 of its 35 min over six recent PR runs (2026-11-20/21), the most headroom of the admission jobs. The sandboxed job ran 27.1-29.7 min, so it took only the two small files.
+- Profile setup:
+  - `test_console_turn_undo_all.py`'s three mounted nodes failed locally with `RecoveryRequired: raw_source_selection_changed`. They now carry `@pytest.mark.bootstrap_profile`, as 512+ census entries do (TASK-36478).
+  - That exposed `test_mounted_partial_and_provider_failures_name_problem_and_allow_retry`'s click before `#change-revert-yes` existed: NoMatches in 2 of 2 runs with the base source and 1 of 1 with the marker, so it blocked laning the file.
+  - Fixed in the TASK-41505 shape: `_click_modal_button` waits until the confirmation has laid the button out, then asserts the click landed. All four confirmation clicks in the file use it. The file then ran 16 passed in 3 of 3 serial runs.
+  - The other six files were green as they were.
+- Not verified: a completed Linux CI run for the newly laned files (local macOS only).
+- Checks after laning (wrapper, load 46-53): `Tests/CI` at -n 4 1811 passed, 2 skipped; preflight passed (census 2445, floor 2445); `ruff --select F` clean; `ruff_gate.py` rc 0; module and screen size ratchets 234 passed.

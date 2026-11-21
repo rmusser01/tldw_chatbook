@@ -383,7 +383,7 @@ class AgentRunsChangeReviewProvider:
             The engine's per-path :class:`RevertOutcome` list.
 
         Raises:
-            RevertRefusedError: A run is active on this workspace.
+            RevertRefusedError: A run is active in this row's root folder.
         """
         from tldw_chatbook.Workspaces.change_revert import (
             RevertRefusedError,
@@ -691,7 +691,7 @@ class AgentRunsChangeReviewProvider:
             The engine's :class:`~tldw_chatbook.Workspaces.git_workspace.CommitResult`.
 
         Raises:
-            CommitRefusedError: A run is active on this workspace --
+            CommitRefusedError: A run is active in this repository's folder --
                 this method does NOT catch it; the caller (screen) must.
             GitWorkspaceError: ``files`` is empty, ``message`` is blank,
                 or a git step failed outside the returned per-step
