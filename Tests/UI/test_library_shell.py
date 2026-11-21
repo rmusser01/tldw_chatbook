@@ -13498,6 +13498,9 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 lambda: (
                     controller.applied_scope == MediaBrowseScope(page=2)
                     and len(screen.query(".library-media-row")) == 5
+                    and not screen.query_one(
+                        "#library-media-select-toggle", Button
+                    ).disabled
                 ),
                 message="Media page 2 never applied.",
             )
