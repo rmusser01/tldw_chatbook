@@ -2207,20 +2207,19 @@ jobs:
     # Round 17: TASK-41718's RAG indexing owner file (sandboxed, 8 tests,
     # about 5 s at -n 4), red on dev in no lane until then, follows the data
     # groups file.
-    # Round 19 (2026-11-21, TASK-42154 AC#5): seven sandboxed files that ran on
-    # no lane, where six finish nodes of the replacement recovery file went red
-    # unseen, follow the RAG indexing file: replacement recovery, default
-    # service container, the four first-binding files and the legacy chat
-    # context roundtrip. Alone at -n 4 (two passes, load 11-27): 65-93 s,
-    # 9-15 s, 7-10 s, 5 s, 266-268 s (first replacement binding), 11-12 s and
-    # 58-72 s; about 8 min together. A local run of this step without them took
-    # 56.8 min (load 17-46), so about 65 min with them, inside both caps.
-    # test_default_service_replacement.py stays off: its fixed 150 s and 300 s
-    # child budgets fail under load at dev too.
+    # Round 19 (2026-11-21, coordinator): CI took 51:23 for this step at dev
+    # dc371f0842 (round 18's files doubled it). Round 19 adds four created-owner
+    # nodes (TASK-42154 crash recovery, TASK-42151 default location; 150-170 s
+    # and under 120 s each locally at -n 4) and the backupdef stream four more.
+    # A local run of this step with this round's four took 56.8 min (load
+    # 17-46); with backupdef's the projection is 63-75 min, over the old
+    # 70-minute cap. The step cap rises 70 -> 85 (10 min over the projection's
+    # top) and the job's 75 -> 90 (the same 5 min for checkout and install).
+    # The recovery and first-binding files run in backup-recovery-binding-dev.
     name: Backup_Recovery owner suites (push to dev)
     if: (github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TIERED_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.nightly)
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -2234,7 +2233,7 @@ jobs:
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis pytest-xdist
 
       - name: Run the Backup_Recovery owner suites
-        timeout-minutes: 70
+        timeout-minutes: 85
         run: |
           pytest \
             Tests/Backup_Recovery/test_builtin_later_snapshot.py \
@@ -2261,13 +2260,6 @@ jobs:
             Tests/Backup_Recovery/test_credentials.py \
             Tests/Backup_Recovery/test_data_groups.py \
             Tests/Backup_Recovery/test_rag_indexing_recovery.py \
-            Tests/Backup_Recovery/test_replacement_recovery.py \
-            Tests/Backup_Recovery/test_default_service_container.py \
-            Tests/Backup_Recovery/test_first_binding_absent_sqlite.py \
-            Tests/Backup_Recovery/test_first_binding_unused_scaffolds.py \
-            Tests/Backup_Recovery/test_first_replacement_binding.py \
-            Tests/Backup_Recovery/test_first_user_data_binding.py \
-            Tests/Backup_Recovery/test_legacy_chat_context_roundtrip.py \
             Tests/Personal_Context/test_repository.py \
             Tests/Personal_Context/test_runtime_policy.py \
             Tests/Personal_Context/test_service.py \
@@ -2275,6 +2267,55 @@ jobs:
             --deselect="Tests/Backup_Recovery/test_complete_roundtrip.py::test_two_captured_profiles_restore_and_open_with_native_content" \
             --deselect="Tests/Backup_Recovery/test_later_rollback_credential_ui.py::test_f9_later_rollback_requires_explicit_credential_review" \
             --deselect="Tests/Backup_Recovery/test_inventory.py::test_normal_config_and_pure_resolvers_agree" \
+            -n 4 \
+            --timeout=300 \
+            --tb=short
+
+  backup-recovery-binding-dev:
+    needs: [preflight]
+    # TASK-42154 AC#5 (coordinator decision 2026-11-21): seven sandboxed
+    # Backup_Recovery files that ran on no lane, where six finish nodes of the
+    # replacement recovery file went red on dev unseen: replacement recovery,
+    # the default service container, the four first-binding files and the
+    # legacy chat context roundtrip. Like backup-owner-suites-dev (same
+    # trigger, install and flags) they run whole on each push to dev, never on
+    # a pull request, and never in the aggregate's needs. Their own job keeps
+    # the owner-suite step inside its cap.
+    # Timeouts: alone at -n 4 (two passes, load 11-27) they took 65-93 s,
+    # 9-15 s, 7-10 s, 5 s, 266-268 s (first replacement binding, whose
+    # slowest node is 65 s), 11-12 s and 58-72 s. Run together with this
+    # step's flags (-n 4 --timeout=300): 159 nodes in 5.7 min at load 15-23.
+    # The 20-minute step cap leaves room for a host three times slower; the
+    # job's 30 adds checkout and the install.
+    # test_default_service_replacement.py stays off: its fixed 150 s and
+    # 300 s child budgets fail under load at dev too.
+    name: Backup_Recovery recovery and first-binding suites (push to dev)
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TIERED_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis pytest-xdist
+
+      - name: Run the Backup_Recovery recovery and first-binding suites
+        timeout-minutes: 20
+        run: |
+          pytest \
+            Tests/Backup_Recovery/test_replacement_recovery.py \
+            Tests/Backup_Recovery/test_default_service_container.py \
+            Tests/Backup_Recovery/test_first_binding_absent_sqlite.py \
+            Tests/Backup_Recovery/test_first_binding_unused_scaffolds.py \
+            Tests/Backup_Recovery/test_first_replacement_binding.py \
+            Tests/Backup_Recovery/test_first_user_data_binding.py \
+            Tests/Backup_Recovery/test_legacy_chat_context_roundtrip.py \
             -n 4 \
             --timeout=300 \
             --tb=short

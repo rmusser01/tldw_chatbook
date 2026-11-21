@@ -803,8 +803,16 @@ BACKUP_OWNER_SUITE_TARGETS = (
     "Tests/Backup_Recovery/test_data_groups.py",
     # TASK-41718: the RAG indexing owner file, red on dev in no lane before.
     "Tests/Backup_Recovery/test_rag_indexing_recovery.py",
-    # TASK-42154 (round 19): recovery, first-binding and legacy roundtrip
-    # files that ran on no lane; six finish nodes went red on dev unseen.
+    "Tests/Personal_Context/test_repository.py",
+    "Tests/Personal_Context/test_runtime_policy.py",
+    "Tests/Personal_Context/test_service.py",
+    "Tests/App/test_personal_context_wiring.py",
+)
+#: TASK-42154 AC#5 (coordinator decision 2026-11-21): recovery, first-binding
+#: and legacy roundtrip files that ran on no lane (six finish nodes went red
+#: on dev unseen), in their own push-to-dev job so the owner-suite step keeps
+#: inside its cap.
+BACKUP_BINDING_SUITE_TARGETS = (
     "Tests/Backup_Recovery/test_replacement_recovery.py",
     "Tests/Backup_Recovery/test_default_service_container.py",
     "Tests/Backup_Recovery/test_first_binding_absent_sqlite.py",
@@ -812,10 +820,6 @@ BACKUP_OWNER_SUITE_TARGETS = (
     "Tests/Backup_Recovery/test_first_replacement_binding.py",
     "Tests/Backup_Recovery/test_first_user_data_binding.py",
     "Tests/Backup_Recovery/test_legacy_chat_context_roundtrip.py",
-    "Tests/Personal_Context/test_repository.py",
-    "Tests/Personal_Context/test_runtime_policy.py",
-    "Tests/Personal_Context/test_service.py",
-    "Tests/App/test_personal_context_wiring.py",
 )
 #: Red at dev 26b2e677dd, outside TASK-40306's five files; TASK-40307's notes
 #: give each node's first error. Remove a node when it is fixed.
@@ -1929,6 +1933,63 @@ def test_backup_owner_suites_run_on_dev_pushes_only_and_are_never_required() -> 
         "test_cached_journal_history_still_refuses_changed_records",
     ):
         assert node in ARCHITECTURE_GUARD_TARGETS
+
+
+def test_backup_binding_suites_run_on_dev_pushes_only_and_are_never_required() -> None:
+    """TASK-42154 AC#5 (coordinator decision 2026-11-21).
+
+    The recovery, first-binding and legacy roundtrip files run whole in their
+    own push-to-dev job, set up like backup-owner-suites-dev: the same trigger,
+    install and flags, never on a pull request and never in the aggregate. No
+    other step lists one of these files whole.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    jobs = workflow["jobs"]
+    job = jobs["backup-recovery-binding-dev"]
+    owner = jobs["backup-owner-suites-dev"]
+
+    assert job["name"] == (
+        "Backup_Recovery recovery and first-binding suites (push to dev)"
+    )
+    assert job["needs"] == ["preflight"]
+    assert job["if"] == DEV_PUSH == owner["if"]
+    required = jobs["derived-artifacts"]
+    assert "backup-recovery-binding-dev" not in required["needs"]
+    assert not any(
+        "backup-recovery-binding-dev"
+        in str(step.get("if", "")) + str(step.get("run", ""))
+        for step in required["steps"]
+    )
+    assert not job.get("continue-on-error", False)
+    assert job["runs-on"] == owner["runs-on"] == "ubuntu-latest"
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    assert job["steps"][:3] == owner["steps"][:3]
+    step = _named_step(
+        job, "Run the Backup_Recovery recovery and first-binding suites"
+    )
+    assert "if" not in step
+    assert 0 < step["timeout-minutes"] < job["timeout-minutes"]
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        *BACKUP_BINDING_SUITE_TARGETS,
+        "-n",
+        "4",
+        "--timeout=300",
+        "--tb=short",
+    )
+    assert len(set(BACKUP_BINDING_SUITE_TARGETS)) == len(BACKUP_BINDING_SUITE_TARGETS)
+    for target in BACKUP_BINDING_SUITE_TARGETS:
+        assert "::" not in target and (PROJECT_ROOT / target).is_file()
+    others = [
+        f"{key}: {candidate['name']}"
+        for key, other in jobs.items()
+        if key != "backup-recovery-binding-dev"
+        for candidate in other.get("steps", ())
+        if set(BACKUP_BINDING_SUITE_TARGETS)
+        & set(_pytest_targets(str(candidate.get("run", ""))))
+    ]
+    assert others == []
 
 
 def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:

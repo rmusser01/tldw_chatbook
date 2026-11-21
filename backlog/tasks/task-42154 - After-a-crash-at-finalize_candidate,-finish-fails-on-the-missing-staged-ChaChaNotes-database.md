@@ -4,7 +4,7 @@ title: "After a crash at finalize_candidate, finish fails on the missing staged 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 22:23
-updated_date: 2026-11-21 21:08
+updated_date: 2026-11-21 21:52
 labels:
 - follow-up
 - backup
@@ -62,7 +62,7 @@ Priority medium: the app refuses to start until rollback is chosen, though rollb
 - [x] #2 finish completes after that crash, or the finish action is not offered when it cannot complete, and the notes say which and why
 - [x] #3 After each recovery the app starts (startup permission and admission), and rollback keeps working
 - [x] #4 The test runs on a PR or dev-push lane, with its time recorded
-- [x] #5 (coordinator, 2026-11-21) The dev-push Backup_Recovery owner-suite step also runs test_replacement_recovery.py, test_default_service_container.py, the test_first_*binding* files and test_legacy_chat_context_roundtrip.py; any file that cannot pass reliably there is left off with the reason; each added file is measured with the step's flags, the step's new total is recorded against its 70-minute cap, and the Tests/CI pins are updated
+- [x] #5 (coordinator, 2026-11-21; job revised in review rev1) A dev-push job beside the Backup_Recovery owner-suite step runs test_replacement_recovery.py, test_default_service_container.py, the test_first_*binding* files and test_legacy_chat_context_roundtrip.py; any file that cannot pass reliably there is left off with the reason; each added file is measured with the step's flags, the step's new total is recorded against its 70-minute cap, and the Tests/CI pins are updated
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -90,20 +90,26 @@ Priority medium: the app refuses to start until rollback is chosen, though rollb
 
 **Covering runs** (`-n 4 --timeout=1500`, through the wrapper, load 40-57). `test_replacement_recovery.py`: 36 passed. `test_restore_data_groups.py`, `test_publication_crashes.py`, `test_rollback_credentials.py`, `test_selected_owner_finish.py`, `test_settings_finish.py`, `test_replacement_publication_scopes.py`, `test_recovery_service.py` and `test_replacement_abort.py` together: 173 passed, 2 failed. The 2 failures are `test_replacement_publication_scopes.py::test_complete_cli_replacement_admits_mapped_sources[True|False]`: the child hit its fixed 90 s subprocess timeout. They fail the same way at base dc371f0842 with this fix reverted (`2 failed`, both `timed out after 90 s`, load 55-58), and that path never reaches the changed line (its only recovery is `abort`).
 
-**Lane (AC#5, coordinator 2026-11-21).** Seven files that ran in no CI lane now run in the dev-push "Backup_Recovery owner suites" step of `.github/workflows/derived-artifacts.yml`, after the RAG indexing file, with a dated round-19 comment. `BACKUP_OWNER_SUITE_TARGETS` in `Tests/CI/test_ci_queue_pressure_contract.py` lists them in the same order. Each was measured alone with `-n 4 --timeout=1500` in two passes (load 11-27), and passed both times:
+**Lane (AC#5, coordinator 2026-11-21, revised in review rev1).** Seven files that ran in no CI lane now run in a new dev-push job of `.github/workflows/derived-artifacts.yml`, `backup-recovery-binding-dev` ("Backup_Recovery recovery and first-binding suites (push to dev)"). The first commit (c3179e708d) put them in the owner-suite step. The review moved them to their own job because that step took 51:23 in CI at dc371f0842 and is projected at 63-75 min with this round's and backupdef's created-owner nodes. The new job copies the owner-suite job's trigger, `needs`, install, runner and flags (`-n 4 --timeout=300 --tb=short`). It is not in the aggregate's needs.
+
+**Caps.** The new job's step cap is 20 min and the job's is 30. The seven files together with the step's flags took 159 nodes in 5.7 min at load 15-23. The owner-suite step's cap rises from 70 to 85 min and its job's from 75 to 90 (coordinator decision), with a dated comment citing the 51:23 CI time, this branch's local 56.8 min run and backupdef's additions. `BACKUP_BINDING_SUITE_TARGETS` and `test_backup_binding_suites_run_on_dev_pushes_only_and_are_never_required` (in `Tests/CI/test_ci_queue_pressure_contract.py`) pin the job. `test_derived_artifacts_workflow.py`'s job list names it. The seven files left `BACKUP_OWNER_SUITE_TARGETS`.
+
+Each file alone, with `-n 4 --timeout=1500`, two passes, load 11-27:
 
 | File | Nodes | Wall (pass 1 / pass 2) | Slowest node |
 |---|---|---|---|
 | `test_replacement_recovery.py` | 36 | 65 s / 93 s | 13 s |
-| `test_default_service_container.py` | 40 | 9 s / 15 s | |
+| `test_default_service_container.py` | 40 (45 after review rev1) | 9 s / 15 s | |
 | `test_first_binding_absent_sqlite.py` | 16 | 7 s / 10 s | |
 | `test_first_binding_unused_scaffolds.py` | 12 | 5 s / 5 s | |
 | `test_first_replacement_binding.py` | 25 | 266 s / 268 s | 65 s |
 | `test_first_user_data_binding.py` | 24 | 12 s / 11 s | |
 | `test_legacy_chat_context_roundtrip.py` | 1 | 72 s / 58 s | 66 s |
 
-Together that is about 8 minutes (436 s and 460 s). Every node stays far under the step's `--timeout=300`, and none of these files has its own timeout marker. Today's local run of the whole step without them took 56:50 at load 17-46, so the step's new local total is about 65 minutes, within the step's 70-minute cap and the job's 75. Neither cap was raised. CI runners are less loaded than this host, but the margin is about 5 minutes, so read the first dev-push runs.
+Run one at a time that is about 8 minutes (436 s and 460 s); run together, 5.7 min. Every node stays far under the step's `--timeout=300`, and none of these files has its own timeout marker.
 
 **Left off:** `test_default_service_replacement.py`. Its children have fixed 150 s (F9 child) and 300 s (later-rollback child) budgets. Here it failed under load in three of three runs with this branch, and in one of two runs at dev dc371f0842. It is the same roundtrip as the step's already-deselected `test_f9_later_rollback_requires_explicit_credential_review`. `test_first_config_lock.py` does not match `test_first_*binding*` and was not added.
 
-**Checks:** `Tests/CI` at `-n 4`: 1811 passed, 2 skipped. Preflight passes.
+**Review rev1, minor items.** `test_created_owner_rollback.py` now asserts at import that `_SCENARIO` holds the crash anchor exactly once, so a missing anchor fails loudly. The `recover_replacement` comment now says the keys were installed before `publication_started` was journaled, and that once it is the staged files may have moved.
+
+**Checks:** `Tests/CI` at `-n 4`: 1812 passed, 2 skipped. The crash and default-location tests pass, and so does preflight.

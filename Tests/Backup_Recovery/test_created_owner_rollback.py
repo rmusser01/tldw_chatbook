@@ -853,6 +853,8 @@ _CRASH_CASE = {
     "refusal": None,
 }
 _CRASH_POINT = "        restored=reviewed(service,"
+# A missing anchor would leave the scenario uncrashed; fail at import instead.
+assert _SCENARIO.count(_CRASH_POINT) == 1
 _CRASH_SCENARIO = _SCENARIO.replace(
     _CRASH_POINT,
     "        from tldw_chatbook.Backup_Recovery import publication as crashed\n"

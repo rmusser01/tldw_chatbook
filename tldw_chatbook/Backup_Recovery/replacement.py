@@ -2438,9 +2438,10 @@ def recover_replacement(
             _apply_replacement_credentials(
                 candidate, journal, session=session, cancel=cancel
             )
-            # TASK-42154: the keys install before publication starts, here and
-            # in replace(). Once it has, the staged files have moved, so the
-            # stage can no longer prove the archive (as publish_candidate).
+            # TASK-42154: here and in replace() the keys were installed before
+            # publication_started was journaled. Once it is, the staged files
+            # may have moved, so the stage cannot prove the archive again (the
+            # same gate publish_candidate uses for its own _descriptor check).
             if not any(row.event == "publication_started" for row in records):
                 _install_personal_context_keys(
                     _acquired_source(candidate, plan, cancel), plan, candidate, cancel
