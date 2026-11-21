@@ -33,8 +33,9 @@ from tldw_chatbook.DB.private_sqlite_protocol import (
 
 #: TASK-33620.15.55: macOS has no vfork launch, so a ``close_fds=True`` helper is
 #: forked with the GIL held for the whole fork of this process. ``close_fds=False``
-#: selects ``posix_spawn`` there instead. Linux keeps ``fork_exec``, whose vfork
-#: launch releases the GIL; Windows launches no helper.
+#: selects ``posix_spawn`` there instead. Every other platform keeps
+#: ``close_fds=True`` and lets ``subprocess`` pick its launch (on Linux a vfork-based
+#: ``fork_exec``, which releases the GIL); Windows launches no helper.
 _SPAWN_WITHOUT_FORK = sys.platform == "darwin"
 
 _LEASE_KINDS = {

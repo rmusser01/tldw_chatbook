@@ -194,7 +194,7 @@ is authorized by this static-scope decision. The alternative of wholesale
 legacy lint/format cleanup is deferred to avoid unrelated churn in this
 security-sensitive correction.
 
-## TASK-33620.15.55 — launch helpers through posix_spawn (2026-11-20, pending owner review)
+## TASK-33620.15.55 — launch helpers through posix_spawn (2026-11-20, owner-approved 2026-11-20)
 
 Helpers were launched with `subprocess.Popen(..., close_fds=True)`. On macOS that
 child is forked, and CPython holds the GIL for the whole `fork()` of the parent;
@@ -209,20 +209,35 @@ and stalled the main thread for 5 ms or more 285 times in 286 launches; a
 
 On macOS the launcher now passes `close_fds=False`, which is what selects
 `subprocess`'s `posix_spawn` path (`os.posix_spawn` also holds the GIL, but for
-the spawn syscall only, not a copy of the parent). Linux keeps `close_fds=True`:
-its `fork_exec` launches through vfork and already releases the GIL. The helper's
-descriptor set is unchanged:
+the spawn syscall only, not a copy of the parent). Every other platform keeps
+`close_fds=True` and lets `subprocess` pick its launch; on Linux that is a
+vfork-based `fork_exec`, which already releases the GIL. The helper's descriptor
+set is unchanged:
 
 - Python creates every descriptor non-inheritable (PEP 446) and SQLite opens its
   database, WAL and shared-memory files close-on-exec (checked on the shipped
   runtime), so the parent's database, pipe and lock descriptors close at exec as
   before.
 - The spawn maps the helper's own pipes onto 0-2 exactly as the fork did.
-- `private_sqlite_helper_entry` closes every descriptor above 2 that it did
-  inherit (only a descriptor some native library left inheritable) as its first
-  action, before it reads its request or opens anything. The helper therefore
-  works with exactly the three pipes a `close_fds=True` fork gave it. Such a
-  descriptor exists in the helper only during interpreter startup.
+- `private_sqlite_helper_entry` closes every descriptor above 2 that it
+  inherited, as its first action, before it reads its request or opens anything.
+  It closes only inheritable descriptors: only those cross exec, so it can never
+  close one its own startup opened. When it can neither list its descriptors nor
+  bound them (65536), it refuses to start. The helper therefore works with
+  exactly the three pipes a `close_fds=True` fork gave it.
+- Two kinds of descriptor can reach a helper during its startup:
+  - one a native library left inheritable;
+  - any non-close-on-exec descriptor the app itself inherited from its own
+    launcher (terminal, tmux, IDE).
+
+  The second kind is harmless, because the app holds those descriptors for its
+  whole life anyway.
+- The remaining risks are bounded by one helper startup:
+  - If an inheritable descriptor carried a `flock` lock, that lock would outlive
+    the parent's close of its copy until the helper's first statement. An explicit
+    `LOCK_UN` still releases it at once, and every `flock` site in the app opens
+    its descriptor close-on-exec.
+  - A pipe's EOF or a PTY's hangup can be delayed by at most one helper startup.
 - A helper that closes an inherited descriptor of a database cannot drop this
   process's POSIX locks: those locks belong to the parent's pid.
 
@@ -234,9 +249,14 @@ by 93 ms at low load (95% CI -187 to -66 ms).
 Nothing else changes: the fixed entry, `-I -S`, the parent-pid check, IPC,
 deadlines, capacity, reaping and every refusal. Windows prepares in-process and
 launches no helper. `Tests/DB/test_private_sqlite_helper_launch.py` pins the macOS
-launch path (no `fork_exec`) and the startup close of an inherited descriptor;
-both fail on the earlier code. The owner decides whether this inherited-descriptor posture
-(PEP 446 plus the helper's own close, instead of the fork's close) is acceptable.
+launch path (no `fork_exec`), the platform choice and the launcher's use of it
+on every platform, and the entry's close: low and high inherited descriptors
+closed, close-on-exec ones spared, refusal without a listing or bound. The
+launch and close tests fail on the earlier code.
+
+Owner decision, 2026-11-20: the inherit-then-close-first posture is accepted. It
+relies on PEP 446 plus the helper's own first-statement close, instead of the
+fork's close.
 
 ## Links
 
