@@ -4966,18 +4966,36 @@ def test_config_load_migrates_a_base_saved_with_v1_appended_once(case, tmp_path,
 def test_config_migration_2_agrees_with_the_endpoint_contracts_rule():
     """Round-18 hotfix of TASK-42002: config is kernel and may not import the
     endpoint contract, so migration 2 keeps its own frozen copy of the shapes.
-    On every shape and tail (both schemes) and every control above it
-    rewrites exactly what ``v1_appended_documented_base`` rewrites, to the
-    same base, so a change to either rule fails here instead of drifting."""
-    from tldw_chatbook.config import _migrate_v1_appended_provider_bases
-    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import v1_appended_documented_base
+    Its table is the contract's, and on every shape (both schemes, with no
+    port, the scheme's default port or another, and with each tail a save
+    drops or refuses) and every control above it rewrites exactly what
+    ``v1_appended_documented_base`` rewrites, to the same base, so a change to
+    either rule fails here instead of drifting (review rev1)."""
+    from urllib.parse import urlsplit
 
+    from tldw_chatbook.config import _V1_APPENDED_SHAPES, _migrate_v1_appended_provider_bases
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        _V1_APPENDED_PATHS,
+        v1_appended_documented_base,
+    )
+
+    assert _V1_APPENDED_SHAPES == {key: "/" + "/".join(path) for key, path in _V1_APPENDED_PATHS.items()}
     rows = {(provider, stored) for provider, _key, stored, _expected in _V1_APPENDED_LOAD_ROWS.values()}
-    rows |= {(provider, "http://" + stored.removeprefix("https://")) for provider, stored in rows}
+    rows |= {(p, "http://" + s.removeprefix("https://")) for p, s in rows if s.startswith("https://")}
+    rows |= {
+        (provider, f"{scheme}://{urlsplit(_V1_APPENDED[provider][0]).hostname}{port}{shape}{tail}")
+        for provider, shape in _V1_APPENDED_SHAPES.items()
+        for scheme, default_port in (("https", ":443"), ("http", ":80"))
+        for port in ("", default_port, ":8443")
+        for tail in ("", "/chat/completions", "/models", "/responses", "/embeddings", "/chat")
+    }
+    disagreements = []
     for provider, stored in sorted(rows):
         config = {"api_settings": {provider: {"api_base_url": stored}}}
         migrated = _migrate_v1_appended_provider_bases(config)["api_settings"][provider]["api_base_url"]
-        assert migrated == (v1_appended_documented_base(provider, stored) or stored), (provider, stored)
+        if migrated != (expected := v1_appended_documented_base(provider, stored) or stored):
+            disagreements.append((provider, stored, migrated, expected))
+    assert not disagreements
 
 
 @pytest.mark.parametrize("version", [2, 1])

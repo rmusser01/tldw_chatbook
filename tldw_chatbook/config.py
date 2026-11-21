@@ -3986,8 +3986,9 @@ def _migrate_v1_appended_provider_bases(config: Dict[str, Any]) -> Dict[str, Any
     Rewrites an ``api_base_url`` an earlier Settings saved with ``/v1``
     appended (``_V1_APPENDED_SHAPES``), a pasted tail a save drops included,
     to the base a save writes for it; those configs' project-instruction keys
-    change once. Only that exact spelling on the provider's own host matches,
-    so a value with user info, a port, a query or a fragment never does.
+    change once. Only a spelling a save wrote matches: the provider's own host,
+    with or without the port typed (kept), so user info, a query or a fragment
+    never does.
     """
     api_settings = config.get("api_settings")
     for provider, table in (api_settings.items() if isinstance(api_settings, dict) else ()):
@@ -3999,8 +4000,13 @@ def _migrate_v1_appended_provider_bases(config: Dict[str, Any]) -> Dict[str, Any
         # QwenCloud's adapter refuses a /models base (TASK-42021), so it is kept.
         tails = ("", "/chat/completions", "/responses" if provider == "qwencloud" else "/models")
         scheme, _, rest = value.partition("://")
-        if scheme in ("http", "https") and rest in {default.netloc + shape + tail for tail in tails}:
-            table["api_base_url"] = documented = default._replace(scheme=scheme).geturl()
+        netloc, slash, remainder = rest.partition("/")
+        host, colon, port = netloc.partition(":")
+        # Review rev1: a save kept a typed port (1-65535, no leading zero).
+        if (scheme in ("http", "https") and host == default.hostname
+                and (not colon or (re.fullmatch(r"[1-9][0-9]{0,4}", port) and int(port) < 65536))
+                and slash + remainder in {shape + tail for tail in tails}):
+            table["api_base_url"] = documented = default._replace(scheme=scheme, netloc=netloc).geturl()
             logger.info("Config migration: api_settings.{}.api_base_url had /v1 appended "
                         "by an earlier version; now its documented base {}.", provider, documented)
     return config
