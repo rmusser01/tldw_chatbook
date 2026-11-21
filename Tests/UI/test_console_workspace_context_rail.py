@@ -20,7 +20,9 @@ from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.test_console_workspace_action_row_geometry import (
     StyledConsoleHarness,
 )
-from Tests.UI.test_destination_shells import _wait_for_selector
+from Tests.UI.test_destination_shells import (
+    _wait_for_selector as _wait_for_mounted_selector,
+)
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -117,6 +119,62 @@ async def _wait_for_condition(pilot, predicate, *, timeout: float = 1.0) -> None
             return
         await pilot.pause(0.05)
     assert predicate()
+
+
+async def _wait_for_console_startup_settled(console, pilot) -> None:
+    """Wait until the Console's startup work has run, so a test's state stays put.
+
+    TASK-42148. The Console's startup work (its first native sync, the
+    persisted-row and workspace-files refresh workers) ends by pushing the
+    screen's own workspace state into the rail. A state a test pushes before
+    that lands is replaced. Under load that took the marker off the Chats
+    header, the test's workspace out of the tree, and pointed the first row's
+    action menu at the screen's own row. The signal is the screen's own: attach
+    reconciled, no Console sync running, requested or scheduled, and no worker
+    left, on two checks in a row (a finishing worker can start another).
+    """
+
+    def pending() -> list[str]:
+        flags = (
+            ("attach not reconciled", not console._console_attach_reconciled),
+            ("sync in progress", console._console_sync_in_progress),
+            ("sync requested", console._console_sync_requested),
+            (
+                "control-bar sync scheduled",
+                getattr(console, "_console_control_bar_sync_scheduled", False),
+            ),
+        )
+        return [name for name, busy in flags if busy] + [
+            f"worker {worker.name or worker.group}" for worker in console.workers
+        ]
+
+    deadline = time.monotonic() + 15.0
+    quiet_checks = 0
+    while quiet_checks < 2:
+        if time.monotonic() > deadline:
+            raise AssertionError(f"Console startup work still pending: {pending()}")
+        quiet_checks = 0 if pending() else quiet_checks + 1
+        await pilot.pause(0.05)
+
+
+def _hold_workspace_state(console, state):
+    """Make the screen's own workspace syncs publish ``state``, and return it.
+
+    TASK-42148. Startup is not the only producer. The workspace-files
+    availability refresh starts whenever a state build finds its 1 s cache
+    expired, and its completion syncs the screen's state into the rail: in
+    a loaded run one landed about 20 ms after startup had settled and
+    replaced the test's rows. No ready signal rules that out, so a test
+    that pushes a hand-built state hands it to the screen's builder too.
+    """
+    console._workspace._build_console_workspace_context_state = lambda: state
+    return state
+
+
+async def _wait_for_selector(console, pilot, selector: str) -> None:
+    """Wait for ``selector`` on the Console, then for its startup work to settle."""
+    await _wait_for_mounted_selector(console, pilot, selector)
+    await _wait_for_console_startup_settled(console, pilot)
 
 
 async def _wait_for_production_chat_screen(
@@ -478,10 +536,6 @@ async def test_console_f1_exposes_full_selected_tree_label_and_complete_grammar(
     async with host.run_test(size=(160, 44)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-tree")
-        # Let initial reminder/persisted-row refreshes finish before installing
-        # this test's synthetic projection for the help-panel assertion.
-        await console.workers.wait_for_complete()
-        await pilot.pause()
         rail = console.query_one("#console-left-rail")
         state = replace(
             _base_grouped_workspace_state(),
@@ -573,14 +627,17 @@ async def test_console_f1_tolerates_missing_tree_context_snapshot(request) -> No
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-workspace-tree")
         console.query_one("#console-left-rail").sync_workspace_context(
-            replace(
-                _base_grouped_workspace_state(),
-                workspace_tree=(
-                    WorkspaceTreeWorkspace(
-                        workspace_id="workspace-1",
-                        label="Workspace 1",
-                        conversations=(),
-                        next_cursor=None,
+            _hold_workspace_state(
+                console,
+                replace(
+                    _base_grouped_workspace_state(),
+                    workspace_tree=(
+                        WorkspaceTreeWorkspace(
+                            workspace_id="workspace-1",
+                            label="Workspace 1",
+                            conversations=(),
+                            next_cursor=None,
+                        ),
                     ),
                 ),
             )
@@ -715,11 +772,14 @@ async def test_expanded_chats_section_capped_row_marker_surfaces_on_header(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
         tray.sync_state(
-            _base_grouped_workspace_state(
-                rows=_chat_rows_with_marker_at(
-                    marked_index,
-                    "●",
-                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+            _hold_workspace_state(
+                console,
+                _base_grouped_workspace_state(
+                    rows=_chat_rows_with_marker_at(
+                        marked_index,
+                        "●",
+                        count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                    ),
                 ),
             )
         )
@@ -788,13 +848,16 @@ async def test_collapsed_chats_section_header_shows_aggregate_unchanged(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
         tray.sync_state(
-            _base_grouped_workspace_state(
-                rows=_chat_rows_with_marker_at(
-                    marked_index,
-                    "●",
-                    count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+            _hold_workspace_state(
+                console,
+                _base_grouped_workspace_state(
+                    rows=_chat_rows_with_marker_at(
+                        marked_index,
+                        "●",
+                        count=CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT + 3,
+                    ),
+                    group_collapse_preferences={"section:chats": True},
                 ),
-                group_collapse_preferences={"section:chats": True},
             )
         )
         await pilot.pause()
@@ -2418,7 +2481,11 @@ async def test_combined_menu_change_appearance_opens_picker_with_saved_identity(
         tray = console.query_one(
             "#console-workspace-context", ConsoleWorkspaceContextTray
         )
-        tray.sync_state(_base_grouped_workspace_state(rows=(decorated,)))
+        tray.sync_state(
+            _hold_workspace_state(
+                console, _base_grouped_workspace_state(rows=(decorated,))
+            )
+        )
         await pilot.pause()
 
         control = console.query_one("#console-conversation-actions-0", Button)
