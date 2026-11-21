@@ -22,7 +22,10 @@ Console default). Unbound, the turn's native sources refused it with
 TASK-42016: so do the draft-snapshot sends.
 
 TASK-42018: the launcher for the probes that show an unseen receipt never
-reaches the next bootstrap-profile test lives here, in a laned file.
+reaches the next bootstrap-profile test lives here, in a laned file. With
+that clear in ``Tests/conftest.py``, TASK-42138 removed this file's own two
+receipt workarounds (marking earlier tests' receipts seen before mounting,
+and waiting for a test's own to be seen before leaving).
 """
 
 from __future__ import annotations
@@ -106,44 +109,6 @@ def _bind_without_pinned_io(monkeypatch) -> None:
     monkeypatch.setattr(mcp_source_participants, "bind", bind)
 
 
-def _acknowledge_leaked_receipts(app) -> None:
-    """Mark seen the Console turn receipts earlier tests left unseen.
-
-    Bootstrap-profile tests share one ChaChaNotes database, and an app opens
-    by announcing unseen receipts ("A Console turn completed while hidden.").
-    A test that has no chats yet owns none of them. Call before mounting.
-    """
-    from tldw_chatbook.Chat.conversation_local_marks_service import (
-        ConversationLocalMarksService,
-    )
-
-    marks = getattr(
-        app, "conversation_local_marks_service", None
-    ) or ConversationLocalMarksService(app.chachanotes_db)
-    for conversation_id, receipt_id in marks.list_console_unseen_marks(limit=10_000):
-        marks.acknowledge_console_unseen(conversation_id, receipt_id)
-
-
-async def _wait_for_own_receipts_seen(console, pilot) -> None:
-    """Wait until this test's own turn receipts are seen on screen.
-
-    Left unseen in the shared database, a later test's app announces them.
-    """
-    marks = console._console_runtime()._console_local_marks_service()
-    store = console._ensure_console_chat_store()
-    mine = {s.persisted_conversation_id for s in store.sessions()} - {None}
-    assert mine
-
-    def unseen() -> list:
-        return [m for m in marks.list_console_unseen_marks() if m[0] in mine]
-
-    for _ in range(200):
-        if not unseen():
-            return
-        await pilot.pause(0.05)
-    assert unseen() == []
-
-
 async def _wait_for_saved_reply(console, pilot, reply: str = "accepted") -> None:
     """Wait up to 30 s for ``reply`` to be saved or shown.
 
@@ -220,7 +185,6 @@ async def test_ordinary_send_reaches_the_provider_and_saves_the_reply(
             await _wait_for_saved_reply(console, pilot)
         except AssertionError:
             raise AssertionError(f"no reply; notices: {notices}") from None
-        await _wait_for_own_receipts_seen(console, pilot)
         store = console._ensure_console_chat_store()
         replies = [
             m.content
@@ -324,7 +288,6 @@ async def test_unbound_store_with_a_replaced_mcp_reader_is_still_refused(monkeyp
     monkeypatch.setattr(
         service, "get_kill_switch", lambda *a, **k: original(*a, **k), raising=False
     )
-    _acknowledge_leaked_receipts(app)  # its first notice must be the refusal
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:

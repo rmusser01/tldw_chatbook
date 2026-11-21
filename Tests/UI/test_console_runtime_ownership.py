@@ -481,10 +481,6 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
         _wait_for_reply,
     )
     from Tests.UI.test_console_send_admission_off_pump import _record_notices
-    from Tests.UI.test_console_send_without_mcp_store import (
-        _acknowledge_leaked_receipts,
-        _wait_for_own_receipts_seen,
-    )
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
         ConsoleHarness,
     )
@@ -508,8 +504,6 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
         return writer(mutations, **kwargs)
 
     monkeypatch.setattr(config, "apply_settings_mutation_to_cli_config", held)
-    # Earlier tests' unseen receipts would be announced into ``notices``.
-    _acknowledge_leaked_receipts(app)
     host = ConsoleHarness(app)
     try:
         async with host.run_test(size=(160, 48)) as pilot:
@@ -563,7 +557,6 @@ async def test_a_send_pressed_during_the_first_send_save_waits_and_is_sent(
                 (m.role.value, (m.content or "")[:80])
                 for m in store.messages_for_session(store.active_session_id)
             ]
-            await _wait_for_own_receipts_seen(console, pilot)
     finally:
         release.set()
 
