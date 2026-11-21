@@ -438,7 +438,8 @@ LIBRARY_MODAL_CONTRACTS = (
         "#cancel",
         _assert_none,
         Path,
-        _assert_exact(Path("/tmp")),
+        # The picker returns its location made absolute (not resolved): C:	mp on Windows.
+        _assert_exact(Path("/tmp").absolute()),
         None,
         _FOCUS_POSTCONDITION,
         None,
@@ -1691,7 +1692,7 @@ async def test_stable_focus_leaves_unusable_identity_to_revealed_screen_policy(
 def _production_owner_sources() -> dict[str, str]:
     repository_root = Path(__file__).resolve().parents[2]
     return {
-        scope.owner_file: (repository_root / scope.owner_file).read_text()
+        scope.owner_file: (repository_root / scope.owner_file).read_text(encoding="utf-8")
         for scope in _SUPPORTED_OWNER_SCOPES
     }
 

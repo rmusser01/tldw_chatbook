@@ -11,6 +11,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 from tldw_chatbook.Widgets.Console import ConsoleBoundedSection
 from tldw_chatbook.Widgets.workspace_create_modal import WorkspaceCreateModal
@@ -82,7 +83,8 @@ async def _reveal_new_workspace_button(console, pilot) -> Button:
 
 
 @pytest.mark.asyncio
-async def test_console_new_workspace_creates_and_activates() -> None:
+@private_profile_test
+async def test_console_new_workspace_creates_and_activates(request) -> None:
     """Pressing [New] in the Session rail opens the shared create modal;
     confirming it creates and activates a local workspace.
 
@@ -119,7 +121,8 @@ async def test_console_new_workspace_creates_and_activates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_new_workspace_announces_creation() -> None:
+@private_profile_test
+async def test_console_new_workspace_announces_creation(request) -> None:
     """TASK-713: creating a workspace must not be silent - the user should be
     told what was created and that Console switched to it.
 
@@ -162,7 +165,8 @@ async def test_console_new_workspace_announces_creation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_browser_row_click_announces_workspace_switch() -> None:
+@private_profile_test
+async def test_browser_row_click_announces_workspace_switch(request) -> None:
     """TASK-713: resuming a conversation from another workspace's group changes
     the active workspace - that side effect must be announced, and rows in the
     already-active workspace must stay silent."""
