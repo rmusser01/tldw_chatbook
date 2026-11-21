@@ -1,13 +1,14 @@
 """An owned ``tldw_test_config_*`` root goes on exits pytest_sessionfinish misses.
 
 TASK-42145: ``pytest --version``/``--help`` and a ``SIGTERM`` left one root in
-``$TMPDIR`` each, and about 440 had piled up. The child is plain Python with
-only ``Tests/real_profile_guard.py`` imported (it installs nothing on import),
-no app.
+``$TMPDIR`` each, and about 440 had piled up. The helper's children are plain
+Python with only ``Tests/real_profile_guard.py`` imported (it installs nothing
+on import), no app; the last test runs the root conftest itself.
 """
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 import sys
@@ -89,3 +90,27 @@ def test_owned_root_is_removed(
     assert finished.returncode == returncode, finished.stderr
     assert finished.stdout.strip() == output
     assert not root.exists()
+
+
+def test_pytest_version_leaves_no_bootstrap_root(tmp_path: Path) -> None:
+    """The root conftest's own wiring: ``--version`` loads it (``testpaths``)
+    and never reaches ``pytest_sessionfinish``, the run mode that left a
+    ``tldw_test_config_*`` root behind every time."""
+    env = dict(os.environ, TMPDIR=str(tmp_path))
+    # A fresh session, as from a shell: it creates and owns its own root.
+    for name in (
+        "TLDW_TEST_CONFIG_ROOT",
+        "TLDW_TEST_CONFIG_ROOT_OWNER",
+        "PYTEST_XDIST_WORKER",
+    ):
+        env.pop(name, None)
+    finished = subprocess.run(
+        [sys.executable, "-m", "pytest", "--version", "-p", "no:cacheprovider"],
+        cwd=_REPO,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert finished.returncode == 0, finished.stderr
+    assert list(tmp_path.glob("tldw_test_config_*")) == []

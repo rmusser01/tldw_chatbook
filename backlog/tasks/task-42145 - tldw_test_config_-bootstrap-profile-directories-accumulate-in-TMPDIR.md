@@ -4,7 +4,7 @@ title: "tldw_test_config_* bootstrap profile directories accumulate in TMPDIR"
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 20:39
+updated_date: 2026-11-21 20:49
 labels:
 - follow-up
 - tests
@@ -64,7 +64,7 @@ On 2026-11-20 at 19:58 UTC `$TMPDIR` held 437 of these directories, about 200 MB
     - 204 bare `config data home` and 18 with files: serial-run roots;
     - 101 with `gw0..gw3` and 41 with other worker counts or files: xdist controllers that never reached their session end, which fits a killed `-n 4` run;
     - 76 with only `home` (3 more: `config home` twice, one empty). That is a root removed at session end and then recreated through `HOME`; 56 of them hold the 7 recovery-bootstrap admission files. No run I tried reproduced it (bootstrap UI and Skills tests serially and at `-n 2`, at base). An in-process writer at exit is now covered by the `atexit` removal; an orphaned child process that outlives pytest is not.
-- **Covering runs.** `Tests/test_real_profile_guard.py`, `Tests/UI/test_console_fixture_ownership.py`, `Tests/App/test_app_shutdown.py`, `Tests/test_bootstrap_profile_config_reset.py`, `Tests/test_private_profile_coverage.py` and the two new CI files at -n 4: 133 passed, 2 skipped (load 37). The guard tests run `Tests/UI/conftest.py` through `runpy`, so each such run now also registers an exit removal of its own tmp sandbox. That is harmless.
+- **Covering runs.** `Tests/test_real_profile_guard.py`, `Tests/UI/test_console_fixture_ownership.py`, `Tests/App/test_app_shutdown.py`, `Tests/test_bootstrap_profile_config_reset.py`, `Tests/test_private_profile_coverage.py` and the two new CI files at -n 4: 133 passed, 2 skipped (load 37). The guard tests run `Tests/UI/conftest.py` through `runpy`. Since review rev1 they record the `remove_sandbox_at_exit` call instead of running it, so they install no exit removal or handler on the worker.
 - **Review rev1 (fixes).**
   - *Important, fork safety.* A fork child inherited the `atexit` entry and the handlers, so terminating it removed the parent's live root. Chunking's `ebook_chapters` strategy does exactly that: a fork context, then `p.terminate()`, and fork is the Linux default. The helper now records `owner = os.getpid()` and removes the root only in that process, from both the `atexit` callable and the handler. Every process still re-raises the signal.
     - New `fork-child-terminated` case: the child terminates a fork child (exit -15) and the root must still exist, then must be gone once the child exits.
@@ -75,6 +75,7 @@ On 2026-11-20 at 19:58 UTC `$TMPDIR` held 437 of these directories, about 200 MB
     - It fails at base dc371f0842 with the same files (2 of 3 runs), so it was luck that my earlier -n 4 runs passed.
     - Paired at -n 4, it fails only beside `Tests/App/test_app_shutdown.py` (2 of 2), never beside the other three files, and passes alone (27 passed, twice).
   - Tests/CI at -n 4 after these fixes: 1817 passed, 2 skipped (load 28). Preflight and the ruff gate pass.
+- **Review rev2 (fixes).** The root conftest's call, the source of the leftover directories, is now pinned. `test_pytest_version_leaves_no_bootstrap_root` runs `python -m pytest --version -p no:cacheprovider` from the repo root, with `TMPDIR=tmp_path` and without `TLDW_TEST_CONFIG_ROOT`, `TLDW_TEST_CONFIG_ROOT_OWNER` or `PYTEST_XDIST_WORKER`. It requires rc 0 and no `tldw_test_config_*` in `tmp_path`, and takes 1.4 s. Red with the conftest call removed: `assert [PosixPath('.../tldw_test_config_4b2tr_gi')] == []`, one directory left. Green: the file has 5 passed. The two stale notes above (the `runpy` sentence, the Files list) are corrected.
 - Tests/CI at -n 4 after the move: 1815 passed, 2 skipped (load 48). After the move the run modes measured the same as the table: 0 left for every mode except SIGKILL.
 - `backlog/docs/lessons-testing-evidence.md`: the `pytest --version` lesson no longer says the root stays in `$TMPDIR`.
-- Files: `Tests/real_profile_guard.py`, `Tests/conftest.py`, `Tests/UI/conftest.py`, `Tests/CI/test_bootstrap_root_cleanup.py`, `backlog/docs/lessons-testing-evidence.md`.
+- Files: `Tests/real_profile_guard.py`, `Tests/conftest.py`, `Tests/UI/conftest.py`, `Tests/CI/test_bootstrap_root_cleanup.py`, `Tests/test_real_profile_guard.py`, `backlog/docs/lessons-testing-evidence.md`.
