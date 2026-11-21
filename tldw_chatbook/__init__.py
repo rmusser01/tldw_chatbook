@@ -13,7 +13,7 @@ and advanced RAG (Retrieval-Augmented Generation) capabilities.
 import os
 import sys
 from functools import cache, partial, wraps
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from .Utils.tiktoken_runtime import (
     arm_bundled_tiktoken_runtime as _arm_bundled_tiktoken_runtime,
@@ -495,9 +495,11 @@ def _install_zero_width_fold_guard() -> None:
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from textual.widget import Widget
+
+_T = TypeVar("_T")
 
 #: Marks the message-keeping ``App._prune`` (idempotent, detectable).
 QUEUED_MESSAGE_KEEPER = "_tldw_queued_message_keeper"
@@ -569,6 +571,22 @@ def keep_queued_messages(nodes: "Iterable[Widget]") -> None:
                         _forward_a_dropped_message, node, node._on_message
                     )
                 node = parent
+
+
+def rendered_target(targets: "Mapping[Widget, _T]", sender: "Widget") -> "_T | None":
+    """What ``sender`` was rendered for, or None when it is from an earlier
+    rebuild or is being removed (TASK-42150 review r19rc-rev1).
+
+    A press can reach its handler after the rows it came from were rebuilt:
+    the keeper hands one below a removed row to a live ancestor, and one that
+    had already left the row is handled after the rebuild too. A position read
+    from the sender's id then names whatever row holds that position now, so
+    resolve the target from the sender instance: the builder maps each
+    control it renders to its target, a new map per rebuild.
+    """
+    if not sender.is_attached or sender._pruning:
+        return None
+    return targets.get(sender)
 
 
 def _install_queued_message_keeper() -> None:

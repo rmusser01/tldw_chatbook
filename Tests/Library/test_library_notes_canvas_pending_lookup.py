@@ -79,6 +79,14 @@ from textual.widgets import (
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.Widgets.Library.test_library_notes_canvas import _editor_state
+from Tests.UI.test_evals_bench_editor import (  # noqa: F401 -- fixture re-exports
+    _REALISTIC_SIZE,
+    bench_with_mixed_readiness,
+    evals_app,
+    evals_db,
+)
+from tldw_chatbook.UI.Evals.bench_editor import BenchEditor
+from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook import QUEUED_MESSAGE_KEEPER
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
 from tldw_chatbook.STT.parakeet_sources import (
@@ -950,3 +958,102 @@ def test_every_removal_reaches_the_message_keeper():
     through (a recompose, ``remove_children()``, ``remove()``, a query's
     ``remove()``), so no override can remove children ahead of it."""
     assert getattr(App._prune, QUEUED_MESSAGE_KEEPER, False)
+
+
+# --- TASK-42150 review r19rc-rev1: a late press resolves its target by
+# identity. The keeper hands a press below a rebuilt row to a live ancestor
+# after the rebuild, and a press already past the row reaches its handler
+# then too, so a handler that reads a position from the button's id would
+# act on whatever row holds that position now.
+
+
+async def _press_a_stale_row_across(pilot, stale: Button, first: Button, closing) -> None:
+    """The user's second press (``stale``) is still in transit when their
+    first press (``first``) rebuilds the rows: hold it in its button until the
+    rebuild is closing ``closing``, then let it go."""
+    held, release = asyncio.Event(), asyncio.Event()
+
+    async def hold() -> None:
+        held.set()
+        await release.wait()
+
+    stale.call_later(hold)
+    try:
+        await asyncio.wait_for(held.wait(), timeout=5)
+        stale.press()
+        first.press()
+        deadline = asyncio.get_running_loop().time() + 5
+        while not closing._closing:
+            assert asyncio.get_running_loop().time() < deadline, "no rebuild"
+            await asyncio.sleep(0)
+    finally:
+        release.set()
+    for _ in range(50):
+        await pilot.pause(0.02)
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_stale_bench_target_remove_never_unstages_another_target(
+    evals_app, bench_with_mixed_readiness  # noqa: F811 -- fixtures imported above
+):
+    """Remove row 0, then row 1 before the first rebuild lands. The second
+    press belongs to "warned-target"; once row 0 is gone, index 1 is
+    "blocked-target". It must not be un-staged (and then saved)."""
+    task_id, ids = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+        assert editor._staged_target_ids == [ids["ready"], ids["warned"], ids["blocked"]]
+        await _press_a_stale_row_across(
+            pilot,
+            screen.query_one("#evals-bench-target-remove-1", Button),
+            screen.query_one("#evals-bench-target-remove-0", Button),
+            screen.query_one("#evals-bench-targets-body"),
+        )
+
+        names = {target: name for name, target in ids.items()}
+        staged = [names[target] for target in editor._staged_target_ids]
+        assert staged == ["warned", "blocked"], "a stale Remove un-staged another target"
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_stale_bench_target_add_never_stages_the_rebuilt_pickers_default(
+    evals_app, evals_db, bench_with_mixed_readiness, monkeypatch  # noqa: F811 -- fixtures imported above
+):
+    """Pick "spare-a" and press Add while a Remove rebuilds the picker. The
+    rebuilt picker shows its first option, "spare-b"; the late Add must not
+    stage that (nor anything else) in place of what the user picked."""
+    task_id, ids = bench_with_mixed_readiness
+    spare_a = evals_db.create_model(name="spare-a", provider="llama_cpp", model_id="m")
+    spare_b = evals_db.create_model(name="spare-b", provider="llama_cpp", model_id="m")
+    real_targets = EvalsViewModel.llama_targets
+    monkeypatch.setattr(
+        EvalsViewModel,
+        "llama_targets",
+        lambda self: sorted(real_targets(self), key=lambda row: row["name"] != "spare-b"),
+    )
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+        screen.query_one("#evals-bench-add-target", Select).value = spare_a
+        await pilot.pause()
+        await _press_a_stale_row_across(
+            pilot,
+            screen.query_one("#evals-bench-add-target-button", Button),
+            screen.query_one("#evals-bench-target-remove-0", Button),
+            screen.query_one("#evals-bench-targets-body"),
+        )
+
+        assert screen.query_one("#evals-bench-add-target", Select).value == spare_b
+        names = {target: name for name, target in ids.items()}
+        names |= {spare_a: "spare-a", spare_b: "spare-b"}
+        staged = [names[target] for target in editor._staged_target_ids]
+        assert staged == ["warned", "blocked"], "a stale Add staged the rebuilt default"

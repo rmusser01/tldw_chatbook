@@ -129,6 +129,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Sequence
 
+from tldw_chatbook import rendered_target
 from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import on
@@ -786,6 +787,11 @@ class BenchEditor(Vertical):
         """
         db = self._view_model.db
         preflight = self._preflight_map
+        # TASK-42150: each Remove/Add mapped to what it was rendered for, a
+        # new map per rebuild, so a late press from an earlier rebuild
+        # resolves to nothing instead of to whatever row now holds its index.
+        self._target_removers: dict[Button, int] = {}
+        self._target_adders: dict[Button, Select] = {}
         heading = Static(
             f"Targets ({len(self._staged_target_ids)})",
             id="evals-bench-targets-heading",
@@ -806,7 +812,9 @@ class BenchEditor(Vertical):
             # `snippet_editor.py`'s identical `_compose_row` fix for the
             # same principle applied to snippets.
             rows = [
-                self._build_target_row(db, preflight, index, target_id)
+                self._build_target_row(
+                    db, preflight, index, target_id, self._target_removers
+                )
                 for index, target_id in enumerate(self._staged_target_ids)
             ]
             body.append(Vertical(*rows, id="evals-bench-target-table"))
@@ -822,6 +830,7 @@ class BenchEditor(Vertical):
         preflight: dict[str, Any],
         index: int,
         target_id: str,
+        removers: dict[Button, int],
     ) -> Widget:
         """One target row: its readiness ``Static`` (unchanged id/class
         from before Task 6, ``#evals-bench-target-{index}`` /
@@ -870,6 +879,12 @@ class BenchEditor(Vertical):
                 label = f"{base} · system prompt set"
             else:
                 label = base
+        remove = Button(
+            "Remove",
+            id=f"evals-bench-target-remove-{index}",
+            classes="evals-bench-target-remove console-action-secondary",
+        )
+        removers[remove] = index
         return Horizontal(
             Static(
                 label,
@@ -877,11 +892,7 @@ class BenchEditor(Vertical):
                 classes="evals-bench-target-row",
                 markup=False,
             ),
-            Button(
-                "Remove",
-                id=f"evals-bench-target-remove-{index}",
-                classes="evals-bench-target-remove console-action-secondary",
-            ),
+            remove,
             classes="evals-bench-target-row-wrap",
         )
 
@@ -913,26 +924,25 @@ class BenchEditor(Vertical):
             (escape_markup(f"{row['name']} ({row['model_id']})"), row["id"])
             for row in llama_targets
         ]
-        return Horizontal(
-            # compact=True: a bordered Select is 3 rows tall by default
-            # (see Textual's own DEFAULT_CSS) against every other row in
-            # this section's 1-row convention -- the same fix `sources_
-            # pane.py`'s TASK-995 comment applies to a Select inside a
-            # height-constrained strip, for the identical reason: without
-            # it, this row alone could push the section's own fixed Add
-            # control past `#evals-detail-pane`'s clip rectangle at a
-            # realistic viewport (confirmed live via `test_every_pane_
-            # descendant_stays_within_its_pane`).
-            Select(
-                options, allow_blank=False, compact=True, id="evals-bench-add-target"
-            ),
-            Button(
-                "Add",
-                id="evals-bench-add-target-button",
-                classes="console-action-secondary",
-            ),
-            id="evals-bench-add-target-row",
+        # compact=True: a bordered Select is 3 rows tall by default
+        # (see Textual's own DEFAULT_CSS) against every other row in
+        # this section's 1-row convention -- the same fix `sources_
+        # pane.py`'s TASK-995 comment applies to a Select inside a
+        # height-constrained strip, for the identical reason: without
+        # it, this row alone could push the section's own fixed Add
+        # control past `#evals-detail-pane`'s clip rectangle at a
+        # realistic viewport (confirmed live via `test_every_pane_
+        # descendant_stays_within_its_pane`).
+        picker = Select(
+            options, allow_blank=False, compact=True, id="evals-bench-add-target"
         )
+        add = Button(
+            "Add",
+            id="evals-bench-add-target-button",
+            classes="console-action-secondary",
+        )
+        self._target_adders[add] = picker
+        return Horizontal(picker, add, id="evals-bench-add-target-row")
 
     def _build_create_target_control(self) -> Widget:
         """The "+ New target" mini-form (task-1611 T2): a Name ``Input``,
@@ -1205,15 +1215,11 @@ class BenchEditor(Vertical):
         config_data.target_ids` write happens at Save, same as every other
         field this widget edits."""
         event.stop()
-        from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
-
-        try:
-            picker = self.query_one("#evals-bench-add-target", Select)
-        except QueryError:
-            # Defensive only: this button is never composed without the
-            # picker beside it (see `_build_target_add_control`) -- the
-            # zero-models state means `_build_target_add_control` returned
-            # `None` instead, with no picker/Add button at all.
+        # The picker rendered beside THIS button (TASK-42150): an Add from an
+        # earlier rebuild, or one being removed, is dropped rather than
+        # staging whatever the rebuilt picker shows.
+        picker = rendered_target(self._target_adders, event.button)
+        if picker is None:
             return
         target_id = picker.value
         if target_id is Select.BLANK or not isinstance(target_id, str):
@@ -1232,21 +1238,18 @@ class BenchEditor(Vertical):
 
     @on(Button.Pressed, ".evals-bench-target-remove")
     async def _on_remove_target_pressed(self, event: Button.Pressed) -> None:
-        """Un-stages one target row by INDEX -- see `_build_target_row`'s
-        own comment for why widget ids here are index-, not target_id-,
-        derived. Removing the last target is allowed (a draft state --
-        the zero-target Run gate and readiness copy both read SAVED state,
-        never this widget's staged form state, see the module docstring)."""
+        """Un-stages the row this button was rendered for -- its index in
+        the current rebuild, looked up by the button itself (TASK-42150), not
+        read back from its index-derived id (see `_build_target_row`'s own
+        comment for why ids here are index-, not target_id-, derived): a
+        press from an earlier rebuild would otherwise un-stage whichever
+        target now holds that index. Removing the last target is allowed (a
+        draft state -- the zero-target Run gate and readiness copy both read
+        SAVED state, never this widget's staged form state, see the module
+        docstring)."""
         event.stop()
-        button_id = event.button.id or ""
-        prefix = "evals-bench-target-remove-"
-        if not button_id.startswith(prefix):
-            return
-        try:
-            index = int(button_id[len(prefix) :])
-        except ValueError:
-            return
-        if not 0 <= index < len(self._staged_target_ids):
+        index = rendered_target(self._target_removers, event.button)
+        if index is None or not 0 <= index < len(self._staged_target_ids):
             return
         del self._staged_target_ids[index]
         self._capture_pending_target_form()
