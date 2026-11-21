@@ -4,7 +4,7 @@ title: "A default-location Replace cannot create or start the pet: make pet file
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 18:48
-updated_date: 2026-11-21 20:48
+updated_date: 2026-11-21 22:09
 labels:
 - follow-up
 - backup
@@ -172,3 +172,11 @@ The unit cases are in `test_config_participant_lifetimes.py`, already a whole-fi
 - AC#3 is rescoped to bound profiles: once a profile is bound, its pet files never become roots. A backup of a profile that is not bound yet, and a profile's first binding, still register fixed config leaves as roots. That predates this task and is near TASK-42151's code, so the coordinator files it as a follow-up in this round's filing.
 - AC#5: the notes above name the owners. The coordinator files the follow-up in this round's filing: `notes.templates` and `rag.definitions` as fixed leaves, and `config.history`, which needs its own design.
 - AC#6: the `finish` half is TASK-42154's, fixed in the backuprec stream. The coordinator runs this task's crash test with `finish` on the stacked top (backupdef plus backuprec) before handover.
+
+**Review rev1 (2026-11-21).**
+- *A restored marker.* New `[pets-seeded]` case, at the default location and on a separate folder: the backup holds the pet file and its seed-once marker, the target has neither. The Replace creates both, the marker from its absence. The pet starts and saves, and the later rollback retires both. It took 121 s at the default location and 120 s on the separate folder (`-n 2`, load 17-25). It went red under a temporary edit to each no-row branch: `publication_config_relation_unverified` at the default location with the publication branch disabled, and a refusal in `_config_file_relations` at both locations with the later-rollback branch disabled.
+- *The no-row fallbacks are narrowed* to the leaves an owner lists only while they exist (`_CONFIG_ROWLESS_LEAVES`, the marker's local id `seeded`); any other leaf still needs its row.
+- *Journal pass-over.* `_recovery_admission_aliases` now passes over a deleted root only when the journal moved none of the artifact targets it falls under. If it moved one, several candidates still refuse. A new unit case went red with the old expression (`DID NOT RAISE`).
+- *Lanes.* `test_same_session_retirement_capture.py`, `test_effective_admission_roots.py` and `test_config_companion_missing_record_evidence.py` joined the recovered-suites PR lane's sandboxed block, after the config participant lifetimes, with the Tests/CI pin. Serial times under that step's flags (`--storage-lease-guard --timeout=180`, load 17-18): 16 s, 4 s and 9 s. Run in step order with the lifetimes file and the next file: 92 passed in 46 s. The step's cap is 30 min.
+- *Docs.* The user doc now says "the same folder": a folder deleted and recreated, for example by a sync tool, does not count, and a file at a drive's top level or in a mount-point folder stays strict. The owner inventory says the marker is listed only while it exists. The architecture doc names the residual risk of the inode-only folder token (a same-label drive at the same mount path). A comment at `_deleted_file_root_scopes` says it reads only the default bootstrap root, so a non-default authority stays strict.
+- *Runs.* `Tests/CI` at `-n 4`: 1811 passed. The owner-inventory and layer-direction Architecture files: 80 passed. `ruff --select F` and `ruff_gate.py`: pass. Preflight: pass.

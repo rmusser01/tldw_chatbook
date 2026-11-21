@@ -160,9 +160,12 @@ changed or removed.
 A backup keeps track of each single file it saves, such as a database or a
 settings file beside `config.toml`. If such a file is later removed, by a
 restore or by you, the app still starts and later backups and restores still
-work, as long as the folder that held it is still there. If that folder is
-gone, as when the drive it is on is not connected, the app stops with
-"Recovery required" instead of carrying on without it. A file the app started
+work, as long as the same folder that held it is still there. A folder that
+was deleted and created again, for example by a sync tool, is not the same
+folder. If that folder is gone, as when the drive it is on is not connected,
+or has been replaced, the app stops with "Recovery required" instead of
+carrying on without it. So does a removed file that sat at the top level of a
+drive or in a folder another drive is mounted on. A file the app started
 tracking in an earlier version still stops it once the file is removed.
 
 If source and target locations cannot
