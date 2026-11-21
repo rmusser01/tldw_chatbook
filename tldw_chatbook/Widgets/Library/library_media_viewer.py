@@ -16,6 +16,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Static, TextArea
 
+from tldw_chatbook import rendered_target
 from tldw_chatbook.Audio.meeting_session import (
     is_widget_safe_cluster_id,
     normalize_speaker_name,
@@ -314,6 +315,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         self.trash_list_open = trash_list_open
         self.media_db = media_db
         self.speaker_rename_media_id = speaker_rename_media_id
+        #: Each legend Input to the item and speaker it was composed for, a
+        #: new map per compose (TASK-42150 review r19rc-rev2).
+        self._speaker_inputs: dict[Input, tuple[int | None, str]] = {}
         self.link_receipt = link_receipt
         self.link_undo_offered = link_undo_offered
         self.delete_target_title = delete_target_title
@@ -981,6 +985,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         Returns:
             ComposeResult for the legend, or nothing when there is none.
         """
+        self._speaker_inputs = {}
         if not self.viewer.can_rename_speakers or not self.viewer.speaker_legend_rows:
             return
         with VerticalGroup(id="library-media-speaker-legend"):
@@ -1002,28 +1007,32 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                     markup=False,
                     classes="library-media-edit-label library-media-speaker-label",
                 )
-                yield Input(
+                field = Input(
                     placeholder="Rename…",
                     id=f"{self._SPEAKER_INPUT_PREFIX}{cluster_id}",
                     classes="library-media-speaker-input",
                 )
+                self._speaker_inputs[field] = (self.speaker_rename_media_id, cluster_id)
+                yield field
 
     @on(Input.Submitted, ".library-media-speaker-input")
     def _handle_speaker_rename_submitted(self, event: Input.Submitted) -> None:
         """Persist the submitted row's rename off the UI thread.
 
-        Mirrors ``LibraryMediaCanvas``' legend: the rename itself is
-        unconditional (a submit racing teardown should still persist) and
-        only the repaint afterwards is ``is_mounted``-guarded.
+        The item and speaker come from the Input itself, as this compose
+        rendered it (TASK-42150 review r19rc-rev2), never from the viewer's
+        current item: a submit still in flight when the reader switches to
+        another item that also has an "S1" would otherwise rename that one.
+        A submit from an earlier render is dropped. Only the repaint after a
+        rename is ``is_mounted``-guarded.
         """
         event.stop()
-        widget_id = event.input.id or ""
-        if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
+        target = rendered_target(self._speaker_inputs, event.input)
+        if target is None:
             return
-        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX) :]
+        media_id, cluster_id = target
         name = normalize_speaker_name(event.value)
         event.input.value = ""
-        media_id = self.speaker_rename_media_id
         if self.media_db is None or media_id is None:
             return
         # The rename reads the transcript file, runs several DB writes, FTS

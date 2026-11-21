@@ -55,6 +55,7 @@ stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -79,6 +80,10 @@ from textual.widgets import (
     Static,
 )
 
+from Tests.UI.conftest import (  # noqa: F401 -- fixture re-exports
+    meeting_folder_media_item,
+    tmp_media_db,
+)
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_personal_context_review_modal import (
     _Coordinator as _ReviewCoordinator,
@@ -96,6 +101,9 @@ from tldw_chatbook.UI.Evals.bench_editor import BenchEditor
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook import QUEUED_MESSAGE_KEEPER
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Library.library_media_viewer_state import (
+    build_library_media_viewer_state,
+)
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
 from tldw_chatbook.STT.parakeet_sources import (
     ParakeetSourceKey,
@@ -124,6 +132,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 )
 from tldw_chatbook.Widgets.Library import library_notes_canvas as canvas_module
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     LibraryNotesCanvas,
@@ -1193,3 +1202,69 @@ async def test_a_stale_personal_context_apply_never_rewrites_another_change():
         await host.workers.wait_for_complete()
 
         assert coordinator.rewrites == [], "a stale Apply rewrote another change"
+
+
+def _legend_state(db, media_id):
+    return dataclasses.replace(
+        build_library_media_viewer_state(dict(db.get_media_by_id(media_id))),
+        can_rename_speakers=True,
+        speaker_legend_rows=(("S1", "Speaker 1"),),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_stale_speaker_rename_never_renames_another_items_speaker(
+    tmp_media_db, meeting_folder_media_item  # noqa: F811 -- fixtures imported above
+):
+    """Review r19rc-rev2: Enter in item A's "S1" rename field is still in
+    transit when the user selects item B, which also has an "S1". The kept
+    submit must not rename B's speaker (the handler read the media id from
+    the viewer's current item); a submit from an earlier render is dropped."""
+    db = tmp_media_db
+    a, _ = meeting_folder_media_item(names={}, segments=[("S1", "hello from a")])
+    b, _ = meeting_folder_media_item(
+        names={}, segments=[("S1", "hello from b"), ("S1", "again")]
+    )
+
+    class _ViewerApp(App):
+        def compose(self) -> ComposeResult:
+            yield LibraryMediaViewer(
+                _legend_state(db, a),
+                media_db=db,
+                speaker_rename_media_id=a,
+                id="library-media-viewer",
+            )
+
+    app = _ViewerApp()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        viewer = app.query_one(LibraryMediaViewer)
+        field = app.query_one("#library-media-speaker-input-S1", Input)
+        field.focus()
+        field.value = "Alice"
+        await pilot.pause()
+
+        def select_b() -> None:  # the controller's sync on a new selection
+            viewer.viewer = _legend_state(db, b)
+            viewer.speaker_rename_media_id = b
+            viewer.refresh(recompose=True)
+
+        await _hold_a_press_across(
+            pilot,
+            field,
+            app.query_one("#library-media-speaker-legend"),
+            select_b,
+            action="action_submit",
+            user=lambda: pilot.press("enter"),
+        )
+        for _ in range(30):
+            await pilot.pause(0.02)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    renamed = (
+        "Alice" in db.get_media_by_id(a)["content"],
+        "Alice" in db.get_media_by_id(b)["content"],
+    )
+    assert renamed == (False, False), "a stale rename landed on another item"
