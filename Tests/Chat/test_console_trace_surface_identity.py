@@ -11,7 +11,12 @@ from tldw_chatbook.Chat.console_trace_provenance import SavedRevisionTraceProven
 
 
 # These real controllers read the collection-bound config participant.
-pytestmark = pytest.mark.bootstrap_profile
+# TASK-42155: every controller a test or its rig builds is shut down at
+# teardown (Tests/Chat/conftest.py).
+pytestmark = [
+    pytest.mark.bootstrap_profile,
+    pytest.mark.usefixtures("shut_down_console_controllers"),
+]
 
 
 @pytest.mark.asyncio
