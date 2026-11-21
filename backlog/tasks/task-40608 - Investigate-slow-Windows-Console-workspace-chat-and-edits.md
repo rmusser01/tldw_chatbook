@@ -275,6 +275,22 @@ An earlier run with the same code failed at workspace setup: zero folder
 bindings after an unhandled `ConsoleChannelLost` in `_publish_resumed_source`.
 That failure is unexplained. AC5 and AC6 remain open.
 
+The workspace-setup failure was an ordering bug. `WorkspaceCreateModal` saved
+the folder binding and dismissed. Its callers activate the new workspace in the
+push_screen result callback, which Textual queues on the opener's message pump.
+In process-backed Console the Chat screen's resume work ran first, and the
+callback ran about 1.08 s after dismissal. For that second the built-in Default
+workspace was still active, so the journey read zero bindings and failed. The
+`ConsoleChannelLost` in the log came from teardown afterwards. With "make
+active" and no profile interview, the dialog now activates the workspace before
+it dismisses. Callers keep their own activation and error reporting. Under a
+10 ms stack sampler the failure had reproduced in 7 of 7 runs. With the fix,
+3 of 3 original journeys passed in that configuration. A regression test
+checks that activation precedes dismissal and that the interview and unchecked
+paths still defer. Seven tests in `Tests/UI/test_console_new_workspace.py` and
+`test_workspace_cold_provisioning.py` also fail on the unmodified head and are
+outside the CI mount list.
+
 <!-- SECTION:NOTES:END -->
 
 Measured follow-up under the same [ADR-126 bounded configuration-read amendment](../decisions/126-complete-local-backup-and-recovery.md#task-40608--bounded-sensitive-database-path-configuration-reads): qualify the original sensitive container-reader cohort, then group its admissions without changing readers, overrides or refusal checks. The measured 0.218-second component is separate from the unresolved planning delay; final three-pair acceptance remains open.

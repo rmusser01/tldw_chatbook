@@ -553,6 +553,7 @@ class WorkspaceCreateModal(
             return
         self._bound_folders = all_bound
         self._failed_folder_messages = {}
+        self._activate_before_dismiss()
         self.dismiss_safe_once(
             WorkspaceCreateResult(
                 workspace_id=self._created_workspace_id,
@@ -564,6 +565,30 @@ class WorkspaceCreateModal(
                 project_skills=self._project_skills_for(all_bound),
             )
         )
+
+    def _activate_before_dismiss(self) -> None:
+        """Make "create and make active" visible as the dialog closes.
+
+        Callers still activate in their result callback, but Textual queues
+        that callback on the opener's message pump, after the opener has
+        resumed. In process-backed Console that resume takes long enough that
+        the previous workspace stayed active for about a second after the
+        dialog closed. The profile-interview path keeps deferring activation to
+        the caller's continuation. A failure here is left to the caller, which
+        retries and reports it.
+        """
+        if (
+            not self._make_active_result
+            or self._offer_profile_interview_result
+            or self._created_workspace_id is None
+            or not self.is_mounted
+            or self.app.screen is not self
+        ):
+            return
+        try:
+            self._registry.set_active_workspace(self._created_workspace_id)
+        except WorkspaceRegistryServiceError:
+            return
 
     async def _show_binding_retry(self) -> None:
         """Focus the replacement retry action after its form has mounted."""
