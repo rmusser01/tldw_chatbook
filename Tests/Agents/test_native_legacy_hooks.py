@@ -684,3 +684,32 @@ def test_real_non_chat_event_keeps_empty_metadata_without_creating_chat(
         assert runtime._chat_store is None and runtime._agent_bridge is None
     finally:
         asyncio.run(runtime.dispose())
+
+
+@pytest.mark.parametrize("deny", [False, True])
+async def test_prompt_hook_runs_while_the_submit_task_holds_its_agent_admission(
+    native_hooks, deny
+):
+    """TASK-42173: a Console submit holds its agent admission across the turn.
+
+    fire_async ran the hook on a to_thread worker that inherited a copy of that
+    admission; the guard refuses a copied admission (AgentActivationRequired),
+    fire() logged "engine error" and returned an empty outcome. So with the
+    agent runtime on, no UserPromptSubmit hook ran: none injected context and
+    none could block the send.
+    """
+    from tldw_chatbook.Agents.activation import captured_sources, execution
+
+    h = native_hooks
+    h.configure(
+        "import sys; sys.exit(2)" if deny else "print('native hook context')",
+        event="UserPromptSubmit",
+    )
+    with execution(sources=captured_sources(None)):
+        outcome = await h.engine.fire_async(
+            "UserPromptSubmit", session_id=h.session.id, data={"prompt": "hi"}
+        )
+    if deny:
+        assert outcome.blocked
+    else:
+        assert outcome.context == "native hook context"
