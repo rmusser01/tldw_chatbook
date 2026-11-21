@@ -976,7 +976,9 @@ _BUDGETS: dict[str, int] = {
     # the provider's own host matches too.
     # 2026-11-21, TASK-42153: 8901 -> 8913 (+12) -- config migration 3 reads
     # the v1-appended shapes on QwenCloud's China host and Cohere's old host.
-    "tldw_chatbook/config.py": 8913,
+    # 2026-11-21, TASK-42131: 8913 -> 8928 (+15) -- one helper runs every
+    # load-time migration for the full load and both rebuilds from a raw mapping.
+    "tldw_chatbook/config.py": 8928,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

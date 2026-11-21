@@ -8,7 +8,12 @@ path keeps TASK-21124's near-zero cost.
 
 from __future__ import annotations
 
+import copy
+from functools import reduce
+from operator import getitem
+
 import pytest
+import toml
 
 from Tests.Backup_Recovery.test_bound_config_companions import _SCRIPT
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
@@ -124,6 +129,64 @@ def test_self_write_is_not_a_phantom_external_edit_across_throttle(tmp_path, mon
         "window; the app's own write must refresh the stamp so it is not seen "
         "as an external edit"
     )
+
+
+def test_a_settings_write_keeps_every_load_time_migration_in_memory(tmp_path, monkeypatch):
+    """TASK-42131: a full load migrates the raw file in memory (every numbered
+    migration, then the legacy reasoning opt-out). The rebuilds a settings
+    write and a locked snapshot make from a raw mapping only merged the
+    defaults, so a write turned reasoning replay back on and restored a
+    ``/v1``-appended base until the next full load. The boot write never runs
+    here, and the fixture needs every registered migration."""
+    raw = {
+        "config_schema_version": 1,
+        "console": {"replay_thinking": False},
+        "api_settings": {
+            "groq": {"api_base_url": "https://api.groq.com/v1"},
+            "cohere": {"api_base_url": "https://api.cohere.ai/v1"},
+        },
+    }
+    for version, migration in config_module._CONFIG_MIGRATIONS.items():
+        assert migration(copy.deepcopy(raw)) != raw, f"add a row migration {version} rewrites"
+    target = tmp_path / "config.toml"
+    target.write_text(toml.dumps(raw), encoding="utf-8")
+    select_config_source(monkeypatch, target, globals())
+    _clear()
+    config_module.load_settings(force_reload=True)
+
+    assert config_module.save_setting_to_cli_config("general", "users_name", "after-write")
+
+    paths = (
+        ("console", "reasoning_history"),
+        ("api_settings", "groq", "api_base_url"),
+        ("api_settings", "cohere", "api_base_url"),
+    )
+
+    def read(view):
+        return [reduce(getitem, path, view) for path in paths]
+
+    views = {
+        "bootstrap cache": read(config_module.load_cli_config_and_ensure_existence()),
+        "load_settings": read(config_module.load_settings()),
+        "atomic snapshot": read(config_module.get_atomic_config_snapshot().values),
+    }
+    full = read(config_module.load_cli_config_and_ensure_existence(force_reload=True))
+
+    assert full == ["off", "https://api.groq.com/openai/v1", "https://api.cohere.ai"]
+    assert views == dict.fromkeys(views, full)
+
+    # The literal transaction's builder reads the same view, and a write keeps
+    # the file as read: only the boot step persists a numbered migration.
+    seen = []
+
+    def build(snapshot):
+        seen.append(read(snapshot.effective_values))
+        return config_module.LiteralSettingsMutation({("general",): {"users_name": "literal"}}, {})
+
+    assert config_module.apply_literal_settings_transaction_to_cli_config(build).file_replaced
+    stored = toml.loads(target.read_text(encoding="utf-8"))
+    assert seen == [full]
+    assert (stored["console"], stored["api_settings"]) == (raw["console"], raw["api_settings"])
 
 
 _SHIPPED_THROTTLE = (

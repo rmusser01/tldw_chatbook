@@ -4086,6 +4086,27 @@ def _changed_beyond_stamp(raw: Mapping[str, Any], migrated: Mapping[str, Any]) -
     return {**migrated, CONFIG_SCHEMA_VERSION_KEY: None} != {**raw, CONFIG_SCHEMA_VERSION_KEY: None}
 
 
+def _migrated_raw_config(raw: Mapping[str, Any]) -> tuple[Dict[str, Any], bool, Optional[str]]:
+    """Every load-time migration over a copy of one raw config (TASK-42131).
+
+    The full load and the rebuilds from a raw mapping a write or a locked read
+    already parsed all use this, so a settings write keeps what a load
+    migrates in memory. ``raw`` is never changed: a write persists it as read.
+
+    Returns:
+        The migrated config; whether nothing beyond the version stamp changed
+        (nothing for the boot step to persist); any newer-version conflict.
+    """
+    migrated, _changed, conflict = migrate_config_forward(raw)
+    settled = not _changed_beyond_stamp(raw, migrated)
+    if migrated is raw:
+        migrated = copy.deepcopy(raw)
+    from tldw_chatbook.Utils.reasoning_config import migrate_legacy_reasoning_history
+
+    migrate_legacy_reasoning_history(migrated)
+    return migrated, settled, conflict
+
+
 def get_config_schema_conflict() -> Optional[str]:
     """Return the newer-than-supported schema warning, if the last load hit one."""
     return _CONFIG_SCHEMA_CONFLICT
@@ -4295,16 +4316,9 @@ def _load_cli_config_bootstrap_unlocked(
         # an unversioned file must be seen as the baseline (0), not inherit the
         # default's current version and skip its migrations. A newer-than-code
         # version is served untouched with a recorded conflict warning.
-        raw_from_file = user_config_from_file
-        user_config_from_file, _schema_changed, _schema_conflict = (
-            migrate_config_forward(user_config_from_file)
+        user_config_from_file, migration_settled, _schema_conflict = (
+            _migrated_raw_config(user_config_from_file)
         )
-        migration_settled = not _changed_beyond_stamp(raw_from_file, user_config_from_file)
-        from tldw_chatbook.Utils.reasoning_config import (
-            migrate_legacy_reasoning_history,
-        )
-
-        migrate_legacy_reasoning_history(user_config_from_file)
         _CONFIG_SCHEMA_CONFLICT = _schema_conflict
         if _schema_conflict is not None:
             logger.warning(_schema_conflict)
@@ -4989,9 +5003,10 @@ def _install_bootstrap_cache_from_raw(
     """Install the bootstrap cache from an already-parsed raw config mapping.
 
     TASK-21124: replicates exactly the success tail of
-    `_load_cli_config_bootstrap_unlocked` (merge the programmatic defaults,
-    decrypt strictly, publish cache + source, retire any recorded parse
-    failure) without re-reading or re-parsing the file. Used by
+    `_load_cli_config_bootstrap_unlocked` (migrate in memory, TASK-42131;
+    merge the programmatic defaults, decrypt strictly, publish cache +
+    source, retire any recorded parse failure) without re-reading or
+    re-parsing the file. Used by
     `_publish_runtime_config_unlocked` with the verify parse-back a write
     just produced. Must be called with `_config_file_lock` held.
 
@@ -5015,7 +5030,7 @@ def _install_bootstrap_cache_from_raw(
 
     if config_path is None:
         config_path = _get_effective_config_path()
-    merged = _merge_user_config_over_shipped_defaults(raw_config)
+    merged = _merge_user_config_over_shipped_defaults(_migrated_raw_config(raw_config)[0])
     decryption = _decrypt_config_section_with_status(merged, strict=True)
     if not decryption.succeeded:
         return None
@@ -5231,9 +5246,9 @@ def replace_hooks_config_snapshot(
 def _atomic_config_values_from_raw(
     config_data: Mapping[str, Any],
 ) -> Dict[str, Any]:
-    """Merge and decrypt the exact raw mapping already read under the write lock."""
+    """Migrate, merge and decrypt the exact raw mapping read under the write lock."""
 
-    merged = _merge_user_config_over_shipped_defaults(config_data)
+    merged = _merge_user_config_over_shipped_defaults(_migrated_raw_config(config_data)[0])
     decryption = _decrypt_config_section_with_status(merged, strict=True)
     if not decryption.succeeded:
         raise ValueError("Authoritative configuration could not be decrypted")
