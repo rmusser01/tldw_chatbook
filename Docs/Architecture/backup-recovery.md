@@ -180,9 +180,9 @@ its profile co-ownership check. Absent folder roots, files whose folder is
 gone, replaced or a mount point, roots registered before the evidence existed,
 and any root while a remap is pending stay strict. The folder evidence is
 an inode number only (TASK-34200 dropped the device), so one residual risk
-remains: a different drive mounted at the same path whose root folder has the
-same inode number passes for the registered folder. The mount-point check
-covers a file directly in a mounted folder, not one deeper in it.
+remains: on a different drive mounted at the same path, a folder at the
+registered path whose inode number matches passes for the registered folder.
+The mount-point check covers only a file directly in the mounted folder.
 `_deleted_file_root_scopes` always reads the default bootstrap root's
 registry, so under any other authority an absent root stays strict. While a deleted root exists,
 admission evidence is not reused (`_metadata_evidence`), so admission takes the
