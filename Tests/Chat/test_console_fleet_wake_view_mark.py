@@ -44,6 +44,12 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 
+# TASK-42157: the wake rig reads config in-process (storage and hook
+# admission). Under the per-test profile redirect those reads refused with
+# RecoveryRequired("raw_source_selection_changed") and no wake delivered, so
+# this file keeps the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _marked(app, conversation_id) -> bool:
     return app.conversation_local_marks_service.has_mark(
