@@ -31,12 +31,15 @@ class _ContestedLockProbe:
         self.second_acquired = threading.Event()
         self.order: list[str] = []
 
-    def __enter__(self):
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        # The guarded store wrapper takes the outer hold with
+        # acquire(timeout=...) / release(), not the context manager.
         depth = getattr(self._local, "depth", 0)
         thread_name = threading.current_thread().name
         if depth == 0 and thread_name == "second-mutator":
             self.second_attempted.set()
-        self._lock.acquire()
+        if not self._lock.acquire(blocking, timeout):
+            return False
         self._local.depth = depth + 1
         if depth == 0 and thread_name == "first-mutator":
             self.order.append("first_acquired")
@@ -45,14 +48,21 @@ class _ContestedLockProbe:
         elif depth == 0 and thread_name == "second-mutator":
             self.order.append("second_acquired")
             self.second_acquired.set()
-        return self
+        return True
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def release(self) -> None:
         depth = self._local.depth - 1
         if depth == 0 and threading.current_thread().name == "first-mutator":
             self.order.append("first_released")
         self._local.depth = depth
         self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.release()
 
 
 def _temporary_store_paths(path) -> list:
@@ -64,6 +74,29 @@ def _temporary_store_paths(path) -> list:
 
 
 def _fail_directory_fsync(monkeypatch, directory, error_number: int) -> None:
+    if os.name == "nt":
+        # Windows opens the directory through platform_files.os and flushes it
+        # with the native barrier (TASK-33422); stdlib os.open never sees it.
+        from tldw_chatbook.Utils import file_durability, platform_files
+
+        native_open = platform_files.os.open
+        native_flush = file_durability.flush_directory
+        native_fd: list[int] = []
+
+        def tracked_native_open(path, flags, *args, **kwargs):
+            fd = native_open(path, flags, *args, **kwargs)
+            if os.fspath(path) == os.fspath(directory):
+                native_fd.append(fd)
+            return fd
+
+        def controlled_flush(fd):
+            if native_fd and fd == native_fd[-1]:
+                raise OSError(error_number, os.strerror(error_number))
+            return native_flush(fd)
+
+        monkeypatch.setattr(platform_files.os, "open", tracked_native_open)
+        monkeypatch.setattr(file_durability, "flush_directory", controlled_flush)
+        return
     original_open = permission_store_module.os.open
     original_fsync = permission_store_module.os.fsync
     directory_fd: list[int] = []
@@ -143,7 +176,9 @@ def test_two_store_instances_share_one_path_fence(tmp_path, monkeypatch):
     path = tmp_path / "permissions.json"
     probe = _ContestedLockProbe()
     resolved = path.expanduser().resolve(strict=False)
-    monkeypatch.setitem(permission_store_module._PATH_LOCKS, resolved, probe)
+    fence = permission_store_module._PermissionPathFence()
+    fence.lock = probe
+    monkeypatch.setitem(permission_store_module._PATH_LOCKS, resolved, fence)
     first = MCPPermissionStore(path)
     second = MCPPermissionStore(path)
     assert first._path_lock is second._path_lock is probe
@@ -272,6 +307,15 @@ def test_save_propagates_real_directory_fsync_failure(tmp_path, monkeypatch):
     assert _temporary_store_paths(path) == []
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason=(
+        "Windows' native directory barrier propagates every errno by design "
+        "(windows_files.flush_directory; Tests/Backup_Recovery/"
+        "test_activation_mcp_remote.py::"
+        "test_remote_permission_writer_uses_windows_directory_barrier)"
+    ),
+)
 @pytest.mark.parametrize(
     "unsupported_errno",
     sorted(
