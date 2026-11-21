@@ -37,7 +37,7 @@ from Tests.UI.test_console_provider_error_copy import (
     answer_http,
     real_provider_adapter,
 )
-from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole, ConsoleRunStatus
 from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
 from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
@@ -294,3 +294,53 @@ async def test_an_unknown_delivery_reads_as_local_and_blocks_the_header(
         assert project_console_send_authority(
             h.console._build_console_inspector_state(None)
         ).run.startswith("Blocked")
+
+
+@pytest.mark.asyncio
+async def test_a_recovered_retry_keeps_regenerate_and_the_next_turn_captured(
+    tmp_path, monkeypatch
+):
+    """.6 AC#2 with #3346's mix-in attempts: the recovered turn stays usable.
+
+    The Retry's run is a second run of the turn's one mix-in attempt, which
+    keeps its first trace call. Regenerating that reply and sending the next
+    turn must both still work with capture on.
+    """
+    async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
+        posts: list[str] = []
+        callout = await paused_after_429(h, monkeypatch, "refused", posts)
+        await press(h, callout, "retry")
+        await _until(
+            h.pilot,
+            lambda: h.controller.run_state.status is ConsoleRunStatus.COMPLETED,
+            timeout=30.0,
+            what=f"the retry did not complete: {h.controller.run_state}",
+        )
+        reply = [
+            m
+            for m in h.store.messages_for_session(h.session.id)
+            if m.role is ConsoleMessageRole.ASSISTANT
+        ][-1]
+        assert (await h.controller.regenerate_message(reply.id)).accepted
+        await _send(h, "Name another color")
+        await _until(
+            h.pilot,
+            lambda: h.controller.run_state.status is ConsoleRunStatus.COMPLETED,
+            timeout=30.0,
+            what=f"the next turn did not complete: {h.controller.run_state}",
+        )
+
+        assert len(posts) == 4, posts  # 429, Retry, regenerate, next turn
+        with h.database.transaction() as cursor:
+            states = [
+                row[0]
+                for row in cursor.execute(
+                    "SELECT state FROM console_trace_calls ORDER BY created_at"
+                ).fetchall()
+            ]
+            replaced = cursor.execute(
+                "SELECT COUNT(*) FROM console_prompt_mixin_attempts "
+                "WHERE replaces_attempt_id IS NOT NULL"
+            ).fetchone()[0]
+        assert states == ["error", "complete", "complete"], states
+        assert replaced == 1

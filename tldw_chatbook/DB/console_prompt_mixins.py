@@ -479,7 +479,13 @@ def copy_conversation_mixins(
 def bind_attempt_trace_call(
     cursor: sqlite3.Cursor, *, conversation_id: str, user_message_id: str, call_id: str
 ) -> None:
-    """Bind the first captured call using its still-owned native dispatch checkpoint."""
+    """Bind the first captured call using its still-owned native dispatch checkpoint.
+
+    A later run of the same turn re-dispatches the same attempt (the trace
+    card's Retry after its retry reserved nothing). Its first call keeps the
+    attempt's first binding, which the schema makes immutable (TASK-33621.6);
+    refusing it rolled that whole reservation back, so Retry never sent.
+    """
     _require_transaction(cursor)
     checkpoint = cursor.execute(
         "SELECT attempt_id,assistant_message_id FROM console_dispatch_checkpoints "
@@ -497,7 +503,21 @@ def bind_attempt_trace_call(
         "AND (trace_call_id IS NULL OR trace_call_id=?)",
         (call_id, conversation_id, attempt_id, assistant_id, call_id),
     ).rowcount
-    if changed != 1:
+    if changed == 1:
+        return
+    redispatch = cursor.execute(
+        "SELECT 1 FROM console_prompt_mixin_attempts a "
+        "JOIN console_trace_calls bound ON bound.call_id=a.trace_call_id "
+        "JOIN console_trace_owners o ON o.owner_id=bound.owner_id "
+        "JOIN console_trace_calls later ON later.call_id=? "
+        "WHERE a.conversation_id=? AND a.attempt_id=? AND a.assistant_message_id=? "
+        "AND o.conversation_id=a.conversation_id AND bound.turn_id=? "
+        "AND bound.call_sequence=0 AND later.owner_id=bound.owner_id "
+        "AND later.turn_id=bound.turn_id AND later.call_sequence=0 "
+        "AND later.run_id<>bound.run_id",
+        (call_id, conversation_id, attempt_id, assistant_id, user_message_id),
+    ).fetchone()
+    if redispatch is None:
         raise MixinSnapshotUnavailableError("mixin_trace_owner_unavailable")
 
 
