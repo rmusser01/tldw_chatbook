@@ -908,6 +908,72 @@ async def test_session_fence_keeps_only_a_weak_handle_on_a_cancelled_delivery():
     assert handle() is None, "the fence kept a strong reference to its delivery"
 
 
+@pytest.mark.asyncio
+async def test_maintenance_drain_waits_for_a_delivery_a_session_close_cancelled():
+    """TASK-42152: the session fence drops the delivery it cancels from
+    `_delivery_tasks`, and the delivery still settles its attempt from its
+    `finally`. A backup's maintenance drain must wait for that before it
+    reports drained. One that never settles still ends the drain False at its
+    deadline, and the drain keeps no reference to it."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    release = asyncio.Event()
+    stop = []
+
+    async def settles_when_released():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await release.wait()
+
+    async def never_settles():
+        while not stop:  # the test's teardown ends it after a failure
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                continue
+
+    controller = ConsoleChatController(store=ConsoleChatStore(), provider_gateway=None)
+    wake = controller.fleet_wake
+    try:
+        controller.maintenance_close_admission()
+        settling = asyncio.create_task(settles_when_released())
+        await asyncio.sleep(0)
+        wake._delivery_tasks[settling] = "closing"
+        wake.fence_conversation("closing", generation=1)
+        await asyncio.sleep(0)
+        assert not wake._delivery_tasks and not settling.done(), (
+            "precondition: the fence dropped the delivery, which is still settling"
+        )
+        drain = asyncio.create_task(
+            controller.maintenance_drain(time.monotonic() + 5)
+        )
+        await asyncio.sleep(0.2)
+        assert not drain.done(), (
+            "the drain reported drained while the delivery a session close "
+            "cancelled was still settling its attempt"
+        )
+        release.set()
+        assert await drain is True
+        assert settling.done()
+
+        stuck = asyncio.create_task(never_settles())
+        await asyncio.sleep(0)
+        wake._delivery_tasks[stuck] = "stuck"
+        wake.fence_conversation("stuck", generation=1)
+        assert await controller.maintenance_drain(time.monotonic() + 0.1) is False
+        handle = weakref.ref(stuck)
+        del stuck
+        await asyncio.sleep(0)  # drop the loop handle that resumed this await
+        gc.collect()
+        assert handle() is None, "the drain kept a strong reference to the delivery"
+    finally:
+        stop.append(True)
+        release.set()
+        await controller.shutdown()
+
+
 # ---------------------------------------------------------------------------
 # AC#3's phantom-wake case, at the launch fire point.
 # ---------------------------------------------------------------------------
