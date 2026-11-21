@@ -22,6 +22,7 @@ from .console_configuration_capture import (
     _mcp_attachment_source,
     _require_mcp_attachment_source,
     capture_console_turn_configuration,
+    capture_skill_context_maximum,
 )
 from .console_preparation_reads import run_preparation_read
 from .console_turn_context import (
@@ -1776,6 +1777,26 @@ async def capture_console_turn_configuration_owned(
         from .console_chat_controller import capture_project_instruction_authority
 
         current()
+        # Reads that take their own storage operation -- skill trust, the RAG
+        # profile store -- run before the Workspace DB operation below is held:
+        # admission refuses a nested acquisition of a different path, which
+        # killed every send once a user skill was installed (#3347) and
+        # silently dropped the RAG profile's top_k.
+        skill_maximum = (
+            {}
+            if planning is not None
+            or _prepared_skills is not None
+            or _deferred_skills is not None
+            else {
+                "_skill_context_maximum": capture_skill_context_maximum(
+                    app, selection.skill_workspace_id, _plugin_service=refs.plugin
+                )
+            }
+        )
+        rag = {} if selection.rag_defaults is None else dict(selection.rag_defaults)
+        if planning is None and "top_k" not in rag:
+            rag["top_k"] = library_rag_profile_top_k()
+        current()
         with ExitStack() as scope:
             databases = []
             for database in (
@@ -1809,9 +1830,6 @@ async def capture_console_turn_configuration_owned(
             tools["session_ephemeral"] = bool(session.ephemeral)
             if "agent_run_budget_maximum" not in tools:
                 tools["agent_run_budget_maximum"] = console_run_budget()
-            rag = {} if selection.rag_defaults is None else dict(selection.rag_defaults)
-            if planning is None and "top_k" not in rag:
-                rag["top_k"] = library_rag_profile_top_k()
             current()
             result = capture_console_turn_configuration(
                 app,
@@ -1841,7 +1859,7 @@ async def capture_console_turn_configuration_owned(
                         "_captured_prompt_transform_inputs": {},
                     }
                     if planning is not None
-                    else {}
+                    else skill_maximum
                     if _prepared_skills is None and _deferred_skills is None
                     else {
                         "_skill_context_maximum": (
