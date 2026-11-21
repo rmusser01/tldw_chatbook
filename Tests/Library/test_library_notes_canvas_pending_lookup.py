@@ -41,9 +41,11 @@ on the button (``ExternalModelView``, ``SpeechTTSSettingsPanel``).
 TASK-42150 moved the keeper again, to ``App._prune``, which every removal goes
 through: two more routes hold a press across a child swap that is not a
 recompose (``remove_children()`` or ``remove()``, then ``mount()``), the
-message tests hold a submit, toggle or selection across a recompose, a press
-below a popped screen still never reaches the App, and the last test pins
-the install.
+message tests hold Enter in an Input and on a ListView across a recompose, a
+Select's mount echo from a removed generation is not handed on, a press below
+a popped screen still never reaches the App, and the last test pins the
+install. Since review r19rc-rev1 the holds are driven by real input (a click,
+or Enter on the focused sender).
 
 Fast lane: a bare Textual app (``run_test``), no product app boot; the
 fallback and recompose tests mount one ``LibraryNotesCanvas`` under the app
@@ -53,7 +55,6 @@ stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
 from __future__ import annotations
 
 import asyncio
-import inspect
 from pathlib import Path
 from typing import ClassVar
 
@@ -68,14 +69,12 @@ from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import (
     Button,
-    Checkbox,
     Input,
     Label,
     ListItem,
     ListView,
     Select,
     Static,
-    Switch,
 )
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
@@ -547,36 +546,45 @@ class _RouteApp(App):
         return _RouteScreen(self._children)
 
 
-async def _hold_a_press_across(opener: Widget, closing, trigger, act=None) -> None:
-    """Press ``opener`` (or run ``act``, another user action on it) while its
-    pump is held, run ``trigger``, and release the message only once
-    ``closing`` (the child being removed above it) is closing, so the order
-    is driven, not timed."""
+async def _hold_a_press_across(
+    pilot, opener: Widget, closing, trigger, action="press", user=None
+) -> None:
+    """Drive real input on ``opener`` (a click, or ``user``: a key), hold the
+    message its ``action`` posts in the sender's own queue, run ``trigger``,
+    and release the message only once ``closing`` (the child being removed
+    above it) is closing, so the order is driven, not timed."""
     held = asyncio.Event()
     release = asyncio.Event()
+    real = getattr(opener, action)
 
-    async def hold() -> None:
-        held.set()
-        await release.wait()
+    def hold_then_act(*args, **kwargs):
+        delattr(opener, action)  # once
 
-    opener.call_later(hold)
+        async def hold() -> None:
+            held.set()
+            await release.wait()
+
+        opener.call_later(hold)  # ahead of the message ``real`` posts
+        return real(*args, **kwargs)
+
+    setattr(opener, action, hold_then_act)
+    # Pilot waits for every pump to go idle, so it runs beside the hold.
+    acting = asyncio.ensure_future(user() if user else pilot.click(opener))
     pending = None
     try:
         await asyncio.wait_for(held.wait(), timeout=5)
-        acted = (act or opener.press)()  # queued in the sender, behind ``hold``
-        if inspect.isawaitable(acted):
-            await acted
         pending = trigger()
         deadline = asyncio.get_running_loop().time() + 5
         while not closing._closing:
             assert asyncio.get_running_loop().time() < deadline, (
-                "the recompose never closed the child above the button"
+                "the recompose never closed the child above the sender"
             )
             await asyncio.sleep(0)
     finally:
         release.set()
     if isinstance(pending, asyncio.Future):  # an awaited ``recompose()``
         await asyncio.wait_for(pending, timeout=5)
+    await asyncio.wait_for(acting, timeout=30)
 
 
 async def _settle_until(pilot, done) -> None:
@@ -609,7 +617,7 @@ async def test_every_removal_route_keeps_a_press_queued_below_a_removed_child(ro
         container = screen if recomposing is None else screen.query_one(recomposing)
         opener = screen.query_one("#opener", Button)
         await _hold_a_press_across(
-            opener, screen.query_one(removed), lambda: trigger(container)
+            pilot, opener, screen.query_one(removed), lambda: trigger(container)
         )
         await _settle_until(pilot, lambda: screen.handled)
 
@@ -619,20 +627,14 @@ async def test_every_removal_route_keeps_a_press_queued_below_a_removed_child(ro
         assert screen.query_one("#opener") is not opener, "nothing was rebuilt"
 
 
-# TASK-42150: the other user actions the app handles above their sender.
-# message: (the sender, the user's action on it)
+# TASK-42150: the other user actions the app handles above their sender, each
+# driven by a real key. message: (the sender, the action the key runs)
 _MESSAGES = {
-    "Checkbox.Changed": (lambda: Checkbox("on", id="opener"), lambda sender: sender.toggle()),
-    "Input.Submitted": (lambda: Input("typed", id="opener"), lambda sender: sender.action_submit()),
+    "Input.Submitted": (lambda: Input("typed", id="opener"), "action_submit"),
     "ListView.Selected": (
         lambda: ListView(ListItem(Label("a")), id="opener"),
-        lambda sender: sender.action_select_cursor(),
+        "action_select_cursor",
     ),
-    "Select.Changed": (
-        lambda: Select([("a", 1), ("b", 2)], value=1, id="opener"),
-        lambda sender: setattr(sender, "value", 2),
-    ),
-    "Switch.Changed": (lambda: Switch(id="opener"), lambda sender: sender.toggle()),
 }
 
 
@@ -654,11 +656,8 @@ class _MessageScreen(Screen):
     def compose(self) -> ComposeResult:
         yield _MessageContainer(self._sender, id="container")
 
-    @on(Checkbox.Changed, "#opener")
     @on(Input.Submitted, "#opener")
     @on(ListView.Selected, "#opener")
-    @on(Select.Changed, "#opener")
-    @on(Switch.Changed, "#opener")
     def _record(self, event) -> None:
         self.seen.append((type(event).__qualname__, event.control))
 
@@ -675,26 +674,105 @@ class _MessageApp(App):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("message", sorted(_MESSAGES))
 async def test_a_user_message_queued_below_a_removed_child_is_kept(message):
-    """TASK-42150: a submit, toggle or selection queued below a removed child
-    reaches the screen once, as a press does. Same hold as the press routes."""
-    sender, act = _MESSAGES[message]
+    """TASK-42150: Enter in an Input or on a ListView, queued below a removed
+    child, reaches the screen once, as a press does. Same hold as the press
+    routes, driven by the real key."""
+    sender, action = _MESSAGES[message]
     app = _MessageApp(sender)
     async with app.run_test(size=(40, 12)) as pilot:
         await pilot.pause()
         screen = app.screen
         opener = screen.query_one("#opener")
+        opener.focus()
+        await pilot.pause()
         screen.seen.clear()
         await _hold_a_press_across(
+            pilot,
             opener,
             screen.query_one("#toolbar"),
             lambda: _recompose(screen.query_one("#container")),
-            act=lambda: act(opener),
+            action=action,
+            user=lambda: pilot.press("enter"),
         )
         await _settle_until(pilot, lambda: any(c is opener for _, c in screen.seen))
 
         mine = [name for name, control in screen.seen if control is opener]
         assert mine == [message], f"the recompose dropped the {message}"
         assert screen.query_one("#opener") is not opener, "nothing recomposed"
+
+
+class _EchoSelect(Select):
+    """Holds its pump, queued ahead of the echo its own mount posts."""
+
+    def __init__(self, *args, held, release, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._held, self._release = held, release
+
+    def _on_mount(self, event) -> None:
+        async def hold() -> None:
+            self._held.set()
+            await self._release.wait()
+
+        self.call_later(hold)
+        super()._on_mount(event)
+
+
+class _EchoScreen(Screen):
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: list[tuple[object, bool]] = []
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(id="container")
+
+    @on(Select.Changed, "#picker")
+    def _record(self, event: Select.Changed) -> None:
+        self.seen.append((event.value, event.control.is_attached))
+
+
+class _EchoApp(App):
+    def get_default_screen(self) -> Screen:
+        return _EchoScreen()
+
+
+@pytest.mark.asyncio
+async def test_a_mount_echo_below_a_removed_child_is_not_forwarded():
+    """TASK-42150 review r19rc-rev1: a Select posts ``Changed`` when it mounts
+    and on every programmatic ``value =``, not only when the user picks. An
+    echo from a removed generation must not reach the screen as if the user
+    had chosen it, so ``Select.Changed`` (like ``Checkbox``'s and ``Switch``'s)
+    is not kept: only the new generation's own echo arrives."""
+    held, release = asyncio.Event(), asyncio.Event()
+    app = _EchoApp()
+    async with app.run_test(size=(40, 10)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        container = screen.query_one("#container")
+        stale = _EchoSelect(
+            [("a", 1), ("b", 2)], value=1, id="picker", held=held, release=release
+        )
+        await container.mount(Horizontal(stale, id="toolbar"))
+        await asyncio.wait_for(held.wait(), timeout=5)
+        toolbar = screen.query_one("#toolbar")
+
+        async def swap() -> None:  # the next generation, on the container's pump
+            await container.remove_children()
+            await container.mount(
+                Horizontal(Select([("a", 1), ("b", 2)], value=2, id="picker"), id="toolbar")
+            )
+
+        container.call_later(swap)
+        try:
+            deadline = asyncio.get_running_loop().time() + 5
+            while not toolbar._closing:
+                assert asyncio.get_running_loop().time() < deadline, "no swap"
+                await asyncio.sleep(0)
+        finally:
+            release.set()
+        await _settle_until(pilot, lambda: screen.seen)
+        await pilot.pause(0.2)
+
+        assert screen.seen == [(2, True)], "a removed Select's echo was forwarded"
 
 
 class _PoppedApp(App):
@@ -718,7 +796,7 @@ async def test_a_press_queued_in_a_popped_screen_never_reaches_the_app():
         await pilot.pause()
         opener = app.screen.query_one("#opener", Button)
         await _hold_a_press_across(
-            opener, app.screen.query_one("#toolbar"), app.pop_screen
+            pilot, opener, app.screen.query_one("#toolbar"), app.pop_screen
         )
         await pilot.pause(0.2)
 
@@ -732,8 +810,10 @@ class _RemovedApp(App):
 
 @pytest.mark.asyncio
 async def test_a_removed_container_recompose_never_waits_for_its_lock():
-    """TASK-42014 review r18lib-rev2: like native ``Widget.recompose``, the
-    keeper's wrapper returns at once for a removed container, before the lock.
+    """TASK-42014 review r18lib-rev2, kept after TASK-42150 removed the
+    ``Widget.recompose`` wrapper: native ``Widget.recompose`` returns at once
+    for a removed container, before its lock, and the keeper on ``App._prune``
+    never takes the lock at all.
 
     A child's handler recomposes its container after the container's
     ``remove()``, while another task holds the container's lock and awaits
@@ -816,7 +896,7 @@ async def test_an_external_model_action_pressed_across_a_reload_still_runs(tmp_p
         view = app.query_one(ExternalModelView)
         change = view.query_one("#external-model-change-v2_int8", Button)
         await _hold_a_press_across(
-            change, view.query_one(".external-model-list"), view.reload
+            pilot, change, view.query_one(".external-model-list"), view.reload
         )
         await _settle_until(pilot, lambda: app.requests)
 
@@ -847,8 +927,16 @@ async def test_a_speech_credential_action_pressed_across_a_recompose_still_runs(
         panel = app.query_one(SpeechTTSSettingsPanel)
         edit = panel.query_one("#settings-speech-openai-credential-edit", Button)
         closing = next(node for node in edit.ancestors if node.parent is panel)
+        # Without the app stylesheet the row covers the button in a mouse hit
+        # test, so the real input here is Enter on the focused button.
+        edit.focus()
+        await pilot.pause()
         await _hold_a_press_across(
-            edit, closing, lambda: panel.refresh(recompose=True)
+            pilot,
+            edit,
+            closing,
+            lambda: panel.refresh(recompose=True),
+            user=lambda: pilot.press("enter"),
         )
         await _settle_until(pilot, lambda: app.screen is not app.screen_stack[0])
 

@@ -507,17 +507,16 @@ QUEUED_MESSAGE_KEEPER = "_tldw_queued_message_keeper"
 def _kept_messages() -> tuple[tuple[type, ...], tuple[type, ...]]:
     """The widgets whose queued user action a removal keeps, and the actions.
 
-    TASK-42150 records why each is here: the app handles each above its
-    sender, in containers that remove the sender's parent.
+    TASK-42150: only messages that a user's own input posts. ``Select``,
+    ``Checkbox`` and ``Switch`` post ``Changed`` on a mount echo or a
+    programmatic ``value =`` as well, so one from a removed generation is not
+    handed on as if the user had chosen it.
     """
-    from textual.widgets import Button, Checkbox, Input, ListView, Select, Switch
+    from textual.widgets import Button, Input, ListView
 
-    return (Button, Input, Checkbox, Switch, Select, ListView), (
+    return (Button, Input, ListView), (
         Button.Pressed,
         Input.Submitted,
-        Checkbox.Changed,
-        Switch.Changed,
-        Select.Changed,
         ListView.Selected,
     )
 
