@@ -1162,7 +1162,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-19, TASK-41903 (owner rule: raise by the change's own lines):
     # 7083 -> 7087 (+4) -- a goal iteration builds the cold skill trust
     # before its synchronous capture.
-    "tldw_chatbook/Chat/console_runtime.py": 7087,
+    # 2026-11-20, TASK-42074 (owner rule: raise by the change's own lines):
+    # 7087 -> 7089 (+2) -- dispose also joins the wake deliveries a session
+    # close cancelled.
+    "tldw_chatbook/Chat/console_runtime.py": 7089,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in
