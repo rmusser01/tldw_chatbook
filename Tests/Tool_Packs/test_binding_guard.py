@@ -631,7 +631,9 @@ def test_process_control_exception_propagates_without_marker_clear(
         registry.set_assistant_defaults(
             "w-1", intended, tool_profile_confirmation_token=token
         )
-    assert registry.get_workspace("w-1").assistant_defaults == intended
+    # The store's transaction rolls back on BaseException (TASK-32801.5), so an
+    # interrupt raised inside the write block leaves no binding behind.
+    assert registry.get_workspace("w-1").assistant_defaults is None
     assert _lifecycle(store)["first_bind_confirmation_required"] is True
 
 

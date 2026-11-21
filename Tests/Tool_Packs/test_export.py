@@ -138,6 +138,9 @@ def test_export_rejects_a_subclass_that_overrides_generic_export_capture(
         )
 
 
+# The real V1 inventory builds LocalToolProvider default specs, which read
+# the config source admitted during collection (see test_local_tool_provider).
+@pytest.mark.bootstrap_profile
 def test_v1_zero_tool_namespace_receives_a_portable_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

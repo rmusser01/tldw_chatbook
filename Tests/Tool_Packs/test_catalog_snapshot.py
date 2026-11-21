@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+import json
 from pathlib import Path
 
 import pytest
@@ -206,6 +207,9 @@ def _hub(name: str, *, server_key: str = "local:docs") -> HubTool:
     )
 
 
+# The real V1 inventory builds LocalToolProvider default specs, which read
+# the config source admitted during collection (see test_local_tool_provider).
+@pytest.mark.bootstrap_profile
 def test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private(
     tmp_path: Path,
 ) -> None:
@@ -271,7 +275,10 @@ def test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private(
         operation="export",
     )
     assert str(sentinel_root).encode() not in schema_bytes
-    assert b"root_alias" not in schema_bytes
+    # Canonical JSON doubles Windows backslashes; check the escaped form too.
+    assert json.dumps(str(sentinel_root))[1:-1].encode() not in schema_bytes
+    # A bound provider adds a root_alias property; prose may mention the word.
+    assert b'"root_alias"' not in schema_bytes
 
 
 @pytest.mark.parametrize(
