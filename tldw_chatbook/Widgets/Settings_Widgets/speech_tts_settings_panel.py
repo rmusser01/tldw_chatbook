@@ -1616,6 +1616,7 @@ class SpeechTTSSettingsPanel(Vertical):
             Button(
                 action_label,
                 id=f"settings-speech-{provider_id}-credential-edit",
+                classes="settings-speech-credential-action",
                 compact=True,
                 disabled=self._latest_request_id is not None,
             ),
@@ -1625,6 +1626,7 @@ class SpeechTTSSettingsPanel(Vertical):
                 Button(
                     "Clear saved credential",
                     id=f"settings-speech-{provider_id}-credential-clear",
+                    classes="settings-speech-credential-action",
                     compact=True,
                     variant="warning",
                     disabled=self._latest_request_id is not None,
@@ -6027,7 +6029,7 @@ class SpeechTTSSettingsPanel(Vertical):
         }
         self.app.post_message(NavigateToScreen("stts", context))
 
-    @on(Button.Pressed, ".settings-speech-credential Button")
+    @on(Button.Pressed, ".settings-speech-credential-action")  # TASK-42014
     def handle_credential_action(self, event: Button.Pressed) -> None:
         event.stop()
         button_id = event.button.id or ""

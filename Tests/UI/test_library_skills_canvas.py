@@ -3827,10 +3827,23 @@ async def test_skills_import_success_offers_review_button():
         assert "demo" in str(review.label)
 
 
+def _as_current_screen(fake):
+    """Make a fake screen the attached, current one (TASK-42012).
+
+    ``_library_screen_is_current`` returns False for a screen it cannot
+    prove attached and on top, so a fake handler test opts in explicitly.
+    """
+    fake.is_attached = True
+    if not hasattr(fake, "app"):
+        fake.app = SimpleNamespace()
+    fake.app.screen = fake
+    return fake
+
+
 @pytest.mark.asyncio
 async def test_handle_library_skills_import_review_opens_editor():
     worker_calls: list[dict] = []
-    fake = SimpleNamespace(
+    fake = _as_current_screen(SimpleNamespace(
         _skills_state=SimpleNamespace(view="list", selected_skill_name=""),
         _library_skill_import_coordinator=LibrarySkillImportCoordinator(
             SimpleNamespace()
@@ -3842,7 +3855,7 @@ async def test_handle_library_skills_import_review_opens_editor():
         _refresh_library_skill_detail=lambda name: None,
         run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),
         refresh=lambda recompose=False: None,
-    )
+    ))
     event = SimpleNamespace(stop=lambda: None)
     await LibraryScreen.handle_library_skills_import_review(fake, event)
     assert fake._skills_state.selected_skill_name == "demo"
@@ -3853,9 +3866,9 @@ async def test_handle_library_skills_import_review_opens_editor():
 @pytest.mark.asyncio
 async def test_handle_library_skills_import_browse_folder_pushes_directory_dialog():
     pushed: list[Any] = []
-    fake = SimpleNamespace(
+    fake = _as_current_screen(SimpleNamespace(
         app=SimpleNamespace(push_screen=lambda dialog, cb=None: pushed.append(dialog)),
-    )
+    ))
     event = SimpleNamespace(stop=lambda: None)
     LibraryScreen.handle_library_skills_import_browse_folder(fake, event)
     assert pushed and type(pushed[0]).__name__ == "SelectDirectory"
@@ -4192,7 +4205,7 @@ async def test_import_browse_folder_clears_stale_status_and_review():
         status='Imported "old" · re-review it in the trust panel',
         review_name="old",
     )
-    fake = SimpleNamespace(
+    fake = _as_current_screen(SimpleNamespace(
         _library_skill_import_coordinator=coordinator,
         _library_skills_import_generation=0,
         _library_skills_import_in_flight=False,
@@ -4205,7 +4218,7 @@ async def test_import_browse_folder_clears_stale_status_and_review():
         app=SimpleNamespace(
             push_screen=lambda dialog, cb=None: pushed.update(dialog=dialog, cb=cb)
         ),
-    )
+    ))
     LibraryScreen.handle_library_skills_import_browse_folder(
         fake, SimpleNamespace(stop=lambda: None)
     )
@@ -4225,7 +4238,7 @@ async def test_import_browse_file_clears_stale_status_and_review():
         status='Imported "old" · re-review it in the trust panel',
         review_name="old",
     )
-    fake = SimpleNamespace(
+    fake = _as_current_screen(SimpleNamespace(
         _library_skill_import_coordinator=coordinator,
         _library_skills_import_generation=0,
         _library_skills_import_in_flight=False,
@@ -4238,7 +4251,7 @@ async def test_import_browse_file_clears_stale_status_and_review():
         app=SimpleNamespace(
             push_screen=lambda dialog, cb=None: pushed.update(dialog=dialog, cb=cb)
         ),
-    )
+    ))
     LibraryScreen.handle_library_skills_import_browse(
         fake, SimpleNamespace(stop=lambda: None)
     )
@@ -4252,7 +4265,7 @@ async def test_import_browse_file_clears_stale_status_and_review():
 async def test_late_skill_browse_callback_cannot_replace_accepted_import_outcome():
     """A picker opened before admission cannot write after that generation ran."""
     pushed: dict = {}
-    fake = SimpleNamespace(
+    fake = _as_current_screen(SimpleNamespace(
         _library_skills_import_generation=4,
         _library_skills_import_in_flight=False,
         _library_skills_import_path="/accepted",
@@ -4262,7 +4275,7 @@ async def test_late_skill_browse_callback_cannot_replace_accepted_import_outcome
         app=SimpleNamespace(
             push_screen=lambda dialog, cb=None: pushed.update(dialog=dialog, cb=cb)
         ),
-    )
+    ))
     LibraryScreen.handle_library_skills_import_browse(
         fake, SimpleNamespace(stop=lambda: None)
     )
@@ -4281,14 +4294,14 @@ async def test_late_skill_browse_callback_cannot_replace_accepted_import_outcome
 def test_skill_import_cancel_handler_fails_closed_while_operation_runs():
     """The handler preserves accepted state even if a disabled event is forced."""
     statuses: list[str] = []
-    fake = SimpleNamespace(
+    fake = _as_current_screen(SimpleNamespace(
         _library_skills_import_in_flight=True,
         _library_skills_import_open=True,
         _library_skills_import_path="/accepted",
         _library_skills_import_status="Inspecting/importing…",
         _library_skills_import_review_name="",
         _apply_library_skills_import_status=statuses.append,
-    )
+    ))
 
     LibraryScreen.handle_library_skills_import_cancel(
         fake, SimpleNamespace(stop=lambda: None)

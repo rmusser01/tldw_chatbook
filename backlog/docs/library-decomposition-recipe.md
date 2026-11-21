@@ -285,9 +285,10 @@ literal-string `getattr` that never resolves).
     silently making the cancellation a no-op. Found by reading the
     framework's own source before moving, not by a test failure.
   - **Form B — a shared shell helper's own screen-identity check.**
-    `_library_screen_is_current(screen)` (`screen_helpers.py`) does
-    `current_screen = getattr(screen.app, "screen", screen); return
-    current_screen is screen`. A moved body forwarding bare `self` makes
+    `_library_screen_is_current(screen)` (`screen_helpers.py`) returns
+    `screen.is_attached and screen.app.screen is screen` (since TASK-42012;
+    it used to read `getattr(screen.app, "screen", screen)`). A moved body
+    forwarding bare `self` makes
     this permanently `False` (`real_screen is controller` can never be
     true), silently no-opping every guarded branch. Found the hard way —
     a first draft moved four such names, the wiring/ratchet battery

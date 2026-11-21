@@ -160,7 +160,7 @@ class ExternalModelView(Widget):
             button = Button(
                 label,
                 id=f"external-model-{action}-{key.value}",
-                classes=f"external-model-{action}",
+                classes=f"external-model-action external-model-{action}",
                 variant="primary" if action == "change" else "default",
             )
             button.source_key = key
@@ -218,7 +218,9 @@ class ExternalModelView(Widget):
         status.display = bool(text)
         status.set_class(error, "-error")
 
-    @on(Button.Pressed, ".external-model-actions Button")
+    # TASK-42014: a class on the button itself, so a press a recompose
+    # forwards after detaching the button still matches.
+    @on(Button.Pressed, ".external-model-action")
     def _action_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         key = getattr(event.button, "source_key", None)

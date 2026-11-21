@@ -12,6 +12,7 @@ and advanced RAG (Retrieval-Augmented Generation) capabilities.
 # This must be done before any libraries that use progress bars are imported
 import os
 import sys
+from typing import TYPE_CHECKING
 
 from .Utils.tiktoken_runtime import (
     arm_bundled_tiktoken_runtime as _arm_bundled_tiktoken_runtime,
@@ -401,6 +402,7 @@ def _install_textual_compatibility_shims() -> None:
             lambda self, value: self.update(value),
         )
     _install_zero_width_fold_guard()
+    _install_recompose_press_keeper()
     # Optional allocation adapters: any failure (e.g. missing Textual
     # dist-info metadata in a packaged build) leaves native Textual in place.
     # Both UI and Widgets imports land here; try (and warn) once per process.
@@ -489,6 +491,85 @@ def _install_zero_width_fold_guard() -> None:
     setattr(_wrap_and_format, ZERO_WIDTH_FOLD_GUARD, True)
     _wrap_and_format.__wrapped__ = upstream  # type: ignore[attr-defined]
     Content._wrap_and_format = _wrap_and_format  # type: ignore[method-assign]
+
+
+if TYPE_CHECKING:
+    from textual.widget import Widget
+
+#: Marks the press-keeping ``Widget.recompose`` (idempotent, detectable).
+RECOMPOSE_PRESS_KEEPER = "_tldw_recompose_press_keeper"
+
+
+async def _forward_a_dropped_press(pressed, node, on_message, message) -> None:
+    """Run ``node``'s own dispatch, then hand on a press its closing parent drops."""
+    await on_message(message)
+    if (
+        not isinstance(message, pressed)
+        or message._stop_propagation
+        or node.is_parent_active
+    ):
+        return
+    target = node.parent
+    while target is not None and target._pruning:
+        target = target.parent
+    # Never past a removed screen to the app, nor past the exit fence.
+    if target is not None and not target.is_dom_root and not target._closing:
+        if target.is_attached:
+            message._bubble_to(target)
+
+
+def keep_queued_presses(container: "Widget") -> None:
+    """Deliver the presses that removing ``container``'s children would drop.
+
+    TASK-41703, generalised by TASK-42014. Textual removes old children top
+    down: a removed child stops taking messages first, and a node below it
+    that then handles a queued ``Button.Pressed`` finds its parent closing, so
+    ``MessagePump._on_message`` does not bubble the press. Each node between a
+    button and ``container``'s own child bubbles such a press to its nearest
+    ancestor that is not being removed (``container``, which outlives its
+    recompose) instead. Handlers on the removed nodes it skips do not run.
+    ``Widget.recompose`` calls this; an override that removes children itself
+    calls it first.
+    """
+    from functools import partial
+
+    from textual.widgets import Button
+
+    for button in container.walk_children(Button):
+        node = button
+        while node.parent is not None and node.parent is not container:
+            if "_on_message" not in vars(node):
+                node._on_message = partial(
+                    _forward_a_dropped_press, Button.Pressed, node, node._on_message
+                )
+            node = node.parent
+
+
+def _install_recompose_press_keeper() -> None:
+    """Make every ``Widget.recompose`` keep a press queued below what it removes."""
+    from functools import wraps
+
+    from textual.widget import Widget
+
+    native = Widget.recompose
+    if getattr(native, RECOMPOSE_PRESS_KEEPER, False):
+        return
+
+    @wraps(native)
+    async def recompose(self: "Widget") -> None:
+        # As native does, a detached or pruning widget returns before the lock:
+        # its holder may be awaiting the task that called this (review rev2).
+        if not self.is_attached or self._pruning:
+            return
+        # Under the lock (re-entrant per task) a concurrent batch or recompose
+        # cannot mount buttons between the keeper and the removal.
+        async with self.lock:
+            if self.is_attached and not self._pruning:
+                keep_queued_presses(self)
+            await native(self)
+
+    setattr(recompose, RECOMPOSE_PRESS_KEEPER, True)
+    Widget.recompose = recompose  # type: ignore[method-assign]
 
 
 __version__ = "0.2.3"

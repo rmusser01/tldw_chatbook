@@ -4,6 +4,8 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from textual.app import App, ScreenStackError
+from textual.screen import Screen
 
 from tldw_chatbook.Chat.console_command_suggestions import (
     CommandSuggestion,
@@ -16,6 +18,7 @@ from tldw_chatbook.UI.Console_Modules.command_handoff import (
     record_console_command_dispatch,
 )
 from tldw_chatbook.UI.Library_Modules.screen_helpers import (
+    _library_screen_is_current,
     source_study_context,
     study_handoff_copy,
 )
@@ -161,3 +164,41 @@ def test_library_study_derivations_keep_scope_and_current_source_copy():
         copy["recovery"]
         == "Import sources or create notes first, or open Study globally without Library context."
     )
+
+
+class _StackApp(App):
+    """Lets a test empty the screen stack for one read of ``app.screen``."""
+
+    stack_empty = False
+
+    @property
+    def screen(self):
+        if self.stack_empty:
+            raise ScreenStackError("No screens on stack")
+        return super().screen
+
+
+@pytest.mark.asyncio
+async def test_library_is_current_is_false_past_the_exit_fence():
+    """TASK-42012: a Library callback run during shutdown sees no current screen.
+
+    ``App.exit`` and ``TldwCli._shutdown`` set ``App._exit`` first, which makes
+    ``is_attached`` False while the stack still holds the screen; Textual's
+    ``_close_all`` then empties the stack, and ``app.screen`` raises.
+    """
+    app = _StackApp()
+    async with app.run_test():
+        screen = Screen()
+        await app.push_screen(screen)
+        assert _library_screen_is_current(screen) is True
+        app._exit = True
+        try:
+            fenced = _library_screen_is_current(screen)
+        finally:
+            app._exit = False
+        app.stack_empty = True
+        try:
+            emptied = _library_screen_is_current(screen)
+        finally:
+            app.stack_empty = False
+        assert (fenced, emptied) == (False, False)
