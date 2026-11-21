@@ -122,7 +122,7 @@ def _config_publication_scopes(
     Artifact receipts, native moves and activation still validate every effect.
     """
     from . import bootstrap
-    from .storage_admission import _config_leaf
+    from .storage_admission import _config_leaf, _rowless_config_leaf
 
     retained = _retained_config_items(plan, document)
     recheck_retained_configs(plan)
@@ -160,7 +160,7 @@ def _config_publication_scopes(
             Path(bound) == path or Path(bound) in path.parents for bound in existing
         )
     }
-    imported = {}
+    imported, imported_keys = {}, {}
     for key, item in files.items():
         leaf = _config_leaf(item.owner_id, key)
         if leaf is None or key not in selected or selected[key] not in affected:
@@ -187,6 +187,7 @@ def _config_publication_scopes(
         if path != selector.parent / leaf:
             raise ValueError("publication_config_relation_unverified")
         imported[path] = (item.owner_id, selector)
+        imported_keys[path] = key
     retired = {}
     if plan.local_snapshot is not None and any(
         path in affected for _, path in plan.retire
@@ -241,12 +242,13 @@ def _config_publication_scopes(
         if prepared is None and item.status == "unused" and os.path.lexists(item.path):
             raise ValueError("publication_config_source_changed")
         scopes[item.path] = selector
-    for path, (_, selector) in imported.items():
+    for path, (owner, selector) in imported.items():
         # TASK-42115: the pet owner lists its seed-once marker only while it
         # exists, so a marker this Replace creates has no target row; its
-        # absence stands for the row.
+        # absence stands for the row. Any other leaf needs its row.
         if (
-            path in scopes
+            not _rowless_config_leaf(owner, imported_keys[path])
+            or path in scopes
             or any(row.path == path for row in plan.target.items)
             or selector not in config_paths
             or sum(

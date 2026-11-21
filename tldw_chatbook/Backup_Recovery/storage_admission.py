@@ -741,7 +741,12 @@ def _contains_owned_path(root: Path, selected: Path) -> bool:
 
 
 def _deleted_file_root_scopes(root: Path, selected: Path) -> bool:
-    """Whether ``selected`` is exactly ``root``, a deleted file root (TASK-42115)."""
+    """Whether ``selected`` is exactly ``root``, a deleted file root (TASK-42115).
+
+    It always reads the registry under ``default_bootstrap_root()``: callers do
+    not pass their authority, so under any other authority every absent root
+    stays strict and holds nothing.
+    """
     from .effective_roots import registered_deleted_file_roots
 
     try:
@@ -771,6 +776,21 @@ _CONFIG_CAPTURE_LEAVES = {
         "seeded": "tamagotchi_pets.seeded",
     },
 }
+
+
+#: Fixed leaves an owner lists only while they exist, so a missing target row
+#: stands for absence (TASK-42115: the pet's seed-once marker).
+_CONFIG_ROWLESS_LEAVES = frozenset({("tamagotchi.config", "seeded")})
+
+
+def _rowless_config_leaf(owner, logical_id):
+    """Whether ``logical_id`` is a leaf its owner lists only while it exists."""
+    parts = logical_id.split(":", 3)
+    return (
+        _config_leaf(owner, logical_id) is not None
+        and len(parts) == 4
+        and (owner, parts[3]) in _CONFIG_ROWLESS_LEAVES
+    )
 
 
 def _config_leaf(owner, logical_id):

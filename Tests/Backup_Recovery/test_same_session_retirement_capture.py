@@ -211,3 +211,54 @@ def test_same_session_missing_root_needs_actual_durable_retirement_proof(
             )
         with journal._locked(exclusive=False) as parent:
             assert journal._records(parent) == before
+
+
+@pytest.mark.parametrize("moved", [False, True])
+def test_journal_passes_over_a_deleted_root_only_when_it_moved_none_of_its_targets(
+    tmp_path, monkeypatch, moved
+):
+    """TASK-42115 review: a deleted file root inside two of this journal's
+    artifact targets is passed over only when the journal moved neither of
+    them; if it moved one, the journal's proof still applies and the
+    ambiguous match refuses."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery import journal as journal_module
+
+    folder = tmp_path / "folder"
+    folder.mkdir(mode=0o700)
+    root = folder / "deleted.json"
+    names = ("profile",)
+    prepared = SimpleNamespace(
+        artifacts=[
+            SimpleNamespace(target=str(folder), logical_id="outer"),
+            SimpleNamespace(target=str(root), logical_id="inner"),
+        ]
+    )
+    records = (
+        [SimpleNamespace(event="move_intended", evidence={"logical_id": "inner"})]
+        if moved
+        else []
+    )
+    monkeypatch.setattr(
+        replacement,
+        "_recovery_admission_record",
+        lambda journal, admission_root: (names, prepared, records),
+    )
+    monkeypatch.setattr(
+        journal_module,
+        "_MoveIntent",
+        SimpleNamespace(
+            model_validate=lambda evidence: SimpleNamespace(
+                logical_id=evidence["logical_id"]
+            )
+        ),
+    )
+    call = lambda: replacement._recovery_admission_aliases(  # noqa: E731
+        None, tmp_path, names, (root,), deleted={root}
+    )
+    if moved:
+        with pytest.raises(ValueError, match="recovery_root_unverified"):
+            call()
+    else:
+        assert call() == {}

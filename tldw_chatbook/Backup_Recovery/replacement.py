@@ -2260,7 +2260,9 @@ def _recovery_admission_aliases(journal, admission_root, names, roots, *, delete
             for item in prepared.artifacts
             if resolved == Path(item.target) or Path(item.target) in resolved.parents
         ]
-        unmoved = len(candidates) != 1 or candidates[0].logical_id not in latest
+        # Any candidate this journal moved keeps the journal's proof, so
+        # several candidates still refuse below.
+        unmoved = not any(item.logical_id in latest for item in candidates)
         if unmoved and root in deleted:
             continue
         if len(candidates) != 1:

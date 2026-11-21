@@ -311,6 +311,23 @@ _CASES.update(
             "delete": (),
             "refusal": None,
         },
+        # The most common pet restore (TASK-42115 review): the backup holds the
+        # pet file and its seed-once marker, and the target has neither. The
+        # owner lists the marker only while it exists, so the target has no
+        # row for it; the Replace still creates it, and the later rollback
+        # retires both files.
+        "pets-seeded": {
+            "start": True,
+            "groups": _PET_GROUPS,
+            "stores": (),
+            "extra": (),
+            "files": {
+                "pets": ("pets", "tamagotchi_pets.json", _PET),
+                "seeded": ("pets", "tamagotchi_pets.seeded", "{}\n"),
+            },
+            "delete": (),
+            "refusal": None,
+        },
         # An ungrouped backup (format 1 with no data_groups) Replaces the
         # whole profile; its pet rows are the rows older backups hold.
         "pets-ungrouped": {
@@ -862,7 +879,7 @@ def test_a_backup_then_pet_rotation_keeps_the_app_starting(tmp_path, location):
     )
 
 
-# TASK-42115: the five pet cases the separate-folder test runs, at the default
+# TASK-42115: the pet cases the separate-folder test runs, at the default
 # config location, where the config folder holds recovery-bootstrap and is
 # never a root: the Replace, the pet's start and save, and the later rollback.
 _DEFAULT_PET_CASES = (
@@ -870,6 +887,7 @@ _DEFAULT_PET_CASES = (
     "pets-missing",
     "pets-none",
     "pets-present",
+    "pets-seeded",
     "pets-ungrouped",
 )
 

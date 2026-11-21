@@ -1127,7 +1127,7 @@ def _created_manifest(journal, original, prepared, rows):
 def _config_file_relations(original, prepared, document, target, *, proof=None):
     """Join authenticated incoming IDs to exact original/local owner identities."""
     from .staging import _items
-    from .storage_admission import _config_leaf
+    from .storage_admission import _config_leaf, _rowless_config_leaf
 
     if not _snapshot_target_available(
         original, target
@@ -1185,7 +1185,7 @@ def _config_file_relations(original, prepared, document, target, *, proof=None):
                 len(local_configs) == 1
                 and not local_files
                 and status == "unused"
-                and source.owner == "tamagotchi.config"
+                and _rowless_config_leaf(source.owner, source.logical_id)
             ):
                 # TASK-42115: the pet owner lists its seed-once marker only
                 # while it exists; before the restore created it, no row.
