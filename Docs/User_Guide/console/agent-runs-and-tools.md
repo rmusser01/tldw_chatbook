@@ -2346,6 +2346,14 @@ fails closed instead of silently falling back. Instruction text is untrusted
 user-level context, never system policy and never permission to bypass tool
 approval.
 
+Before a chat's first send to a destination, **Send project instructions?**
+asks whether the folder's instructions may go to that provider. **Proceed**
+sends the turn with them. **Cancel** (also Escape, or no answer in time)
+does not send the turn: a "Not sent" row says the instructions were not
+approved, and Retry on the turn asks again. **Disable** turns project
+instructions off for this chat and also leaves the turn unsent; Retry then
+sends it without them.
+
 Instructions for deeper folders load lazily when a path-aware tool targets
 them. Chatbook walks only the binding-root-to-target chain, composes active
 files broad-to-specific, and asks the model to reconsider the unchanged tool

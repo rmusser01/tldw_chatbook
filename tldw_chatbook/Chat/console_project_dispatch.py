@@ -15,6 +15,63 @@ from tldw_chatbook.Chat.console_project_instructions import (
     project_instruction_notice_key,
 )
 
+#: Session id -> the user's own "cancel"/"disable" answer to the notice, held
+#: until the run it ended is finalized (TASK-33621.98). An automatic cancel
+#: (the selection drifted, or the chat was already accepted) is not recorded
+#: and stays an ordinary cancellation.
+_DECLINED: dict[str, str] = {}
+
+_DECLINED_COPY = {
+    "cancel": (
+        "Not sent: this folder's project instructions were not approved. Retry "
+        "to answer again: Proceed sends them, Disable turns them off for this chat."
+    ),
+    "disable": (
+        "Not sent: project instructions are now off for this chat. Retry to "
+        "send without them."
+    ),
+}
+
+
+def take_declined_notice(session_id: str) -> str | None:
+    """Claim the decline that ended this session's run, if one did."""
+    return _DECLINED.pop(session_id, None)
+
+
+def finalize_declined_notice(
+    controller: Any,
+    assistant_message_id: str,
+    session_id: str,
+    run_id: str | None,
+    decision: str,
+) -> Any:
+    """End a turn whose project-instructions notice was declined (TASK-33621.98).
+
+    It used to end like any runtime cancellation: a failed reply reading only
+    "Response failed." and ``blocker=-`` in the log. The turn is BLOCKED with
+    a "Not sent" row naming the decline; Retry on the turn sends it again.
+    """
+    from .console_chat_controller import ConsoleSubmitResult
+    from .console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+        ConsoleSubmitBlocker,
+    )
+
+    copy = _DECLINED_COPY[decision]
+    if controller._ensure_assistant_placeholder(assistant_message_id, session_id):
+        failed = controller.store.mark_message_failed(assistant_message_id)
+        controller._record_run_assistant_message(run_id, failed)
+    controller._append_failure_system_row(session_id, copy)
+    controller._set_run_state(ConsoleRunState.blocked(copy), session_id=session_id)
+    return ConsoleSubmitResult(
+        True,
+        True,
+        copy,
+        terminal_status=ConsoleRunStatus.BLOCKED,
+        blocker=ConsoleSubmitBlocker.PROJECT_INSTRUCTIONS_DECLINED,
+    )
+
 
 def build_project_dispatch_callbacks(
     controller: Any,
@@ -122,7 +179,10 @@ def build_project_dispatch_callbacks(
         decision = callback(notice) if callback is not None else "cancel"
         if decision not in {"proceed", "cancel", "disable"}:
             decision = "cancel"
-        return on_owning_loop(lambda: commit_and_record(decision))
+        committed = on_owning_loop(lambda: commit_and_record(decision))
+        if committed == decision != "proceed":
+            _DECLINED[session_id] = committed
+        return committed
 
     return (
         project_activation_callback,
