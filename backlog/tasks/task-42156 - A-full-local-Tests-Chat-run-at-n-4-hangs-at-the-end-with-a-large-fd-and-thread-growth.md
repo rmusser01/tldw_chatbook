@@ -41,7 +41,7 @@ The controllers the Console rigs never shut down (filed separately) are a likely
 
 ## Implementation Notes
 
-The idle time does not come from Console controllers. It comes from a few tests that wait out pytest-timeout, and from executor threads in `legacy_hook_ownership.wait_closed`, which has no timeout. The fd growth is SQLite databases tests never close, and the thread growth is storage-admission hold threads. None of these is test infrastructure or one of the controller rigs, so nothing is fixed here; each cause is listed below as a follow-up for the coordinator to file. AC#3 stays open until they are filed.
+The idle time does not come from Console controllers. It comes from a few tests that wait out pytest-timeout, and from executor threads in `legacy_hook_ownership.wait_closed`, which has no timeout. The fd growth is SQLite databases tests never close, and the thread growth is storage-admission hold threads. None of these is test infrastructure or one of the controller rigs, so nothing is fixed here; each cause is listed below as a follow-up for the coordinator to file.
 
 **Run (AC#1).**
 - Command: `run.sh <wt> r19cb-chatbase python <probe runner> --basetemp=<wrapper bt> Tests/Chat -n 4 --timeout=300 -q --tb=line -rfE`, from dc371f0842 with a private `$TMPDIR`. The tree changed during the run only in `maintenance_drain` (TASK-42152) and in files no running test re-collects.
