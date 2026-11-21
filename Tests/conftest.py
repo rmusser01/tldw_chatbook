@@ -59,6 +59,9 @@ _BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT.resolve(strict=True)
 os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
 if _OWNS_BOOTSTRAP_CONFIG_ROOT:
     os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
+    if not _XDIST_WORKER:
+        # TASK-42145: also on exits that never reach pytest_sessionfinish.
+        _real_profile_guard.remove_sandbox_at_exit(_BOOTSTRAP_CONFIG_ROOT)
 _BOOTSTRAP_DATA_HOME = _BOOTSTRAP_CONFIG_ROOT / "data"
 _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
 _BOOTSTRAP_HOME = _BOOTSTRAP_CONFIG_ROOT / "home"

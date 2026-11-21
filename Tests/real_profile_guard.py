@@ -51,6 +51,8 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import shutil
+import signal
 import sys
 import threading
 import traceback
@@ -365,3 +367,37 @@ def collect_worker_refusals(node: WorkerController) -> None:
     refused = workeroutput.pop(WORKEROUTPUT_KEY, ())
     with _lock:
         _worker_violations.extend(refused)
+
+
+def remove_sandbox_at_exit(root: Path) -> None:
+    """Remove an owned ``tldw_test_config_*`` root however the process ends.
+
+    TASK-42145. The conftests remove the root they ``mkdtemp`` in
+    ``pytest_sessionfinish``, which ``pytest --version`` and ``--help`` never
+    reach and a ``SIGTERM`` or ``SIGHUP`` skips (the default action kills at
+    once), so ``$TMPDIR`` collected hundreds of them. ``atexit`` covers every
+    normal exit and, registered before the app is imported, runs after its
+    exit hooks (``storage_admission``'s shutdown rewrites the admission
+    registry into the dead sandbox). The signal handler removes the root, then
+    dies of the same signal, as before. ``SIGKILL`` and ``os._exit`` cannot be
+    caught.
+
+    Args:
+        root: The sandbox root this process created and owns.
+    """
+    atexit.register(shutil.rmtree, root, ignore_errors=True)
+
+    def remove_then_die(signum: int, _frame: object) -> None:
+        shutil.rmtree(root, ignore_errors=True)
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    for name in ("SIGTERM", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        # Leave a handler someone else installed; signal.signal raises
+        # ValueError off the main thread.
+        if sig is not None and signal.getsignal(sig) is signal.SIG_DFL:
+            try:
+                signal.signal(sig, remove_then_die)
+            except ValueError:
+                pass
