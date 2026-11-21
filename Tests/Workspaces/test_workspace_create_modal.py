@@ -216,6 +216,67 @@ async def test_make_active_checkbox_carried_on_result(request, tmp_path):
     assert app.result.make_active is False
 
 
+class _ActivationOrderRegistry:
+    """Wraps a real registry and logs ``set_active_workspace`` calls."""
+
+    def __init__(self, inner: LocalWorkspaceRegistryService, log: list) -> None:
+        self._inner = inner
+        self._log = log
+
+    def set_active_workspace(self, workspace_id):
+        self._log.append(("activate", workspace_id))
+        return self._inner.set_active_workspace(workspace_id)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("make_active", "interview"),
+    [(True, False), (True, True), (False, False)],
+    ids=["make-active", "interview-defers", "not-active"],
+)
+async def test_make_active_takes_effect_before_the_dialog_closes(
+    request, tmp_path, monkeypatch, make_active, interview
+):
+    """The caller's result callback runs later, queued on the opener's pump.
+
+    In process-backed Console the opener resumes first, so a callback-only
+    activation left the previous workspace active for about a second after the
+    dialog closed (TASK-40608 journey: zero bindings on the "active" workspace).
+    With "make active" and no profile interview, the new workspace must already
+    be active when the dialog dismisses. The interview path still defers to the
+    caller's continuation, and an unchecked box never activates.
+    """
+    inner = _registry(tmp_path)
+    inner.ensure_default_workspace()
+    log: list = []
+    original = WorkspaceCreateModal.dismiss_safe_once
+
+    def dismiss(self, result):
+        active = inner.get_active_workspace()
+        log.append(("dismiss", active.workspace_id if active else None))
+        return original(self, result)
+
+    monkeypatch.setattr(WorkspaceCreateModal, "dismiss_safe_once", dismiss)
+    app = _HarnessApp(_ActivationOrderRegistry(inner, log))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Ordered"
+        modal.query_one("#workspace-create-make-active", Checkbox).value = make_active
+        modal.query_one("#workspace-create-profile-interview", Checkbox).value = interview
+        await _click_visible(pilot, "#workspace-create-confirm")
+        await pilot.pause()
+    created = app.result.workspace_id
+    if make_active and not interview:
+        assert log == [("activate", created), ("dismiss", created)]
+    else:
+        assert log == [("dismiss", "workspace-default")]
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_profile_interview_offer_is_opt_in_and_carried_on_result(
