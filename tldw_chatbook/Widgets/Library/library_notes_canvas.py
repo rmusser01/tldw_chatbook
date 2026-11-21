@@ -1751,11 +1751,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
         TASK-34000.29: runs once this recompose's queued follow-ups (the Notes
         identity replays) have run, and only while focus still sits exactly on
-        the landing Textual's reset picked. A replay, a hand-off or the user's
-        own move wins. Only a control with the same id takes it (no stand-in),
-        and only for a resync that stays in one mode (``"editor"`` or, since
-        TASK-34000.29 N-14, ``"list"``): a transition (opening a note,
-        Create, a delete) owns its own landing.
+        the landing Textual's reset picked. A replay, a hand-off, an armed list
+        entry or the user's own move wins. Only a control with the same id
+        takes it (no stand-in), and only for a resync that stays in one mode
+        (``"editor"`` or, since TASK-34000.29 N-14, ``"list"``): a transition
+        (opening a note, Create, a delete) owns its own landing.
         Without this, a replay that was vetoed or replaced left focus on the
         Library grip, and the next sync captured the grip.
         """

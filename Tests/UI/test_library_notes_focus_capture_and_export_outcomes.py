@@ -13,17 +13,18 @@ export (TASK-34000.29, review R0 of polish-1b Task 6).
 - The list-mode same-id refocus yields to an armed list entry: leaving Import
   once with no notes lands on New (TASK-41128), not on the pruned filter.
 
-Two boots of the real ``LibraryScreen`` with the production stylesheet over a
-real ChaChaNotes database (``Tests/UI/test_library_note_editor_feedback_is_
-honest.py``'s profile). The capture window is entered deterministically: the
-work pane's ``compose`` runs after Textual has pruned the old children and
-moved focus, and before the new ones mount. The capture is taken there.
+Three boots of the real ``LibraryScreen`` with the production stylesheet. The
+first two run over a real ChaChaNotes database (``Tests/UI/test_library_note_
+editor_feedback_is_honest.py``'s profile); the third uses the shell's seeded
+test app with no notes, as TASK-41128's own test does. The capture window is
+entered deterministically: the work pane's ``compose`` runs after Textual has
+pruned the old children and moved focus, and before the new ones mount. The
+capture is taken there.
 """
 
 from __future__ import annotations
 
 import hashlib
-from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button
@@ -58,10 +59,6 @@ from Tests.UI.test_library_note_editor_feedback_is_honest import (
 from Tests.UI.library_quit_guard_support import _open_note
 from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
-from tldw_chatbook.Notes.notes_sync_runtime import (
-    NotesSyncRootRuntimeSnapshot,
-    NotesSyncRuntimeSnapshot,
-)
 from tldw_chatbook.Third_Party.textual_fspicker.file_dialog import FileNameInput
 from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -314,21 +311,13 @@ async def test_the_list_refocus_yields_to_an_armed_entry_after_import_once() -> 
     filter, and the exit's ``then`` arms the list entry (TASK-41128). The
     entry's first attempt runs after a refresh. The list-mode same-id refocus
     ran before it and focused the new filter, whose focus event disarmed the
-    entry, so focus stayed in the filter (r10, 6 runs in 10). Every attempt
+    entry, so focus stayed in the filter (PR #3423, 6 runs in 10). Every attempt
     the arm schedules is held until the queued focus events have run, the
     losing order forced, and then released.
     """
 
-    async def abandon_setup(_root_id: str) -> None:
-        return None
-
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=[])
-    root = NotesSyncRootRuntimeSnapshot("root-1", "up_to_date", "sync_now")
-    app.notes_sync_runtime_owner = SimpleNamespace(
-        snapshot=lambda: NotesSyncRuntimeSnapshot("active", "sync_now", (root,)),
-        abandon_setup=abandon_setup,
-    )
     host = LibraryProductionCSSHarness(app)
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)

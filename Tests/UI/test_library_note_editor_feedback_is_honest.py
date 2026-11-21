@@ -15,10 +15,12 @@ Review notes-library-ux-review-2026-10-02, verified on ``bc64fb2272``:
 
 Four boots of the real ``LibraryScreen`` with the production stylesheet over a
 real ChaChaNotes database behind the real Notes scope service (``Index —
-start here`` links to ``Ideas inbox`` through ``note://``). Every claim is a
-real key press, click or button press, and what the user then sees: painted
-text, the toasts, the focused control (with its footer chip), and the file on
-disk.
+start here`` links to ``Ideas inbox`` through ``note://``). Every boot's claim
+is a real key press, click or button press, and what the user then sees:
+painted text, the toasts, the focused control (with its footer chip), and the
+file on disk. Two tests run without a boot: the origin return's deferred retry
+on a controller-shaped fake, and the backlink lookup's worker connection on
+the real scope service.
 """
 
 from __future__ import annotations
@@ -586,12 +588,13 @@ async def test_the_backlink_lookup_retires_the_connection_its_worker_opened(
     """N-26 runs this lookup for every new note; its worker keeps no cache.
 
     ``list_note_backlinks`` ran on a bare ``asyncio.to_thread`` and left the
-    worker thread's ChaChaNotes connection open, where every other finite
-    Notes read retires it (``run_finite_local_worker``). The executor later
-    gave that warm thread to the blank-note GC's delete, which skipped its
-    connection setup and committed before Back had left the editor
+    worker thread's ChaChaNotes connection open, where its neighbours
+    ``list_deleted_notes``, ``_run_folder_repository`` and ``count_in_worker``
+    retire it (``run_finite_local_worker``). The executor later gave that warm
+    thread to the blank-note GC's delete, which skipped its connection setup
+    and committed before Back had left the editor
     (``test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back``
-    read ``'editor'``, r10, 3 runs in 15).
+    read ``'editor'``, PR #3423, 3 runs in 15).
     """
     db_dir = tmp_path / "chachanotes"
     db_dir.mkdir()
