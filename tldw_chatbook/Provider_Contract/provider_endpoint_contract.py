@@ -100,6 +100,19 @@ _CLOUD_BASE_KEYS = frozenset(
 #: DeepSeek's bare host is its base only on its own host (review r17cu-rev1
 #: M-1: an OpenAI-compatible proxy under its key may serve only ``/v1``).
 _BARE_BASE_ANY_HOST_KEYS = frozenset({"cohere"})
+#: TASK-42002 (owner decision 2026-11-19, "Migrate on load"): the paths an
+#: earlier Settings saved with ``/v1`` wrongly appended to a first-party base.
+#: On the provider's own host each reads as its documented path, so a save
+#: writes that base (TASK-42019) and config load rewrites a saved one
+#: (``config._migrate_v1_appended_provider_bases``). Google's ``/v1`` is a
+#: real Gemini API version, so it is not here.
+_V1_APPENDED_PATHS = {
+    "google": ("v1beta", "v1"),
+    "cohere": ("v1",),
+    "groq": ("v1",),
+    "openrouter": ("v1",),
+    "qwencloud": ("v1",),
+}
 
 
 #: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
@@ -323,6 +336,11 @@ def _resolve_provider_endpoint(
     segments = tuple(segment for segment in path.split("/") if segment)
     if any(segment in {".", ".."} for segment in segments):
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
+    segments = _read_v1_appended_path(provider_key, canonical_host, segments)
+    if provider_key == "qwencloud" and segments[-1:] == ("models",):
+        # TASK-42021: QwenCloud's adapter refuses a /models base before it
+        # strips /responses, so Console read Ready for a base it refused.
+        return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
     if provider_key == "qwencloud" and segments[-1:] == ("responses",):
         # TASK-41722: QwenCloud's adapter strips its own /responses from a
         # pasted endpoint (normalize_qwencloud_base_url), so this reads the
@@ -336,6 +354,10 @@ def _resolve_provider_endpoint(
         provider_key
     )
     if preset is not None:
+        # TASK-42020: a route is not a preset's base either (Z.ai's
+        # .../v4/responses was sent as .../responses/chat/completions).
+        if _names_a_route(segments):
+            return _invalid_resolution(provider_key, ENDPOINT_ROUTE_REFUSAL)
         return _engine_preset_resolution(
             preset, provider_key, scheme, netloc, canonical_host, segments
         )
@@ -461,6 +483,64 @@ def _documented_own_path(provider_key: str, host: str) -> tuple[str, ...] | None
     if default.hostname != host:
         return None
     return tuple(segment for segment in default.path.split("/") if segment)
+
+
+def _read_v1_appended_path(
+    provider_key: str, host: str, segments: tuple[str, ...]
+) -> tuple[str, ...]:
+    """The documented path for a ``_V1_APPENDED_PATHS`` shape on the provider's
+    own host; any other path unchanged (TASK-42002).
+
+    The shape may be followed by a tail the reading drops (a pasted
+    ``/chat/completions`` or ``/models``, and QwenCloud's ``/responses``);
+    the tail is kept after the documented path so the usual reading (or
+    TASK-42021's QwenCloud ``/models`` refusal) still applies (review r18-rev1).
+    """
+    shape = _V1_APPENDED_PATHS.get(provider_key)
+    if shape is None or segments[: len(shape)] != shape:
+        return segments
+    tail = segments[len(shape) :]
+    if tail not in {(), ("chat", "completions"), ("models",)} and (
+        provider_key != "qwencloud" or tail != ("responses",)
+    ):
+        return segments
+    documented = _documented_own_path(provider_key, host)
+    return segments if documented is None else documented + tail
+
+
+def v1_appended_documented_base(provider: object, value: object) -> str | None:
+    """The documented base a value saved with ``/v1`` wrongly appended reads as.
+
+    TASK-42002: config load rewrites such a saved base with this, the rule a
+    save resolves through (``_V1_APPENDED_PATHS``).
+
+    Args:
+        provider: Provider key.
+        value: A saved ``api_base_url``.
+
+    Returns:
+        The base a save writes for the value (the documented base on its own
+        scheme and host, any pasted tail dropped), or None for any other
+        value, including one the contract refuses (user info, a query or a
+        fragment never reach the result).
+    """
+    key = normalize_provider_key_for_contract(provider)
+    if key not in _V1_APPENDED_PATHS or type(value) is not str:
+        return None
+    try:
+        parsed = urlsplit(value.strip())
+        host = canonical_endpoint_host(parsed.hostname or "")
+    except ValueError:
+        return None
+    segments = tuple(segment for segment in parsed.path.split("/") if segment)
+    if host is None or _read_v1_appended_path(key, host, segments) == segments:
+        return None
+    resolution = resolve_provider_endpoint(key, value)
+    if resolution.errors or resolution.chat_url is None:
+        return None
+    # As the save writes an api_base_url (provider_setup_persistence's
+    # _api_base_from_chat_url), so load and save agree on a pasted tail.
+    return resolution.chat_url.removesuffix("/chat/completions")
 
 
 def _names_a_native_route(provider_key: str, segments: tuple[str, ...]) -> bool:

@@ -958,7 +958,16 @@ _BUDGETS: dict[str, int] = {
     # DB/ChaChaNotes_DB, and config.py loads it lazily from there (types stay
     # under TYPE_CHECKING, per #3470); dev 4a9c4c1132 (#3480) shrank the file,
     # so this branch measures 8,837 (dev 8,835, +2); exact measurement.
-    "tldw_chatbook/config.py": 8837,
+    # 2026-11-20, TASK-42002 (owner decision "Migrate on load"): 8837 -> 8871
+    # (+34) -- config migration 2 and the stamp-only no-rewrite check.
+    # 2026-11-20, TASK-42007: 8871 -> 8875 (+4) -- the legacy key bridge
+    # keeps a still-encrypted slot key instead of copying the legacy key over it.
+    # 2026-11-20, review r18-rev1 of TASK-42002: 8875 -> 8884 (+9) -- the load
+    # records per path that migration found nothing to persist, so the boot
+    # step skips the lock; the migration's host pre-filter is gone.
+    # 2026-11-20, review r18-rev2: 8884 -> 8883 (-1) -- the unused
+    # RECORDS_BY_KEY import the pre-filter needed is gone.
+    "tldw_chatbook/config.py": 8883,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

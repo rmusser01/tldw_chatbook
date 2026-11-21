@@ -4799,7 +4799,10 @@ async def test_a_project_instruction_key_saved_before_the_v1_fix_still_resolves(
     not a value an earlier version saved with ``/v1`` added. Console still
     sends to that value as stored, so its project-instruction consent key is
     the one the user gave consent under, and a save that leaves the Endpoint
-    alone writes it back unchanged."""
+    alone writes it back unchanged. TASK-42002 (owner decision "Migrate on
+    load"): Google's and Cohere's own-host values are the exception; config
+    load rewrites them and a save writes the documented base, so their keys
+    change once."""
     from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
 
     locator = fingerprint_canonical_locator(_PROJECT_LOCATOR)
@@ -4818,7 +4821,203 @@ async def test_a_project_instruction_key_saved_before_the_v1_fix_still_resolves(
         ) == notice_key, stored
         assert resolution.base_url == stored, stored
         assert seen == [f"adapter:{stored}"], stored
-        assert persisted_endpoint_for_key(provider, "api_base_url", stored) == stored
+        saved = _V1_APPENDED.get(provider, ("", stored))
+        expected = saved[1] if saved[0] == stored else stored
+        assert persisted_endpoint_for_key(provider, "api_base_url", stored) == expected
+
+
+#: TASK-42002 (owner decision 2026-11-19, "Migrate on load"): what an earlier
+#: Settings saved with ``/v1`` appended on each provider's own host, the
+#: documented base it now reads and saves as, and the URL its adapter posts.
+_V1_APPENDED = {
+    "google": (
+        "https://generativelanguage.googleapis.com/v1beta/v1",
+        "https://generativelanguage.googleapis.com/v1beta",
+        "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
+    ),
+    "cohere": ("https://api.cohere.com/v1", "https://api.cohere.com", "https://api.cohere.com/v2/chat"),
+    "groq": (
+        "https://api.groq.com/v1",
+        "https://api.groq.com/openai/v1",
+        "https://api.groq.com/openai/v1/chat/completions",
+    ),
+    "openrouter": (
+        "https://openrouter.ai/v1",
+        "https://openrouter.ai/api/v1",
+        "https://openrouter.ai/api/v1/chat/completions",
+    ),
+    "qwencloud": (
+        "https://dashscope-intl.aliyuncs.com/v1",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses",
+    ),
+}
+
+
+#: Review r18-rev1: a shape followed by a tail the reading drops still saved
+#: the broken shape (Cohere ``/v1/models`` as ``/v1``, posted to ``/v1/v2/chat``).
+_V1_APPENDED_TAILS = {
+    provider: ("/responses" if provider == "qwencloud" else "/models", "/chat/completions")
+    for provider in _V1_APPENDED
+}
+
+
+@pytest.mark.parametrize(
+    ("provider", "tail"),
+    [(provider, tail) for provider in sorted(_V1_APPENDED) for tail in ("", *_V1_APPENDED_TAILS[provider])],
+)
+def test_a_base_saved_with_v1_appended_saves_its_documented_base(provider, tail, monkeypatch):
+    """TASK-42019 (and TASK-42002's rule for a save): typing Cohere's
+    ``https://api.cohere.com/v1`` saved ``/v1`` and the adapter posted
+    ``/v1/v2/chat``. Each shape TASK-42002 migrates, with or without a pasted
+    tail, saves as the documented base, and the adapter posts its own route
+    under it."""
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+
+    typed, documented, posted = _V1_APPENDED[provider]
+    typed += tail
+    assert persisted_endpoint_for_key(provider, "api_base_url", typed) == documented
+    sent = _cloud_world(monkeypatch, _cloud_config(("api_settings", provider), "api_base_url", {}, documented))
+
+    try:
+        _dispatch(provider)
+    except Exception as exc:  # the stub answers 400
+        caught = exc
+    else:
+        caught = None
+
+    assert sent == [posted], repr(caught)
+
+
+#: Each saved value a load test writes: the shapes above are rewritten; these
+#: controls never are (TASK-42002 AC#2): OpenAI's correct ``/v1``, Google's
+#: ``/v1`` (a real Gemini version), gateway and foreign hosts, a custom and a
+#: preset base, DeepSeek's ``/v1``, and own-host shapes the contract refuses.
+_V1_APPENDED_LOAD_ROWS = {
+    **{f"{provider}-v1-appended": (provider, "api_base_url", row[0], row[1]) for provider, row in _V1_APPENDED.items()},
+    # Review r18-rev1: a stored shape plus a pasted tail is rewritten to what a
+    # save writes; QwenCloud's ``/v1/models`` is refused by both, so kept.
+    **{
+        f"{provider}-v1-appended{tail.replace('/', '-')}": (provider, "api_base_url", row[0] + tail, row[1])
+        for provider, row in _V1_APPENDED.items()
+        for tail in _V1_APPENDED_TAILS[provider]
+    },
+    **{
+        case: (provider, key, value, value)
+        for case, (provider, key, value) in {
+            "openai-v1": ("openai", "api_base_url", "https://api.openai.com/v1"),
+            "google-v1": ("google", "api_base_url", "https://generativelanguage.googleapis.com/v1"),
+            "google-gateway": ("google", "api_base_url", "https://litellm.corp/gemini/v1beta/v1"),
+            "groq-gateway": ("groq", "api_base_url", "https://litellm.corp/v1"),
+            "qwencloud-china-host": ("qwencloud", "api_base_url", "https://dashscope.aliyuncs.com/v1"),
+            "deepseek-v1": ("deepseek", "api_base_url", "https://api.deepseek.com/v1"),
+            "custom": ("custom", "api_url", "http://127.0.0.1:8080/v1"),
+            "preset-own-host-v1": ("fireworks", "api_base_url", "https://api.fireworks.ai/v1"),
+            "cohere-query": ("cohere", "api_base_url", "https://api.cohere.com/v1?key=secret-42002"),
+            "openrouter-user-info": ("openrouter", "api_base_url", "https://u:secret-42002@openrouter.ai/v1"),
+            "qwencloud-v1-models": ("qwencloud", "api_base_url", "https://dashscope-intl.aliyuncs.com/v1/models"),
+        }.items()
+    },
+}
+
+
+@pytest.mark.parametrize("case", sorted(_V1_APPENDED_LOAD_ROWS))
+def test_config_load_migrates_a_base_saved_with_v1_appended_once(case, tmp_path, monkeypatch):
+    """TASK-42002: config load rewrites each shape on the provider's own host
+    to the documented base, logs it without credentials or a query, and the
+    boot step saves it once; a control is never rewritten and its file is
+    left byte for byte (no stamp-only rewrite)."""
+    from loguru import logger
+
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import endpoint_refusal
+
+    provider, key, stored, expected = _V1_APPENDED_LOAD_ROWS[case]
+    path = tmp_path / "config.toml"
+    path.write_text(
+        toml.dumps({"config_schema_version": 1, "api_settings": {provider: {key: stored}}}),
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+    logged: list[str] = []
+    sink = logger.add(lambda message: logged.append(str(message)), level="INFO", format="{message}")
+    try:
+        config_mod = select_config_source(monkeypatch, path)
+        loaded = config_mod.load_settings(force_reload=True)["api_settings"][provider][key]
+        first = config_mod.migrate_config_file_if_needed()
+        second = config_mod.migrate_config_file_if_needed()
+    finally:
+        logger.remove(sink)
+
+    assert loaded == expected
+    rewrites = [line for line in logged if f"api_settings.{provider}.api_base_url" in line]
+    assert not any("secret-42002" in line for line in logged)
+    if expected == stored:
+        assert (first, path.read_bytes(), rewrites) == (None, original, [])
+        # A save shares the rule, so it keeps every accepted control too.
+        if key == "api_base_url" and not endpoint_refusal(provider, stored):
+            assert persisted_endpoint_for_key(provider, key, stored) == stored
+        return
+    assert first is not None and second is None
+    assert tomllib.loads(path.read_text(encoding="utf-8"))["api_settings"][provider][key] == expected
+    assert rewrites and all(expected in line for line in rewrites)
+
+
+@pytest.mark.parametrize("version", [2, 1])
+def test_the_boot_migration_step_takes_no_lock_for_a_config_with_nothing_to_rewrite(
+    version, tmp_path, monkeypatch
+):
+    """Review r18-rev1: with migration 2 registered, the boot's
+    ``migrate_config_file_if_needed`` took the config write lock and parsed
+    the whole file on every launch (~35 ms under load), and a v1 config with
+    nothing to rewrite is never stamped, so it paid that forever. The load
+    records that it found nothing beyond the stamp; the boot step then takes
+    no lock and reads no file."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        toml.dumps(
+            {"config_schema_version": version, "api_settings": {"openai": {"api_base_url": "https://api.openai.com/v1"}}}
+        ),
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+    config_mod = select_config_source(monkeypatch, path)
+    config_mod.load_cli_config_and_ensure_existence(force_reload=True)
+
+    def no_lock(*_args, **_kwargs):
+        raise AssertionError("took the config write lock")
+
+    monkeypatch.setattr(config_mod, "_config_write_lock", no_lock)
+
+    assert config_mod.migrate_config_file_if_needed() is None
+    assert path.read_bytes() == original
+
+
+def test_the_boot_migration_step_writes_a_file_changed_after_the_load_settled_it(
+    tmp_path, monkeypatch
+):
+    """Review r18-rev2: the settled record holds only for the file the load
+    read. A file changed afterwards (here a different size, now holding a
+    shape migration 2 rewrites) takes the locked path and is written."""
+    path = tmp_path / "config.toml"
+
+    def write(base):
+        path.write_text(
+            toml.dumps({"config_schema_version": 1, "api_settings": {"groq": {"api_base_url": base}}}),
+            encoding="utf-8",
+        )
+        return path.stat().st_size
+
+    settled_size = write("https://api.groq.com/openai/v1")
+    config_mod = select_config_source(monkeypatch, path)
+    config_mod.load_cli_config_and_ensure_existence(force_reload=True)
+    assert write("https://api.groq.com/v1") != settled_size
+
+    backup = config_mod.migrate_config_file_if_needed()
+
+    assert backup is not None
+    stored = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert stored["api_settings"]["groq"]["api_base_url"] == "https://api.groq.com/openai/v1"
 
 
 #: TASK-41727: per cloud dispatch case, a base that ends in a request route
@@ -4876,6 +5075,52 @@ def test_a_cloud_base_ending_in_a_route_without_v1_is_refused(
     assert str(caught.value) == f"{name} API URL: {ENDPOINT_ROUTE_REFUSAL}"
 
 
+def _preset_keys():
+    from tldw_chatbook.provider_registry import ALL_RECORDS
+
+    return sorted(r.key for r in ALL_RECORDS if r.engine_driven and r.key != "custom-hosted")
+
+
+#: TASK-42020: request routes a base must not end in (TASK-41727's set).
+_PRESET_ROUTES = ("responses", "embeddings", "chat", "completions", "chat/completions/x")
+
+
+@pytest.mark.parametrize("provider", [*_preset_keys(), "zai"])
+def test_a_preset_or_zai_base_ending_in_a_route_is_refused(provider, monkeypatch):
+    """TASK-42020: TASK-41727 refused a route-ending path for the first-party
+    cloud keys, but the preset reading (TASK-34100.6) took any path as the
+    base, so Console and the save accepted Z.ai's ``.../v4/responses`` (read
+    as ``.../v4/responses/chat/completions``), which Z.ai's and the hosted
+    engine's own checks refuse at send. Every engine preset and Z.ai now
+    refuse it with the route refusal, and their adapters send nothing; the
+    documented base, with or without a pasted ``/chat/completions`` or
+    ``/models``, is still accepted."""
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+        endpoint_refusal,
+    )
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    base = RECORDS_BY_KEY[provider].default_base_url or "https://gw.example.com/v1"
+    for route in _PRESET_ROUTES:
+        assert endpoint_refusal(provider, f"{base}/{route}") == ENDPOINT_ROUTE_REFUSAL, route
+    for pasted in ("", "/chat/completions", "/models"):
+        assert endpoint_refusal(provider, base + pasted) == "", pasted
+    if provider not in {"together", "zai"}:
+        return
+    config = _cloud_config(("api_settings", provider), "api_base_url", {}, f"{base}/responses")
+    world = _cloud_world if provider == "zai" else _local_world
+    sent = world(monkeypatch, config)
+
+    with pytest.raises(ChatConfigurationError) as caught:
+        _dispatch(provider)
+
+    assert sent == []
+    # Z.ai's resolver gives its own copy for any base the contract refuses.
+    assert _RESOLVER_REFUSALS.get(provider, ENDPOINT_ROUTE_REFUSAL) in str(caught.value)
+
+
 _QWENCLOUD_PASTED = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/responses"
 _QWENCLOUD_BASE = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
@@ -4923,6 +5168,45 @@ async def test_console_and_the_qwencloud_adapter_agree_on_a_pasted_responses_end
     assert persisted_endpoint_for_key("qwencloud", "api_base_url", _QWENCLOUD_PASTED) == (
         _QWENCLOUD_BASE
     )
+
+
+@pytest.mark.parametrize(
+    ("value", "refused"),
+    [
+        (f"{_QWENCLOUD_BASE}/models", True),
+        (f"{_QWENCLOUD_BASE}/models/", True),
+        (f"{_QWENCLOUD_BASE}/responses/models", True),
+        # Review r18-rev1: the /v1-appended shape plus /models is still refused.
+        ("https://dashscope-intl.aliyuncs.com/v1/models", True),
+        ("https://dashscope-intl.aliyuncs.com/models", True),
+        ("https://gw.example.com/qwen/v1/models", True),
+        (_QWENCLOUD_BASE, False),
+        (_QWENCLOUD_PASTED, False),
+        (f"{_QWENCLOUD_BASE}/chat/completions", False),
+    ],
+)
+def test_console_and_the_qwencloud_adapter_agree_on_a_models_endpoint(value, refused):
+    """TASK-42021: the QwenCloud adapter refuses a base ending in ``/models``
+    (``normalize_qwencloud_base_url``, pinned in ``test_qwencloud.py``), but
+    the contract dropped it as a pasted ``/models`` and read Ready. The
+    contract now refuses the same values with the route refusal, and the
+    Settings save with it."""
+    from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
+    from tldw_chatbook.LLM_Calls.qwencloud import normalize_qwencloud_base_url
+    from tldw_chatbook.Provider_Contract import ChatConfigurationError
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import (
+        ENDPOINT_ROUTE_REFUSAL,
+        endpoint_refusal,
+    )
+
+    assert endpoint_refusal("qwencloud", value) == (ENDPOINT_ROUTE_REFUSAL if refused else "")
+    saved = persisted_endpoint_for_key("qwencloud", "api_base_url", value)
+    assert saved == (None if refused else _QWENCLOUD_BASE)
+    if refused:
+        with pytest.raises(ChatConfigurationError):
+            normalize_qwencloud_base_url(value)
+    else:
+        assert normalize_qwencloud_base_url(value) == _QWENCLOUD_BASE
 
 
 def test_the_shared_local_transport_keeps_its_recovery_wrapper():
@@ -5480,6 +5764,92 @@ def test_dreams_refuses_a_still_encrypted_key_and_sends_nothing(legacy, tmp_path
         [],
         [],
     )
+
+
+def _bridged_providers():
+    from tldw_chatbook.config import _LEGACY_PROVIDER_API_KEY_BRIDGE
+
+    return _LEGACY_PROVIDER_API_KEY_BRIDGE
+
+
+@pytest.mark.parametrize(("provider", "toml_key", "env_var"), _bridged_providers())
+def test_a_still_encrypted_slot_key_keeps_the_legacy_key_out(
+    provider, toml_key, env_var, tmp_path, monkeypatch
+):
+    """TASK-42007: the nine-provider bridge read a still-``enc:`` slot key as
+    no key and copied the legacy ``[API]`` key over it, so readiness said
+    Ready and the send spent the older key. As Custom 2's rule does
+    (TASK-41710), ciphertext is now a key of its own: the slot keeps it,
+    readiness says still encrypted, the legacy ``<provider>_api`` dict gets
+    no key, and a send without a pinned key reaches nothing. Hugging Face
+    sends keyless by design (public Inference API or an unsecured TGI), as
+    Custom 2 does here; it carries neither key."""
+    import requests
+
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.Chat.provider_readiness import (
+        STILL_ENCRYPTED_REASON,
+        get_provider_readiness,
+    )
+    from tldw_chatbook.Provider_Contract import ChatAPIError
+
+    monkeypatch.delenv(env_var, raising=False)
+    slot_key = _ciphertext("slot-key-0000")
+    path = tmp_path / "config.toml"
+    path.write_text(
+        toml.dumps(
+            {"API": {toml_key: "legacy-key-0000"}, "api_settings": {provider: {"api_key": slot_key}}}
+        ),
+        encoding="utf-8",
+    )
+    settings = select_config_source(monkeypatch, path).load_settings(force_reload=True)
+    readiness = get_provider_readiness(provider, settings)
+    sent = _cloud_world(monkeypatch, settings)
+    stub, wire = requests.Session.send, []
+
+    def recording(session, request, **kwargs):
+        wire.append(f"{request.url} {dict(request.headers)}")
+        return stub(session, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", recording)
+
+    with pytest.raises(ChatAPIError):
+        chat_api_call(provider, [{"role": "user", "content": "x"}], model="m", streaming=False)
+
+    assert (readiness.ready, readiness.reason) == (False, STILL_ENCRYPTED_REASON)
+    assert settings["api_settings"][provider]["api_key"] == slot_key
+    assert settings.get(f"{provider}_api", {}).get("api_key") is None
+    assert [line for line in wire if "legacy-key-0000" in line or "enc:" in line] == []
+    if provider != "huggingface":
+        assert sent == []
+
+
+@pytest.mark.parametrize(("provider", "toml_key", "env_var"), _bridged_providers())
+def test_an_env_key_still_outranks_a_still_encrypted_slot_key(
+    provider, toml_key, env_var, tmp_path, monkeypatch
+):
+    """Review r18-rev1: TASK-42007 stops at a ciphertext slot only after the
+    variable, as readiness's resolver does: with the variable set, readiness
+    is Ready from it and the legacy ``<provider>_api`` dict holds its key,
+    never the legacy one (Google has no legacy dict)."""
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    monkeypatch.setenv(env_var, "env-key-0000")
+    slot_key = _ciphertext("slot-key-0000")
+    path = tmp_path / "config.toml"
+    path.write_text(
+        toml.dumps(
+            {"API": {toml_key: "legacy-key-0000"}, "api_settings": {provider: {"api_key": slot_key}}}
+        ),
+        encoding="utf-8",
+    )
+    settings = select_config_source(monkeypatch, path).load_settings(force_reload=True)
+    readiness = get_provider_readiness(provider, settings)
+
+    assert (readiness.ready, readiness.api_key_source) == (True, f"env:{env_var}")
+    assert settings["api_settings"][provider]["api_key"] == slot_key
+    if provider != "google":
+        assert settings[f"{provider}_api"]["api_key"] == "env-key-0000"
 
 
 def test_a_legacy_only_custom_2_key_reads_the_same_in_readiness_and_every_send(

@@ -296,7 +296,10 @@ save recorded the key as stored, the env var is unset: `openai_api_key`, `anthro
 `custom_openai2_api_key` is the tenth, on its own rule (below). Saving a change of
 provider, model or endpoint with that provider chosen copies the key into its
 own `[api_settings.<provider>]` table, so it stays the key in use if you set
-the env var later; a save of other rows alone copies nothing. No other `[API]`
+the env var later; a save of other rows alone copies nothing. A key of the
+provider's own that is still encrypted keeps the older key out, as for
+Custom 2: the provider is not ready, because its saved key is still
+encrypted, and nothing sends the older key. No other `[API]`
 key is shown in that row or copied. Once a save records "no credential"
 (**Clear**) or an **Env var** for the provider, its `[API]` key is no longer
 shown or copied, and chats and summaries no longer send it. The MCP server's
@@ -409,11 +412,21 @@ the start of its documented path is completed to that path: Groq's
 `https://api.groq.com` or `https://api.groq.com/openai` is saved as
 `…/openai/v1`, and Google's `https://generativelanguage.googleapis.com` as
 `…/v1beta`. On any other host a bare address gets `/v1`, except under Cohere,
-whose adapter adds its own `/v2/chat`. An address an earlier version saved with `/v1`
-added (such as `…/v1beta/v1`) stays as it is: enter the provider's address
-again and save. QwenCloud's Endpoint may be a pasted Responses endpoint
+whose adapter adds its own `/v2/chat`. An earlier version saved some of these
+addresses with `/v1` added; on the provider's own host the app rewrites them
+to the documented address once when it loads your config, and **s** saves
+them that way too: Google's `…/v1beta/v1` becomes `…/v1beta`, Cohere's
+`https://api.cohere.com/v1` the bare host, and Groq's, OpenRouter's and
+QwenCloud's `<host>/v1` become `…/openai/v1`, `…/api/v1` and
+`…/compatible-mode/v1`, with or without a pasted `/chat/completions` or
+`/models` after them (QwenCloud: `/responses` or `/chat/completions`). Any other address, including a gateway's and Google's
+`…/v1`, is left as it is. QwenCloud's Endpoint may be a pasted Responses endpoint
 (`…/compatible-mode/v1/responses`): the Console, **s** and its chats all read
-it as the base before `/responses`, which is what **s** saves. When **s**
+it as the base before `/responses`, which is what **s** saves. A QwenCloud
+address ending in `/models` is refused with the route refusal, as its chats
+refuse it. An inference cloud's Endpoint (Together, Fireworks and the other
+presets) or Z.AI's that names a request route, such as
+`https://api.z.ai/api/paas/v4/responses`, is refused the same way. When **s**
 refuses an endpoint, the save result and the Endpoint row's help give the
 reason, such as "Endpoint URL must include a valid host and port." or the
 route refusal above, and the row gives it as you type.
