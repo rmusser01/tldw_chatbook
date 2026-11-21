@@ -1279,10 +1279,10 @@ def _created_config_file_targets(
 ):
     """Reobserve finite config files while their originating activation is live."""
     from ..runtime_policy.recovery import recovery_adapters as runtime_adapters
-    from ..Widgets.Tamagotchi.recovery import recovery_adapters as pet_adapters
     from .config_adapter import recovery_adapters
     from .generation_witnesses import _witnesses
     from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
+    from .owner_registry import install_adapters
     from .storage_admission import (
         _CONFIG_CAPTURE_LEAVES,
         _config_leaf,
@@ -1313,9 +1313,14 @@ def _created_config_file_targets(
         original, prepared, document, target, proof=proof
     )
     owners = {
-        owner.owner_id: owner
-        for owner in (*recovery_adapters(), *runtime_adapters(), *pet_adapters())
+        owner.owner_id: owner for owner in (*recovery_adapters(), *runtime_adapters())
     }
+    # TASK-42115: the pet owner is installed from the widget layer.
+    owners.update(
+        (owner.owner_id, owner)
+        for owner in install_adapters()
+        if owner.owner_id == "tamagotchi.config"
+    )
     result = {}
     for key, (item, selector) in relations.items():
         lease = acquire_storage(selector) if session is None else None

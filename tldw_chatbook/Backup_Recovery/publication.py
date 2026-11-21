@@ -241,7 +241,7 @@ def _config_publication_scopes(
         if prepared is None and item.status == "unused" and os.path.lexists(item.path):
             raise ValueError("publication_config_source_changed")
         scopes[item.path] = selector
-    for path, (owner, selector) in imported.items():
+    for path, (_, selector) in imported.items():
         # TASK-42115: the pet owner lists its seed-once marker only while it
         # exists, so a marker this Replace creates has no target row; its
         # absence stands for the row.
