@@ -10,6 +10,8 @@ export (TASK-34000.29, review R0 of polish-1b Task 6).
   cancelling. It leaves no failure-phase line, shows one toast, and returns
   focus to the button that started the export.
 - AC#2's "fails" arm: after a failed write, focus is back on that button too.
+- The list-mode same-id refocus yields to an armed list entry: leaving Import
+  once with no notes lands on New (TASK-41128), not on the pruned filter.
 
 Two boots of the real ``LibraryScreen`` with the production stylesheet over a
 real ChaChaNotes database (``Tests/UI/test_library_note_editor_feedback_is_
@@ -21,10 +23,23 @@ moved focus, and before the new ones mount. The capture is taken there.
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_library_shell import (
+    LIBRARY_TEST_SIZE,
+    LibraryProductionCSSHarness,
+    _active_library_screen,
+    _seed_conversations,
+    _two_conversations,
+    _wait_for_condition,
+    _wait_for_library_notes_compact,
+    _wait_for_library_shell,
+    _wait_for_selector,
+)
 from Tests.UI.test_library_note_editor_feedback_is_honest import (
     EXPORT_MD,
     IDEAS,
@@ -42,6 +57,11 @@ from Tests.UI.test_library_note_editor_feedback_is_honest import (
 )
 from Tests.UI.library_quit_guard_support import _open_note
 from tldw_chatbook.Library.library_notes_state import LibraryNotesFocusIdentity
+from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+from tldw_chatbook.Notes.notes_sync_runtime import (
+    NotesSyncRootRuntimeSnapshot,
+    NotesSyncRuntimeSnapshot,
+)
 from tldw_chatbook.Third_Party.textual_fspicker.file_dialog import FileNameInput
 from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -284,3 +304,77 @@ async def test_a_failed_or_kept_export_returns_focus_and_keep_is_a_cancel(
             host, screen, pilot, EXPORT_MD, "export Markdown", after="Keep"
         )
         assert sorted(path.name for path in folder.iterdir()) == ["ideas.md"]
+
+
+async def test_the_list_refocus_yields_to_an_armed_entry_after_import_once() -> None:
+    """Leaving Import once with no notes lands on New, never the filter.
+
+    Escape after a cancelled picker: focus sits on the items grip, so the
+    shell's reopen hands it to the filter, the Notes canvas then prunes the
+    filter, and the exit's ``then`` arms the list entry (TASK-41128). The
+    entry's first attempt runs after a refresh. The list-mode same-id refocus
+    ran before it and focused the new filter, whose focus event disarmed the
+    entry, so focus stayed in the filter (r10, 6 runs in 10). Every attempt
+    the arm schedules is held until the queued focus events have run, the
+    losing order forced, and then released.
+    """
+
+    async def abandon_setup(_root_id: str) -> None:
+        return None
+
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=[])
+    root = NotesSyncRootRuntimeSnapshot("root-1", "up_to_date", "sync_now")
+    app.notes_sync_runtime_owner = SimpleNamespace(
+        snapshot=lambda: NotesSyncRuntimeSnapshot("active", "sync_now", (root,)),
+        abandon_setup=abandon_setup,
+    )
+    host = LibraryProductionCSSHarness(app)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+        await _wait_for_library_notes_compact(screen, pilot, False)
+        screen.query_one(f"#library-row-{LIBRARY_ROW_BROWSE_NOTES}").press()
+        await _wait_for_selector(screen, pilot, "#library-notes-empty")
+        screen.query_one("#library-notes-add-from-files", Button).press()
+        await _wait_for_selector(screen, pilot, "#notes-add-import-once")
+        screen.query_one("#notes-add-import-once", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: pilot.app.screen is not screen,
+            message="Import once did not open its picker.",
+        )
+        await pilot.press("escape")
+        await _wait_for_condition(
+            pilot,
+            lambda: pilot.app.screen is screen and screen._notes_state.view == "import",
+            message="Cancelling the picker did not return to Import once.",
+        )
+        await pilot.pause()
+        assert screen.focused is screen.query_one("#library-browse-items-grip")
+
+        held: list[int] = []
+        screen._focus_library_list_entry_if_current = held.append
+        await pilot.press("escape")
+        canvas = screen.query_one("#library-notes-canvas")
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.view == "list"
+            and bool(held)
+            and not canvas.recompose_in_flight
+            and canvas.focus_before_prune is None,
+            message="Escape did not leave Import once for the Notes page.",
+        )
+        await pilot.pause()
+        await pilot.pause()
+        assert screen.focused is not screen.query_one("#library-notes-filter")
+        assert screen._library_pending_list_entry_focus
+
+        del screen._focus_library_list_entry_if_current
+        for generation in held:
+            screen._focus_library_list_entry_if_current(generation)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen.focused is screen.query_one("#library-notes-new"),
+            message=lambda: f"focus is on {screen.focused!r}, not New.",
+        )

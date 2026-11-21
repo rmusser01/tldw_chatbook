@@ -1779,6 +1779,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             screen = self.screen
         except Exception:  # noqa: BLE001 - a detached canvas has no screen
             return
+        # An armed list entry owns focus, as it does for the identity replay:
+        # its attempt runs after a refresh, and this refocus's focus event
+        # disarmed it (an Import once exit then landed in the filter).
+        if mode == "list" and getattr(screen, "_library_pending_list_entry_focus", False):
+            return
         if screen.focused is not landing:
             return
         matches = self.query(f"#{pruned.id}")
