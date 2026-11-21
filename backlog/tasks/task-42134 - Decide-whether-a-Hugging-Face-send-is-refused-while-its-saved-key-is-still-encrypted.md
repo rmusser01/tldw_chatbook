@@ -4,7 +4,7 @@ title: "Decide whether a Hugging Face send is refused while its saved key is sti
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 18:22
+updated_date: 2026-11-21 21:05
 labels:
 - follow-up
 - providers
@@ -30,19 +30,23 @@ TASK-42007's test (round-18 providers branch) pins this: with a ciphertext slot 
 <!-- AC:BEGIN -->
 - [x] #1 The owner's decision is recorded: whether a Hugging Face send is refused while its saved key is still ciphertext
 - [x] #2 If refused: a send through `chat_api_call` with a still-encrypted Hugging Face key and no pinned key raises before any request is made, and a test shows it, red before the change (N/A — the decision is not to refuse; the keyless send stays)
-- [x] #3 Either way, a Hugging Face send with no saved key at all keeps its keyless behaviour, and a test pins it (N/A per the coordinator's brief — the decision changes no code, so the no-key path is untouched; see notes)
-- [x] #4 `Docs/User_Guide/settings.md` says what a Hugging Face send does while its key is locked (N/A per the coordinator's brief — no behaviour changes; see notes)
+- [x] #3 Either way, a Hugging Face send with no saved key at all keeps its keyless behaviour, and a test pins it
+- [x] #4 `Docs/User_Guide/settings.md` says what a Hugging Face send does while its key is locked
 <!-- AC:END -->
 
 ## Implementation Plan
 
 1. Record the owner's decision (2026-11-21) in this file.
-2. The decision is "no", so nothing changes in code: tick AC#1 and mark the conditional criteria not applicable with the reason.
+2. The decision is "no", so the send path does not change; AC#2 does not apply.
+3. AC#3 and AC#4 apply either way: pin the keyless send with a test in a lane-run file, and say in `Docs/User_Guide/settings.md` what a send does while the key is still encrypted.
 
 ## Implementation Notes
 
-**Owner decision, 2026-11-21 (verbatim): "134 - no".** A Hugging Face send is not refused while its saved `api_settings.huggingface.api_key` is still `enc:` ciphertext. `chat_with_huggingface` keeps reading ciphertext as no key and sends without an `Authorization` header (public Inference API or an unsecured TGI endpoint), and readiness keeps reporting "Saved API key is still encrypted".
+**Owner decision, 2026-11-21 (verbatim): "134 - no".** A Hugging Face send is not refused while its saved `api_settings.huggingface.api_key` is still `enc:` ciphertext. `chat_with_huggingface` keeps reading ciphertext as no key and sends without an `Authorization` header (public Inference API or an unsecured TGI endpoint). Readiness keeps reporting "Saved API key is still encrypted".
 
-- No code, test or doc change (coordinator's brief: "No code change").
-- AC#2 does not apply: it was conditional on refusing.
-- AC#3 and AC#4 are worded "either way" and unconditionally. Per the coordinator's brief they are marked not applicable, because the decision keeps today's behaviour and changes no code. For the record: no existing test pins a Hugging Face send with no saved key at all (the nearest pins are `Tests/Chat/test_encrypted_api_key_never_sent.py::test_huggingface_sends_no_ciphertext`, ciphertext reads as no key and the request goes out without it, and TASK-42007's `test_a_still_encrypted_slot_key_keeps_the_legacy_key_out[huggingface]`), and `Docs/User_Guide/settings.md` does not yet say that a Hugging Face send goes out keyless while its key is locked. Both were reported to the coordinator as a possible follow-up.
+- AC#2 does not apply: it was conditional on refusing. The send path is unchanged.
+- AC#3: `Tests/Chat/test_local_server_discovery.py::test_a_hugging_face_send_without_a_usable_saved_key_goes_out_keyless[absent|still-encrypted]` (lane-run). It uses a real scratch config with `HUGGINGFACE_API_KEY` unset and the `_cloud_world` stub transport, so nothing leaves the process. With no saved key, and with a still-encrypted one, `chat_api_call("huggingface", ...)` sends a request that has no `Authorization` header and no ciphertext. The test pins an invariant dev already keeps, so red was shown under temporary edits to `chat_with_huggingface`, each reverted. Refusing when the key is missing failed both nodes ("the send was refused"); sending a placeholder `Authorization` failed both on the header assertion. Green after: 2 passed.
+- AC#4: `Docs/User_Guide/settings.md` (the paragraph on a provider's own key that is still encrypted) now says that a Hugging Face send is not refused: while its key is still encrypted the provider reads as not ready, but a send made anyway goes out with no key, as with no key saved.
+- Correction: the first version of these notes marked AC#3 and AC#4 not applicable on the coordinator's first brief ("No code change"). The coordinator corrected that, because both criteria apply either way.
+
+Files: `Tests/Chat/test_local_server_discovery.py`, `Docs/User_Guide/settings.md`.

@@ -5950,6 +5950,40 @@ def test_an_env_key_still_outranks_a_still_encrypted_slot_key(
         assert settings[f"{provider}_api"]["api_key"] == "env-key-0000"
 
 
+
+@pytest.mark.parametrize("slot_key", ["absent", "still-encrypted"])
+def test_a_hugging_face_send_without_a_usable_saved_key_goes_out_keyless(slot_key, tmp_path, monkeypatch):
+    """TASK-42134 (owner decision 2026-11-21, "134 - no"): a Hugging Face send
+    is never refused for want of a key. With no saved key at all, or one still
+    encrypted (a locked session), ``chat_api_call`` sends the request with no
+    ``Authorization`` header (public Inference API or an unsecured TGI), and
+    never the ciphertext."""
+    import requests
+
+    from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+    from tldw_chatbook.Provider_Contract import ChatAPIError
+
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    table = {"model": "m"} if slot_key == "absent" else {"model": "m", "api_key": _ciphertext("slot-key-0000")}
+    path = tmp_path / "config.toml"
+    path.write_text(toml.dumps({"api_settings": {"huggingface": table}}), encoding="utf-8")
+    settings = select_config_source(monkeypatch, path).load_settings(force_reload=True)
+    _cloud_world(monkeypatch, settings)
+    stub, wire = requests.Session.send, []
+
+    def recording(session, request, **kwargs):
+        wire.append({name.lower(): value for name, value in request.headers.items()})
+        return stub(session, request, **kwargs)
+
+    monkeypatch.setattr(requests.Session, "send", recording)
+
+    with pytest.raises(ChatAPIError):  # the stub answers 400
+        chat_api_call("huggingface", [{"role": "user", "content": "x"}], model="m", streaming=False)
+
+    assert wire, "the send was refused"
+    assert [headers for headers in wire if "authorization" in headers or "enc:" in str(headers)] == []
+
+
 def test_a_legacy_only_custom_2_key_reads_the_same_in_readiness_and_every_send(
     tmp_path, monkeypatch
 ):

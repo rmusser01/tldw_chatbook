@@ -299,7 +299,10 @@ own `[api_settings.<provider>]` table, so it stays the key in use if you set
 the env var later; a save of other rows alone copies nothing. A key of the
 provider's own that is still encrypted keeps the older key out, as for
 Custom 2: the provider is not ready, because its saved key is still
-encrypted, and nothing sends the older key. No other `[API]`
+encrypted, and nothing sends the older key. A Hugging Face send is not
+refused, by design: while its saved key is still encrypted the provider reads
+as not ready, but a send made anyway goes out with no key, as it does when no
+key is saved (for the public Inference API or an unsecured TGI endpoint). No other `[API]`
 key is shown in that row or copied. Once a save records "no credential"
 (**Clear**) or an **Env var** for the provider, its `[API]` key is no longer
 shown or copied, and chats and summaries no longer send it. The MCP server's
