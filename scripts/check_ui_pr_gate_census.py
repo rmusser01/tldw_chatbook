@@ -1201,6 +1201,9 @@ MINIMUM_FILES = 2439
 # TASK-42073 (2026-11-20): append the Library character-repair file at the
 # tail. The floor is the measured entry count.
 MINIMUM_FILES = 2440
+# TASK-42005 (2026-11-20): append the Tool Profiles settings file at the tail.
+# The floor is the measured entry count.
+MINIMUM_FILES = 2441
 
 
 def read_census(path: Path) -> list[str]:

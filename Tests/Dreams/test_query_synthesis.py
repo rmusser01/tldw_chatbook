@@ -807,7 +807,7 @@ async def test_sections_with_restarting_numbers_lose_numbers_and_marks():
 # the query and the goal is attributed. Where the wrapping is something the
 # cleaner claims to remove completely, the query comes out exactly.
 
-from hypothesis import assume, given, settings as hyp_settings  # noqa: E402
+from hypothesis import assume, example, given, settings as hyp_settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
 _BASE_QUERIES = [
@@ -941,6 +941,10 @@ def _marked_lines(draw):
 
 @hyp_settings(max_examples=600, deadline=None)
 @given(_marked_lines())
+# TASK-42008: a quoted line inside bold behind a subject label; the quote
+# after the mark opens the phrase there too, as it does on a bare quoted line.
+@example(('Kyoto: **"[g1]"Wednesday 13" tour dates 2026"**',
+          'Kyoto "Wednesday 13" tour dates 2026', 1, True))
 def test_no_wrapping_lets_a_mark_through_or_loses_its_goal(case):
     from tldw_chatbook.Dreams.query_synthesis import _query_row
 

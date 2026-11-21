@@ -498,11 +498,21 @@ ARCHITECTURE_GUARD_TARGETS = (
     # and archive both exclude whole and refuses one the archive lacks (the
     # plugins owner's never-listed fetch members). Hypothesis-free module.
     "Tests/Backup_Recovery/test_restore_plan_excluded_directories.py",
+    # TASK-42009: the SQLite validation file (sandboxed, ~55 s serially), on
+    # no lane before, so its RAG nodes went red on dev unseen.
+    "Tests/Backup_Recovery/test_sqlite_validation.py",
+    # TASK-42025: the loguru/stdlib logging-style scans and the network guard
+    # (DNS refusal included), on no PR lane before (~6 s and ~1 s serially).
+    "Tests/test_stdlib_logging_format_style.py",
+    "Tests/test_network_guard.py",
     # TASK-41653 / TASK-41655 (2026-11-19): the ChaChaNotes historical bootstrap
     # sweep (versions 4..86) and the trigger census, on no lane before; sandboxed,
     # so before the bootstrap_profile node below (102 tests, 99 s serially).
     "Tests/ChaChaNotesDB/test_historical_bootstrap.py",
     "Tests/ChaChaNotesDB/test_trigger_census.py",
+    # TASK-42026: the Media DB diagnostics privacy file (Tests/DB keeps the
+    # bootstrap profile, so after the sandboxed block; ~1 s serially).
+    "Tests/DB/test_client_media_debug_logging.py",
     # TASK-39153: last, after every sandboxed suite (one bootstrap_profile node).
     "Tests/Architecture/test_persistent_terminal_privacy_boundary.py",
 )

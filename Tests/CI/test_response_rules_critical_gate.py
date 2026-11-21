@@ -62,6 +62,7 @@ INHERITED = {
         "Tests/UI/test_console_project_instruction_choose_folder.py::test_choose_folder_opens_picker_and_applies_the_chosen_binding[enable]",
         "Tests/UI/test_console_conversation_action_menu.py::test_unwritable_save_path_shows_an_error_and_keeps_the_app_running",
         "Tests/UI/test_console_conversation_action_menu.py::test_save_prompt_closes_without_writing_and_restores_focus[cancel]",
+        "Tests/Dreams/test_query_synthesis.py",  # TASK-42008
         "--timeout=180",
         "--tb=short",
     ],

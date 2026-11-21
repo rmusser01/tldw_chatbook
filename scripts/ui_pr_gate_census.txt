@@ -3570,3 +3570,8 @@ Tests/UI/test_screen_navigation.py::test_focus_library_list_entry_checked_row_pr
 # asyncio.to_thread). 15 passed in
 # 10.9-16.2 s serially with the lane's flags (13 runs, load 10-12).
 Tests/UI/test_library_character_repair.py
+# TASK-42005 (2026-11-20): the Tool Profiles settings file, on no lane before.
+# Its removal-confirmation node was test drift (88ae92a234 moved markup
+# escaping into ConfirmationDialog). 30 private-profile tests, 190.5 s serially
+# with the lane's flags at load 20-27.
+Tests/UI/test_settings_tool_profiles.py

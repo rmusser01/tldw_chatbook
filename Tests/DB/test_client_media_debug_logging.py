@@ -180,8 +180,11 @@ class TestConvertedSitesStillLogUnderDebug:
 
         assert rows == []
         assert total == 0
+        assert db.get_connection() is not connection
         captured = loguru_output.getvalue() + stdlib_output.getvalue()
-        assert "Media database connection was closed; reopening." in captured
+        # TASK-42026: b5251e9a6e dropped the "was closed; reopening" warning;
+        # the reopen's diagnostic is now the open line it logs.
+        assert "Media database connection opened." in captured
         assert database_path not in captured
         assert "test-client" not in captured
 

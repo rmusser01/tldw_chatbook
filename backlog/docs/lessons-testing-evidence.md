@@ -15,6 +15,12 @@
 
 **What to do.** For backup behaviour that depends on where a file sits relative to its config, run the case at the default location too, with the config at `~/.config/tldw_cli/config.toml` and `RecoveryService(default_control_root())`, not only in the harness's separate folder. Name the code behind `backup_operation_failed` before drawing conclusions. `recovery_service.issue_code` names the error, but `replacement_rolled_back` hides its cause (`from None`), so wrap `publication.finalize_candidate` too.
 
+## An assertion inside a mocked dialog dies with the `exit_on_error=False` worker that awaits it (TASK-42005, 2026-11-20)
+
+**Incident.** `test_removal_confirmation_names_the_profile_id_verbatim` (was `test_removal_confirmation_does_not_interpolate_the_profile_id`) replaced `push_screen_wait` with an `AsyncMock` whose `side_effect` asserted on the dialog's message. When 88ae92a234 changed the contract (the dialog renders literally, callers stop escaping), that assertion raised inside Settings' removal worker, which is `exit_on_error=False`: the worker ended silently before writing its result, and the test reported only `assert '' == 'Remove cancelled'`. Two rounds recorded it as red without naming the cause (TASK-36387 at dev, TASK-41526).
+
+**What to do.** In a stand-in that a worker awaits, record what it was given and assert after the run, on the test's own stack; an assertion inside the stand-in can only fail as a missing effect downstream.
+
 ## A test's `monkeypatch.setattr` lives until after every autouse teardown, so a patched builtin breaks them (TASK-42028, 2026-11-20)
 
 **Incident.** Two tests in `test_console_first_send_import_cycles.py` replaced `builtins.__import__` with a one-argument fake through `monkeypatch.setattr` (since e75333c318, 2026-11-02) and passed until TASK-41507 put `test_console_launch_wake.py` (which imports helpers from `test_console_fleet_wake_wiring.py`) in their UI shard; then all six ended in teardown ERRORs (`import_module() takes 1 positional argument but 5 were given`). `--setup-plan` shows why: an autouse fixture (`_console_gateway_http_client_is_offline`) requests `monkeypatch` first, so the test shares that instance and its undo runs after every other autouse teardown. `drain_test_app_user_data_dirs` tears down earlier and, only when the wiring module is loaded, runs `from Tests.conftest import ...` under the fake. That module was loaded by an import from another file, not by a test of its own in the shard.

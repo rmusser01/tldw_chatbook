@@ -1143,13 +1143,17 @@ jobs:
 
       # pr-fast-lane's line plus hypothesis (TASK-42028): the admission step's
       # agent-call thinking file imports Tests/Agents/test_fleet_continuation.py,
-      # which imports hypothesis.
+      # which imports hypothesis. So does the sandboxed step's query-synthesis
+      # file (TASK-42008).
       - name: Install fast-lane dependencies
         run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging aiohttp-jinja2 hypothesis
 
       # TASK-41508 (2026-11-18): the trace provenance file, whose constructor
       # builder it fixed (sandboxed, no config read): 45 passed in 5.1 s
       # serially with this step's flags at load ~50.
+      # TASK-42008 (round 18): the Dreams query-synthesis file, here for this
+      # job's hypothesis install (sandboxed, no config read; on no PR lane
+      # before): 311 passed in 3.8 s serially with this step's flags at load 18.
       - name: Run the sandboxed Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'sandboxed' }}
         run: |
@@ -1180,6 +1184,7 @@ jobs:
             Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_shipped76_staged_failure_rolls_back_checkpoint_rebuild \
             Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation \
             Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated \
+            Tests/Dreams/test_query_synthesis.py \
             --timeout=180 \
             --tb=short
 
@@ -1431,6 +1436,14 @@ jobs:
     # not its `--print-occurrences` check, which is unlaned).
     # TASK-39153: the persistent terminal privacy boundary runs last; its one
     # bootstrap_profile node must not precede a sandboxed suite (TASK-32873).
+    # Round 18: 21 PR runs to 2026-11-20 took 6-11 min of the 20. TASK-42009
+    # adds the SQLite validation file (sandboxed, 82 tests, 55.5 s serially at
+    # load 31; its RAG nodes went red on dev unseen) before the ChaChaNotesDB
+    # files. TASK-42025 adds the logging-style scans (sandboxed, 10 tests,
+    # 6.2 s at load 28) and the network guard (sandboxed, 31 tests, 1.4 s at
+    # load 26) after it. TASK-42026 adds the Media DB diagnostics privacy file
+    # (Tests/DB keeps the bootstrap profile, so after the sandboxed block, 9
+    # tests, 1.3 s at load 18) before the last node.
     name: Architecture guard contracts
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1491,8 +1504,12 @@ jobs:
             Tests/Architecture/test_console_review_selection_controller_boundary.py \
             Tests/Architecture/test_console_wave6_inventory.py \
             Tests/Backup_Recovery/test_restore_plan_excluded_directories.py \
+            Tests/Backup_Recovery/test_sqlite_validation.py \
+            Tests/test_stdlib_logging_format_style.py \
+            Tests/test_network_guard.py \
             Tests/ChaChaNotesDB/test_historical_bootstrap.py \
             Tests/ChaChaNotesDB/test_trigger_census.py \
+            Tests/DB/test_client_media_debug_logging.py \
             Tests/Architecture/test_persistent_terminal_privacy_boundary.py \
             --timeout=180 \
             --tb=short
