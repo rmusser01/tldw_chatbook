@@ -803,6 +803,15 @@ BACKUP_OWNER_SUITE_TARGETS = (
     "Tests/Backup_Recovery/test_data_groups.py",
     # TASK-41718: the RAG indexing owner file, red on dev in no lane before.
     "Tests/Backup_Recovery/test_rag_indexing_recovery.py",
+    # TASK-42154 (round 19): recovery, first-binding and legacy roundtrip
+    # files that ran on no lane; six finish nodes went red on dev unseen.
+    "Tests/Backup_Recovery/test_replacement_recovery.py",
+    "Tests/Backup_Recovery/test_default_service_container.py",
+    "Tests/Backup_Recovery/test_first_binding_absent_sqlite.py",
+    "Tests/Backup_Recovery/test_first_binding_unused_scaffolds.py",
+    "Tests/Backup_Recovery/test_first_replacement_binding.py",
+    "Tests/Backup_Recovery/test_first_user_data_binding.py",
+    "Tests/Backup_Recovery/test_legacy_chat_context_roundtrip.py",
     "Tests/Personal_Context/test_repository.py",
     "Tests/Personal_Context/test_runtime_policy.py",
     "Tests/Personal_Context/test_service.py",

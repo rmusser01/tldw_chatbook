@@ -4,7 +4,7 @@ title: "After a crash at finalize_candidate, finish fails on the missing staged 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 22:23
-updated_date: 2026-11-21 19:03
+updated_date: 2026-11-21 21:08
 labels:
 - follow-up
 - backup
@@ -62,6 +62,7 @@ Priority medium: the app refuses to start until rollback is chosen, though rollb
 - [x] #2 finish completes after that crash, or the finish action is not offered when it cannot complete, and the notes say which and why
 - [x] #3 After each recovery the app starts (startup permission and admission), and rollback keeps working
 - [x] #4 The test runs on a PR or dev-push lane, with its time recorded
+- [x] #5 (coordinator, 2026-11-21) The dev-push Backup_Recovery owner-suite step also runs test_replacement_recovery.py, test_default_service_container.py, the test_first_*binding* files and test_legacy_chat_context_roundtrip.py; any file that cannot pass reliably there is left off with the reason; each added file is measured with the step's flags, the step's new total is recorded against its 70-minute cap, and the Tests/CI pins are updated
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -88,3 +89,21 @@ Priority medium: the app refuses to start until rollback is chosen, though rollb
 **Files.** `tldw_chatbook/Backup_Recovery/replacement.py` (`recover_replacement` only: one condition and a comment, +3 lines); `Tests/Backup_Recovery/test_created_owner_rollback.py`.
 
 **Covering runs** (`-n 4 --timeout=1500`, through the wrapper, load 40-57). `test_replacement_recovery.py`: 36 passed. `test_restore_data_groups.py`, `test_publication_crashes.py`, `test_rollback_credentials.py`, `test_selected_owner_finish.py`, `test_settings_finish.py`, `test_replacement_publication_scopes.py`, `test_recovery_service.py` and `test_replacement_abort.py` together: 173 passed, 2 failed. The 2 failures are `test_replacement_publication_scopes.py::test_complete_cli_replacement_admits_mapped_sources[True|False]`: the child hit its fixed 90 s subprocess timeout. They fail the same way at base dc371f0842 with this fix reverted (`2 failed`, both `timed out after 90 s`, load 55-58), and that path never reaches the changed line (its only recovery is `abort`).
+
+**Lane (AC#5, coordinator 2026-11-21).** Seven files that ran in no CI lane now run in the dev-push "Backup_Recovery owner suites" step of `.github/workflows/derived-artifacts.yml`, after the RAG indexing file, with a dated round-19 comment. `BACKUP_OWNER_SUITE_TARGETS` in `Tests/CI/test_ci_queue_pressure_contract.py` lists them in the same order. Each was measured alone with `-n 4 --timeout=1500` in two passes (load 11-27), and passed both times:
+
+| File | Nodes | Wall (pass 1 / pass 2) | Slowest node |
+|---|---|---|---|
+| `test_replacement_recovery.py` | 36 | 65 s / 93 s | 13 s |
+| `test_default_service_container.py` | 40 | 9 s / 15 s | |
+| `test_first_binding_absent_sqlite.py` | 16 | 7 s / 10 s | |
+| `test_first_binding_unused_scaffolds.py` | 12 | 5 s / 5 s | |
+| `test_first_replacement_binding.py` | 25 | 266 s / 268 s | 65 s |
+| `test_first_user_data_binding.py` | 24 | 12 s / 11 s | |
+| `test_legacy_chat_context_roundtrip.py` | 1 | 72 s / 58 s | 66 s |
+
+Together that is about 8 minutes (436 s and 460 s). Every node stays far under the step's `--timeout=300`, and none of these files has its own timeout marker. Today's local run of the whole step without them took 56:50 at load 17-46, so the step's new local total is about 65 minutes, within the step's 70-minute cap and the job's 75. Neither cap was raised. CI runners are less loaded than this host, but the margin is about 5 minutes, so read the first dev-push runs.
+
+**Left off:** `test_default_service_replacement.py`. Its children have fixed 150 s (F9 child) and 300 s (later-rollback child) budgets. Here it failed under load in three of three runs with this branch, and in one of two runs at dev dc371f0842. It is the same roundtrip as the step's already-deselected `test_f9_later_rollback_requires_explicit_credential_review`. `test_first_config_lock.py` does not match `test_first_*binding*` and was not added.
+
+**Checks:** `Tests/CI` at `-n 4`: 1811 passed, 2 skipped. Preflight passes.

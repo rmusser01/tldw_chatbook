@@ -2207,6 +2207,16 @@ jobs:
     # Round 17: TASK-41718's RAG indexing owner file (sandboxed, 8 tests,
     # about 5 s at -n 4), red on dev in no lane until then, follows the data
     # groups file.
+    # Round 19 (2026-11-21, TASK-42154 AC#5): seven sandboxed files that ran on
+    # no lane, where six finish nodes of the replacement recovery file went red
+    # unseen, follow the RAG indexing file: replacement recovery, default
+    # service container, the four first-binding files and the legacy chat
+    # context roundtrip. Alone at -n 4 (two passes, load 11-27): 65-93 s,
+    # 9-15 s, 7-10 s, 5 s, 266-268 s (first replacement binding), 11-12 s and
+    # 58-72 s; about 8 min together. A local run of this step without them took
+    # 56.8 min (load 17-46), so about 65 min with them, inside both caps.
+    # test_default_service_replacement.py stays off: its fixed 150 s and 300 s
+    # child budgets fail under load at dev too.
     name: Backup_Recovery owner suites (push to dev)
     if: (github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TIERED_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.nightly)
     runs-on: ubuntu-latest
@@ -2251,6 +2261,13 @@ jobs:
             Tests/Backup_Recovery/test_credentials.py \
             Tests/Backup_Recovery/test_data_groups.py \
             Tests/Backup_Recovery/test_rag_indexing_recovery.py \
+            Tests/Backup_Recovery/test_replacement_recovery.py \
+            Tests/Backup_Recovery/test_default_service_container.py \
+            Tests/Backup_Recovery/test_first_binding_absent_sqlite.py \
+            Tests/Backup_Recovery/test_first_binding_unused_scaffolds.py \
+            Tests/Backup_Recovery/test_first_replacement_binding.py \
+            Tests/Backup_Recovery/test_first_user_data_binding.py \
+            Tests/Backup_Recovery/test_legacy_chat_context_roundtrip.py \
             Tests/Personal_Context/test_repository.py \
             Tests/Personal_Context/test_runtime_policy.py \
             Tests/Personal_Context/test_service.py \
