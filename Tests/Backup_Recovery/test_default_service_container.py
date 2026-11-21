@@ -255,6 +255,75 @@ def test_first_default_config_binding_preserves_exact_service_only(
         assert prove() == initial
 
 
+# TASK-42151 review: the untouched-folder branch holds only while nothing the
+# plan maps, restores, retires or creates overlaps the default config folder.
+@pytest.mark.parametrize(
+    "case",
+    [
+        "nonsynthetic_root",
+        "restore_child",
+        "retire_child",
+        "container_child",
+        "ancestor_destination",
+    ],
+)
+def test_untouched_default_folder_refuses_any_planned_path_in_it(
+    default_container, tmp_path, case
+):
+    from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
+    from tldw_chatbook.Backup_Recovery.replacement import _first_config_container
+
+    service, archive, destination, target, _item = default_container
+    selector = destination / "config.toml"
+    selector.write_bytes(b"[general]\n")
+    selector.chmod(0o600)
+    target = replace(
+        target,
+        items=(
+            *target.items,
+            StorageItem("config", "config", selector, "included", ()),
+        ),
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(mode=0o700)
+    plan = plan_restore(
+        archive, mode="replace", destinations={"root": elsewhere}, target=target
+    )
+    placed = {
+        # A second, non-synthetic root mapped onto the folder itself.
+        "nonsynthetic_root": {
+            "destinations": (*plan.destinations, ("other", destination))
+        },
+        "restore_child": {
+            "restore": (*plan.restore, ("other", destination / "new.txt"))
+        },
+        "retire_child": {"retire": (*plan.retire, ("other", destination / "note.txt"))},
+        "container_child": {
+            "containers": (*plan.containers, ("local:other", destination / "new"))
+        },
+        "ancestor_destination": {
+            "destinations": (*plan.destinations, ("other", destination.parent))
+        },
+    }[case]
+    plan = replace(plan, **placed)
+    with pytest.raises(ValueError, match="^replacement_config_container_unverified$"):
+        _first_config_container(
+            selector,
+            target,
+            (),
+            bootstrap._registry(bootstrap.default_bootstrap_root()),
+            (),
+            (selector,),
+            (
+                bootstrap.default_bootstrap_root(),
+                service.control_root,
+                service_storage.work_root(service.control_root) / "candidate",
+            ),
+            plan=plan,
+            document=verify_sealed(archive),
+        )
+
+
 @pytest.mark.parametrize("kind", ["arbitrary", "nondefault_service"])
 def test_other_nested_archive_and_staging_paths_still_refuse(default_container, kind):
     from tldw_chatbook.Backup_Recovery.archive_reader import acquire

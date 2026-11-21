@@ -844,6 +844,13 @@ def _untouched_service_work(path, parent, plan):
 
     return (
         plan.mode == "replace"
+        and any(
+            item.path is not None
+            and parent in item.path.parents
+            and (item.logical_id, item.path) in plan.preserve
+            and is_private_service_work(path, item)
+            for item in plan.target.items
+        )
         and parent.is_dir()
         and not parent.is_symlink()
         and not any(
@@ -854,13 +861,6 @@ def _untouched_service_work(path, parent, plan):
                 *plan.retire,
                 *plan.containers,
             )
-        )
-        and any(
-            item.path is not None
-            and parent in item.path.parents
-            and (item.logical_id, item.path) in plan.preserve
-            and is_private_service_work(path, item)
-            for item in plan.target.items
         )
     )
 

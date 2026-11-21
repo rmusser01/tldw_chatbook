@@ -4,7 +4,7 @@ title: "A Replace at the default config location without the Settings group is r
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 20:42
+updated_date: 2026-11-21 21:52
 labels:
 - follow-up
 - backup
@@ -52,5 +52,14 @@ Rechecked at d85e90bc9e with TASK-42113's temporary harness change applied and t
 Unit pins in `test_default_service_container.py`. `test_first_default_config_binding_preserves_exact_service_only` and `test_first_default_binding_never_enrolls_control_or_config_parent` now also run with the archive root mapped `elsewhere`, outside the config folder. `elsewhere-valid` proves the folder, `elsewhere-service_replaced` sees the service change, and the binding enrolls only `config.toml` and the profile file, never the folder or a control. These three were red without the fix (`replacement_config_container_unverified`). The refusals `unknown_protected`, `nondefault_protected`, `unknown_sibling`, `unpreserved_bootstrap`, `bootstrap_mutation` (a planned retire inside the bootstrap root) and `foreign_bootstrap_registry` still refuse for `elsewhere`, before and after (40 passed). This file is in no CI lane (see follow-ups).
 
 **Other runs** (through the wrapper). The whole dev-push owner-suite lane step, run locally with its deselects at `-n 4 --timeout=1500`, gave 1074 passed in 56:50 at load 17-46. It includes TASK-42113's `test_a_default_location_pet_replace_refuses_and_keeps_the_pets`, whose plans do touch the config folder, so they still refuse as pinned. `test_first_replacement_binding.py`, `test_first_config_lock.py` and `test_first_binding_unused_scaffolds.py` all passed (45 passed together with the next file). `test_default_service_replacement.py` (in no lane) failed under load in three runs with the fix: its F9 child hit its fixed 150 s deadline twice, and the later-rollback child's `asyncio.timeout` once, after the F9 replacement had passed. At base dc371f0842 with this file reverted it passed once (428 s, close to its 600 s cap) and failed once the same way (the F9 child's 150 s deadline). Its default-profile plan restores Settings into the folder, so the new branch never applies to it.
+
+**Review rev1.** The safety clause in `_untouched_service_work` (the folder must not overlap any destination, restore, retire or container path) is now pinned by `test_default_service_container.py::test_untouched_default_folder_refuses_any_planned_path_in_it`. Each case adds one planned path to the valid `elsewhere` plan and expects `replacement_config_container_unverified` from `_first_config_container`:
+- `nonsynthetic_root`: a second, non-synthetic root mapped onto the folder;
+- `restore_child`: a restore of a file in it;
+- `retire_child`: a retire of its `note.txt`;
+- `container_child`: a new container in it;
+- `ancestor_destination`: a destination that is the folder's parent.
+
+With the clause deleted, all five failed `DID NOT RAISE <class 'ValueError'>` (5 failed, 40 passed); with it, the file passes (45 passed). The helper now runs its `any(item ...)` check for a preserved default service item before the overlap scan.
 
 **Files.** `tldw_chatbook/Backup_Recovery/replacement.py`: new `_untouched_service_work`, a call to it in `_preserved_default_controls`, and one in `_first_profile_container`'s `protected_overlap`; +36 lines. Also `Tests/Backup_Recovery/test_created_owner_rollback.py` and `Tests/Backup_Recovery/test_default_service_container.py`.
