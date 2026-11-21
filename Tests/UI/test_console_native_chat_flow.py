@@ -1532,6 +1532,7 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_warm_console_resume_consumes_staged_chat_handoff():
     """A CHAT handoff staged while away is consumed on the WARM revisit.
@@ -1598,6 +1599,7 @@ async def test_warm_console_resume_consumes_staged_chat_handoff():
         assert launch is not None
         assert launch.title == "Warm revisit handoff"
         assert launch.source == "library"
+        await _wait_for_selector(console, pilot, "#console-pending-launch-card")
 
 
 @private_profile_test
@@ -2597,6 +2599,7 @@ async def test_conversation_settings_return_suspend_releases_acquired_exact_clai
             allow_restore_exit.set()
 
 
+@pytest.mark.bootstrap_profile
 def test_console_store_uses_app_citation_repository_for_matching_database():
     app = _build_test_app()
     db = Mock(name="chachanotes-db")
@@ -2622,6 +2625,7 @@ def test_native_paste_entry_point_advances_edit_serial_for_stale_apply_guard():
     assert composer.capture_draft_snapshot().segments[0].origin == "paste"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_store_rejects_mismatched_citation_repository():
     app = _build_test_app()
     db = Mock(name="chachanotes-db")
@@ -2637,6 +2641,7 @@ def test_console_store_rejects_mismatched_citation_repository():
     assert store.persistence.citation_repository is None
 
 
+@pytest.mark.bootstrap_profile
 def test_console_store_uses_app_citation_repository_only_with_database():
     app = _build_test_app()
     app.chachanotes_db = None
@@ -3315,6 +3320,7 @@ async def test_improvement_disclosure_is_pinned_and_drift_before_click_is_blocke
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
 async def test_manual_apply_compares_captured_and_fresh_effective_resolution(
@@ -3373,6 +3379,7 @@ async def test_manual_apply_compares_captured_and_fresh_effective_resolution(
         assert service.usage_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("drift", ["session", "draft", "system", "provider"])
 async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_applies(

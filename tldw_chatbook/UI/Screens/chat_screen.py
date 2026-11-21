@@ -14487,6 +14487,8 @@ class ChatScreen(BaseAppScreen):
                 except QueryError:
                     continue
                 await stale_card.remove()
+            if not local_section.viewport.is_attached:
+                return  # A recompose replaced this rail while removing the old card.
             launch = self._pending_console_launch_context
             card = (
                 self._build_console_live_work_status_card(launch)

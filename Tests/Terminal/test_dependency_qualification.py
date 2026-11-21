@@ -289,19 +289,25 @@ def _load_qualification_module(name: str) -> object:
     module_path = QUALIFICATION_ROOT / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"task22512_{name}", module_path)
     assert spec is not None and spec.loader is not None
-    sys.path.insert(0, str(QUALIFICATION_ROOT))
-    previous = sys.modules.get(spec.name)
-    try:
+    with pytest.MonkeyPatch.context() as imports:
+        imports.syspath_prepend(str(QUALIFICATION_ROOT))
+        if name != "common":
+            # The standalone probes import their sibling by its script name.
+            imports.setitem(sys.modules, "common", _load_qualification_module("common"))
         module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
+        imports.setitem(sys.modules, spec.name, module)
         spec.loader.exec_module(module)
-        return module
-    finally:
-        if previous is None:
-            sys.modules.pop(spec.name, None)
-        else:
-            sys.modules[spec.name] = previous
-        sys.path.remove(str(QUALIFICATION_ROOT))
+    return module
+
+
+def test_qualification_module_ignores_unrelated_cached_common(monkeypatch) -> None:
+    other_common = ModuleType("common")
+    monkeypatch.setitem(sys.modules, "common", other_common)
+
+    probe = _load_qualification_module("pyte_probe")
+
+    assert probe.SCHEMA_VERSION == _load_qualification_module("common").SCHEMA_VERSION
+    assert sys.modules["common"] is other_common
 
 
 def test_qualification_scripts_do_not_import_product_code() -> None:
