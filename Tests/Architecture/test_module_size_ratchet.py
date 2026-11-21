@@ -1609,7 +1609,10 @@ _BUDGETS: dict[str, int] = {
     # own +575; same owner decision: expand limits, don't contort code).
     # 2026-11-06, rebased onto dev 2684e5453f: 4742 -> 5317 (polish-1b's
     # own +575; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 5317,
+    # 2026-11-21, r10 shell red: 5317 -> 5322 (+5). The list-mode refocus
+    # yields to an armed list entry. Owner decision: expand limits, don't
+    # contort code.
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 5322,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     # 2026-11-03 TASK-36945.3: +9, [rag.service] constants read when used.
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
