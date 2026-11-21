@@ -612,14 +612,16 @@ async def test_a_default_agent_chat_reads_ready_then_may_pause_and_the_send_hold
             assert held is not None and held.pause_kind is (
                 ConsolePreparationPauseKind.CONTEXT_COMPACTION
             ), (held, controller.run_state_for(session.id))
+            card = console.query_one(TraceCallRecoveryCallout)
+            # The card is shown by a later sync than the header's; wait on both.
             for _ in range(100):
                 await console._sync_native_console_chat_ui()
                 await pilot.pause(0.1)
-                if badge() == "Blocked":
+                if badge() == "Blocked" and card.display:
                     break
             assert badge() == "Blocked"
             assert run_line() == "Blocked — compaction ask"
-            assert console.query_one(TraceCallRecoveryCallout).display
+            assert card.display
     finally:
         if console is not None:
             await _dispose_runtime(console)
