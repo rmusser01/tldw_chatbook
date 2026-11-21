@@ -676,6 +676,12 @@ RECOVERED_SUITES_TARGETS = (
     # TASK-39172: config participant lifetimes, sandboxed and reading config
     # in-process, so before the bootstrap_profile suites.
     "Tests/Backup_Recovery/test_config_participant_lifetimes.py",
+    # TASK-42115: the deleted-root guards, sandboxed, in no lane before: the
+    # journal-first same-session retirement cases, the effective admission
+    # roots and the companion record evidence (bootstrap digest pin).
+    "Tests/Backup_Recovery/test_same_session_retirement_capture.py",
+    "Tests/Backup_Recovery/test_effective_admission_roots.py",
+    "Tests/Backup_Recovery/test_config_companion_missing_record_evidence.py",
     # TASK-38948: the subscription background-readiness file (sandboxed,
     # ~6 s serial), which ran on no PR lane.
     "Tests/Chat/test_subscription_background_readiness.py",
