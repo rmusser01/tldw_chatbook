@@ -5013,7 +5013,7 @@ def test_config_load_migrates_a_base_saved_with_v1_appended_once(case, tmp_path,
     assert rewrites and all(expected in line for line in rewrites)
 
 
-def test_config_migration_2_agrees_with_the_endpoint_contracts_rule():
+def test_config_migrations_2_and_3_agree_with_the_endpoint_contracts_rule():
     """Round-18 hotfix of TASK-42002: config is kernel and may not import the
     endpoint contract, so migration 2 keeps its own frozen copy of the shapes.
     Its table is the contract's, and on every shape (both schemes, with no
@@ -5021,8 +5021,9 @@ def test_config_migration_2_agrees_with_the_endpoint_contracts_rule():
     drops or refuses) and every control above it rewrites exactly what
     ``v1_appended_documented_base`` rewrites, to the same base, so a change to
     either rule fails here instead of drifting (review rev1). TASK-42153: the
-    migrations run as a v1 config's load runs them (2, then 3), over
-    QwenCloud's China host and Cohere's old host too."""
+    migrations run as a v1 config's load runs them (2, then 3), over every
+    ``_V1_APPENDED_OTHER_HOSTS`` host too (QwenCloud's China host, Cohere's
+    old host), read from the contract's table."""
     from urllib.parse import urlsplit
 
     from tldw_chatbook import config as config_mod
@@ -5032,11 +5033,8 @@ def test_config_migration_2_agrees_with_the_endpoint_contracts_rule():
         key: "/" + "/".join(path) for key, path in contract._V1_APPENDED_PATHS.items()
     }
     assert config_mod._V1_APPENDED_OTHER_HOSTS == contract._V1_APPENDED_OTHER_HOSTS
-    hosts = {
-        (provider, urlsplit(row[0]).hostname)
-        for table in (_V1_APPENDED, _V1_APPENDED_OTHER_HOSTS)
-        for provider, row in table.items()
-    }
+    hosts = {(provider, urlsplit(row[0]).hostname) for provider, row in _V1_APPENDED.items()}
+    hosts |= set(contract._V1_APPENDED_OTHER_HOSTS.items())
     rows = {(provider, stored) for provider, _key, stored, _expected in _V1_APPENDED_LOAD_ROWS.values()}
     rows |= {(p, "http://" + s.removeprefix("https://")) for p, s in rows if s.startswith("https://")}
     rows |= {
@@ -5967,7 +5965,6 @@ def test_an_env_key_still_outranks_a_still_encrypted_slot_key(
         assert settings[f"{provider}_api"]["api_key"] == "env-key-0000"
 
 
-
 @pytest.mark.parametrize("slot_key", ["absent", "still-encrypted"])
 def test_a_hugging_face_send_without_a_usable_saved_key_goes_out_keyless(slot_key, tmp_path, monkeypatch):
     """TASK-42134 (owner decision 2026-11-21, "134 - no"): a Hugging Face send
@@ -5985,6 +5982,7 @@ def test_a_hugging_face_send_without_a_usable_saved_key_goes_out_keyless(slot_ke
     path = tmp_path / "config.toml"
     path.write_text(toml.dumps({"api_settings": {"huggingface": table}}), encoding="utf-8")
     settings = select_config_source(monkeypatch, path).load_settings(force_reload=True)
+    assert settings["api_settings"]["huggingface"].get("api_key") == table.get("api_key")
     _cloud_world(monkeypatch, settings)
     stub, wire = requests.Session.send, []
 

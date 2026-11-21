@@ -7,7 +7,7 @@ Allowances: TASK-34367.3-.5 (3e618d7119) replaced the provisional empty sets
 with ones taken from each provider's official schema (the reconciliation note
 above ``TOGETHER`` in the registry names each source; offline contracts, live
 qualification stays with TASK-33640). Two sets are proved by live capture
-instead and keep their fixture citations: Together's choice ``logprobs`` and
+and keep their fixture citations: Together's choice ``logprobs`` and
 Fireworks' tool call ``{index, name}`` (TASK-42132).
 
 Live captures of these (and every other engine preset) replay under their
@@ -89,8 +89,9 @@ def test_settings_defaults_carry_no_model_key(key: str) -> None:
 # --- allowances: the registry's doc-sourced contract plus captured sets ---
 
 
-# What each provider's official schema documents (TASK-34367.3-.5; the
-# registry's reconciliation note above TOGETHER names the source, below).
+# What each provider's official schema documents, less the captured sets below
+# (TASK-34367.3-.5; the registry's reconciliation note above TOGETHER names the
+# source, below).
 _DOCUMENTED_ALLOWANCES = {
     "together": {
         "response": frozenset({"prompt", "warnings"}),
