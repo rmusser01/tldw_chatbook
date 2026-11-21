@@ -4963,6 +4963,23 @@ def test_config_load_migrates_a_base_saved_with_v1_appended_once(case, tmp_path,
     assert rewrites and all(expected in line for line in rewrites)
 
 
+def test_config_migration_2_agrees_with_the_endpoint_contracts_rule():
+    """Round-18 hotfix of TASK-42002: config is kernel and may not import the
+    endpoint contract, so migration 2 keeps its own frozen copy of the shapes.
+    On every shape and tail (both schemes) and every control above it
+    rewrites exactly what ``v1_appended_documented_base`` rewrites, to the
+    same base, so a change to either rule fails here instead of drifting."""
+    from tldw_chatbook.config import _migrate_v1_appended_provider_bases
+    from tldw_chatbook.Provider_Contract.provider_endpoint_contract import v1_appended_documented_base
+
+    rows = {(provider, stored) for provider, _key, stored, _expected in _V1_APPENDED_LOAD_ROWS.values()}
+    rows |= {(provider, "http://" + stored.removeprefix("https://")) for provider, stored in rows}
+    for provider, stored in sorted(rows):
+        config = {"api_settings": {provider: {"api_base_url": stored}}}
+        migrated = _migrate_v1_appended_provider_bases(config)["api_settings"][provider]["api_base_url"]
+        assert migrated == (v1_appended_documented_base(provider, stored) or stored), (provider, stored)
+
+
 @pytest.mark.parametrize("version", [2, 1])
 def test_the_boot_migration_step_takes_no_lock_for_a_config_with_nothing_to_rewrite(
     version, tmp_path, monkeypatch

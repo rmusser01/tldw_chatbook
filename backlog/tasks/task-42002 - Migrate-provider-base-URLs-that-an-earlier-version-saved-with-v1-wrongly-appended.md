@@ -4,7 +4,7 @@ title: "Migrate provider base URLs that an earlier version saved with /v1 wrongl
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-19 19:39
-updated_date: 2026-11-20 18:01
+updated_date: 2026-11-21 17:03
 labels:
 - follow-up
 - providers
@@ -79,3 +79,10 @@ Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_ch
 - `config.py` 8875 -> 8884 (+9), dated ratchet comment. Docs: `Docs/Architecture/llm-providers.md` and `Docs/User_Guide/settings.md`.
 
 **Review r18-rev2:** `config.py`'s unused `RECORDS_BY_KEY` import (only the removed pre-filter used it) is gone; ratchet 8884 -> 8883. `test_the_boot_migration_step_writes_a_file_changed_after_the_load_settled_it` pins that a file changed after the load settled it (a different size, now holding Groq's `<host>/v1`) takes the locked path and is rewritten; red with the stamp comparison temporarily ignored (`assert None is not None`), green after.
+
+**Round-18 hotfix (2026-11-21):** migration 2's lazy import of `Provider_Contract.provider_endpoint_contract` from `config.py` was a kernel -> domain edge (`Docs/Architecture/layer-map.md`), so `Tests/Architecture/test_layer_direction.py::test_no_new_upward_import` failed on dev f864f00762 and every PR's required check. Coordinator decision: a config migration is a frozen historical fix and does not call live domain code.
+- `config.py` keeps its own table, `_V1_APPENDED_SHAPES` (provider -> the path saved with `/v1` appended), and the migration matches only that exact spelling on the provider's registry default host (`RECORDS_BY_KEY`, already imported from the kernel `provider_registry`; stdlib `urlsplit`), `http` or `https`, with no tail, a pasted `/chat/completions`, or `/models` (QwenCloud: `/responses`; its `/v1/models` is kept, as the contract refuses it). It rewrites to the registry default base on the value's scheme, which is what a save writes. User info, a port, a query, a fragment, a trailing slash or any other host never match, so they are left untouched (stricter than the contract on spellings an earlier Settings never wrote). The log line is unchanged: provider and new base only. No allowlist row was added.
+- The documented base is built with `SplitResult._replace(...).geturl()`, not an f-string over `.path`: the production diagnostic inventory reads `.path` as path-shaped and flagged the log call as a new path-privacy candidate.
+- Parity test: `test_config_migration_2_agrees_with_the_endpoint_contracts_rule` (`Tests/Chat/test_local_server_discovery.py`, lane-run) runs the migration and the contract's `v1_appended_documented_base` over every `_V1_APPENDED_LOAD_ROWS` value (the 5 shapes, their 10 tails, and the 11 controls including QwenCloud `/v1/models`), each also as `http://`, and asserts the same result. It is green at base (an invariant dev keeps by construction), so red was shown under temporary source edits: removing Groq from the contract's `_V1_APPENDED_PATHS` failed it (`('groq', 'http://api.groq.com/v1')`), and dropping the kernel's `/models` tail failed it (`('cohere', 'http://api.cohere.com/v1/models')`); both reverted. The existing TASK-42002/42019 tests are unchanged and green (46 passed, `-n 4`).
+- The contract's comments and `Docs/Architecture/llm-providers.md` now say config keeps a frozen copy pinned by the parity test. Boot import weight unchanged (687/688). `config.py` 8883 -> 8895 (+12), dated ratchet comment.
+- Same hotfix, second red: `Tests/Architecture/test_app_string_lookup_census.py::test_app_string_lookups_match_their_pin[UI]` measured 1315 against a pin of 1316. TASK-42015 (bd343b444a) deleted `ChatScreen._record_console_first_send`, and with it `getattr(self.app_instance, "app_config", None)`; the census over the tree with that one file restored to bd343b444a^ measures 1316. The pin in `Tests/Architecture/app_lookup_census.tsv` is lowered to 1315.

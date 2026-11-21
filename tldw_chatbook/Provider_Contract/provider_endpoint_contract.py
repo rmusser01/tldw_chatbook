@@ -103,8 +103,8 @@ _BARE_BASE_ANY_HOST_KEYS = frozenset({"cohere"})
 #: TASK-42002 (owner decision 2026-11-19, "Migrate on load"): the paths an
 #: earlier Settings saved with ``/v1`` wrongly appended to a first-party base.
 #: On the provider's own host each reads as its documented path, so a save
-#: writes that base (TASK-42019) and config load rewrites a saved one
-#: (``config._migrate_v1_appended_provider_bases``). Google's ``/v1`` is a
+#: writes that base (TASK-42019); config load rewrites a saved one with its own
+#: frozen copy (``config._V1_APPENDED_SHAPES``). Google's ``/v1`` is a
 #: real Gemini API version, so it is not here.
 _V1_APPENDED_PATHS = {
     "google": ("v1beta", "v1"),
@@ -511,8 +511,9 @@ def _read_v1_appended_path(
 def v1_appended_documented_base(provider: object, value: object) -> str | None:
     """The documented base a value saved with ``/v1`` wrongly appended reads as.
 
-    TASK-42002: config load rewrites such a saved base with this, the rule a
-    save resolves through (``_V1_APPENDED_PATHS``).
+    TASK-42002: the rule a save resolves through (``_V1_APPENDED_PATHS``).
+    Config migration 2 keeps its own frozen copy (config is kernel); a parity
+    test asserts the two agree.
 
     Args:
         provider: Provider key.
