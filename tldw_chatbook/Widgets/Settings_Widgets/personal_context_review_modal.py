@@ -24,6 +24,7 @@ from tldw_profile_core import (
     SyncMode,
 )
 
+from ... import rendered_target
 from ...Personal_Context.interview_coordinator import (
     InterviewCommitOutcomeUnknownError,
     InterviewCommitReceipt,
@@ -462,6 +463,10 @@ class PersonalContextReviewModal(
         self._status_copy = (
             "Review each proposed change. Only checked rows will be saved."
         )
+        #: Each row's Apply edit button to its row, a new map per compose
+        #: (TASK-42150): a late press from an earlier compose resolves to
+        #: nothing, not to whichever change now holds its index.
+        self._apply_rows: dict[Button, int] = {}
 
     @property
     def selected_change_ids(self) -> tuple[str, ...]:
@@ -471,6 +476,7 @@ class PersonalContextReviewModal(
         )
 
     def compose(self) -> ComposeResult:
+        self._apply_rows = {}
         with Vertical(id="personal-context-review-modal"):
             yield Static("Review Personal Context", classes="profile-interview-title")
             yield Static(
@@ -596,11 +602,13 @@ class PersonalContextReviewModal(
                     allow_blank=False,
                     id=f"personal-context-review-visibility-{index}",
                 )
-                yield Button(
+                apply = Button(
                     "Apply edit",
                     id=f"personal-context-review-apply-{index}",
                     disabled=self._receipt is not None,
                 )
+                self._apply_rows[apply] = index
+                yield apply
 
     # No on_mount override: it did nothing but super().on_mount(), which the
     # dispatcher already invokes on SafeModalDismissMixin separately for
@@ -635,11 +643,9 @@ class PersonalContextReviewModal(
         }:
             return
         if button_id.startswith("personal-context-review-apply-"):
-            try:
-                index = int(button_id.rsplit("-", 1)[1])
-            except ValueError:
-                return
-            self._apply_edit(index)
+            index = rendered_target(self._apply_rows, event.button)
+            if index is not None:
+                self._apply_edit(index)
         elif button_id == "personal-context-review-save-only":
             self._commit(enable_runtime=False)
         elif button_id == "personal-context-review-save-use":

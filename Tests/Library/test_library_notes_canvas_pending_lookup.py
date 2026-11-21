@@ -55,6 +55,7 @@ stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
@@ -79,6 +80,11 @@ from textual.widgets import (
 )
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.test_personal_context_review_modal import (
+    _Coordinator as _ReviewCoordinator,
+    _Host as _ReviewHost,
+    _push as _push_review,
+)
 from Tests.Widgets.Library.test_library_notes_canvas import _editor_state
 from Tests.UI.test_evals_bench_editor import (  # noqa: F401 -- fixture re-exports
     _REALISTIC_SIZE,
@@ -102,6 +108,9 @@ from tldw_chatbook.UI.Speech.settings_speech_tts import load_global_speech_tts_s
 from tldw_chatbook.UI.Watchlists_Modules.briefing_preset_modal import (
     BriefingPresetModal,
     _blank_speaker,
+)
+from tldw_chatbook.Widgets.Settings_Widgets.personal_context_review_modal import (
+    PersonalContextReviewModal,
 )
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
@@ -1155,3 +1164,32 @@ async def test_a_stale_hook_revoke_never_revokes_another_hook():
         )
 
         assert revoked == [], "a stale Revoke revoked another hook"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_personal_context_apply_never_rewrites_another_change():
+    """An Apply for row 1 ("change-2") is in transit when the review's diff
+    is replaced in a new order and the modal recomposes; row 1 is then
+    "change-1". No rewrite may be sent for it."""
+    coordinator = _ReviewCoordinator()
+    host = _ReviewHost()
+    async with host.run_test(size=(110, 34)) as pilot:
+        modal = PersonalContextReviewModal(
+            coordinator, session_id="session-1", diff=coordinator.diff
+        )
+        await _push_review(host, modal)
+        await pilot.pause()
+
+        def reorder() -> None:
+            modal._diff = replace(modal._diff, changes=modal._diff.changes[::-1])
+            modal._revision += 1
+
+        await _press_a_stale_row_across(
+            pilot,
+            modal.query_one("#personal-context-review-apply-1", Button),
+            reorder,
+            modal.query_one("#personal-context-review-modal"),
+        )
+        await host.workers.wait_for_complete()
+
+        assert coordinator.rewrites == [], "a stale Apply rewrote another change"
