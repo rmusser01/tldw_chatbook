@@ -42,9 +42,9 @@ Found in a Linux UAT on dev 230205800c (2026-11-20, Debian 12, a new user accoun
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-**Fix (Backup_Recovery/launcher.py `startup_preflight`):** PrivatePathError with reason `missing_parent` returns `(None, None)`, the same as FileNotFoundError. `config.py`'s loader already treats `missing_parent` as a fresh profile and creates the folder under its own private-path checks. `shared_writable_parent` and every other reason keep their existing refusals.
+**Fix (Backup_Recovery/launcher.py `startup_preflight`):** for the default config path with no `TLDW_CONFIG_PATH` override, PrivatePathError with reason `missing_parent` returns `(None, None)`, the same as FileNotFoundError. This is the same scope as `config.application_owned_config_directory`. A custom path whose folder is missing still gets `configuration_unavailable`; local review caught that the first version accepted any path. `config.py`'s loader already treats `missing_parent` as a fresh profile and creates the folder under its own private-path checks. `shared_writable_parent` and every other reason keep their existing refusals.
 
-**Test:** `Tests/Backup_Recovery/test_startup_unlock.py::test_fresh_profile_without_a_config_folder_starts_normally` covers two cases, real missing folders and a forced Linux `missing_parent`. Both returned `configuration_unavailable` on base. Inside pytest, macOS raised `missing_parent` for real missing folders too; a scratch-HOME probe outside pytest got FileNotFoundError. The rest of the file still passes (32/32).
+**Test:** `Tests/Backup_Recovery/test_startup_unlock.py::test_fresh_profile_without_a_config_folder_starts_normally` covers three cases: real missing folders and a forced Linux `missing_parent` on the default path (both returned `configuration_unavailable` on base), and a custom `TLDW_CONFIG_PATH` that stays refused. Inside pytest, macOS raised `missing_parent` for real missing folders too; a scratch-HOME probe outside pytest got FileNotFoundError. The rest of the file still passes (32/32).
 
 **Live (Linux, 2026-11-20):** a new account with no `~/.config` launched straight into the Console in about 12 s and created `~/.config/tldw_cli/config.toml`. Before the fix it opened on "Recovery required: configuration_unavailable".
 <!-- SECTION:NOTES:END -->

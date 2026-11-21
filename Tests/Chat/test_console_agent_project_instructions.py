@@ -1591,16 +1591,21 @@ async def test_preflight_without_chooser_callback_terminalizes_turn():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("decision", ["cancel", "disable"])
+@pytest.mark.parametrize(
+    ("decision", "review_destination"),
+    [("cancel", False), ("disable", False), ("cancel", True)],
+)
 async def test_declined_notice_blocks_the_turn_and_names_the_decline(
-    tmp_path, decision
+    tmp_path, decision, review_destination
 ):
     """TASK-33621.98: declining "Send project instructions?" said only "Response failed."
 
     The user's own Cancel/Disable reached the bridge as an ordinary runtime
     cancellation (AgentService returns RUN_CANCELLED for any non-proceed
     answer; pinned by test_cancel_and_disable_abort_before_provider_and_discard_snapshot),
-    so the turn ended FAILED with no reason and ``blocker=-`` in the log.
+    so the turn ended FAILED with no reason and ``blocker=-`` in the log. A
+    review destination's notice is not the primary send's decline and keeps
+    the ordinary cancellation.
     """
     from tldw_chatbook.Chat.console_chat_models import ConsoleSubmitBlocker
 
@@ -1638,10 +1643,28 @@ async def test_declined_notice_blocks_the_turn_and_names_the_decline(
                 ),
                 warning_codes=(),
             )
-            if kwargs["confirm_project_instruction_dispatch"](snapshot) == "proceed":
+            confirm = kwargs["confirm_project_instruction_dispatch"]
+            answer = (
+                confirm(snapshot, review_target)
+                if review_destination
+                else confirm(snapshot)
+            )
+            if answer == "proceed":
                 sent.append(True)
                 return "run-1", RunOutcome(status=RUN_DONE, steps=[], final_text="ok")
             return "run-1", RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
+
+    review_target = with_destination(
+        ConsoleProviderResolution(
+            provider="OpenAI",
+            base_url="https://review.example/v1",
+            model="review-model",
+            ready=True,
+            readiness_key="openai",
+            execution_key="openai",
+            max_tokens=128,
+        )
+    )
 
     class Gateway:
         async def resolve_for_send(self, _selection):
@@ -1675,13 +1698,21 @@ async def test_declined_notice_blocks_the_turn_and_names_the_decline(
 
     assert sent == []
     assert result.accepted is True
-    assert result.blocker is ConsoleSubmitBlocker.PROJECT_INSTRUCTIONS_DECLINED
     state = controller.run_state_for(session.id)
+    if review_destination:
+        assert result.blocker is None
+        assert state.status is ConsoleRunStatus.FAILED
+        return
+    assert result.blocker is ConsoleSubmitBlocker.PROJECT_INSTRUCTIONS_DECLINED
     assert state.status is ConsoleRunStatus.BLOCKED
     assert state.visible_copy.startswith("Not sent: ")
+    # The failed reply itself names the decline (Retry lives on it); no bare
+    # "Response failed." bubble and no separate system row.
     rows = store.messages_for_session(session.id)
-    assert rows[-1].role is ConsoleMessageRole.SYSTEM
+    assert rows[-1].role is ConsoleMessageRole.ASSISTANT
+    assert rows[-1].status == "failed"
     assert rows[-1].content == state.visible_copy
+    assert not any(row.role is ConsoleMessageRole.SYSTEM for row in rows)
     # A later send is not held by the declined turn, and the decline is not
     # carried into it.
     controller._confirm_project_instruction_dispatch = lambda _notice: "proceed"
@@ -1690,3 +1721,15 @@ async def test_declined_notice_blocks_the_turn_and_names_the_decline(
     if decision == "disable":
         assert sent == [True]
     assert controller.run_state_for(session.id).status is not ConsoleRunStatus.BLOCKED
+
+
+def test_a_decline_is_claimed_only_by_the_reply_it_ended():
+    """TASK-33621.98 review: a record a Stop or an exception left unclaimed must
+    not label a later turn's ordinary cancellation as a decline."""
+    from tldw_chatbook.Chat import console_project_dispatch as dispatch
+
+    dispatch._DECLINED["session"] = ("reply-1", "cancel")
+    assert dispatch.take_declined_notice("session", "reply-2") is None
+    assert "session" not in dispatch._DECLINED
+    dispatch._DECLINED["session"] = ("reply-3", "disable")
+    assert dispatch.take_declined_notice("session", "reply-3") == "disable"

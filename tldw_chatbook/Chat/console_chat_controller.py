@@ -26797,7 +26797,7 @@ class ConsoleChatController:
         from tldw_chatbook.Agents.agent_models import RUN_CANCELLED, RUN_DONE
         from .console_project_dispatch import finalize_declined_notice, take_declined_notice
 
-        declined = take_declined_notice(session_id)  # TASK-33621.98: claim before any branch
+        declined = take_declined_notice(session_id, assistant_message_id)  # TASK-33621.98
         current = self._ensure_assistant_placeholder(assistant_message_id, session_id)
         # task-227 LOW-2 (+ AC3 follow-up): a Stop can land in the
         # ultra-narrow window after asyncio.to_thread returns an outcome

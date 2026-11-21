@@ -116,7 +116,7 @@ field holds a fixed code:
 | `owner_changed` | Another action took over the saved send; it is kept for recovery |
 | `prerequisites_only` | The send was saved but deliberately not sent, so Discard or recovery can settle it |
 | `project_setup` | A temporary chat's send needed a project folder and none was chosen, or project instructions were turned off from the folder picker |
-| `project_instructions_declined` | You answered **Send project instructions?** with Cancel or Disable (or let it time out), so the turn was not sent |
+| `project_instructions_declined` | **Send project instructions?** was declined — Cancel, Disable, Escape, a timeout, or no notice could be shown — so the turn was not sent |
 | `turn_refused` | Another check stopped the send, for example a hook, the private scratch space or the context check; the run chip states the reason |
 
 The rotating application log's `phase=controller_submit status=blocked` line
