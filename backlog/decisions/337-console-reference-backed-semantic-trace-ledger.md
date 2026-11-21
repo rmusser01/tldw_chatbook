@@ -1019,9 +1019,12 @@ chain on 2026-11-12.
 by stored sequence and refuses more than `MAX_SURFACE_REPLACEMENT_CHAIN_LINKS`
 (256) links as `count_or_span`. The admission and the verified delta carry the
 links on the replacement range; only a rewritten tail may have them. The writer
-validates every link's range, and that no live row lies between links, in
-preparation and again in the dispatch-binding transaction, then writes the
-placeholders, their links and the final link in that transaction. Placeholder
+validates every link's range, that no live row lies between links, and that each
+link holds at least one live row (TASK-40577: the reader refuses a link with none,
+so committing one would leave the new head and every later head unreadable, and,
+after a restart, every later send unable to plan; heads recorded before it still
+read), in preparation and again in the dispatch-binding transaction, then writes
+the placeholders, their links and the final link in that transaction. Placeholder
 sequences precede the new rows, and the warm projection checkpoint records them
 in its lineage as the cold reader does.
 
@@ -1038,9 +1041,26 @@ CPU is the steadier figure):
 | Chain, 1,999 rows | 8 | 109 / 146 ms | 73 / 89 ms |
 
 A chain costs about one replacement's time per 256 replaced rows, mostly the
-per-link range reads and the replacement rows' lineage trigger. It is paid once,
+per-link range reads and the replacement rows' lineage trigger. (Superseded by the
+2026-11-20 re-measure below: each link's cost grows with the segment's stored depth,
+so a chain costs about links x depth, not a fixed amount per link.) It is paid once,
 by the send after the rewrite. Ordinary sends, which the 10 ms reservation gate
 measures, take no new work.
+
+Dispatch binding re-measured 2026-11-20 (TASK-40578; thread CPU, load1 4 to 7). The
+lineage trigger, not the range reads, is most of a chain's cost. That trigger walks the
+node chain toward the segment root once per replacement row. At 1,999 rows (8 links)
+binding takes 36 ms, of which the two validation passes are 18% and the trigger about
+64%. At the 256-link cap (65,536 stored rows) binding takes about 38 s, so it holds
+the write lock for that long. The validation passes are 0.6% of that and the trigger
+99%; TASK-42130 tracks the trigger cost.
+
+The review measured the sizes between those two points. At 5,000 rows (20 links)
+binding takes 164 ms of CPU. At 10,000 rows (40 links) it takes 1.03 s of CPU, and
+7.0 s of wall time at load1 82. The cost grows about as links x stored depth. A
+captured request carries at most about 20,000 messages, so about 80 links.
+`Tests/Benchmarks/test_console_trace_chain_binding.py` reruns these shapes on
+request.
 
 ### Amendment 2026-11-17 (owner decision, TASK-41310): a spawned child's calls have their own segment
 

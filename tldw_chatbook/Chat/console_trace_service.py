@@ -5879,7 +5879,11 @@ class ConsoleTraceService:
         """Validate the complete bounded range, or each chain link, before writing.
 
         A chain's links must also leave no live row between them, so removing
-        the whole range removes exactly what the links replace.
+        the whole range removes exactly what the links replace. Each link must
+        hold at least one live row: the reader folds a link over the live rows
+        in its range and refuses one that has none, so neither the new head nor
+        any later head would read back, and after a restart no send could plan
+        (TASK-40577). Heads recorded before the chain are unaffected.
         """
 
         if tail is None or tail.node_id != plan.predecessor_head_id:
@@ -5913,19 +5917,23 @@ class ConsoleTraceService:
                 raise ValueError("replacement_range_noncontiguous")
         if not plan.chain:
             return
-        linked = {
-            sequence
-            for first, last in _replaced_ranges(plan)
+        link_of = {
+            sequence: index
+            for index, (first, last) in enumerate(_replaced_ranges(plan))
             for sequence in range(first, last + 1)
         }
-        if any(
-            plan.start_sequence <= sequence <= plan.end_sequence
-            and sequence not in linked
-            for sequence, _key in self._surface_projection(
-                cursor, segment_id, tail
-            ).root.iter_entries()
-        ):
-            raise ValueError("replacement_chain_gap")
+        covered: set[int] = set()
+        for sequence, _key in self._surface_projection(
+            cursor, segment_id, tail
+        ).root.iter_entries():
+            if not plan.start_sequence <= sequence <= plan.end_sequence:
+                continue
+            index = link_of.get(sequence)
+            if index is None:
+                raise ValueError("replacement_chain_gap")
+            covered.add(index)
+        if len(covered) != len(plan.chain):
+            raise ValueError("replacement_chain_link_inactive")
 
     def _persist_header(
         self,
