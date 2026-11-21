@@ -61,6 +61,10 @@ from tldw_chatbook.Provider_Contract.thinking_blocks import (
 #: TASK-33621.4 AC#3: the header badge and the Context chip's lead, once the
 #: chat is over its Ask trigger (Inspect's Run line spells it out in full).
 COMPACTION_PAUSE_FORECAST_COPY = "Next send pauses to compact"
+#: TASK-33621.4 AC#3, owner decision 2026-11-20 ("ready, then may pause"): the
+#: same surfaces, and the run chip, once an agent chat (the default) is over
+#: its displayed trigger. Its tools are not counted, so a pause is not certain.
+COMPACTION_MAY_PAUSE_COPY = "May pause to compact"
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +198,8 @@ class ConsoleContextControlState:
     forecast_tokens: int | None = None
     forecast_units: int = 0
     forecast_unavailable_reason: str = ""
+    #: No exact forecast, and the estimated history is over the displayed
+    #: trigger: the next send may pause (COMPACTION_MAY_PAUSE_COPY).
     forecast_high_context: bool = False
 
     @property
@@ -684,20 +690,19 @@ def build_console_context_cost_state(
         context_part = f"{COMPACTION_PAUSE_FORECAST_COPY} · {context_part}"
         compact_part = f"Pauses to compact · {compact_part}"
         compaction_line += (
-            " Estimated next send pauses for compaction approval: "
+            f" {COMPACTION_PAUSE_FORECAST_COPY} (estimated "
             f"~{format_context_tokens(forecast.used_tokens)} of "
-            f"{format_context_tokens(forecast.budget_tokens)} conversation tokens."
+            f"{format_context_tokens(forecast.budget_tokens)} conversation tokens); "
+            "you approve before anything is summarized."
         )
-    elif context.forecast_unavailable_reason:
-        advisory = (
-            "High context · forecast unavailable"
-            if context.forecast_high_context
-            else "Compaction forecast unavailable"
-        )
-        context_part = f"{advisory} · {context_part}"
-        compact_part = f"{'High context · ' if context.forecast_high_context else ''}Forecast unavailable · {compact_part}"
+    elif context.forecast_high_context:
+        # Owner decision 2026-11-20: with no exact forecast the chip says
+        # nothing below the trigger (the chat reads Ready) and this above it.
+        context_part = f"{COMPACTION_MAY_PAUSE_COPY} · {context_part}"
+        compact_part = f"{COMPACTION_MAY_PAUSE_COPY} · {compact_part}"
         compaction_line += (
-            f" Compaction forecast unavailable: {context.forecast_unavailable_reason}"
+            f" {COMPACTION_MAY_PAUSE_COPY}: {context.forecast_unavailable_reason} "
+            "If it pauses, you approve before anything is summarized."
         )
     return replace(
         cost,

@@ -17,6 +17,7 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchState,
 )
 from tldw_chatbook.Widgets.Console.console_context_controls import (
+    COMPACTION_MAY_PAUSE_COPY,
     COMPACTION_PAUSE_FORECAST_COPY,
 )
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
@@ -36,7 +37,7 @@ def build_console_workbench_state(
     readiness_word: str = "",
     blocked_turn: str = "",
     compaction_pause_expected: bool = False,
-    compaction_forecast_unavailable: bool = False,
+    compaction_may_pause: bool = False,
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -63,6 +64,9 @@ def build_console_workbench_state(
             (TASK-33621.2).
         compaction_pause_expected: The chat is over its Ask trigger, so the
             badge says the next send pauses to compact (TASK-33621.4).
+        compaction_may_pause: No exact forecast (an agent chat), and the
+            estimated history is over the trigger: the badge says the next
+            send may pause (owner decision 2026-11-20); below it, Ready.
         density: Requested Workbench density, currently ``normal`` or ``compact``.
         ephemeral: Whether the active session is temporary. Retained for
             callers even though no top action reads it today: Save Chatbook
@@ -192,10 +196,8 @@ def build_console_workbench_state(
                     if blocked_turn
                     else COMPACTION_PAUSE_FORECAST_COPY
                     if compaction_pause_expected and readiness_word and not blocker
-                    else "Compaction forecast unavailable"
-                    if compaction_forecast_unavailable
-                    and readiness_word
-                    and not blocker
+                    else COMPACTION_MAY_PAUSE_COPY
+                    if compaction_may_pause and readiness_word and not blocker
                     else readiness_word
                 )
             ),

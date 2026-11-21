@@ -1716,9 +1716,9 @@ class ConsoleInspectorState:
     #: (paused for trace recovery); empty when no turn is blocked.
     run_blocked_reason: str = ""
     #: TASK-33621.4: the chat is over its Ask compaction trigger, so the next
-    #: send will pause for compaction approval.
+    #: send will pause for compaction approval; ``compaction_may_pause``: it may.
     compaction_pause_expected: bool = False
-    compaction_forecast_unavailable: bool = False
+    compaction_may_pause: bool = False
     staged_source_count: int = 0
     pending_approval_count: int = 0
     scope_item_count: int | None = None
@@ -1877,7 +1877,7 @@ class ConsoleInspectorState:
         run_failure_reason: str = "",
         run_blocked_reason: str = "",
         compaction_pause_expected: bool = False,
-        compaction_forecast_unavailable: bool = False,
+        compaction_may_pause: bool = False,
         ephemeral: bool = False,
         change_review_available: bool = False,
         staged_source_count: int = 0,
@@ -2086,7 +2086,7 @@ class ConsoleInspectorState:
             run_failure_reason=_clean(run_failure_reason, ""),
             run_blocked_reason=_clean(run_blocked_reason, ""),
             compaction_pause_expected=bool(compaction_pause_expected),
-            compaction_forecast_unavailable=bool(compaction_forecast_unavailable),
+            compaction_may_pause=bool(compaction_may_pause),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
             _pending_inputs=pending_inputs,

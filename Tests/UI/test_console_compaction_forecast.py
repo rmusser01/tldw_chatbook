@@ -240,21 +240,45 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
                     )
                 )
             )
-            assert states[-1].compaction_pause_forecast is None
-            assert states[-1].forecast_unavailable_reason
-            assert not states[-1].forecast_high_context
-            assert (
-                "forecast unavailable"
-                in build_console_context_cost_state(states[-1], _COST).label.lower()
-            )
-            controller.store.set_session_context_policy_overrides(
-                session.id,
-                ConsoleContextPolicyOverrides(
-                    budget_mode=ContextBudgetMode.CUSTOM,
-                    custom_budget_tokens=1500,
-                    compaction_mode=ContextCompactionMode.ASK,
-                ),
-            )
+            # Owner decision 2026-11-20, "ready, then may pause": an agent
+            # chat's exact next-send check is unavailable (its tools are not
+            # counted), and below a displayed trigger it reads Ready, never
+            # "Forecast unavailable" (dev's copy, pinned here until then).
+            def set_budget(budget: int | None) -> None:
+                controller.store.set_session_context_policy_overrides(
+                    session.id,
+                    ConsoleContextPolicyOverrides(
+                        budget_mode=(
+                            ContextBudgetMode.AUTOMATIC
+                            if budget is None
+                            else ContextBudgetMode.CUSTOM
+                        ),
+                        custom_budget_tokens=budget,
+                        compaction_mode=ContextCompactionMode.ASK,
+                    ),
+                )
+
+            for budget in (None, 100_000):
+                set_budget(budget)
+                assert await memory.warm(controller, session.id)
+                states = []
+                assert projection.run(
+                    lambda: states.append(
+                        console._context_spend._console_context_control_state_for_session(
+                            session.id
+                        )
+                    )
+                )
+                below = states[-1]
+                assert below.compaction_pause_forecast is None
+                assert below.forecast_unavailable_reason
+                assert not below.forecast_high_context, budget
+                shown = build_console_context_cost_state(below, _COST)
+                visible = f"{shown.label}\n{shown.compact_label}\n{shown.tooltip}"
+                # ("On next send unavailable" is the spend estimate, not this.)
+                assert "forecast unavailable" not in visible.lower(), (budget, visible)
+                assert "May pause to compact" not in visible, (budget, visible)
+            set_budget(1500)
             assert await memory.warm(controller, session.id)
             states = []
             assert projection.run(
@@ -268,8 +292,15 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
             assert advisory.forecast_high_context
             assert advisory.compaction_pause_forecast is None
             shown = build_console_context_cost_state(advisory, _COST)
-            assert "High context" in shown.label
-            assert "next-send check unavailable" in shown.tooltip
+            # Over the displayed trigger it may pause: qualified, not promised.
+            assert shown.label.startswith("May pause to compact · "), shown.label
+            assert shown.compact_label.startswith("May pause to compact · ")
+            assert (
+                "May pause to compact: the estimated history (~5,003 conversation "
+                "tokens) is over the trigger." in shown.tooltip
+            ), shown.tooltip
+            assert "you approve before anything is summarized" in shown.tooltip
+            assert "forecast unavailable" not in shown.label.lower()
             assert "Next send pauses" not in shown.tooltip
             assert adapter_calls == []
     finally:
@@ -532,27 +563,45 @@ def test_cold_forecast_does_not_read_history_or_count(monkeypatch) -> None:
     ) == (None, 0)
 
 
-def test_unavailable_forecast_is_honest_without_hiding_live_or_failed_work() -> None:
+def test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above() -> None:
+    """TASK-33621.4 AC#3 as amended (owner decision 2026-11-20).
+
+    The decision: "ready, then may pause". With no exact forecast (an agent
+    chat's tools are not counted), dev read "Compaction forecast unavailable"
+    in the header and "Forecast unavailable" in Inspect and the run chip as
+    soon as the chat had history. Below the displayed trigger it is Ready;
+    over it, "May pause to compact". Live, failed, blocked and stopped states
+    keep their own copy. The copy is pinned literally, not imported.
+    """
     from dataclasses import replace
 
-    state = replace(
-        _state(tokens=1656, units=3),
+    may_pause = "May pause to compact"
+    below = replace(
+        _state(tokens=900, units=3),
         forecast_tokens=None,
         forecast_unavailable_reason="Current tool overhead is unknown.",
     )
-    assert (
-        "forecast unavailable"
-        in build_console_context_cost_state(state, _COST).label.lower()
-    )
+    shown = build_console_context_cost_state(below, _COST)
+    visible = f"{shown.label}\n{shown.compact_label}\n{shown.tooltip}"
+    # ("On next send unavailable" is the spend estimate's word, not this.)
+    assert "forecast unavailable" not in visible.lower(), visible
+    assert may_pause not in visible
+    reason = "the estimated history (~1,656 conversation tokens) is over the trigger."
+    above = replace(below, forecast_high_context=True, forecast_unavailable_reason=reason)
+    assert above.compaction_pause_forecast is None
+    shown = build_console_context_cost_state(above, _COST)
+    assert shown.label.startswith(f"{may_pause} · "), shown.label
+    assert shown.compact_label.startswith(f"{may_pause} · "), shown.compact_label
+    assert f"{may_pause}: {reason}" in shown.tooltip
+    assert "forecast unavailable" not in shown.label.lower()
+
     for values, expected in (
-        ({"compaction_forecast_unavailable": True}, "Forecast unavailable"),
-        ({"compaction_forecast_unavailable": True, "run_active": True}, "Running"),
-        ({"compaction_forecast_unavailable": True, "run_failed": True}, "Failed"),
+        ({"compaction_may_pause": True}, may_pause),
+        ({}, "Ready"),
+        ({"compaction_may_pause": True, "run_active": True}, "Running"),
+        ({"compaction_may_pause": True, "run_failed": True}, "Failed"),
         (
-            {
-                "compaction_forecast_unavailable": True,
-                "run_blocked_reason": "recovery needed",
-            },
+            {"compaction_may_pause": True, "run_blocked_reason": "recovery needed"},
             "Blocked — recovery needed",
         ),
     ):
@@ -561,42 +610,35 @@ def test_unavailable_forecast_is_honest_without_hiding_live_or_failed_work() -> 
                 ConsoleInspectorState.from_values(**values)
             ).run
             == expected
-        )
-    header = build_console_workbench_state(
-        control_state=_control_state(),
-        readiness_word="Ready",
-        compaction_forecast_unavailable=True,
-    ).header
-    assert header.status_label == "Compaction forecast unavailable"
-    high = replace(
-        state,
-        forecast_high_context=True,
-        forecast_unavailable_reason=(
-            "Estimated history reaches the displayed compaction trigger; next-send check unavailable."
-        ),
-    )
-    assert high.compaction_pause_forecast is None
-    assert "High context" in build_console_context_cost_state(high, _COST).compact_label
-    assert (
-        "next-send check unavailable"
-        in build_console_context_cost_state(high, _COST).tooltip
-    )
+        ), values
 
-    blocked = build_console_workbench_state(
-        control_state=_control_state(),
-        readiness_word="Missing key",
-        provider_blocker_copy="Missing API key",
-        compaction_forecast_unavailable=True,
-    ).header
-    assert blocked.status_label == "Missing key"
+    def badge(**values) -> str:
+        values.setdefault("control_state", _control_state())
+        values.setdefault("readiness_word", "Ready")
+        return build_console_workbench_state(**values).header.status_label
+
+    assert badge() == "Ready"
+    assert badge(compaction_may_pause=True) == may_pause
+    assert (
+        badge(
+            readiness_word="Missing key",
+            provider_blocker_copy="Missing API key",
+            compaction_may_pause=True,
+        )
+        == "Missing key"
+    )
+    assert badge(compaction_may_pause=True, blocked_turn="compaction ask") == "Blocked"
+    # Single-pane widths drop the readiness word because it overruns the row.
+    assert badge(compaction_may_pause=True, readiness_word="") == ""
     from tldw_chatbook.Widgets.Console import console_workbench_state as workbench
 
-    stopped = build_console_workbench_state(
-        control_state=replace(_control_state(), emergency_stop_held=True),
-        readiness_word="Ready",
-        compaction_forecast_unavailable=True,
-    ).header
-    assert stopped.status_label == workbench.CONSOLE_EMERGENCY_STOP_HEADER_LABEL
+    assert (
+        badge(
+            control_state=replace(_control_state(), emergency_stop_held=True),
+            compaction_may_pause=True,
+        )
+        == workbench.CONSOLE_EMERGENCY_STOP_HEADER_LABEL
+    )
 
     from types import SimpleNamespace
     from tldw_chatbook.Chat.console_chat_models import ConsoleRunStatus
@@ -612,6 +654,7 @@ def test_unavailable_forecast_is_honest_without_hiding_live_or_failed_work() -> 
         has_pending_approval_round=lambda _sid: False,
     )
     acknowledgement = ["Sending…"]
+    over = [True]
     screen = SimpleNamespace(
         _console_chat_store=store,
         _console_chat_controller=controller,
@@ -620,7 +663,7 @@ def test_unavailable_forecast_is_honest_without_hiding_live_or_failed_work() -> 
         ),
         _context_spend=SimpleNamespace(
             compaction_pause_expected=lambda: False,
-            compaction_forecast_unavailable=lambda: True,
+            compaction_may_pause=lambda: over[0],
         ),
         _console_send_ack=SimpleNamespace(run_copy=lambda _sid: acknowledgement[0]),
     )
@@ -631,7 +674,9 @@ def test_unavailable_forecast_is_honest_without_hiding_live_or_failed_work() -> 
     acknowledgement[0] = ""
     assert ChatScreen._native_run_status_copy(screen) == "Response failed."
     controller.run_state.status = ConsoleRunStatus.IDLE
-    assert screen._console_active_run_copy() == "Forecast unavailable"
+    assert screen._console_active_run_copy() == may_pause
+    over[0] = False
+    assert screen._console_active_run_copy() == ""
 
 
 def _state(*, tokens, units, mode=ContextCompactionMode.ASK):
@@ -688,10 +733,15 @@ def test_the_context_chip_leads_with_the_forecast_and_explains_it() -> None:
 
     assert over.label.startswith(COMPACTION_PAUSE_FORECAST_COPY)
     assert over.compact_label.startswith("Pauses to compact")
-    assert "Estimated next send pauses for compaction approval:" in over.tooltip
-    assert "1,656 of 1,500" in over.tooltip
+    # The tooltip opens with the label's words (dev's said "Estimated next
+    # send pauses for compaction approval:"), then the numbers and who decides.
+    assert (
+        "Next send pauses to compact (estimated ~1,656 of 1,500 conversation "
+        "tokens); you approve before anything is summarized." in over.tooltip
+    ), over.tooltip
     assert COMPACTION_PAUSE_FORECAST_COPY not in under.label
-    assert "compaction approval" not in under.tooltip
+    assert COMPACTION_PAUSE_FORECAST_COPY not in under.tooltip
+    assert "you approve" not in under.tooltip
 
 
 def test_inspect_says_the_next_send_pauses_but_not_over_live_or_stuck_work() -> None:
@@ -764,6 +814,7 @@ def test_both_compaction_run_lines_fit_the_inspect_rail_whole() -> None:
     held = _BLOCKED_TURN_REASONS[ConsolePreparationPauseKind.CONTEXT_COMPACTION]
     for line in (
         run(compaction_pause_expected=True),
+        run(compaction_may_pause=True),  # owner decision 2026-11-20
         run(run_blocked_reason=held),
     ):
         assert cell_len(f"Run: {line}") <= 29, line

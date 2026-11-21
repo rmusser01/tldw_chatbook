@@ -669,12 +669,15 @@ class ConsoleContextSpendController:
         ):
             # An advisory about the displayed estimate, never an ASK verdict:
             # unknown mandatory material may make compaction impossible.
+            # Owner decision 2026-11-20 ("ready, then may pause"): below the
+            # trigger an unmeasured forecast shows nothing; over it, this.
             state = replace(
                 state,
                 forecast_high_context=True,
                 forecast_unavailable_reason=(
-                    "Estimated history reaches the displayed compaction trigger; "
-                    "next-send check unavailable."
+                    f"the estimated history (~{estimated_history:,} conversation "
+                    "tokens) is over the trigger. Tools and other request input "
+                    "are not counted here, so the send itself checks."
                 ),
             )
         return state
@@ -797,10 +800,14 @@ class ConsoleContextSpendController:
         state = self._last_console_context_control_state
         return state is not None and state.compaction_pause_forecast is not None
 
-    def compaction_forecast_unavailable(self) -> bool:
-        """Whether current tool/input facts cannot qualify a forecast."""
+    def compaction_may_pause(self) -> bool:
+        """Whether the next send may pause: no exact forecast, history over trigger.
+
+        TASK-33621.4 AC#3, owner decision 2026-11-20: an agent chat's tools are
+        not counted, so below the trigger it reads Ready and over it "may pause".
+        """
         state = self._last_console_context_control_state
-        return state is not None and bool(state.forecast_unavailable_reason)
+        return state is not None and state.forecast_high_context
 
     def _build_console_settings_summary_state(self) -> ConsoleSettingsSummaryState:
         """Build compact summary state for the active Console session settings."""

@@ -13,6 +13,9 @@ from textual.events import Resize
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_display_state import ConsoleInspectorState
+from tldw_chatbook.Widgets.Console.console_context_controls import (
+    COMPACTION_MAY_PAUSE_COPY,
+)
 from tldw_chatbook.Widgets.Console.console_inspector_ownership import (
     InspectorOwnershipPolicy,
     classify_inspector_content,
@@ -182,8 +185,10 @@ def project_console_send_authority(
         # most misleading thing this line can say.
         reason = str(state.run_failure_reason or "").strip()
         run = f"Failed — {reason}" if reason else "Failed"
-    elif state.compaction_forecast_unavailable:
-        run = "Forecast unavailable"
+    elif state.compaction_may_pause:
+        # Owner decision 2026-11-20: an agent chat (no exact forecast) over its
+        # displayed trigger; below it the line stays Ready.
+        run = COMPACTION_MAY_PAUSE_COPY
     else:
         run = "Ready"
 

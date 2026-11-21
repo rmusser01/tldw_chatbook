@@ -587,6 +587,7 @@ from ...Widgets.Console.console_settings_summary import (
     build_console_readiness_presentation,
 )
 from ...Widgets.Console.console_send_authority_summary import COMPACTION_PAUSE_RUN_COPY
+from ...Widgets.Console.console_context_controls import COMPACTION_MAY_PAUSE_COPY
 from ...Widgets.Console.console_control_bar import (
     ConsoleAutoSpeakRetryRequested,
     ConsoleAutoSpeakResumeRequested,
@@ -13057,7 +13058,7 @@ class ChatScreen(BaseAppScreen):
             ),
             run_blocked_reason=blocked_turn_reason(run_controller),
             compaction_pause_expected=self._context_spend.compaction_pause_expected(),
-            compaction_forecast_unavailable=self._context_spend.compaction_forecast_unavailable(),
+            compaction_may_pause=self._context_spend.compaction_may_pause(),
             provider_label=settings_readiness.provider_display_name or "Provider",
             model_label=model,
             provider_ready=provider_ready,
@@ -13742,7 +13743,7 @@ class ChatScreen(BaseAppScreen):
             else build_console_readiness_presentation(readiness[1]).primary_label,
             blocked_turn=blocked_turn_reason(controller),
             compaction_pause_expected=self._context_spend.compaction_pause_expected(),
-            compaction_forecast_unavailable=self._context_spend.compaction_forecast_unavailable(),
+            compaction_may_pause=self._context_spend.compaction_may_pause(),
         )
 
     def _console_provider_blocker_copy(
@@ -17445,10 +17446,10 @@ class ChatScreen(BaseAppScreen):
             )
             if acknowledgement:
                 return acknowledgement
-            if self._context_spend.compaction_forecast_unavailable() and (
+            if self._context_spend.compaction_may_pause() and (
                 run_state is None or run_state.status is ConsoleRunStatus.IDLE
             ):
-                return "Forecast unavailable"
+                return COMPACTION_MAY_PAUSE_COPY
             return acknowledgement or (
                 rule_status(rule_state) if rule_state is not None else ""
             )
