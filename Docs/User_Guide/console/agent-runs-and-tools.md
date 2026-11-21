@@ -1250,9 +1250,9 @@ listed and checked (uncheck one to leave it out), **Commit message
 (required)** must be filled, and **Create branch first (optional)** checks
 out a new branch before committing. A warning line such as "⚠ committing
 directly to main" or "⚠ detached HEAD — this commit will not be on any
-branch" never blocks the commit. While an agent run is active on that
-workspace, the commit is refused before the dialog opens: "a run is active
-on this workspace — finish or stop the run first". A repository in the
+branch" never blocks the commit. While an agent run is active in that
+repository's folder, the commit is refused before the dialog opens: "a run
+is active in this folder — finish or stop the run first". A repository in the
 middle of a merge, rebase or cherry-pick is refused when you confirm, not
 before: the dialog closes and the notice reads "Commit failed at
 in-progress-check: finish or abort the merge/rebase/cherry-pick first". The

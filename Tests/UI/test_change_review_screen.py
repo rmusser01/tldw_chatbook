@@ -1320,7 +1320,7 @@ async def test_undo_all_refuses_same_root_windows_before_preflight(
         assert (root / "shared.txt").read_text() == "BRAVO_ONLY_MARKER\n"
         assert notices == [
             (
-                "This turn has multiple change windows for the same workspace. "
+                "This turn has multiple change windows for the same folder. "
                 "Revert files individually from one labeled window at a time.",
                 "warning",
             )

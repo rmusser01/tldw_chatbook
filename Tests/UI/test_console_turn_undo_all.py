@@ -99,6 +99,12 @@ def _row(row_id: int, root: Path, **overrides) -> dict:
     return row
 
 
+#: TASK-42137: the refusal names the turn's folders, never "this workspace".
+_RUN_ACTIVE_UNDO_REFUSAL = (
+    "A run is active in a folder this turn changed — finish or stop the run first."
+)
+
+
 def _prepare(provider: _Provider):
     prepare = getattr(review_selection, "prepare_console_turn_undo", None)
     assert callable(prepare), "turn-level Undo All planner is missing"
@@ -167,8 +173,11 @@ def test_prepare_refuses_duplicate_root_windows_before_any_diff_or_preflight(tmp
     ambiguous = getattr(review_selection, "ConsoleTurnUndoAmbiguousError", None)
     assert ambiguous is not None, "ambiguous-window refusal type is missing"
 
-    with pytest.raises(ambiguous, match="multiple change windows"):
+    with pytest.raises(ambiguous) as raised:
         _prepare(provider)
+    assert str(raised.value) == (
+        "This turn has multiple change windows for the same folder."
+    )
 
     assert provider.changed_calls == []
     assert provider.preflight_calls == []
@@ -193,8 +202,9 @@ def test_prepare_refuses_tracking_error_and_active_run_without_mutation(tmp_path
         {1: [ChangedFile(path="a.txt", status="M", adds=1, dels=1)]},
     )
     active.active = True
-    with pytest.raises(unavailable, match="finish or stop"):
+    with pytest.raises(unavailable) as raised:
         _prepare(active)
+    assert str(raised.value) == _RUN_ACTIVE_UNDO_REFUSAL
     assert active.changed_calls == []
     assert active.revert_calls == []
 
@@ -212,11 +222,35 @@ def test_prepare_refuses_a_background_run_targeting_any_turn_root(tmp_path):
     provider.active_roots.add(str(root_b))
     unavailable = review_selection.ConsoleTurnUndoUnavailableError
 
-    with pytest.raises(unavailable, match="finish or stop"):
+    with pytest.raises(unavailable) as raised:
         _prepare(provider)
+    assert str(raised.value) == _RUN_ACTIVE_UNDO_REFUSAL
 
     assert provider.changed_calls == []
     assert provider.preflight_calls == []
+    assert provider.revert_calls == []
+
+
+def test_undo_all_refusals_name_a_missing_root_and_a_late_run_as_folders(tmp_path):
+    """TASK-42137: a snapshot's root is a folder, not a workspace."""
+    unavailable = review_selection.ConsoleTurnUndoUnavailableError
+    rootless = _Provider([{**_row(1, tmp_path), "root": ""}], {1: []})
+    with pytest.raises(unavailable) as raised:
+        _prepare(rootless)
+    assert str(raised.value) == (
+        "Undo All is unavailable because a change snapshot has no folder."
+    )
+
+    root = tmp_path / "workspace"
+    provider = _Provider(
+        [_row(1, root)],
+        {1: [ChangedFile(path="a.txt", status="M", adds=1, dels=1)]},
+    )
+    plan = _prepare(provider)
+    provider.active_roots.add(str(root))
+    with pytest.raises(unavailable) as raised:
+        _apply(provider, plan)
+    assert str(raised.value) == _RUN_ACTIVE_UNDO_REFUSAL
     assert provider.revert_calls == []
 
 

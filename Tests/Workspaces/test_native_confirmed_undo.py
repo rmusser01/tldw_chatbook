@@ -295,6 +295,25 @@ async def test_writer_admitted_after_modal_refuses_whole_undo(undo_host):
                 claim.settle(durable=True)
 
 
+async def test_recheck_after_confirmation_names_the_active_run_folder():
+    """TASK-42137: the recheck is per root folder, so its refusal says folder."""
+    from tldw_chatbook.Workspaces.change_revert_ownership import _UndoCall
+
+    row = {"root": "/confirmed/folder"}
+    source = SimpleNamespace(
+        rows=[(row, ("edit.txt",), None)],
+        validate_row=lambda _row: None,
+        provider=SimpleNamespace(run_active_for_root=lambda root: root == row["root"]),
+    )
+    call = _UndoCall(source, applying=True)
+    call.validate_root = lambda _root: None
+    with pytest.raises(RevertRefusedError) as raised:
+        call.revalidate()
+    assert str(raised.value) == (
+        "a run is active in this folder — finish or stop the run first"
+    )
+
+
 async def test_confirmed_restore_records_original_row_and_retires(undo_host):
     h = undo_host
     async with h.app.run_test(size=(120, 40)) as pilot:

@@ -67,8 +67,12 @@ def test_prestaged_unrelated_entry_survives(repo):
 
 def test_run_active_refuses_before_touching(repo):
     (repo / "a.txt").write_text("x\n")
-    with pytest.raises(CommitRefusedError):
+    with pytest.raises(CommitRefusedError) as raised:
         commit_selected(repo, ["a.txt"], "m", None, run_active=lambda: True)
+    # TASK-42137: the Review screen's early refusal reads the same sentence.
+    assert str(raised.value) == (
+        "a run is active in this folder — finish or stop the run first"
+    )
     assert "a.txt" not in _git(repo, "diff", "--cached", "--name-only")
     # Nothing was staged and no commit happened -- the edit is still
     # unstaged (visible in the worktree diff, absent from the index).

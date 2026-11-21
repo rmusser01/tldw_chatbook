@@ -1,10 +1,11 @@
 ---
 id: TASK-42137
 title: "Undo All and run-active refusals say workspace where they mean a bound folder"
-status: To Do
-assignee: []
+status: Done
+assignee:
+- '@claude'
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-20 20:45
+updated_date: 2026-11-21 18:29
 labels:
 - follow-up
 - console
@@ -41,8 +42,50 @@ The checks are per root folder (`row.get("root")`), and a workspace can bind sev
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Each Undo All refusal that refers to a change snapshot's root names it as a folder, consistent with the User Guide's undo section
-- [ ] #2 The run-active refusals in `change_revert.py`, `change_revert_ownership.py`, `git_workspace.py` and `COMMIT_RUN_ACTIVE_REFUSAL` use the same wording, so Console and the Review screen name the same thing the same way
-- [ ] #3 Tests that pin the old wording are updated, and a test pins each new notice
-- [ ] #4 Where `Docs/User_Guide/console/agent-runs-and-tools.md` quotes these notices, it quotes them as they now read, including the commit refusal quoted verbatim at lines 1229-1230
+- [x] #1 Each Undo All refusal that refers to a change snapshot's root names it as a folder, consistent with the User Guide's undo section
+- [x] #2 The run-active refusals in `change_revert.py`, `change_revert_ownership.py`, `git_workspace.py` and `COMMIT_RUN_ACTIVE_REFUSAL` use the same wording, so Console and the Review screen name the same thing the same way
+- [x] #3 Tests that pin the old wording are updated, and a test pins each new notice
+- [x] #4 Where `Docs/User_Guide/console/agent-runs-and-tools.md` quotes these notices, it quotes them as they now read, including the commit refusal quoted verbatim at lines 1229-1230
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Pin the new wording in tests first and show them red: tighten the partial matches in `Tests/UI/test_console_turn_undo_all.py`, `Tests/Workspaces/test_change_revert.py`, `Tests/Workspaces/test_git_workspace_commit.py` and `Tests/UI/test_change_review_screen.py`; add pins for the Console no-folder refusal, the Console apply-time run-active refusal, the native undo revalidation refusal and the `COMMIT_RUN_ACTIVE_REFUSAL` literal.
+2. Change the copy: the engine and Review screen run-active refusals read "a run is active in this folder — finish or stop the run first"; Console's Undo All refusals say "folder" (no folder, multiple windows for the same folder, a run active in a folder this turn changed); `MULTI_WINDOW_UNDO_REFUSAL` says "folder".
+3. Update the User Guide's quote of the commit refusal.
+4. Run the touched test files at -n 4, Tests/Docs, preflight, the ruff gates and the markup census check.
+
+## Implementation Notes
+
+Every refusal that meant a snapshot's root folder said "workspace". It now says "folder"; the copy change is all this task does.
+
+**New wording**
+- Engine and Review screen, one sentence at all four sites: "a run is active in this folder — finish or stop the run first". The sites are `Workspaces/change_revert.py:185`, `Workspaces/change_revert_ownership.py:382`, `Workspaces/git_workspace.py:924` and `COMMIT_RUN_ACTIVE_REFUSAL` (`UI/Screens/change_review_screen.py:100`). Each check is per root (`run_active_for_root`, or the commit's repository root).
+- Console Undo All (`UI/Console_Modules/review_selection.py`):
+  - "Undo All is unavailable because a change snapshot has no folder."
+  - "This turn has multiple change windows for the same folder." (the same sentence starts `MULTI_WINDOW_UNDO_REFUSAL`)
+  - "A run is active in a folder this turn changed — finish or stop the run first." at :406 and :466. These two checks cover every root of the turn (`_console_turn_undo_run_active`), so "this folder" would not say which folder on a multi-folder card. The sentence matches the guide's "refuses while a run is active in any of the turn's folders". Both surfaces now name the thing "folder".
+- User Guide: the commit refusal quote in "Commit and push from the working tree" now reads as the product does, and its lead-in says "active in that repository's folder". No other page quotes these notices.
+
+**Tests**
+- Pins tightened from partial `match=` to exact text:
+  - `test_console_turn_undo_all.py`: the duplicate-root test and both run-active tests;
+  - `test_change_revert.py::test_revert_refuses_while_a_run_is_active`;
+  - `test_git_workspace_commit.py::test_run_active_refuses_before_touching`;
+  - `test_change_review_screen.py::test_undo_all_refuses_same_root_windows_before_preflight` (literal updated).
+- New pins:
+  - `test_console_turn_undo_all.py::test_undo_all_refusals_name_a_missing_root_and_a_late_run_as_folders` covers the no-folder refusal and the apply-time run-active refusal.
+  - `test_native_confirmed_undo.py::test_recheck_after_confirmation_names_the_active_run_folder` covers `_UndoCall.revalidate`, which had no run-active test.
+  - `test_change_review_commit_ui.py::test_active_run_refuses_before_any_modal_or_status_read` now pins the `COMMIT_RUN_ACTIVE_REFUSAL` literal.
+- The fake refusal in `test_an_unexpected_commit_error_is_not_dressed_as_a_refusal` now raises `COMMIT_RUN_ACTIVE_REFUSAL` instead of the old literal.
+- Red/green:
+  - With the base source, 9 pins failed on assertions (all of the above; the new Console test's first assertion: 'has no workspace.' != 'has no folder.'). All were green after the change.
+  - The new test's second half was not reached in that red run, so a negative control checked it: line 466 reverted to "on this workspace" made it fail on the apply assertion. Reverted afterwards.
+- None of the seven touched test files runs in a PR lane (not in `scripts/ui_pr_gate_census.txt` or `derived-artifacts.yml`). No census edit, since the criteria ask for none; proposed as a follow-up.
+
+**Runs** (through the wrapper, load average about 14 on 18 CPUs)
+- The seven touched files at -n 4: 199 passed and 3 failed.
+- The 3 failures are the `test_mounted_*` Console tests, which fail locally with `RecoveryRequired: raw_source_selection_changed` (the known trap). Under a temporary `@private_profile_test` marker (since removed), two passed. `test_mounted_partial_and_provider_failures_name_problem_and_allow_retry` failed with `NoMatches: '#change-revert-yes'`, and fails the same way with the base source restored (2 of 2). It is pre-existing and does not touch this copy.
+- Module and screen size ratchets: 234 passed (serial).
+- `ruff --select F`: clean. `ruff_gate.py`: rc 0.
+- `check_markup_interpolation.py`: OK. The changed notices are static text.

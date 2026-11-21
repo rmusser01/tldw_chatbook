@@ -379,7 +379,7 @@ class _UndoCall:
             self.validate_root(row["root"])
             if s.provider.run_active_for_root(str(row["root"])):
                 raise RevertRefusedError(
-                    "a run is active on this workspace — finish or stop the run first"
+                    "a run is active in this folder — finish or stop the run first"
                 )
             current = preflight_revert(s.service, row, paths)
             if (
