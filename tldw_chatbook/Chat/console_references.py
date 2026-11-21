@@ -18,7 +18,6 @@ Two invariants carry the safety (AC#7 + AC#3):
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 import shutil
 import subprocess
@@ -404,7 +403,11 @@ def run_git_reference(
 ) -> str:
     """Read the whole repository diff only inside the original readable maximum."""
     from ..Tools.git_tool_impls import _denylist_pathspecs
-    from ..Workspaces.native_git import qualified_git_command, run_native_git
+    from ..Workspaces.native_git import (
+        qualified_git_command,
+        run_native_git,
+        scrubbed_git_environment,
+    )
 
     cwd = Path(cwd) if cwd is not None else _git_reference_cwd()
     if roots is None or not _cwd_within_roots(cwd, roots):
@@ -415,9 +418,7 @@ def run_git_reference(
     if executable is None:
         raise RuntimeError("git executable unavailable")
     environment = (
-        dict(environment)
-        if environment is not None
-        else {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+        dict(environment) if environment is not None else scrubbed_git_environment()
     )
     environment["GIT_TERMINAL_PROMPT"] = "0"
 
