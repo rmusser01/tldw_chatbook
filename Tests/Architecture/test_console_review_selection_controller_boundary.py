@@ -56,6 +56,7 @@ _, LIVE_SCREEN_LINE_CEILING, LIVE_SCREEN_METHOD_CEILING = _SCREEN_SIZE_BUDGETS[
 #: the branch's own +19 lines and +2 methods (the Agent open-flag and
 #: stored-preference reads).
 #: Re-pinned 2026-11-19 with the row (rebased onto dev a6df4d8d48).
+#: Re-pinned 2026-11-21 with the row (rebased onto dev f864f00762).
 LIVE_RATCHET_ROW = ("ChatScreen", 24_636, 742)
 MAX_DELEGATE_LINES = 5
 

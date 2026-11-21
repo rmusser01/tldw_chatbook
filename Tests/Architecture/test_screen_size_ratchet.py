@@ -404,6 +404,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # and the branch adds 19 lines and two methods): 24568/742 -> 24587/744.
     #: 2026-11-13: re-measured after rebasing onto dev 531acb8cdc (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24587/744 -> 24577/744.
     #: 2026-11-19: re-measured after rebasing onto dev a6df4d8d48 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24592/743 -> 24582/745.
+    #: 2026-11-21: re-measured after rebasing onto dev f864f00762 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24582/745 -> 24551/743.
     "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24636, 742),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
