@@ -116,6 +116,14 @@ class RecordingPersistence:
         self.console_library_policy_repository = SimpleNamespace(read=self._read_policy)
         self.console_dispatch_repository = self
         self._checkpoint = None
+        # TASK-42155: a durable send saves its prompt mix-in attempt before the
+        # provider is entered; a memory-flagged db runs that save inline.
+        self.db = SimpleNamespace(is_memory_db=True)
+
+    def save_conversation_mixin_attempt(
+        self, conversation_id, *, batch, native_message_ids, pending_assistant=None
+    ):
+        del conversation_id, batch, native_message_ids, pending_assistant
 
     def _read_policy(self, conversation_id):
         del conversation_id

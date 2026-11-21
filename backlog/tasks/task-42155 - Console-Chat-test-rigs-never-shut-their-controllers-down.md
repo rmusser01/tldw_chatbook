@@ -1,10 +1,10 @@
 ---
 id: TASK-42155
 title: "Console Chat test rigs never shut their controllers down"
-status: In Progress
+status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 22:23
-updated_date: 2026-11-21 19:46
+updated_date: 2026-11-21 21:49
 labels:
 - follow-up
 - tests
@@ -32,7 +32,7 @@ A consolerun follow-up (round 18), checked against the code:
 <!-- AC:BEGIN -->
 - [x] #1 The Chat rig helpers and the controller tests shut down every controller they create, through a fixture or the helper itself, not by hand in each test
 - [x] #2 A check fails when a test leaves a controller running (for example a count of live controllers or their worker threads at teardown), red before the change on at least one test
-- [ ] #3 The touched Chat files pass at -n 4 and on their lanes
+- [x] #3 The touched Chat files pass at -n 4 and on their lanes
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -44,7 +44,7 @@ A consolerun follow-up (round 18), checked against the code:
 
 ## Implementation Notes
 
-A shared fixture now shuts down every Console controller these files build, and fails the test if one is left running. AC#3 is left open: one test in a touched file, red at base, still fails. See below.
+A shared fixture now shuts down every Console controller these files build, and fails the test if one is left running. The one test in a touched file that was red at base is repaired too (coordinator decision).
 
 **Fix (AC#1).** `Tests/Chat/conftest.py` gains `shut_down_console_controllers`. While the test runs it wraps `ConsoleChatController.__init__` (a scoped `MonkeyPatch.context()`, undone before teardown work starts) to record every controller built, by the test or by a rig. At teardown it awaits `shutdown()` (5 s bound) on each one not yet disposed, newest first. Then it asserts none is left with `_disposed` False.
 - The four files apply it module-wide through `pytestmark = [bootstrap_profile, usefixtures("shut_down_console_controllers")]`:
@@ -71,12 +71,14 @@ A shared fixture now shuts down every Console controller these files build, and 
 - These files leak no threads, before or after: 3 per worker at session end (main, execnet, storage admission), plus the probe's own. Live controllers at session end were 0-1 per worker both times.
 - fd growth per worker stayed in the same noisy range (+18..+68 before, +48..+84 after), so the fd growth is not these controllers (see TASK-42156).
 
-**Lanes and -n 4 (AC#3, not met).**
+**Lanes and -n 4 (AC#3).**
 - Lane runs, all green:
   - recovered-suites flags (serial, `--storage-lease-guard --timeout=180`) on `test_console_rewind_summarize.py` and the laned controller node: 74 passed in 126 s (load 30-56).
   - Console P0 admission flags (serial, `--timeout=300`) on `test_console_project_instruction_traces.py`, `test_console_trace_failed_tool_run.py` and `test_console_trace_discarded_tool_run.py`: 149 passed, 18 shutdown warnings, in 1,054 s (load 40-56).
-- At `-n 4` the four files give 509 passed, 1 failed. The failure, `test_console_prompt_queue_coordinator.py::test_accepted_queued_prompts_use_normal_persistence_exactly_once`, fails identically at base (same command: 509 passed, 1 failed). It is on no lane.
-  - Alone it waits out pytest-timeout on `await gateway.started[0].wait()`. A temporary probe showed why: its `RecordingPersistence` double has no prompt mix-in storage, so `accept_attempt` raises `MixinSnapshotUnavailableError`. `_block_context_preflight` then blocks the turn ("Mix-in attempt could not be saved"), and the settlement reports "Dispatch terminal settlement previously failed.". The provider never starts.
-  - The double has not changed since 2026-10-01. Repairing it is outside this task (proposed follow-up), so AC#3 stays unticked.
+- `test_console_prompt_queue_coordinator.py::test_accepted_queued_prompts_use_normal_persistence_exactly_once` was red at base, waiting out pytest-timeout on `await gateway.started[0].wait()`.
+  - Cause: its `RecordingPersistence` double (unchanged since 2026-10-01) has no prompt mix-in storage. A durable send saves its mix-in attempt before the provider is entered, so `ConsolePromptMixinService.accept_attempt` raised `MixinSnapshotUnavailableError("mixin_persistence_unavailable")`. `_block_context_preflight` then blocked the turn, and the provider never started.
+  - Fix (coordinator decision): the double gains a no-op `save_conversation_mixin_attempt` with the real signature, and a `db` flagged `is_memory_db`, so `_run_owned_save` runs the save inline. The test is the double's only user.
+  - Red at base: `Failed: Timeout (>120.0s)` serially. Green with the fix: 1 passed in 1.7 s.
+- After the fix, the four files at `-n 4`: **510 passed**, 26 warnings (the 26 refused shutdowns above), in 186 s (load 20-23).
 
 **Files:** `Tests/Chat/conftest.py`, `Tests/Chat/test_console_chat_controller.py`, `Tests/Chat/test_console_trace_discarded_tool_run.py`, `Tests/Chat/test_console_prompt_queue_coordinator.py`, `Tests/Chat/test_console_rewind_summarize.py`.
