@@ -180,7 +180,15 @@ def preflight(state, route, attempt):
         if state.backup not in members:
             members += (state.backup,)
         members += (state.backup_temporary,)
-    for path in members:
+    leased = members
+    if state.companion_guard is not None:
+        # TASK-42115: a bound profile's dated copies are config companions,
+        # checked under the guard; only a copy another namespace claims (one a
+        # backup registered before TASK-42114) still takes its own lease.
+        from . import config_participants
+
+        leased = config_participants.foreign_companion_members(state, members)
+    for path in leased:
         attempt.check()
         state.leases.append(storage.acquire_storage(path))
         state.holds.append(storage._holds.get(state.leases[-1]._key))

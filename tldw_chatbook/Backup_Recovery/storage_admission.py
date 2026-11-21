@@ -759,11 +759,36 @@ def _contains_capture_path(roots: Iterable[Path], selected: Path) -> bool:
     return any(_contains_owned_path(root, selected) for root in ordered)
 
 
+#: Fixed files beside a bound ``config.toml`` that are config companions,
+#: never roots of their own: owner -> {local id: leaf}. TASK-42115: the pet
+#: owner has two (its pet file and the seed-once marker).
 _CONFIG_CAPTURE_LEAVES = {
-    "ui.state": "ui_state.toml",
-    "ui.emoji_recents": "recent_emojis.json",
-    "runtime.source_state": "runtime_policy.json",
+    "ui.state": {"": "ui_state.toml"},
+    "ui.emoji_recents": {"": "recent_emojis.json"},
+    "runtime.source_state": {"": "runtime_policy.json"},
+    "tamagotchi.config": {
+        "": "tamagotchi_pets.json",
+        "seeded": "tamagotchi_pets.seeded",
+    },
 }
+
+
+def _config_leaf(owner, logical_id):
+    """The fixed config leaf of ``owner``'s ``logical_id``, or None.
+
+    Args:
+        owner: A storage owner ID.
+        logical_id: ``profile:<id>:<owner>``, plus ``:<local id>`` for a
+            second leaf of the same owner.
+
+    Returns:
+        The leaf's file name, or None when the ID is not one of its leaves.
+    """
+    leaves = _CONFIG_CAPTURE_LEAVES.get(owner)
+    parts = logical_id.split(":", 3)
+    if leaves is None or len(parts) < 3 or parts[0] != "profile" or parts[2] != owner:
+        return None
+    return leaves.get(parts[3] if len(parts) == 4 else "")
 
 
 def _config_capture_bindings(root, selectors):
@@ -811,7 +836,11 @@ def _config_capture_sources(root, selectors, bindings):
         selector = Path(row["selector"])
         if not _contains_capture_path(map(Path, row["roots"]), selector):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
-        for owner, leaf in _CONFIG_CAPTURE_LEAVES.items():
+        for owner, leaf in (
+            (owner, leaf)
+            for owner, leaves in _CONFIG_CAPTURE_LEAVES.items()
+            for leaf in leaves.values()
+        ):
             path = selector.parent / leaf
             tokens = {"path:" + str(path), "path:" + str(path.resolve())}
             try:
@@ -842,12 +871,38 @@ def _config_capture_sources(root, selectors, bindings):
     return tuple(result)
 
 
+def _session_config_sources(session, inventory):
+    """Fixed config leaves of the selectors a maintenance session holds bound.
+
+    TASK-42115: a Replace or rollback session reads a leaf created after the
+    binding (no root of its own) as a companion of its held selector. The
+    session's exclusive namespaces are the authority; the leaf still refuses a
+    foreign registry claim (``_config_capture_sources``).
+    """
+    root = session._control.parent
+    _, profiles = bootstrap._records(root)
+    selectors = {
+        item.path
+        for item in inventory.items
+        if item.owner == "config" and item.status == "included"
+    }
+    bindings = tuple(
+        (row, None)
+        for row in profiles
+        if Path(row["selector"]) in selectors
+        and set(row["namespaces"]) <= set(session._names)
+    )
+    return _config_capture_sources(
+        root, tuple(Path(row["selector"]) for row, _ in bindings), bindings
+    )
+
+
 def _config_capture_item(item, inventory, sources):
     """Require the installed rediscovered file's exact config dependency."""
     for path, owner, selector, _ in sources:
         if item.path != path or item.owner != owner:
             continue
-        if any(
+        if _config_leaf(owner, item.logical_id) == path.name and any(
             row.owner == "config"
             and row.path == selector
             and item.dependencies == (row.logical_id,)

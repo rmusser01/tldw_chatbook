@@ -87,7 +87,7 @@ def _plan_digest(plan):
 
 def _config_scope_candidates(plan, document):
     """Identify plans requiring the finite config-file relation, without IO."""
-    from .storage_admission import _CONFIG_CAPTURE_LEAVES
+    from .storage_admission import _CONFIG_CAPTURE_LEAVES, _config_leaf
 
     if plan.mode != "replace" or plan.target is None:
         return False
@@ -99,7 +99,7 @@ def _config_scope_candidates(plan, document):
         item.owner in _CONFIG_CAPTURE_LEAVES
         and item.path is not None
         and item.path in affected
-        and item.path.name == _CONFIG_CAPTURE_LEAVES[item.owner]
+        and item.path.name == _config_leaf(item.owner, item.logical_id)
         for item in plan.target.items
     ) or any(
         item.owner_id in _CONFIG_CAPTURE_LEAVES and item.logical_id in selected
@@ -122,7 +122,7 @@ def _config_publication_scopes(
     Artifact receipts, native moves and activation still validate every effect.
     """
     from . import bootstrap
-    from .storage_admission import _CONFIG_CAPTURE_LEAVES
+    from .storage_admission import _config_leaf
 
     retained = _retained_config_items(plan, document)
     recheck_retained_configs(plan)
@@ -162,11 +162,9 @@ def _config_publication_scopes(
     }
     imported = {}
     for key, item in files.items():
-        if (
-            item.owner_id not in _CONFIG_CAPTURE_LEAVES
-            or key not in selected
-            or selected[key] not in affected
-        ):
+        leaf = _config_leaf(item.owner_id, key)
+        if leaf is None or key not in selected or selected[key] not in affected:
+            # Another file of a leaf owner keeps its root protocol (TASK-42115).
             continue
         producer = producers.get(key)
         if (
@@ -186,7 +184,7 @@ def _config_publication_scopes(
             raise ValueError("publication_config_relation_unverified")
         selector = selected.get(config.logical_id) or retained[config.logical_id].path
         path = selected[key]
-        if path != selector.parent / _CONFIG_CAPTURE_LEAVES[item.owner_id]:
+        if path != selector.parent / leaf:
             raise ValueError("publication_config_relation_unverified")
         imported[path] = (item.owner_id, selector)
     retired = {}
@@ -201,7 +199,8 @@ def _config_publication_scopes(
         }
     scopes = {}
     for item in plan.target.items:
-        if item.owner not in _CONFIG_CAPTURE_LEAVES or item.path not in affected:
+        leaf = _config_leaf(item.owner, item.logical_id)
+        if leaf is None or item.path not in affected:
             continue
         configs = [
             row
@@ -215,7 +214,7 @@ def _config_publication_scopes(
         selector = configs[0].path
         if (
             selector is None
-            or item.path != selector.parent / _CONFIG_CAPTURE_LEAVES[item.owner]
+            or item.path != selector.parent / leaf
             or item.status not in {"unused", "included"}
             or sum(row.path == item.path for row in plan.target.items) != 1
             or selector not in config_paths
@@ -242,6 +241,24 @@ def _config_publication_scopes(
         if prepared is None and item.status == "unused" and os.path.lexists(item.path):
             raise ValueError("publication_config_source_changed")
         scopes[item.path] = selector
+    for path, (owner, selector) in imported.items():
+        # TASK-42115: the pet owner lists its seed-once marker only while it
+        # exists, so a marker this Replace creates has no target row; its
+        # absence stands for the row.
+        if (
+            path in scopes
+            or any(row.path == path for row in plan.target.items)
+            or selector not in config_paths
+            or sum(
+                row.owner == "config" and row.status == "included" and row.path == selector
+                for row in plan.target.items
+            )
+            != 1
+            or prepared is None
+            and os.path.lexists(path)
+        ):
+            continue
+        scopes[path] = selector
     if set(imported) - set(scopes):
         raise ValueError("publication_config_relation_unverified")
     if not scopes:

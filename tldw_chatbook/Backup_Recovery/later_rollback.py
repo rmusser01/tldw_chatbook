@@ -763,11 +763,16 @@ def _builtin_sources(plan):
 def _stage_read_sources(plan):
     """Read preserved persona safety trees and reviewed created-tree (and
     created-file) retirements."""
+    from .storage_admission import _config_leaf
+
     sources = {item.logical_id: item for item in _builtin_sources(plan)}
     retired = dict(plan.retire)
     for item in plan.target.items:
         if (
             item.owner in _CREATED_FILE_OWNERS
+            # A fixed config leaf's retirement is proven as a config file
+            # (TASK-42115: the pet files), under its selector's binding.
+            and _config_leaf(item.owner, item.logical_id) is None
             and item.status == "included"
             # A SQLite declaration's inventory row carries no file metadata.
             and (
@@ -1122,7 +1127,7 @@ def _created_manifest(journal, original, prepared, rows):
 def _config_file_relations(original, prepared, document, target, *, proof=None):
     """Join authenticated incoming IDs to exact original/local owner identities."""
     from .staging import _items
-    from .storage_admission import _CONFIG_CAPTURE_LEAVES
+    from .storage_admission import _config_leaf
 
     if not _snapshot_target_available(
         original, target
@@ -1134,11 +1139,11 @@ def _config_file_relations(original, prepared, document, target, *, proof=None):
     result = {}
     for artifact in prepared.artifacts:
         source = incoming.get(artifact.logical_id)
+        leaf = None if source is None else _config_leaf(source.owner, source.logical_id)
         if (
             artifact.action != "publish"
             or artifact.previous is not None
-            or source is None
-            or source.owner not in _CONFIG_CAPTURE_LEAVES
+            or leaf is None
         ):
             continue
         record = files.get(artifact.logical_id)
@@ -1158,8 +1163,7 @@ def _config_file_relations(original, prepared, document, target, *, proof=None):
             or source.path != Path(artifact.target)
             or len(configs) != 1
             or source.dependencies != (configs[0].logical_id,)
-            or source.path
-            != configs[0].path.parent / _CONFIG_CAPTURE_LEAVES[source.owner]
+            or source.path != configs[0].path.parent / leaf
         ):
             raise ValueError("local_snapshot_created_scope_unverified")
         selector = configs[0].path
@@ -1177,15 +1181,27 @@ def _config_file_relations(original, prepared, document, target, *, proof=None):
                 for row in inventory.items
                 if row.path == source.path and row.owner == source.owner
             ]
+            if (
+                len(local_configs) == 1
+                and not local_files
+                and status == "unused"
+                and source.owner == "tamagotchi.config"
+            ):
+                # TASK-42115: the pet owner lists its seed-once marker only
+                # while it exists; before the restore created it, no row.
+                matched.append(None)
+                continue
             if len(local_configs) != 1 or len(local_files) != 1:
                 raise ValueError("local_snapshot_created_scope_unverified")
             config, item = local_configs[0], local_files[0]
             identity = config.logical_id.split(":")
+            local = source.logical_id.split(":", 3)[3:]
             if (
                 len(identity) != 3
                 or identity[0] != "profile"
                 or identity[2] != "config"
-                or item.logical_id != f"profile:{identity[1]}:{source.owner}"
+                or item.logical_id
+                != ":".join(("profile", identity[1], source.owner, *local))
                 or item.status != status
                 or item.dependencies != (config.logical_id,)
                 or status == "unused"
@@ -1201,7 +1217,7 @@ def _config_file_relations(original, prepared, document, target, *, proof=None):
             ):
                 raise ValueError("local_snapshot_created_scope_unverified")
             matched.append(item)
-        if matched[0].logical_id in original.safety_scope:
+        if matched[0] is not None and matched[0].logical_id in original.safety_scope:
             raise ValueError("local_snapshot_absence_overlap")
         result[artifact.logical_id] = (matched[1], selector)
     return result
@@ -1209,7 +1225,7 @@ def _config_file_relations(original, prepared, document, target, *, proof=None):
 
 def _config_file_retirement_scopes(plan):
     """Return receipt-proven retirements; callers still prove their live phase."""
-    from .storage_admission import _CONFIG_CAPTURE_LEAVES
+    from .storage_admission import _config_leaf
 
     if plan.local_snapshot is None:
         return ()
@@ -1220,7 +1236,7 @@ def _config_file_retirement_scopes(plan):
         set(dict(plan.retire).values()),
     )
     if not any(
-        item.owner in _CONFIG_CAPTURE_LEAVES
+        _config_leaf(item.owner, item.logical_id) is not None
         and (item.logical_id in retirement_keys or item.path in retirement_paths)
         for item in plan.target.items
     ):
@@ -1249,7 +1265,7 @@ def _config_file_retirement_scopes(plan):
     for key, path in plan.retire:
         item = current.get(key)
         if path not in paths and (
-            item is None or item.owner not in _CONFIG_CAPTURE_LEAVES
+            item is None or _config_leaf(item.owner, item.logical_id) is None
         ):
             continue
         if (key, path) not in proved:
@@ -1263,17 +1279,21 @@ def _created_config_file_targets(
 ):
     """Reobserve finite config files while their originating activation is live."""
     from ..runtime_policy.recovery import recovery_adapters as runtime_adapters
+    from ..Widgets.Tamagotchi.recovery import recovery_adapters as pet_adapters
     from .config_adapter import recovery_adapters
     from .generation_witnesses import _witnesses
     from .models import DISCOVERY_CONTEXT_KEY, DiscoveryContext
     from .storage_admission import (
         _CONFIG_CAPTURE_LEAVES,
+        _config_leaf,
         _contains_owned_path,
         acquire_storage,
     )
 
     config_paths = {
-        item.path for item in target.items if item.owner in _CONFIG_CAPTURE_LEAVES
+        item.path
+        for item in target.items
+        if _config_leaf(item.owner, item.logical_id) is not None
     }
     if not any(
         row.action == "publish"
@@ -1293,7 +1313,8 @@ def _created_config_file_targets(
         original, prepared, document, target, proof=proof
     )
     owners = {
-        owner.owner_id: owner for owner in (*recovery_adapters(), *runtime_adapters())
+        owner.owner_id: owner
+        for owner in (*recovery_adapters(), *runtime_adapters(), *pet_adapters())
     }
     result = {}
     for key, (item, selector) in relations.items():
@@ -1373,8 +1394,12 @@ def _created_config_file_targets(
                     raise ValueError("local_snapshot_created_scope_unverified")
                 context = DiscoveryContext(selector, item.logical_id.split(":", 2)[1])
                 observed = owners[item.owner].discover({DISCOVERY_CONTEXT_KEY: context})
+                # An owner of several files lists them all (TASK-42115: the
+                # pets); this one must still be observed once, unchanged.
                 if (
-                    observed != (item,)
+                    [row for row in observed if row.path == item.path] != [item]
+                    or len(_CONFIG_CAPTURE_LEAVES[item.owner]) == 1
+                    and len(observed) != 1
                     or before != bootstrap._control_records(root)
                     or registry != bootstrap._registry(root)
                 ):
