@@ -4734,6 +4734,21 @@ _NO_V1_BASES["google-api_base_url"] += (
         "https://generativelanguage.googleapis.com/v1beta/models/m:generateContent",
     ),
 )
+#: TASK-42153 (owner decision 2026-11-21, "153 - yes"): QwenCloud's China host
+#: reads as its own host, so its bare host or ``/compatible-mode`` saves the
+#: documented path at once (it saved ``<host>/v1``, which the next save then
+#: rewrote); Cohere's old host already saved bare and still does.
+_NO_V1_BASES["qwencloud-api_base_url"] += tuple(
+    (typed, "https://dashscope.aliyuncs.com/compatible-mode/v1", "https://dashscope.aliyuncs.com/compatible-mode/v1/responses")
+    for typed in (
+        "https://dashscope.aliyuncs.com/compatible-mode",
+        "https://dashscope.aliyuncs.com/compatible-mode/",
+        "https://dashscope.aliyuncs.com",
+    )
+)
+_NO_V1_BASES["cohere-api_base_url"] += (
+    ("https://api.cohere.ai", "https://api.cohere.ai", "https://api.cohere.ai/v2/chat"),
+)
 
 
 @pytest.mark.parametrize(
@@ -4755,12 +4770,14 @@ def test_a_cloud_base_without_v1_saves_a_base_its_adapter_posts_under(
     the adapter posts to its own route on it. Review r17cu-rev1: an own-host
     prefix such as Groq's ``/openai`` still saves the documented path (it saved
     ``/openai`` and posted ``/openai/chat/completions``), and a bare host under
-    DeepSeek's key that is not DeepSeek's still gets ``/v1``."""
+    DeepSeek's key that is not DeepSeek's still gets ``/v1``. TASK-42153: a
+    save is stable, so saving what was saved writes it unchanged."""
     from tldw_chatbook.Chat.provider_setup_persistence import persisted_endpoint_for_key
 
     for typed, expected, posted in _NO_V1_BASES[case]:
         saved = persisted_endpoint_for_key(dispatch, "api_base_url", typed)
         assert saved == expected, (case, typed, saved)
+        assert persisted_endpoint_for_key(dispatch, "api_base_url", saved) == saved, (case, typed)
         sent = _cloud_world(monkeypatch, _cloud_config(table, key, extra, saved))
 
         try:

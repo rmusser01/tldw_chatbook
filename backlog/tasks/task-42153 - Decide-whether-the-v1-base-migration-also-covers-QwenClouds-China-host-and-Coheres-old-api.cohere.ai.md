@@ -4,7 +4,7 @@ title: "Decide whether the /v1 base migration also covers QwenCloud's China host
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 19:25
+updated_date: 2026-11-21 21:10
 labels:
 - follow-up
 - providers
@@ -53,7 +53,7 @@ Whether to extend the migration to these hosts is an owner decision.
 Each also with the tails TASK-42002 drops (`/chat/completions`, `/models`; QwenCloud `/responses`; QwenCloud's `/v1/models` is still refused and kept). The host typed is kept: the documented path goes on that host, as with a typed port. Nothing moves to the registry default's host.
 
 **Contract (save rule).** `Provider_Contract/provider_endpoint_contract.py` gains `_V1_APPENDED_OTHER_HOSTS` (`qwencloud: dashscope.aliyuncs.com`, `cohere: api.cohere.ai`) beside `_V1_APPENDED_PATHS`. `_read_v1_appended_path` reads a shape on that host as on the provider's own host. `v1_appended_documented_base` follows from it.
-- Out of scope, so unchanged: the bare-host completion (`_documented_own_path`, review r17cu-rev2) still treats only the registry default's host as the provider's own. A bare `https://dashscope.aliyuncs.com` still saves as `.../v1`, and a later save of that provider then rewrites it to `.../compatible-mode/v1`. Reported to the coordinator as a proposed follow-up.
+- The bare-host completion follows too (see "Coordinator correction" below): `_documented_own_path` treats the listed host as the provider's own, so `_read_v1_appended_path` needs no host mapping of its own.
 
 **Config (load migration), migration 3 and a schema bump.** `config.py` keeps a frozen kernel copy of the table (`_V1_APPENDED_OTHER_HOSTS`). Migration 3 is `partial(_migrate_v1_appended_provider_bases, hosts=_V1_APPENDED_OTHER_HOSTS)`: the same matcher, reading the listed host instead of the registry default's. Migration 2 behaves exactly as before (`hosts=None`). `_CURRENT_CONFIG_SCHEMA_VERSION` is 2 -> 3 and the template's stamp is 3 (sha pin re-pinned).
 - Why a new number rather than widening migration 2: a config already at schema 2 never runs migration 2 again. That covers a config migration 2's boot write stamped (it held one of the five own-host shapes) and every config created from the v2 template. A v2 config can hold the China shape, because a save of the China `/v1`, or of the bare China host, writes it today. Widening migration 2 would never reach those configs, and it would also change a frozen migration's result.
@@ -73,3 +73,11 @@ Each also with the tails TASK-42002 drops (`/chat/completions`, `/models`; QwenC
 **Docs:** `Docs/User_Guide/settings.md` now lists the shapes the migration covers, the two added hosts included, and says the host and any port typed are kept. `Docs/Architecture/llm-providers.md` describes `_V1_APPENDED_OTHER_HOSTS`, migration 3 and why it is a new schema version.
 
 Files: `tldw_chatbook/Provider_Contract/provider_endpoint_contract.py`, `tldw_chatbook/config.py`, `tldw_chatbook/Config_Files/default_config.toml`, `Tests/Chat/test_local_server_discovery.py`, `Tests/test_config_load_settings_table_guard.py`, `Tests/Architecture/test_module_size_ratchet.py`, `Docs/User_Guide/settings.md`, `Docs/Architecture/llm-providers.md`.
+
+**Coordinator correction (2026-11-21): the bare-host completion is in scope of "153 - yes".** The first version left `_documented_own_path` (review r17cu-rev2) knowing only the registry default's host. A bare `https://dashscope.aliyuncs.com` (or `.../compatible-mode`) therefore saved as `.../v1` (or as typed), and the next save of that provider rewrote it to `.../compatible-mode/v1`, so the save was not stable.
+- `_documented_own_path` now treats the provider's `_V1_APPENDED_OTHER_HOSTS` host as its own. Both rules read it from there, and the host mapping added earlier to `_read_v1_appended_path` is gone. A bare China host, or one with `/compatible-mode`, saves as `https://dashscope.aliyuncs.com/compatible-mode/v1`, and the adapter posts `.../compatible-mode/v1/responses`. `https://api.cohere.ai` already saved bare, because Cohere's bare host is its base on any host, and it still does.
+- Test: `test_a_cloud_base_without_v1_saves_a_base_its_adapter_posts_under` (`Tests/Chat/test_local_server_discovery.py`, lane-run). The QwenCloud case gains the China host bare, `/compatible-mode` and `/compatible-mode/` rows; the Cohere case gains `https://api.cohere.ai`. Every row of the test now also asserts that a save is stable: saving what was saved writes it unchanged.
+  - Red before the change: `[qwencloud-api_base_url]` failed (`https://dashscope.aliyuncs.com/compatible-mode` saved as typed), and the other 5 cases passed, the new stability assertion included. The Cohere old-host row passed before the change too; it is a pin, not a fix.
+  - After: the TASK-41704/42002/42019/42153/42134 selection, 75 passed.
+- Config's frozen table and migration 3 are unaffected: a bare host is not a `/v1`-appended shape. The parity test is unchanged and green.
+- Docs: `Docs/User_Guide/settings.md` (the own-host completion sentence) and `Docs/Architecture/llm-providers.md`.

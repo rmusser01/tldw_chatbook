@@ -414,7 +414,8 @@ gateway's (`…/gemini/v1beta`). On the provider's own host, the bare host or
 the start of its documented path is completed to that path: Groq's
 `https://api.groq.com` or `https://api.groq.com/openai` is saved as
 `…/openai/v1`, and Google's `https://generativelanguage.googleapis.com` as
-`…/v1beta`. On any other host a bare address gets `/v1`, except under Cohere,
+`…/v1beta`. QwenCloud's China host counts as its own: `https://dashscope.aliyuncs.com`
+or `…/compatible-mode` is saved as `…/compatible-mode/v1`. On any other host a bare address gets `/v1`, except under Cohere,
 whose adapter adds its own `/v2/chat`. An earlier version saved some of these
 addresses with `/v1` added. The app rewrites these once when it loads your
 config, and **s** saves them that way too:

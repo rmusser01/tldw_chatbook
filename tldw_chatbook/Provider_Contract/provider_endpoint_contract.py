@@ -113,9 +113,10 @@ _V1_APPENDED_PATHS = {
     "openrouter": ("v1",),
     "qwencloud": ("v1",),
 }
-#: TASK-42153 (owner decision 2026-11-21, "153 - yes"): a shape is also read on
-#: QwenCloud's China host and Cohere's old host, as on the provider's own host
-#: (the documented path on the host typed); config migration 3 keeps a copy.
+#: TASK-42153 (owner decision 2026-11-21, "153 - yes"): QwenCloud's China host
+#: and Cohere's old host read as the provider's own host (the documented path
+#: on the host typed), for a ``_V1_APPENDED_PATHS`` shape and for the bare-host
+#: completion alike; config migration 3 keeps a copy.
 _V1_APPENDED_OTHER_HOSTS = {"qwencloud": "dashscope.aliyuncs.com", "cohere": "api.cohere.ai"}
 
 
@@ -481,10 +482,12 @@ def _documented_own_path(provider_key: str, host: str) -> tuple[str, ...] | None
 
     Returns:
         The segments of the registry default's path (``()`` for a bare
-        documented host), or None for any other host.
+        documented host), or None for any other host. The registry default's
+        host and the provider's ``_V1_APPENDED_OTHER_HOSTS`` host are its own
+        (TASK-42153).
     """
     default = urlsplit(RECORDS_BY_KEY[provider_key].default_base_url or "")
-    if default.hostname != host:
+    if host not in {default.hostname, _V1_APPENDED_OTHER_HOSTS.get(provider_key)}:
         return None
     return tuple(segment for segment in default.path.split("/") if segment)
 
@@ -509,8 +512,6 @@ def _read_v1_appended_path(
         provider_key != "qwencloud" or tail != ("responses",)
     ):
         return segments
-    if _V1_APPENDED_OTHER_HOSTS.get(provider_key) == host:
-        host = urlsplit(RECORDS_BY_KEY[provider_key].default_base_url or "").hostname or host
     documented = _documented_own_path(provider_key, host)
     return segments if documented is None else documented + tail
 
