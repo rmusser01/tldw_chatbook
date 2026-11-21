@@ -138,6 +138,50 @@ files under that roaming folder remain unsupported durable content. After
 committed profile validation, both fresh selection and launch derive portable
 home/roaming selectors from the attempt, ignoring inherited APPDATA.
 
+Fixed config companions (TASK-42115). The default config folder holds
+`recovery-bootstrap`, so it is never an admission root. Files beside a bound
+`config.toml` reach admission only as the config route's own members or as the
+fixed leaves in `storage_admission._CONFIG_CAPTURE_LEAVES` (owner → {local id:
+leaf}): `ui_state.toml`, `recent_emojis.json`, `runtime_policy.json`, and the
+pet owner's `tamagotchi_pets.json` and `tamagotchi_pets.seeded`. Capture
+(`_config_capture_sources`), Replace publication (`_config_publication_scopes`,
+which projects a leaf onto its selector) and later rollback
+(`_config_file_relations`, `_created_config_file_targets`) treat each leaf as a
+companion of the selector, so a bound profile never registers it as a root; the
+pet route's `sibling_selector` makes the footer pet a companion too, and its
+dated copies are checked under the companion guard instead of leased (one a
+pre-TASK-42114 backup registered is still leased). A later rollback proves a
+created leaf as a config file, not as a stage-read created file, and a Replace
+or rollback session reads a leaf created after the binding as a companion of
+the selector it holds (`storage_admission._session_config_sources`, used by
+`preserved_groups._read_scope`). The pet owner lists its marker only while it
+exists, so a marker a Replace creates has no target row; its absence stands for
+the row in `_config_publication_scopes` and `_config_file_relations`. A
+profile's first binding, and a backup of a profile that is not bound yet, still
+register each captured config-folder file as a root of its own.
+
+Deleted file roots (TASK-42115). `Admission.register` records each regular-file
+root's folder (`file:<folder inode>:<root>`). A registered root is a deleted
+file root (`effective_roots.deleted_file_roots`) when it was registered with
+that evidence, is absent, and its folder is present, is not a mount point and
+is still the registered folder. It holds nothing and scopes exactly its own
+path, at every root consumer: grouping (`Admission._groups`, history kept),
+publication roots (`Admission._publication_roots`, so finalization coverage),
+the recovery journal's staging names and aliases
+(`replacement._recovery_staging_roots`, `_groups` under a journal: a root the
+journal moved still needs the journal's move proof, and
+`_recovery_admission_aliases` passes over only a deleted root it never moved),
+containment (`storage_admission._contains_owned_path`, so
+activation, the abort, sessions and later rollback), the staging-overlap check,
+a bound profile's binding check (`bootstrap._binding`) and capture naming
+(`capture_service._capture_names`). Without a journal, a file inside an
+enrolled folder root still meets `effective_roots`' alias proof first, with
+its profile co-ownership check. Absent folder roots, files whose folder is
+gone, replaced or a mount point, roots registered before the evidence existed,
+and any root while a remap is pending stay strict. While a deleted root exists,
+admission evidence is not reused (`_metadata_evidence`), so admission takes the
+full derivation.
+
 ## Prompt mix-in operational content (ADR-286)
 
 The four conversation-owned `console_prompt_mixin_*` tables belong to the existing
