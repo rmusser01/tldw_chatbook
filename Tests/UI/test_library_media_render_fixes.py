@@ -4434,21 +4434,18 @@ def _count_set_loads(service) -> list[str]:
 async def _decoration_fixture(host, pilot):
     """A settled Media list with a two-item active set over four rows.
 
-    The load tally starts counting BEFORE the canvas build that follows the
-    create, so it covers the first real decoration rather than a cache the
-    fixture already warmed.
+    Decorate the real retained rows before yielding to Reader progress work,
+    which also loads the set and has its own cache.
     """
     screen = await _open_media_list(host, pilot)
     service = screen._review_set_service()
     set_id = service.create_review_set(
         "These", origin="browse", items=[(1, "Doc 1"), (2, "Doc 2")]
     )
-    loads = _count_set_loads(service)
-    _sync_library_canvas(screen, "media")
-    for _ in range(3):
-        await pilot.pause()
     items = screen._library_media_browse_controller.retained_items
     assert len(items) == 4, items
+    loads = _count_set_loads(service)
+    screen._decorate_library_media_reviewed(items)
     return screen, service, set_id, items, loads
 
 
@@ -4471,7 +4468,7 @@ async def test_decorating_a_page_loads_the_active_set_once_not_per_build():
         screen, _service, _set_id, items, loads = await _decoration_fixture(
             host, pilot
         )
-        # The canvas build inside the fixture already decorated this page.
+        # The fixture already decorated this page.
         assert len(loads) == 1, loads
 
         first = screen._media_controller._decorate_library_media_reviewed(items)

@@ -582,6 +582,8 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
                 and bounded.hint.display is (before_demand > bounded.max_content_lines)
             )
 
+        # Mount and resize callbacks may queue another reconcile after the first frame.
+        await pilot.pause()
         await _wait_for_right_rail_condition(
             pilot,
             initial_geometry_is_stable,
@@ -593,7 +595,6 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
                 f"hint={bounded.hint.display}"
             ),
         )
-        await pilot.pause()
         assert initial_geometry_is_stable(), (
             bounded.desired_content_lines,
             viewport.content_region.width,

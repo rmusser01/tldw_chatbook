@@ -13488,7 +13488,7 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 lambda: (
                     controller.applied_scope == MediaBrowseScope()
                     and bool(controller.type_options)
-                    and bool(screen.query("#library-media-next"))
+                    and not screen.query_one("#library-media-next", Button).disabled
                 ),
                 message="Initial Media page and facets never settled.",
             )
