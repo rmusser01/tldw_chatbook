@@ -1094,6 +1094,7 @@ ADMISSION_3_TARGETS = (
     # on no PR lane before. Ahead of the Roleplay files for the same reason:
     # before them they took 69 s and the step 582 s; after them, 162 s (their
     # teardown 2.4 s -> 51 s a file) and the step 650 s (load 4-7, pytest 9).
+    # Behind the Skills file, 73 s of the step's 735 s (load 9-24).
     "Tests/UI/test_console_mcp_catalog_reuse.py",
     "Tests/UI/test_console_mcp_catalog_anchor.py",
     # Roleplay frame B2b (TASK-33910.4, owner decision D7, 2026-10-26): the
