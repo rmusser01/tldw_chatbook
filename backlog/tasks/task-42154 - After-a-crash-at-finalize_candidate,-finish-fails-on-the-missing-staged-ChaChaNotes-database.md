@@ -1,10 +1,10 @@
 ---
 id: TASK-42154
 title: "After a crash at finalize_candidate, finish fails on the missing staged ChaChaNotes database"
-status: To Do
-assignee: []
+status: Done
+assignee: ['@claude']
 created_date: 2026-11-20 22:23
-updated_date: 2026-11-20 22:34
+updated_date: 2026-11-21 19:03
 labels:
 - follow-up
 - backup
@@ -58,8 +58,33 @@ Priority medium: the app refuses to start until rollback is chosen, though rollb
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A test kills a Replace at finalize_candidate (after publication) on a separate config folder and on the default one, then runs finish and rollback in fresh processes; finish is red before the fix
-- [ ] #2 finish completes after that crash, or the finish action is not offered when it cannot complete, and the notes say which and why
-- [ ] #3 After each recovery the app starts (startup permission and admission), and rollback keeps working
-- [ ] #4 The test runs on a PR or dev-push lane, with its time recorded
+- [x] #1 A test kills a Replace at finalize_candidate (after publication) on a separate config folder and on the default one, then runs finish and rollback in fresh processes; finish is red before the fix
+- [x] #2 finish completes after that crash, or the finish action is not offered when it cannot complete, and the notes say which and why
+- [x] #3 After each recovery the app starts (startup permission and admission), and rollback keeps working
+- [x] #4 The test runs on a PR or dev-push lane, with its time recorded
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reproduce with the task's recipe (separate folder, crash at `finalize_candidate` after publication, `finish` in a fresh process): `FileNotFoundError` from `_acquired_source` -> `publication._descriptor`.
+2. Add a test to `Tests/Backup_Recovery/test_created_owner_rollback.py` (already in the dev-push Backup_Recovery owner-suite lane), parametrized on the config location (separate, default): one source backup, then two targets each killed at `finalize_candidate`; one recovers with `finish`, the other with `rollback`, each in a fresh process, and each then checks startup permission and startup admission. Show `finish` red.
+3. Fix in `recover_replacement`: re-derive the archive (`_acquired_source`, whose `_descriptor` needs every candidate artifact still staged) for the Personal Context key install only while publication has not started. `replace()` and `finish` both install the keys before `publication_started` is journaled, and `publish_candidate` already skips `_descriptor` once publication started.
+4. Green at both locations; finish before publication (existing crash tests) and rollback still pass; owner suites, Architecture, preflight, ruff; record the test's time.
+
+## Implementation Notes
+
+**Cause.** TASK-40135 (0f7ded1620, 2026-11-13) added the Personal Context key install to `recover_replacement`'s finish path as `_install_personal_context_keys(_acquired_source(candidate, plan, cancel), ...)`, gated only on "not committed". `_acquired_source` runs `publication._descriptor`, which needs every candidate artifact still in its stage (and re-reads the archive). After a crash anywhere past `publication_started`, the staged files have moved, so finish raised `FileNotFoundError` (or `candidate_identity_changed`) before it reached `publish_candidate`/`finalize_candidate`. The archive was re-derived even when the plan has no Personal Context keys, because the argument is evaluated first.
+
+**Fix (AC#2: finish completes).** That call now runs only while `publication_started` is not journaled, the same gate `publish_candidate` uses for its own `_descriptor` check. This is safe: `replace()` and finish both install the keys before `publish_candidate` journals `publication_started`, so once publication has started they are already installed and read back. A crash before publication still re-installs them, accepting the same value, and `test_restore_data_groups.py`'s Personal Context `finish` scenario (interrupted at `publish_candidate`) still passes. Rollback is unchanged. `finish` stays offered.
+
+**Test (AC#1, AC#3).** `test_created_owner_rollback.py::test_a_replace_killed_after_publication_recovers_by_finish_or_rollback[separate|default]`. Each location runs one source backup, then two targets, each killed by `os._exit(17)` at `finalize_candidate` during a real `RecoveryService` Replace with the conversations, settings and workspaces groups and no pet files. Fresh processes then check that the app refuses to start (`recovery_pending`), that the journal shows `artifact_published` and no `committed`, and that the offered actions are `('finish', 'rollback')`. Then `finish` (→ `committed`), a start (startup permission `(True, 'startup_allowed')` plus `acquire_storage()`), a later rollback of the finished restore after credential review (→ `restoration_validated`) and another start. The other target runs `rollback` (→ `rolled_back`), then a start.
+
+**Red/green.** Without the fix, both nodes failed at the finish recovery: `state: recovery_required`. The probe recipe named the underlying `FileNotFoundError: 'tldw_chatbook_ChaChaNotes.db'` from `_acquired_source` → `_descriptor` → `observe_artifact`. With the fix, `2 passed in 326.91s`.
+
+**Already-red tests this fixes.** `test_replacement_recovery.py::test_fresh_process_reconciles_real_killed_publication[finish-*]` had six variants red at base dc371f0842 (`6 failed, 8 passed`). They kill publication at each boundary and then run finish. That file is in no CI lane, so the regression went unseen. With the fix the whole file passes (36 passed).
+
+**Lane and time (AC#4).** The test sits in `Tests/Backup_Recovery/test_created_owner_rollback.py`, already a whole-file target of the dev-push "Backup_Recovery owner suites" job (`derived-artifacts.yml`, `BACKUP_OWNER_SUITE_TARGETS`), so no lane edit was needed. Local time at `-n 4`: 321.4 s [separate] and 321.8 s [default], with load 33-45 on 18 CPUs (one source plus two crashed targets each, about 15 child processes per node).
+
+**Files.** `tldw_chatbook/Backup_Recovery/replacement.py` (`recover_replacement` only: one condition and a comment, +3 lines); `Tests/Backup_Recovery/test_created_owner_rollback.py`.
+
+**Covering runs** (`-n 4 --timeout=1500`, through the wrapper, load 40-57). `test_replacement_recovery.py`: 36 passed. `test_restore_data_groups.py`, `test_publication_crashes.py`, `test_rollback_credentials.py`, `test_selected_owner_finish.py`, `test_settings_finish.py`, `test_replacement_publication_scopes.py`, `test_recovery_service.py` and `test_replacement_abort.py` together: 173 passed, 2 failed. The 2 failures are `test_replacement_publication_scopes.py::test_complete_cli_replacement_admits_mapped_sources[True|False]`: the child hit its fixed 90 s subprocess timeout. They fail the same way at base dc371f0842 with this fix reverted (`2 failed`, both `timed out after 90 s`, load 55-58), and that path never reaches the changed line (its only recovery is `abort`).
