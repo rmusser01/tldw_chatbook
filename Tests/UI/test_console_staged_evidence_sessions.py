@@ -67,6 +67,7 @@ from tldw_chatbook.Widgets.Console.console_staged_context import (
 from tldw_chatbook.Widgets.Console.console_staged_evidence_strip import (
     ConsoleStagedEvidenceStrip,
 )
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleMarkdownMessage
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -101,13 +102,37 @@ def _chip_text(screen) -> str:
     return _plain(screen.query_one("#console-sources-label", Static))
 
 
-def _reply_footers(screen) -> list[str]:
-    """The dim footer under each assistant reply, in transcript order."""
+def _reply_rows(screen) -> list[ConsoleMarkdownMessage]:
+    """The rendered assistant reply rows, in transcript order.
+
+    The transcript renders only assistant rows as markdown rows.
+    """
     transcript = screen.query_one("#console-native-transcript")
-    return [_plain(footer) for footer in transcript.query(".console-markdown-footer")]
+    return list(transcript.query(ConsoleMarkdownMessage))
+
+
+def _reply_footers(screen) -> list[str]:
+    """The dim footer under each rendered assistant reply, in transcript order.
+
+    A reply with no attachment chips, sources line or citation notice mounts
+    no footer at all (95ca4bf47b, 2026-11-14, made the footer lazy; before,
+    every reply carried an empty hidden one). Such a reply reads "" here, so
+    index N is always reply N.
+    """
+    footers = []
+    for row in _reply_rows(screen):
+        footer = row.query_one_optional(".console-markdown-footer", Static)
+        shown = footer is not None and footer.display
+        footers.append(_plain(footer) if shown else "")
+    return footers
 
 
 async def _wait_for_replies(screen, pilot, count: int) -> None:
+    """Wait for ``count`` complete replies, each rendered as a transcript row.
+
+    TASK-33620.7: this used to count footers, so it timed out on every
+    reply with no sources once such a reply stopped mounting one.
+    """
     store = screen._ensure_console_chat_store()
     for _ in range(120):
         replies = [
@@ -117,9 +142,10 @@ async def _wait_for_replies(screen, pilot, count: int) -> None:
             and message.status == "complete"
             and message.content == "accepted"
         ]
+        rendered = {row.message_id for row in _reply_rows(screen)}
         if (
             len(replies) >= count
-            and len(_reply_footers(screen)) >= count
+            and all(reply.id in rendered for reply in replies)
             # The turn leaves runtime custody after its reply lands; a send
             # admitted before that is refused as a second turn.
             and not screen._console_runtime().has_custodied_turns(
@@ -134,7 +160,10 @@ async def _wait_for_replies(screen, pilot, count: int) -> None:
         (message.role.value, message.status, message.content[:60])
         for message in store.messages_for_session(store.active_session_id)
     ]
-    raise AssertionError(f"{count} replies did not arrive: {rows}")
+    raise AssertionError(
+        f"{count} replies did not arrive: {rows}; rendered reply rows: "
+        f"{len(_reply_rows(screen))}"
+    )
 
 
 async def _send(screen, pilot, draft: str, replies: int) -> None:
@@ -897,7 +926,22 @@ async def test_original_stock_handler_accepts_b_without_consuming_a_staging(
             assert record.request.staged_evidence_launch is None
             if record.received_intent is not None:
                 assert record.received_intent.staged_evidence_launch is None
-            assert record.inputs.staged_evidence_revision is None
+                # This press now takes the received route (it took the
+                # ordinary one at fc80778b01, 2026-11-02; bisected into the
+                # TASK-39147 native-phase series that landed by 064d5cb014,
+                # 2026-11-09). Its intent carries B's own snapshot at the
+                # press: nothing staged, revision 0, the empty answer of
+                # snapshot_console_staged_evidence asserted above. That is
+                # harmless: 0 is no launch's revision (each stage and release
+                # takes the next one, from 1); it only fences B's staging
+                # during preparation (require_received_source); and with no
+                # launch no evidence lease, so no release, is built from it.
+                # The ordinary route carries None instead.
+                assert record.inputs.staged_evidence_revision == 0
+                assert record.received_intent.staged_evidence_revision == 0
+            else:
+                assert record.inputs.staged_evidence_revision is None
+            assert record.inputs.staged_evidence_revision != first_state[1]
             # Issued only by the real acceptance owner, never set by this test.
             assert record.inputs.durable_accepted is True
             record_property("pr3331_durable_accepted", record.inputs.durable_accepted)
