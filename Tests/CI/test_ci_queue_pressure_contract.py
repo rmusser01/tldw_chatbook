@@ -262,8 +262,9 @@ FAST_LANE_TARGETS = (
     # the models it listed included (whole file, pure, about a second).
     "Tests/Chat/test_readiness_words.py",
     # TASK-33005.7: the empty transcript's ready line leads with the readiness
-    # word (one pure node, under a second).
-    "Tests/Chat/test_console_onboarding_state.py::test_the_ready_line_leads_with_the_readiness_word_every_surface_shows",
+    # word. TASK-42139 (2026-11-21) gates the whole file (pure, under a
+    # second): its step-one label nodes had been red since #2365 in no lane.
+    "Tests/Chat/test_console_onboarding_state.py",
     # Phase 9 Task 12: TASK-33005.10's begin-order lock, endpoint-parsing memo
     # and one model facet, and TASK-33005.9's wizard store keyed by the sent
     # key (two new pure files, about a second each, 3 of 3 serial).

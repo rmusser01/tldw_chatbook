@@ -12,7 +12,9 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     console_setup_is_blocking,
 )
 from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
     ConsoleSettingsReadiness,
+    build_console_settings_readiness,
     readiness_words,
 )
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
@@ -21,6 +23,11 @@ from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 def _readiness(
     label: str, *, ready: bool = False, detail: str = ""
 ) -> ConsoleSettingsReadiness:
+    """A legacy label-only readiness. Use it for a ready one only.
+
+    Blocked, it carries ``blocker="readiness_unknown"`` whatever the label, so
+    step one reads "Finish provider setup" (TASK-42139); use ``_blocked``.
+    """
     return ConsoleSettingsReadiness(
         label=label,
         detail=detail,
@@ -28,9 +35,37 @@ def _readiness(
     )
 
 
+#: Settings and config that production reads as each blocked setup.
+_BLOCKED_SETUPS = {
+    "missing_key": ("openai", None, {"openai": {}}),
+    "invalid_endpoint": ("llama_cpp", None, {"llama_cpp": {"api_url": "not a url"}}),
+    "unsaved_endpoint": (
+        "vllm",
+        "http://127.0.0.1:9001/v1",
+        {"vllm": {"api_url": "http://127.0.0.1:9000/v1"}},
+    ),
+    "no_provider": ("", None, {}),
+    "unsupported_provider": ("not_a_provider", None, {}),
+}
+
+
+def _blocked(setup: str) -> ConsoleSettingsReadiness:
+    """The readiness production builds for one blocked setup (TASK-42139).
+
+    Step one's label is keyed by ``readiness.blocker`` (since #2365), so a
+    test of it must carry the blocker production derives, not just a label.
+    """
+    provider, base_url, api_settings = _BLOCKED_SETUPS[setup]
+    return build_console_settings_readiness(
+        ConsoleSessionSettings(provider=provider, model="model-a", base_url=base_url),
+        app_config={"api_settings": api_settings},
+        environ={},
+    )
+
+
 def _build(**overrides) -> ConsoleSetupCardState:
     defaults = dict(
-        readiness=_readiness("Missing key"),
+        readiness=_blocked("missing_key"),
         provider_label="OpenAI",
         has_model=True,
         first_send_completed=False,
@@ -71,19 +106,19 @@ def test_template_default_model_does_not_precheck_step_two():
 
 def test_endpoint_problems_relabel_step_one():
     assert (
-        _build(readiness=_readiness("Invalid URL")).steps[0].label
+        _build(readiness=_blocked("invalid_endpoint")).steps[0].label
         == "Save the provider's server address (endpoint)"
     )
     assert (
-        _build(readiness=_readiness("Endpoint not saved")).steps[0].label
+        _build(readiness=_blocked("unsaved_endpoint")).steps[0].label
         == "Save the provider's server address (endpoint)"
     )
     assert (
-        _build(readiness=_readiness("Unknown")).steps[0].label
+        _build(readiness=_blocked("no_provider")).steps[0].label
         == "Choose a supported provider"
     )
     assert (
-        _build(readiness=_readiness("Pending")).steps[0].label
+        _build(readiness=_blocked("unsupported_provider")).steps[0].label
         == "Choose a provider that works in the Console"
     )
 
@@ -314,7 +349,7 @@ def test_detected_server_action_drops_non_loopback_and_malformed_servers():
 def test_setup_is_blocking_when_provider_missing():
     assert (
         console_setup_is_blocking(
-            readiness=_readiness("Missing key"),
+            readiness=_blocked("missing_key"),
             has_model=True,
             first_send_completed=False,
         )
@@ -352,7 +387,7 @@ def test_setup_not_blocking_once_first_send_completed():
     session must agree."""
     assert (
         console_setup_is_blocking(
-            readiness=_readiness("Missing key"),
+            readiness=_blocked("missing_key"),
             has_model=False,
             first_send_completed=True,
         )
