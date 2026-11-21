@@ -714,7 +714,6 @@ def test_default_config_template_bytes_are_unchanged():
 
 
 def test_config_toml_content_is_the_data_file_with_placeholders_resolved():
-    import hashlib
     import importlib.resources
 
     from tldw_chatbook import config

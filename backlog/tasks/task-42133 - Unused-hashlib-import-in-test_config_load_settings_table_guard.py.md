@@ -1,10 +1,10 @@
 ---
 id: TASK-42133
 title: "Unused hashlib import in test_config_load_settings_table_guard.py"
-status: To Do
-assignee: []
+status: Done
+assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-20 20:06
+updated_date: 2026-11-21 18:20
 labels:
 - follow-up
 - tests
@@ -23,6 +23,19 @@ Found by the providers stream (round 18). At d85e90bc9e `ruff check --select F40
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `ruff check --select F Tests/test_config_load_settings_table_guard.py` reports no findings
-- [ ] #2 The file's tests still pass
+- [x] #1 `ruff check --select F Tests/test_config_load_settings_table_guard.py` reports no findings
+- [x] #2 The file's tests still pass
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Delete the unused `import hashlib` in `test_config_toml_content_is_the_data_file_with_placeholders_resolved`.
+2. Run `ruff check --select F` on the file and the file's tests.
+
+## Implementation Notes
+
+Removed the unused `import hashlib` from `test_config_toml_content_is_the_data_file_with_placeholders_resolved` (the sibling `test_default_config_template_bytes_are_unchanged` keeps its own, used import).
+- Before: `ruff check --select F Tests/test_config_load_settings_table_guard.py` reported `F401 'hashlib' imported but unused` at 717:12. After: "All checks passed!".
+- The file's tests: 12 passed (`-n 4`, through the test wrapper).
+
+File: `Tests/test_config_load_settings_table_guard.py`.
