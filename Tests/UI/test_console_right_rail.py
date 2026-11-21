@@ -699,6 +699,48 @@ async def test_live_work_widget_swaps_cover_real_twenty_twenty_one_geometry(
 
 
 @pytest.mark.asyncio
+async def test_live_work_swap_reconciles_replacement_rail_with_latest_launch(monkeypatch):
+    async with make_console_pilot(size=(235, 52)) as pilot:
+        screen = pilot.app.screen
+        rail = screen.query_one("#console-right-rail")
+        first = ConsoleLiveWorkLaunch.from_values(source="Library", title="First")
+        latest = replace(first, title="Latest")
+        screen._pending_console_launch_context = first
+        await rail.recompose()
+
+        old_section = rail.query_one(
+            "#console-bounded-section-live-work", ConsoleBoundedSection
+        )
+        old_card = old_section.query_one("#console-pending-launch-card")
+        remove_card = old_card.remove
+
+        async def replace_rail_during_removal():
+            await remove_card()
+            await rail.recompose()
+            assert not old_section.viewport.is_attached
+            title = rail.query_one("#console-live-work-title", Static)
+            assert str(title.renderable) == "Title: First"
+            screen._pending_console_launch_context = latest
+            assert screen._sync_console_pending_launch_surfaces()
+
+        monkeypatch.setattr(old_card, "remove", replace_rail_during_removal)
+        screen._console_live_work_card_swap_scheduled = True
+        await screen._apply_console_live_work_card_swap()
+
+        def shows_latest_launch() -> bool:
+            title = rail.query_one_optional("#console-live-work-title", Static)
+            return (
+                title is not None
+                and str(title.renderable) == "Title: Latest"
+                and not screen._console_live_work_card_swap_scheduled
+            )
+
+        await _wait_for_right_rail_condition(
+            pilot, shows_latest_launch, description="the latest live-work title"
+        )
+
+
+@pytest.mark.asyncio
 async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
     ownership = importlib.import_module(
         "tldw_chatbook.Widgets.Console.console_inspector_ownership"

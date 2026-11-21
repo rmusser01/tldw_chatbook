@@ -6,7 +6,7 @@ status: In Progress
 created_date: 2026-11-13 21:54
 assignee:
 - '@codex'
-updated_date: 2026-11-21 21:57
+updated_date: 2026-11-21 22:09
 ---
 
 ## Description
@@ -272,6 +272,7 @@ On 2026-11-21, nonpublishing release run 44932782149 on 7279c7590f exposed four 
 CodeRabbit reviewed 7279c7590f in review 6007604469 with one autosave test finding and no open threads. The held-reply control now observes the actual pending-save wait and checks that Back remains pending while the committed row is still present. All four real SQLite autosave variants pass with storage lease checks. Release run 44932782149 also exposed a chat-store estimate fixture that changed its admitted config source and a Notes rail switch that asserted route selection before the delete reply. The node keeps the admitted bootstrap profile and 20 related store cases pass. Delaying the real delete reply reproduced the rail-switch assertion and the corrected fixture passes while still asserting real deletion. Package qualification passed on 7279c7590f. The PR and full-release verdicts still require hosted qualification.
 On 2026-11-21, CodeRabbit completed its incremental review on 375d11e88c, returned success on that SHA, and reported zero actionable findings. #3636 was armed at 20:31:50 UTC. Scheduled main dispatchers 44710101507 and 44889167158 succeeded. The latter dispatched nightly 44894046855 for f864f00762, whose downstream verdict failed. The nonpublishing 44940520486 release built distributions successfully and reached six additional first-failure results. The three UI shards stopped in Console native-flow config admission. Local reproduction fixed the module profile binding and reached a genuine warm-resume Live Work rail detach during old-card removal. The guard rechecks attachment after removal. Warm navigation now reuses the same screen and renders the staged card, and both live-work geometry cases pass. Terminal probe import isolation, dictation model-handoff settlement, and built-in image-template isolation address the three core failures. Focused terminal (11), voice (9), and image (106) checks passed, the diagnostic and Textual contracts are green, and Bandit found zero new findings. Broad Console fixture verification and the hosted rollout gates are in progress.
 Dev advanced to e5626ea043 via #3654. Rebasing #3636 kept all incoming product code and added the landed Git LFS task record. The sole conflict in the MCP Live Work geometry test keeps real layout assertions at 17 rows with RAG available and 18 with RAG unavailable, both under the 20-row cap. The branch carries the six hosted release repairs and the narrowly verified Console cases. The exploratory module-wide enrollment exposed additional unverified legacy cases.
+CodeRabbit review 6008503497 at 762b1f77f1 identified a detached-rail handoff race. A mounted reproduction replaced the rail during card removal, staged a later launch, and timed out on its title. The swap now queues one follow-up for an attached replacement; an absent rail finishes normally. The regression, warm resume, and both geometry directions passed. The Textual worker check and targeted Ruff passed, with zero new Bandit findings.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Renumbering provenance

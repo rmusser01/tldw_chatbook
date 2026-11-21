@@ -14458,11 +14458,10 @@ class ChatScreen(BaseAppScreen):
         the awaits -- staging can happen again while a swap is in flight).
         The scheduled flag stays set for the WHOLE swap, so a mid-swap
         staging can never start a second, overlapping swap regardless of how
-        the caller reached the scheduler (PR #691 review); the tail re-check
-        below converges on the latest context instead.
+        the caller reached the scheduler (PR #691 review). Retry on the
+        mounted rail if the context changes or a recompose replaces it.
         """
-        swapped_context = None
-        swap_completed = False
+        retry = False
         try:
             try:
                 local_section = self.query_one(
@@ -14488,7 +14487,11 @@ class ChatScreen(BaseAppScreen):
                     continue
                 await stale_card.remove()
             if not local_section.viewport.is_attached:
-                return  # A recompose replaced this rail while removing the old card.
+                replacement = self.query_one_optional(
+                    "#console-bounded-section-live-work", ConsoleBoundedSection
+                )
+                retry = replacement is not None and replacement.viewport.is_attached
+                return
             launch = self._pending_console_launch_context
             card = (
                 self._build_console_live_work_status_card(launch)
@@ -14499,20 +14502,11 @@ class ChatScreen(BaseAppScreen):
             pending_header.display = launch is not None
             readiness_header.display = launch is None
             self.call_after_refresh(self._request_console_live_work_reconcile)
-            swapped_context = launch
-            swap_completed = True
+            retry = self._pending_console_launch_context is not launch
         finally:
-            self._console_live_work_card_swap_scheduled = False
-        # Gate on completion: the rail-unmounted early return must NOT
-        # re-schedule, or a lingering context would loop this forever.
-        if (
-            swap_completed
-            and self._pending_console_launch_context is not swapped_context
-        ):
-            # Staging changed the context after this swap's re-read; run one
-            # more swap so the mounted card converges on the latest context.
-            self._console_live_work_card_swap_scheduled = True
-            self.call_later(self._apply_console_live_work_card_swap)
+            self._console_live_work_card_swap_scheduled = retry
+            if retry:
+                self.call_later(self._apply_console_live_work_card_swap)
 
     def _sync_console_staged_context_tray(self) -> None:
         """Refresh the mounted staged-context tray from the launch context."""
