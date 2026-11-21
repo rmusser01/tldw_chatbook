@@ -657,6 +657,12 @@ try:
             if case.get('retired'):assert started['contained'] is True,started
             assert snapshot(shared_pets)==shared_before,'pet start changed the old shared pet folder'
             assert produce('admit')['permission'][0] is True
+            # TASK-42115 AC#3: once the profile is bound, its pet files are
+            # config companions; only the target's own pet files, which its
+            # first binding found, are roots of their own.
+            registry=bootstrap._registry(bootstrap.default_bootstrap_root())
+            pet_roots={Path(root) for entry in registry.values() for root in entry['roots'] if Path(root).name.startswith('tamagotchi_pets')}
+            assert pet_roots<={path for path,_ in own.values()},sorted(map(str,pet_roots))
         if case.get('then')=='chain':
             raise RestoreOnly
         if case.get('extract'):
