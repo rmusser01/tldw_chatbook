@@ -24223,21 +24223,19 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
         )
 
         _press_note_back(screen)
+        # Back can still be returning to the list after the DB commit.
         for _ in range(150):
-            if (
-                await app.notes_scope_service.count_notes(
-                    scope="local_note", user_id="default_user"
-                )
-                == 0
-            ):
+            note_count = await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            if note_count == 0 and screen._notes_state.view == "list":
                 break
             await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                "A blank note typed into and then emptied out again was "
-                "not GC'd -- an empty 'Untitled' row survived, exactly "
-                "what AC#5 forbids."
-            )
+        assert note_count == 0, (
+            "A blank note typed into and then emptied out again was "
+            "not GC'd -- an empty 'Untitled' row survived, exactly "
+            "what AC#5 forbids."
+        )
         assert screen._notes_state.view == "list"
         assert screen._notes_state.session_blank_id is None
 
@@ -35032,11 +35030,13 @@ async def test_library_note_pilot_conflict_can_originate_from_every_region(
 
         _bump_note_version_externally(app.notes_scope_service, "n-1")
         screen.query_one("#library-note-save").press()
+        # The coordinator records the conflict before the UI applies the save outcome.
         await _wait_for_condition(
             pilot,
             lambda: bool(
                 screen._library_note_session.snapshot
                 and screen._library_note_session.snapshot.in_conflict
+                and screen.query_one("#library-note-conflict-region").display
             ),
             message=f"{origin} did not surface its save conflict.",
         )
