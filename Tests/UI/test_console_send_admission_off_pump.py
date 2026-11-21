@@ -54,17 +54,19 @@ ENTRY_SECONDS = 30.0
 
 
 class HeldMcpRead:
-    """Hold the MCP read admission makes, until the test releases it.
+    """Hold the first ``get_kill_switch`` call made from a named caller.
 
-    Wraps the real ``unified_mcp_service.get_kill_switch``; only the first
-    call made by ``capture_mcp_definition_maximum`` (admission's capture, on
-    whichever thread admission reads it) is held. Every other caller, such as
-    the run's own catalog composition, passes straight through.
+    Wraps the real ``unified_mcp_service.get_kill_switch`` on the instance and
+    holds only a call whose caller is ``capture_mcp_definition_maximum``.
 
-    TASK-42140: replacing the method makes the service non-stock, and a send
-    through the app's Console runtime is then refused ("Console preparation
-    source unavailable; Send again.") before any MCP read, so the off-pump
-    tests hold ``HeldNativeMcpRead`` instead.
+    TASK-42140: this no longer reaches any read, for two reasons. The frame
+    name is stale: ``capture_mcp_definition_maximum`` delegates, and
+    ``_capture_mcp_definition_selection`` makes the call (11d71e5db5). And the
+    instance assignment makes the service non-stock, so a send through the
+    app's Console runtime is refused ("Console preparation source unavailable;
+    Send again.", ``turn_admission.capture_authority``) before any MCP read.
+    The off-pump tests hold ``HeldNativeMcpRead`` instead; only
+    ``test_console_fallback_pressed_draft.py`` still uses this.
     """
 
     def __init__(self, service) -> None:
@@ -92,7 +94,12 @@ class HeldNativeMcpRead:
 
     This is the MCP read admission makes: ``_CapturedSources.
     read_permission_payload`` for the app's own service, on whichever thread
-    admission reads it. Patched on the class, so the service stays stock.
+    admission reads it. Patched on the class, so ``standard_console_sources``
+    stays True and admission takes its stock route. The patch does make
+    ``controller_precheck_pipeline_current()`` False (the method is in
+    ``_CONTROLLER_PRECHECK_METHODS``), so the run's tool preparation, the tool
+    preview and ``capture_standard_controller_composition`` take their
+    ordinary routes: the hold can only catch admission's read.
     """
 
     READ = "_CapturedSources.read_permission_payload"
@@ -660,7 +667,7 @@ async def test_a_bare_second_enter_never_sends_a_committed_draft_again(
                 # TASK-42140: the "y" turn saves its user row before its run
                 # starts and reloads the composer; wait until it has answered.
                 await until(
-                    lambda: gateway.stream_calls == 2 and _first_turn_done(host, console)
+                    lambda: gateway.stream_calls >= 2 and _first_turn_done(host, console)
                 )
             sent = [DRAFT, "y"] if then_y else [DRAFT]
             assert _sent_or_queued(console, session_id) == sent

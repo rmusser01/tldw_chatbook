@@ -20,18 +20,17 @@ from tldw_chatbook.Chat.console_session_settings import (
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 
 
-def _readiness(
-    label: str, *, ready: bool = False, detail: str = ""
-) -> ConsoleSettingsReadiness:
-    """A legacy label-only readiness. Use it for a ready one only.
+def _ready() -> ConsoleSettingsReadiness:
+    """A ready readiness, built the legacy (label-only) way.
 
-    Blocked, it carries ``blocker="readiness_unknown"`` whatever the label, so
-    step one reads "Finish provider setup" (TASK-42139); use ``_blocked``.
+    A blocked one comes only from ``_blocked``: built this way it would carry
+    ``blocker="readiness_unknown"`` whatever its label, so step one would read
+    "Finish provider setup" (TASK-42139).
     """
     return ConsoleSettingsReadiness(
-        label=label,
-        detail=detail,
-        native_send_supported=ready,
+        label="Ready",
+        detail="",
+        native_send_supported=True,
     )
 
 
@@ -99,7 +98,7 @@ def test_template_default_model_does_not_precheck_step_two():
     assert blocked_with_default_model.steps[1].state == "pending"
 
     ready_without_model = _build(
-        readiness=_readiness("Ready", ready=True), has_model=False
+        readiness=_ready(), has_model=False
     )
     assert ready_without_model.steps[1].state == "active"
 
@@ -124,7 +123,7 @@ def test_endpoint_problems_relabel_step_one():
 
 
 def test_provider_ready_without_model_activates_model_step():
-    state = _build(readiness=_readiness("Ready", ready=True), has_model=False)
+    state = _build(readiness=_ready(), has_model=False)
     assert state.mode == "card"
     assert [step.state for step in state.steps] == ["done", "active", "pending"]
     assert state.steps[0].glyph == "✓"
@@ -178,7 +177,7 @@ def test_the_active_step_carries_the_one_readiness_word():
 
 
 def test_setup_complete_collapses_to_ready_line():
-    state = _build(readiness=_readiness("Ready", ready=True), has_model=True)
+    state = _build(readiness=_ready(), has_model=True)
     assert state.mode == "ready_line"
     # TASK-33005.7 (rewritten on purpose): the line leads with the word.
     assert state.body_copy == CONSOLE_READY_EMPTY_COPY.replace(
@@ -218,7 +217,7 @@ def test_the_ready_line_leads_with_the_readiness_word_every_surface_shows():
     reachable = build_console_settings_readiness(
         settings, app_config=config, environ={}, connection_evidence=owner
     )
-    untested = _readiness("Ready", ready=True)
+    untested = _ready()
 
     for readiness, word in (
         (untested, "Ready · not tested"),
@@ -236,7 +235,7 @@ def test_the_ready_line_leads_with_the_readiness_word_every_surface_shows():
 
 def test_first_send_completed_is_quiet_forever():
     state = _build(
-        readiness=_readiness("Ready", ready=True),
+        readiness=_ready(),
         first_send_completed=True,
     )
     assert state.mode == "quiet"
@@ -251,7 +250,7 @@ def test_messages_present_is_quiet():
 
 def test_dismissal_hides_ready_line_but_not_setup_card():
     ready = _build(
-        readiness=_readiness("Ready", ready=True),
+        readiness=_ready(),
         guidance_dismissed=True,
     )
     assert ready.mode == "quiet"
@@ -360,7 +359,7 @@ def test_setup_is_blocking_when_provider_missing():
 def test_setup_is_blocking_when_ready_but_no_model():
     assert (
         console_setup_is_blocking(
-            readiness=_readiness("Ready", ready=True),
+            readiness=_ready(),
             has_model=False,
             first_send_completed=False,
         )
@@ -371,7 +370,7 @@ def test_setup_is_blocking_when_ready_but_no_model():
 def test_setup_not_blocking_once_provider_and_model_ready():
     assert (
         console_setup_is_blocking(
-            readiness=_readiness("Ready", ready=True),
+            readiness=_ready(),
             has_model=True,
             first_send_completed=False,
         )

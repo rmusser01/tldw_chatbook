@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-21 18:45
+updated_date: 2026-11-21 19:30
 labels:
 - follow-up
 - tests
@@ -44,7 +44,7 @@ The likely cause: `build_console_setup_card_state` picks the label from `readine
 
 **Cause.** Test drift, not a product fault. #2365 (939dee8dc2, 2026-09-04) keyed `_STEP_ONE_LABELS` by `readiness.blocker` instead of `readiness.label`, and gave `ConsoleSettingsReadiness` a legacy normalization: a readiness built from a label alone with `native_send_supported=False` gets `blocker="readiness_unknown"`, whatever the label says. The file's `_readiness("Missing key")` / `_readiness("Invalid URL")` helpers therefore all read "Finish provider setup". The test file was not touched by #2365, and only one of its nodes ran in a lane, so the two nodes stayed red for 2.5 months.
 
-**Fix (tests only).** A `_blocked(setup)` helper builds the readiness with the production builder (`build_console_settings_readiness`) for five named setups: missing key (openai, no key), invalid endpoint (llama.cpp `api_url = "not a url"`), unsaved endpoint (vLLM session URL differing from the saved one), no provider, unsupported provider. A probe through the wrapper confirmed the builder's labels/blockers for each (`Missing key/credential_missing`, `Invalid URL/endpoint_invalid`, `Endpoint not saved/endpoint_not_saved`, `Unknown/provider_missing`, `Unknown/provider_unsupported`). `_build()`'s default and the two `console_setup_is_blocking` missing-key cases use `_blocked("missing_key")`; `_readiness` keeps only ready readiness and its docstring says why.
+**Fix (tests only).** A `_blocked(setup)` helper builds the readiness with the production builder (`build_console_settings_readiness`) for five named setups: missing key (openai, no key), invalid endpoint (llama.cpp `api_url = "not a url"`), unsaved endpoint (vLLM session URL differing from the saved one), no provider, unsupported provider. A probe through the wrapper confirmed the builder's labels/blockers for each (`Missing key/credential_missing`, `Invalid URL/endpoint_invalid`, `Endpoint not saved/endpoint_not_saved`, `Unknown/provider_missing`, `Unknown/provider_unsupported`). `_build()`'s default and the two `console_setup_is_blocking` missing-key cases use `_blocked("missing_key")`; the label-only helper is now the no-argument `_ready()` (review rev1), so a blocked readiness can come only from `_blocked`.
 
 **Evidence.** Base dc371f0842 (`-n 4`, load ~12): the two nodes fail ("Finish provider setup"). After: 19 passed. Negative control: `credential_missing` and `endpoint_invalid` set to "WRONG LABEL" in `_STEP_ONE_LABELS` turned both fixed nodes red (`assert 'WRONG LABEL' == 'Connect a pr...local server)'`, `... == 'Save the pro...ss (endpoint)'`), 2 failed / 17 passed; reverted.
 
