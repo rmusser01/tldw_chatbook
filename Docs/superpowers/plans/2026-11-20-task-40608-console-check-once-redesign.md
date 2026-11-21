@@ -1,6 +1,6 @@
 # TASK-40608 Console redesign: check storage once, then simplify the pipeline
 
-> Status: **proposal, not approved** (2026-11-20). Four decisions below need the owner before any implementation starts.
+> Status: **approved by the owner on 2026-11-20** (O1–O4 all approved). Phase 1 was corrected after approval to run on the PR head, where the estimate was measured.
 
 **Goal:** Both original Windows journeys (README, approved edit) under 5 s of application time in all three sequential pairs (TASK-40608 AC5), without weakening a user-facing safety guarantee.
 **Architecture:** Verify storage when a profile session opens, hold its connections, and revalidate on events instead of on every call. The Console runtime stays in its own process (your 2026-11-18 direction), but its display protocol drops per-read retirement proofs.
@@ -107,7 +107,7 @@ Branch strategy: build on current `dev`. Do not squash #3575's 695 files and 239
 
 ### Phase 1: prove the floor before building (after O1–O2)
 
-1. On a spike branch from `dev`, give the in-process ChaChaNotes and AgentRuns stores a minimal D1 session: held connections, draining on `pause_requested`, no per-call stamps. Also remove the per-read retirement wait from display reads.
+1. On a spike branch from the PR head, where the ~7.5 s estimate was measured (`dev` has neither the external runtime nor per-read retirement proofs), keep owned-call connections open and drop the per-read retirement wait from display reads. Bypass per-call storage re-verification as far as the journey allows. This is a measurement build, not the D1 implementation.
 2. Run the original journey twice. Gate: plain rounds ≤ 0.8 s and turns ≤ ~9 s. That is consistent with the ~7.5 s estimate; anything worse means the estimate missed a cost.
 3. Inventory cross-process write invariants, for O4.
 
