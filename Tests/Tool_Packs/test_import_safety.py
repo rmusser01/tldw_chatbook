@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import time
 import warnings
 import zipfile
 
@@ -425,6 +426,194 @@ def test_rejects_archive_path_substitution_during_descriptor_read(
 
     with pytest.raises(ToolPackError) as raised:
         importer_module._read_regular_archive(archive)
+    assert raised.value.category == "archive_invalid"
+
+
+# The archive reader on native Windows. None of these tests is platform-skipped:
+# Windows has no O_NOFOLLOW, its CRT opens files in text mode unless O_BINARY
+# is passed, and its fstat and stat disagree about st_ctime. Each of those once
+# made every Windows import fail (or fail at random).
+
+# The creation-or-change timestamp the reader includes in a file's identity.
+_IDENTITY_TIME_FIELD = "st_birthtime_ns" if os.name == "nt" else "st_ctime_ns"
+
+
+class _StatView:
+    """An ``os.stat`` result with selected fields replaced."""
+
+    def __init__(self, real: os.stat_result, **overrides: int) -> None:
+        self._real = real
+        self._overrides = overrides
+
+    def __getattr__(self, name: str) -> object:
+        if name in self._overrides:
+            return self._overrides[name]
+        return getattr(self._real, name)
+
+
+def test_inspects_a_valid_archive_on_every_platform(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixed_now: datetime,
+) -> None:
+    archive, tool = _valid_archive(tmp_path)
+    raw = archive.read_bytes()
+
+    review = _service(monkeypatch, _inventory(tool), fixed_now).inspect_archive(
+        archive, destination_id="research"
+    )
+
+    assert review.archive_sha256 == hashlib.sha256(raw).hexdigest()
+    assert importer_module._read_regular_archive(archive) == raw
+
+
+def test_inspects_an_archive_rewritten_in_place(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixed_now: datetime,
+) -> None:
+    # On Windows a rewrite moves the ChangeTime that fstat reports as st_ctime,
+    # but not the CreationTime that stat reports as st_ctime.
+    archive, tool = _valid_archive(tmp_path)
+    raw = archive.read_bytes()
+    time.sleep(0.05)  # Longer than one filesystem clock tick.
+    with archive.open("r+b") as handle:
+        handle.write(raw)
+        handle.truncate()
+
+    review = _service(monkeypatch, _inventory(tool), fixed_now).inspect_archive(
+        archive, destination_id="research"
+    )
+
+    assert review.archive_sha256 == hashlib.sha256(raw).hexdigest()
+
+
+def test_reads_archive_bytes_exactly_including_crlf_and_ctrl_z(
+    tmp_path: Path,
+) -> None:
+    raw = b"PK\x03\x04" + bytes(range(256)) * 4 + b"\r\n\x1a\r\n"
+    path = tmp_path / "binary.tldw-tool-pack"
+    path.write_bytes(raw)
+
+    assert importer_module._read_regular_archive(path) == raw
+
+
+def test_inspects_a_valid_archive_whose_bytes_contain_ctrl_z(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fixed_now: datetime,
+) -> None:
+    # A CRC or length byte of 0x1A ends a text-mode read early; a few percent
+    # of real archives contain one. Search deterministically for such a pack.
+    for index in range(2000):
+        tool = _tool(name=f"search-{index}")
+        archive = _archive(
+            tmp_path / "ctrl-z.tldw-tool-pack",
+            rules=(
+                PortableToolRule(
+                    "mcp",
+                    "local:docs",
+                    tool.name,
+                    "allow",
+                    portable_contract_sha256(tool),
+                ),
+            ),
+        )
+        raw = archive.read_bytes()
+        if b"\x1a" in raw:
+            break
+    assert b"\x1a" in raw
+
+    review = _service(monkeypatch, _inventory(tool), fixed_now).inspect_archive(
+        archive, destination_id="research"
+    )
+
+    assert review.archive_sha256 == hashlib.sha256(raw).hexdigest()
+    assert len(review.matched) == 1
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        None,
+        "st_dev",
+        "st_ino",
+        "st_size",
+        "st_mtime_ns",
+        pytest.param(_IDENTITY_TIME_FIELD, id="identity_time"),
+    ],
+)
+def test_path_identity_must_match_the_descriptor_that_was_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str | None,
+) -> None:
+    # Unlike the substitution test above, this reaches the identity comparison
+    # on every platform: Windows refuses that test's os.replace of an open file.
+    archive, _tool_value = _valid_archive(tmp_path)
+    raw = archive.read_bytes()
+    real_stat = importer_module.os.stat
+    calls: list[tuple[object, bool]] = []
+
+    def drifted_stat(path: object, *, follow_symlinks: bool = True) -> object:
+        calls.append((path, follow_symlinks))
+        real = real_stat(path, follow_symlinks=follow_symlinks)
+        if field is None:
+            return real
+        return _StatView(real, **{field: getattr(real, field) + 1})
+
+    monkeypatch.setattr(importer_module.os, "stat", drifted_stat)
+
+    if field is None:
+        assert importer_module._read_regular_archive(archive) == raw
+    else:
+        with pytest.raises(ToolPackError) as raised:
+            importer_module._read_regular_archive(archive)
+        assert raised.value.category == "archive_invalid"
+    assert calls == [(archive, False)]
+
+
+def test_windows_identity_ignores_st_ctime_but_posix_compares_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive, _tool_value = _valid_archive(tmp_path)
+    raw = archive.read_bytes()
+    real_stat = importer_module.os.stat
+
+    def ctime_shifted_stat(path: object, *, follow_symlinks: bool = True) -> object:
+        real = real_stat(path, follow_symlinks=follow_symlinks)
+        return _StatView(real, st_ctime_ns=real.st_ctime_ns + 1)
+
+    monkeypatch.setattr(importer_module.os, "stat", ctime_shifted_stat)
+
+    if os.name == "nt":
+        # Windows stat's st_ctime is CreationTime while fstat's is ChangeTime,
+        # so st_ctime cannot be part of the identity there.
+        assert importer_module._read_regular_archive(archive) == raw
+    else:
+        with pytest.raises(ToolPackError) as raised:
+            importer_module._read_regular_archive(archive)
+        assert raised.value.category == "archive_invalid"
+
+
+def test_posix_host_without_o_nofollow_refuses_before_opening(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive, _tool_value = _valid_archive(tmp_path)
+
+    def refusing_open(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("the reader opened the archive")
+
+    # Scoped to the one call: a process-wide os.name of "posix" breaks pathlib
+    # on Windows, including in fixture teardown.
+    with monkeypatch.context() as patch:
+        patch.delattr(importer_module.os, "O_NOFOLLOW", raising=False)
+        patch.setattr(importer_module.os, "name", "posix")
+        patch.setattr(importer_module.os, "open", refusing_open)
+        with pytest.raises(ToolPackError) as raised:
+            importer_module._read_regular_archive(archive)
     assert raised.value.category == "archive_invalid"
 
 
