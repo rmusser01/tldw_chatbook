@@ -96,6 +96,81 @@ def test_speculative_voice_capture_request_has_complete_frozen_provenance() -> N
     assert len(request.provenance.metadata) == 1
 
 
+def _message_descriptors(request) -> tuple:
+    """Every message row's descriptor, in request order."""
+    provenance = request.provenance
+    history = tuple(item for unit in provenance.compactable for item in unit.messages)
+    return (
+        *provenance.system,
+        *provenance.memory,
+        *provenance.mandatory,
+        *history,
+        *provenance.active_request,
+    )
+
+
+def test_voice_builder_labels_unsaved_rows_like_the_typed_path() -> None:
+    """TASK-33621.46 AC#2: one rule for every unsaved row, both builders.
+
+    A system row inside the history belongs to the history category. The
+    typed builder labels it so (``unsaved_row_sources``); the voice builder
+    used the role-only mapping, calling it rendered system context, and the
+    request aggregate refused the whole Capture-On request.
+    """
+    from tldw_chatbook.Chat.console_trace_row_sources import unsaved_row_sources
+
+    saved = SavedRevisionTraceProvenance(new_opaque_id())
+    rows = (
+        {"role": "system", "content": "rendered system"},
+        {"role": "user", "content": "saved", "_native_message_id": "native-1"},
+        {"role": "system", "content": "a system row inside the history"},
+        {"role": "user", "content": "rolling transcript"},
+    )
+
+    request = _build_speculative_voice_capture_request(
+        messages=rows,
+        tools=(),
+        capture_policy=_policy(),
+        saved_by_owner={"native-1": saved},
+    )
+
+    expected = unsaved_row_sources(
+        [{k: v for k, v in row.items() if k != "_native_message_id"} for row in rows]
+    )
+    descriptors = _message_descriptors(request)
+    assert len(descriptors) == len(rows)
+    assert descriptors[1] == saved
+    assert [descriptors[i].source for i in (0, 2, 3)] == [expected[i] for i in (0, 2, 3)]
+
+
+def test_voice_builder_admits_a_media_omitting_row_as_an_artifact() -> None:
+    """TASK-33621.46: an owned row that left saved media out is not that revision."""
+    rows = (
+        {"role": "user", "content": "hello", "_native_message_id": "native-1"},
+        {
+            "role": "assistant",
+            "content": "[image] a red square",
+            "_native_message_id": "native-image",
+        },
+        {"role": "user", "content": "describe it"},
+    )
+    saved = SavedRevisionTraceProvenance(new_opaque_id())
+
+    request = _build_speculative_voice_capture_request(
+        messages=rows,
+        tools=(),
+        capture_policy=_policy(),
+        saved_by_owner={"native-1": saved},
+        media_omitted=frozenset({"native-image"}),
+    )
+
+    descriptors = _message_descriptors(request)
+    assert len(descriptors) == len(rows)
+    assert descriptors[0] == saved
+    assert isinstance(descriptors[1], ProviderArtifactTraceProvenance)
+    assert descriptors[1].source is TraceProvenanceSource.ACTIVE_REQUEST
+
+
 def _context(promotion_id: str) -> VoiceTraceImportContext:
     return VoiceTraceImportContext(
         import_id=promotion_id,

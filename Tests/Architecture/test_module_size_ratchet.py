@@ -329,7 +329,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-18: rebased onto dev 45b1949ca3 (dev's row + this branch's growth, measured): 28761.
     # Raised for TASK-41507, 2026-11-18: +3 lines on 28,761, submit_draft builds
     # the skill trust a cold capture reads (Chat/console_configuration_preparation.py).
-    "tldw_chatbook/Chat/console_chat_controller.py": 28764,
+    # Raised for TASK-33621.46, 2026-11-21 (owner rule: exact measurement): +14
+    # lines on dev's 28,758 -> 28,772, the voice trace builder applies the typed
+    # path's saved-media and unsaved-row rules (Chat/console_trace_row_sources.py).
+    "tldw_chatbook/Chat/console_chat_controller.py": 28772,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
     # answerable view fails closed instead of waiting forever (dev's row +

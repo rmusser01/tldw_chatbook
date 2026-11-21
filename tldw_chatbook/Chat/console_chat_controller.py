@@ -2409,25 +2409,30 @@ def _build_speculative_voice_capture_request(
     tools: Sequence[Mapping[str, Any]],
     capture_policy: FrozenTracePolicy,
     saved_by_owner: Mapping[str, SavedRevisionTraceProvenance],
+    media_omitted: frozenset[str] = frozenset(),
 ) -> PreparedConsoleRequest:
-    """Build one durable provisional request with complete capture provenance."""
-    from .console_trace_row_sources import unsaved_trace_artifact_source
+    """Build one durable provisional request with complete capture provenance.
+
+    TASK-33621.46: owned rows in ``media_omitted`` left saved media out, so
+    they are provider artifacts; every unsaved row takes the typed path's
+    source (``unsaved_row_sources``).
+    """
+    from .console_trace_row_sources import unsaved_row_sources
 
     rows = tuple(dict(row) for row in messages)
     if not rows or rows[-1].get("role") != ConsoleMessageRole.USER.value:
         raise TraceProvenancePersistenceError()
+    owners = [row.pop(NATIVE_MESSAGE_ID_KEY, None) for row in rows]
+    visible: list[dict[str, Any]] = list(rows)
+    sources = unsaved_row_sources(visible)
     descriptors: list[TraceProvenance] = []
-    visible: list[dict[str, Any]] = []
-    for index, row in enumerate(rows):
-        owner_id = row.pop(NATIVE_MESSAGE_ID_KEY, None)
-        visible.append(row)
-        if type(owner_id) is str:
+    for owner_id, source in zip(owners, sources, strict=True):
+        if type(owner_id) is str and owner_id not in media_omitted:
             saved = saved_by_owner.get(owner_id)
             if type(saved) is not SavedRevisionTraceProvenance:
                 raise TraceProvenancePersistenceError()
             descriptors.append(saved)
             continue
-        source = unsaved_trace_artifact_source(row, is_last=index == len(rows) - 1)
         descriptors.append(ProviderArtifactTraceProvenance(source, capture_policy))
 
     from tldw_chatbook.Chat.console_prepared_request import build_console_request
@@ -9087,6 +9092,7 @@ class ConsoleChatController:
         capture_detail = CaptureDetail.SAFE
         capture_policy: FrozenTracePolicy | None = None
         saved_by_owner: dict[str, SavedRevisionTraceProvenance] = {}
+        media_omitted: set[str] = set()
         capture_requested = False
         next_trace_privacy_revision = None
         try:
@@ -9122,12 +9128,19 @@ class ConsoleChatController:
             if connection is None:
                 requires_pre_dispatch_authority = True
             else:
-                for owner_id in original_saved_rows:
+                from .console_trace_row_sources import saved_message_id
+
+                for owner_id, saved_row in original_saved_rows.items():
                     try:
                         message = self.store.get_message(owner_id)
                         persisted_id = message.persisted_message_id
                         if type(persisted_id) is not str or not persisted_id:
                             raise ValueError("voice_saved_revision_unavailable")
+                        if saved_message_id(message, saved_row) is None:
+                            # TASK-33621.46: the typed path's rule -- a row that
+                            # omits saved media is not that saved revision.
+                            media_omitted.add(owner_id)
+                            continue
                         row = connection.execute(
                             """SELECT revision_id, source_conversation_id,
                                       source_message_id
@@ -9168,6 +9181,7 @@ class ConsoleChatController:
                 tools=tools,
                 capture_policy=capture_policy,
                 saved_by_owner=saved_by_owner,
+                media_omitted=frozenset(media_omitted),
             )
             prepared = prepare(
                 resolution,
