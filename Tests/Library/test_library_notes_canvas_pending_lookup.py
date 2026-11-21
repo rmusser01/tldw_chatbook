@@ -88,6 +88,7 @@ from Tests.UI.test_evals_bench_editor import (  # noqa: F401 -- fixture re-expor
 from tldw_chatbook.UI.Evals.bench_editor import BenchEditor
 from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
 from tldw_chatbook import QUEUED_MESSAGE_KEEPER
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
 from tldw_chatbook.STT.parakeet_sources import (
     ParakeetSourceKey,
@@ -97,6 +98,10 @@ from tldw_chatbook.STT.parakeet_sources import (
 from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
 from tldw_chatbook.UI.Screens.settings_screen import SettingsRegion
 from tldw_chatbook.UI.Speech.settings_speech_tts import load_global_speech_tts_state
+from tldw_chatbook.UI.Watchlists_Modules.briefing_preset_modal import (
+    BriefingPresetModal,
+    _blank_speaker,
+)
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
 )
@@ -1057,3 +1062,29 @@ async def test_a_stale_bench_target_add_never_stages_the_rebuilt_pickers_default
         names |= {spare_a: "spare-a", spare_b: "spare-b"}
         staged = [names[target] for target in editor._staged_target_ids]
         assert staged == ["warned", "blocked"], "a stale Add staged the rebuilt default"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_briefing_speaker_remove_never_removes_another_speaker(tmp_path):
+    """Remove speaker 0 ("A"), then speaker 1 ("B") before the modal's
+    recompose lands. Once "A" is gone, index 1 is "C"; it must stay."""
+    modal = BriefingPresetModal(
+        SubscriptionsDB(tmp_path / "subs.db", "test"),
+        character_options=[],
+        voice_options=[],
+    )
+    modal._speakers = [dict(_blank_speaker(), name=name) for name in "ABC"]
+    app = App()
+    async with app.run_test(size=(160, 42)) as pilot:
+        app.push_screen(modal)
+        await _settle_until(pilot, lambda: modal.is_mounted)
+        await pilot.pause(0.2)  # the mount-time preset load recomposes once
+        await _press_a_stale_row_across(
+            pilot,
+            modal.query_one("#bpm-speaker-remove-1", Button),
+            modal.query_one("#bpm-speaker-remove-0", Button),
+            modal.query_one("#bpm-dialog"),
+        )
+
+        names = [speaker["name"] for speaker in modal._speakers]
+        assert names == ["B", "C"], "a stale Remove removed another speaker"
