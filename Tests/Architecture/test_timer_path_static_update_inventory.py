@@ -1247,6 +1247,29 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "arm -- a one-shot lease-expiry edge the interval cannot take "
         "again until a new lease is armed."
     ),
+    # -- Widgets/Settings_Widgets/project_index_binding_card.py (TASK-42147)
+    #    The 2 s `_poll` reloads only while a build runs (state "Building",
+    #    no upgrade pending, no load in flight); otherwise a tick is a compare.
+    (
+        "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+        "ProjectIndexBindingCard._paint",
+        "self.query_one('.project-index-status', Static)",
+    ): (
+        "NEEDS-LAYOUT: each Building reload changes the counts and scan time, "
+        "and the copy wraps over several lines of a height:auto Static in a "
+        "Settings detail pane as narrow as 34 columns, so its height moves. "
+        "The same pass toggles which action buttons display."
+    ),
+    (
+        "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+        "ProjectIndexBindingCard._feedback",
+        "self.query_one('.project-index-feedback', Static)",
+    ): (
+        "NEEDS-LAYOUT: a tick's reload can swap the Building guidance for "
+        "busy or error copy of another wrapped height (height:auto, 34-column "
+        "pane). Not equality-gated: during a build an unchanged guidance "
+        "still costs one layout pass per 2 s tick."
+    ),
     # -- Widgets/Settings_Widgets/tool_profiles_panel.py
     (
         "tldw_chatbook/Widgets/Settings_Widgets/tool_profiles_panel.py",
@@ -1776,6 +1799,13 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "tldw_chatbook/Widgets/Settings_Widgets/personal_context_provenance.py",
             "PersonalContextProvenanceDetails",
             "_tick",
+        ),
+        # Folder keyword-index build poll (TASK-42147 rows at its sites).
+        (
+            "set_interval",
+            "tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py",
+            "ProjectIndexBindingCard",
+            "_poll",
         ),
         # Change-review preparing poll; repaints only on `latest != observed`.
         (

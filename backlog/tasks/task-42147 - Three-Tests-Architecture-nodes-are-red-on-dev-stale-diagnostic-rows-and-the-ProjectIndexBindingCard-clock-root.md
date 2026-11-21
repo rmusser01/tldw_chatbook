@@ -1,10 +1,10 @@
 ---
 id: TASK-42147
 title: "Three Tests/Architecture nodes are red on dev: stale diagnostic rows and the ProjectIndexBindingCard clock root"
-status: To Do
-assignee: []
+status: Done
+assignee: ['@claude']
 created_date: 2026-11-20 20:06
-updated_date: 2026-11-20 20:33
+updated_date: 2026-11-21 18:35
 labels:
 - follow-up
 - tests
@@ -33,8 +33,25 @@ The card came with 2e9018b86d ("manage optional workspace keyword indexes").
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The two reviewed diagnostic rows name the diagnostics' current owners, or are removed with the reason, and `test_reviewed_diagnostic_changes_are_metadata_only` passes
-- [ ] #2 `ProjectIndexBindingCard._poll` is in the pinned clock roots, and each `.update(` it reaches either passes `layout=` (proved as the file's message requires) or has a `CLASSIFIED_SITES` row saying why it need not
-- [ ] #3 `test_persistent_diagnostic_inventory.py` and `test_timer_path_static_update_inventory.py` pass in a serial run
-- [ ] #4 These three nodes run in a PR lane (no PR lane runs them today), so a later drift fails CI
+- [x] #1 The two reviewed diagnostic rows name the diagnostics' current owners, or are removed with the reason, and `test_reviewed_diagnostic_changes_are_metadata_only` passes
+- [x] #2 `ProjectIndexBindingCard._poll` is in the pinned clock roots, and each `.update(` it reaches either passes `layout=` (proved as the file's message requires) or has a `CLASSIFIED_SITES` row saying why it need not
+- [x] #3 `test_persistent_diagnostic_inventory.py` and `test_timer_path_static_update_inventory.py` pass in a serial run
+- [x] #4 These three nodes run in a PR lane (no PR lane runs them today), so a later drift fails CI
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Move the two `REVIEWED_METADATA_ONLY_DIAGNOSTICS` rows to their current owners (`Agents/agent_native_execution.py`, `Chat/console_store_first_persistence.py`) with the same field pins, and map the moved TASK-15743 repair row through `_TASK_15743_CURRENT_OWNERS`.
+2. Review `ProjectIndexBindingCard._poll` (what it repaints, how often), pin it in `EXPECTED_CLOCK_ROOTS`, and classify each `.update(` it reaches: `CLASSIFIED_SITES` rows for the method-level writes; explicit `layout=` for writes inside the nested `run` closure (the stale-row check keys a call by its innermost function, the census by every enclosing reachable function, so no row can cover them).
+3. Lane: the diagnostic node beside its sibling node in pr-fast-lane (architecture-guards refuses a file another PR lane lists); the timer-path file whole in architecture-guards' sandboxed block. Update the Tests/CI target lists.
+4. Run both files serially, Tests/CI, the whole Tests/Architecture suite serially, preflight and ruff gates.
+
+## Implementation Notes
+
+Red at base (dc371f0842, serial through the wrapper, load ~10): the two files gave 3 failed, 96 passed, 1 skipped in 280 s, exactly the three nodes. After: 99 passed, 1 skipped (the TASK-15743 archaeology skip, commits not fetchable here) in 429 s at load 17-35.
+
+- **Diagnostic rows (AC #1).** Both rows moved, metadata-only pins unchanged: "on_child_settled consumer raised" (`type(exc).__name__`) to `Agents/agent_native_execution.py`, "Failed to flush Console roleplay context on first persist" (no fields) to `Chat/console_store_first_persistence.py`. 6125fbc5b8 moved both. The first is also a TASK-15743 repair row, so `_TASK_15743_CURRENT_OWNERS` maps it to its new owner the way the fleet.py moves are mapped; without that the archaeology delta test would fail on a machine that still has the commits.
+- **Clock root review (AC #2).** `set_interval(2, ProjectIndexBindingCard._poll)` runs for the card's life but does nothing unless a build is running (state Building, no upgrade pending, no load in flight). During a build it reloads every 2 s on a thread and repaints the status copy, the feedback line and the action buttons. It is pinned in `EXPECTED_CLOCK_ROOTS`. `_paint`'s status write and `_feedback`'s write are NEEDS-LAYOUT rows: both are height:auto Statics in a Settings pane as narrow as 34 columns whose wrapped copy changes height (counts grow; guidance can turn into busy or error copy). `_feedback` is not equality-gated, so an unchanged Building guidance costs one layout pass per 2 s tick while a build runs; the row says so. The two "Keyword index unavailable" writes sit in the nested `run` closure. The census keys them under both `_launch` and `run`, while `test_classified_sites_are_not_stale` looks a call up by its innermost function only, so a `_launch` row would be reported stale. They now pass `layout=True` explicitly (the default, so no behaviour change), with a comment: one line replacing wrapped copy, and a None status stops the poll.
+- **Lanes (AC #4).** `test_reviewed_diagnostic_changes_are_metadata_only` rides in pr-fast-lane next to its file's existing node (5.5 s serial at load 10). architecture-guards refuses a file that another PR lane lists. The timer-path file runs whole in architecture-guards' sandboxed block, before the Tests/DB entry (19 tests, ~37 s serial). `Tests/CI/test_ci_queue_pressure_contract.py`'s FAST_LANE_TARGETS and ARCHITECTURE_GUARD_TARGETS list both. Tests/CI at `-n 4`: 1811 passed, 2 skipped.
+
+Files: `Tests/Architecture/test_persistent_diagnostic_inventory.py`, `Tests/Architecture/test_timer_path_static_update_inventory.py`, `tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py`, `.github/workflows/derived-artifacts.yml`, `Tests/CI/test_ci_queue_pressure_contract.py`.

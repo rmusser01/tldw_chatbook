@@ -50,9 +50,12 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "autowake_enabled is not boolean; using default": (),
         "child_max_wall_seconds is not numeric": (),
         "child_max_wall_seconds is not finite": (),
-        "on_child_settled consumer raised": ("type(exc).__name__",),
         "subagents_outlive_turn is not boolean": (),
         "sub-agents are outliving their turn": ("len(survivors)",),
+    },
+    # TASK-42147: 6125fbc5b8 moved this one out of agent_service.py.
+    "tldw_chatbook/Agents/agent_native_execution.py": {
+        "on_child_settled consumer raised": ("type(exc).__name__",),
     },
     "tldw_chatbook/Agents/local_tool_provider.py": {
         "Local tool state resolution failed": (),
@@ -102,6 +105,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "type(exc).__name__",
         ),
         "Failed to persist Console roleplay identity context": ("type(exc).__name__",),
+    },
+    # TASK-42147: 6125fbc5b8 moved this one out of console_chat_store.py.
+    "tldw_chatbook/Chat/console_store_first_persistence.py": {
         "Failed to flush Console roleplay context on first persist": (),
     },
     "tldw_chatbook/Chat/console_agent_bridge.py": {
@@ -645,6 +651,10 @@ def _commit_available(revision: str) -> bool:
 _TASK_15743_STACKED = "fdee8a31f"
 _TASK_15743_REPAIRED = "afee9672a"
 _TASK_15743_CURRENT_OWNERS = {
+    (
+        "tldw_chatbook/Agents/agent_service.py",
+        "on_child_settled consumer raised",
+    ): "tldw_chatbook/Agents/agent_native_execution.py",
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "console fleet wake mount-claim failed",

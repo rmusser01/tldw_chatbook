@@ -208,6 +208,9 @@ FAST_LANE_TARGETS = (
     "Tests/Scripts/test_check_textual_worker_contract.py::test_w002_literal_dependency_catchers_preserve_lookup_protection",
     "Tests/Scripts/test_check_textual_worker_contract.py::test_w002_literal_dependency_catchers_do_not_protect_other_clauses",
     "Tests/Architecture/test_persistent_diagnostic_inventory.py::test_literal_dependency_loggers_remain_in_the_diagnostic_inventory",
+    # TASK-42147: the reviewed metadata-only rows, red on dev in no PR lane.
+    # This file already rides here, so architecture-guards cannot list it.
+    "Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only",
     "Tests/Chat/test_console_value_layers_skipped_model_defaults.py",
     "Tests/Widgets/test_model_search_picker_list_keys.py",
     # Ruling C16 for the capture fix wave (2026-10-13): six tests it added to
@@ -515,6 +518,9 @@ ARCHITECTURE_GUARD_TARGETS = (
     # so before the bootstrap_profile node below (102 tests, 99 s serially).
     "Tests/ChaChaNotesDB/test_historical_bootstrap.py",
     "Tests/ChaChaNotesDB/test_trigger_census.py",
+    # TASK-42147: the timer-path `.update(` census, red on dev in no PR lane
+    # (pure AST, sandboxed, so before the Tests/DB file below).
+    "Tests/Architecture/test_timer_path_static_update_inventory.py",
     # TASK-42026: the Media DB diagnostics privacy file (Tests/DB keeps the
     # bootstrap profile, so after the sandboxed block; ~1 s serially).
     "Tests/DB/test_client_media_debug_logging.py",

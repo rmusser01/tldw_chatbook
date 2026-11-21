@@ -453,6 +453,7 @@ jobs:
             Tests/Scripts/test_check_textual_worker_contract.py::test_w002_literal_dependency_catchers_preserve_lookup_protection \
             Tests/Scripts/test_check_textual_worker_contract.py::test_w002_literal_dependency_catchers_do_not_protect_other_clauses \
             Tests/Architecture/test_persistent_diagnostic_inventory.py::test_literal_dependency_loggers_remain_in_the_diagnostic_inventory \
+            Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only \
             Tests/Chat/test_console_value_layers_skipped_model_defaults.py \
             Tests/Widgets/test_model_search_picker_list_keys.py \
             Tests/Chat/test_console_settings_defaults.py \
@@ -1447,7 +1448,9 @@ jobs:
     # 6.2 s at load 28) and the network guard (sandboxed, 31 tests, 1.4 s at
     # load 26) after it. TASK-42026 adds the Media DB diagnostics privacy file
     # (Tests/DB keeps the bootstrap profile, so after the sandboxed block, 9
-    # tests, 1.3 s at load 18) before the last node.
+    # tests, 1.3 s at load 18) before the last node. TASK-42147 adds the
+    # timer-path census (sandboxed, so before Tests/DB; 19 tests, ~37 s
+    # serially at load 10-17; red on dev unseen).
     name: Architecture guard contracts
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1513,6 +1516,7 @@ jobs:
             Tests/test_network_guard.py \
             Tests/ChaChaNotesDB/test_historical_bootstrap.py \
             Tests/ChaChaNotesDB/test_trigger_census.py \
+            Tests/Architecture/test_timer_path_static_update_inventory.py \
             Tests/DB/test_client_media_debug_logging.py \
             Tests/Architecture/test_persistent_terminal_privacy_boundary.py \
             --timeout=180 \
