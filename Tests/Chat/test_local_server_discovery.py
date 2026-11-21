@@ -4902,6 +4902,9 @@ _V1_APPENDED_LOAD_ROWS = {
         for provider, row in _V1_APPENDED.items()
         for tail in _V1_APPENDED_TAILS[provider]
     },
+    # Review rev2 of the round-18 hotfix: a save kept a typed port, so a
+    # ported shape is rewritten end to end too, its port kept.
+    "groq-v1-appended-port": ("groq", "api_base_url", "https://api.groq.com:443/v1", "https://api.groq.com:443/openai/v1"),
     **{
         case: (provider, key, value, value)
         for case, (provider, key, value) in {

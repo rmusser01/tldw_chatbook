@@ -421,8 +421,9 @@ QwenCloud's `<host>/v1` become `…/openai/v1`, `…/api/v1` and
 `…/compatible-mode/v1`, with or without a pasted `/chat/completions` or
 `/models` after them (QwenCloud: `/responses` or `/chat/completions`), and a port you typed is kept.
 Loading rewrites only the address as an earlier version saved it; one you edited by
-hand (capital letters in the host, a trailing slash) is rewritten when you save that
-Endpoint with **s**. Any other address, including a gateway's and Google's
+hand (capital letters in the host, a trailing slash) is rewritten the next time you
+save a change to that provider with **s** (change any of its fields, the Endpoint
+included); **s** with nothing changed saves nothing. Any other address, including a gateway's and Google's
 `…/v1`, is left as it is. QwenCloud's Endpoint may be a pasted Responses endpoint
 (`…/compatible-mode/v1/responses`): the Console, **s** and its chats all read
 it as the base before `/responses`, which is what **s** saves. A QwenCloud
