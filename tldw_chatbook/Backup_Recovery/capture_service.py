@@ -129,10 +129,15 @@ def _capture_names(authority, inventory, *, include_absent_sqlite=False):
                 # Absence needs exclusion of existing writers, not enrollment
                 # of a nonexistent source or a broader parent directory.
                 names.update(_absence_names(registry, paths))
-    from .effective_roots import check_redundant_profiles
+    from .effective_roots import check_redundant_profiles, deleted_file_roots
 
     _, profiles = bootstrap._records(authority.control_root.parent)
     omitted = check_redundant_profiles(registry, profiles)
+    # TASK-42115: a deleted file root covers nothing.
+    omitted |= deleted_file_roots(
+        (root for entry in registry.values() for root in entry["roots"]),
+        registry.values(),
+    )
     for root in sorted(roots, key=lambda path: (len(path.parts), str(path))):
         covered = False
         narrower = False

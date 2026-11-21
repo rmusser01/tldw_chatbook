@@ -26,24 +26,45 @@ def private_file(path, data=b"local source"):
     return path
 
 
+@pytest.mark.parametrize("evidence", [False, True])
 @pytest.mark.parametrize("held", [False, True])
-def test_ordinary_capture_refuses_arbitrary_missing_registry_root(tmp_path, held):
+def test_ordinary_capture_refuses_arbitrary_missing_registry_root(
+    tmp_path, monkeypatch, held, evidence
+):
+    """An ordinary session cannot qualify an arbitrary disappearance. TASK-42115:
+    a file registered with its folder's evidence and deleted from that same
+    folder is a deleted file root, which keeps its own name here."""
+    from tldw_chatbook.Backup_Recovery import effective_roots as proof
+
     source = private_file(tmp_path / "source")
     unrelated = private_file(tmp_path / "unrelated")
     stage = tmp_path / "private"
     stage.mkdir(mode=0o700)
     authority = admission_authority(tmp_path / "bootstrap")
     authority.register("source", (source,))
+    if not evidence:
+        # Registered as every root was before TASK-42115.
+        monkeypatch.setattr(proof, "file_root_tokens", lambda roots: set())
     authority.register("unrelated", (unrelated,))
     names = ("source", "unrelated") if held else ("source",)
     limits = ArchiveLimits()
     with authority.maintenance(names, 3) as session:
         unrelated.unlink()
-        with (
-            pytest.raises(FileNotFoundError),
-            session._capture_bound_sources((), stage, limits, limits.expanded_bytes),
-        ):
-            pytest.fail("An ordinary session cannot qualify an arbitrary disappearance")
+        if evidence:
+            with session._capture_bound_sources(
+                (), stage, limits, limits.expanded_bytes
+            ):
+                pass
+        else:
+            with (
+                pytest.raises(FileNotFoundError),
+                session._capture_bound_sources(
+                    (), stage, limits, limits.expanded_bytes
+                ),
+            ):
+                pytest.fail(
+                    "An ordinary session cannot qualify an arbitrary disappearance"
+                )
     assert source.read_bytes() == b"local source"
 
 
@@ -119,17 +140,29 @@ def test_private_capture_still_refuses_unproved_actual_source_identity(
         assert not (stage / "copy").exists()
 
 
-@pytest.mark.parametrize("damage", [None, "unrelated", "retained"])
+@pytest.mark.parametrize(
+    "damage", [None, "unrelated", "retained", "unrelated_deleted_file"]
+)
 def test_same_session_missing_root_needs_actual_durable_retirement_proof(
     tmp_path, monkeypatch, helper_resource_root, damage
 ):
+    """A missing root needs this journal's retirement proof. TASK-42115: a
+    deleted file root (registered with its folder's evidence, gone from that
+    same folder) is not the journal's to prove; it keeps its own name."""
+    from tldw_chatbook.Backup_Recovery import effective_roots as proof
+
     monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
     unrelated = private_file(tmp_path / "unrelated")
+    evidence = proof.file_root_tokens
 
     def enroll_sidecar(live):
         authority = admission_authority(tmp_path / "bootstrap")
         authority.register("selected.shm", (live / "research.db-shm",))
+        if damage != "unrelated_deleted_file":
+            # Registered as every root was before TASK-42115.
+            monkeypatch.setattr(proof, "file_root_tokens", lambda roots: set())
         authority.register("unrelated", (unrelated,))
+        monkeypatch.setattr(proof, "file_root_tokens", evidence)
         return ()
 
     with replacement_case(tmp_path, monkeypatch, extras=enroll_sidecar) as case:
@@ -147,12 +180,21 @@ def test_same_session_missing_root_needs_actual_durable_retirement_proof(
             next(row.evidence for row in before if row.event == "prepared")
         )
         retired = next(row for row in prepared.artifacts if row.target == str(sidecar))
-        if damage == "unrelated":
+        if damage in {"unrelated", "unrelated_deleted_file"}:
             unrelated.unlink()
         elif damage == "retained":
             Path(retired.retained).write_bytes(b"changed retained evidence")
         names = tuple(sorted((*prepared.publication.namespaces, UNBOUND_NAMESPACE)))
-        if damage is not None:
+        if damage == "unrelated_deleted_file":
+            assert {sidecar, unrelated} <= set(
+                replacement._recovery_staging_roots(
+                    journal,
+                    session._control,
+                    names,
+                    session._all_roots,
+                )
+            )
+        elif damage is not None:
             with pytest.raises(ValueError, match="recovery_root_unverified"):
                 replacement._recovery_staging_roots(
                     journal,

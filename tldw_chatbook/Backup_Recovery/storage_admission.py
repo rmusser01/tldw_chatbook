@@ -721,8 +721,10 @@ def _contains_owned_path(root: Path, selected: Path) -> bool:
     except FileNotFoundError:
         # An absent root holds nothing (TASK-42000: e.g. a registered file a
         # Replace has since retired). Containment is only positive evidence,
-        # so absence grants nothing beneath the root.
-        return False
+        # so absence grants nothing beneath the root. A deleted file root
+        # (TASK-42115) still scopes exactly its own path, as a present file
+        # root scopes its object.
+        return _deleted_file_root_scopes(root, selected)
     resolved_selected = selected.resolve()
     if stat.S_ISDIR(info.st_mode):
         return (
@@ -736,6 +738,18 @@ def _contains_owned_path(root: Path, selected: Path) -> bool:
     except FileNotFoundError:
         return False
     return (info.st_dev, info.st_ino) == (selected_info.st_dev, selected_info.st_ino)
+
+
+def _deleted_file_root_scopes(root: Path, selected: Path) -> bool:
+    """Whether ``selected`` is exactly ``root``, a deleted file root (TASK-42115)."""
+    from .effective_roots import registered_deleted_file_roots
+
+    try:
+        if selected.resolve() != root.parent.resolve(strict=True) / root.name:
+            return False
+    except (OSError, RuntimeError):
+        return False
+    return root in registered_deleted_file_roots(bootstrap.default_bootstrap_root())
 
 
 def _contains_capture_path(roots: Iterable[Path], selected: Path) -> bool:
@@ -2518,8 +2532,19 @@ class MaintenanceSession:
             *(self._recovery_roots or ()),
             *(path for path, _ in self._publication_roots),
         }
+        deleted = None
         for root in self._all_roots + (self._control,):
-            protected.add(root.resolve(strict=self._recovery_roots is None))
+            try:
+                protected.add(root.resolve(strict=self._recovery_roots is None))
+            except FileNotFoundError:
+                from .effective_roots import registered_deleted_file_roots
+
+                if deleted is None:
+                    deleted = registered_deleted_file_roots(self._control.parent)
+                if root not in deleted:
+                    raise
+                # TASK-42115: a deleted file root keeps its own name here.
+                protected.add(root.parent.resolve(strict=True) / root.name)
         for root in protected:
             if root == staging or root in staging.parents or staging in root.parents:
                 raise bootstrap.RecoveryRequired("capture_staging_overlaps_source")

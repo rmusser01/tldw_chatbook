@@ -77,8 +77,9 @@ def _companion_record_calls(source):
     records_code, records_globals = records.__code__, records.__globals__
     defining_path = Path(bootstrap.__file__).resolve()
     defining_source = defining_path.read_bytes()
+    # TASK-42115 changed bootstrap._binding (a deleted file root), not _records.
     assert hashlib.sha256(defining_source).hexdigest() == (
-        "398ac4ad624e75979e15a57a49ea59c27928a2996ce3122cad000601064412aa"
+        "401204d9c6c3770c427e85d86123e168f3ceef4e9adb686b1c5b25899ea5aacf"
     )
     assert bootstrap.__spec__.name == bootstrap.__name__
     assert Path(bootstrap.__spec__.origin).resolve() == defining_path

@@ -85,15 +85,22 @@ def test_unreferenced_missing_alias_is_not_inferred_owned(tmp_path):
 
 
 @pytest.mark.parametrize("change", ["standalone", "parent_link", "parent_inode"])
-def test_missing_alias_cannot_infer_new_parent_authority(enrolled, tmp_path, change):
+def test_missing_alias_cannot_infer_new_parent_authority(
+    enrolled, tmp_path, monkeypatch, change
+):
     authority, root, data, config, child = enrolled
     _, profiles = bootstrap._records(root)
     child.unlink()
     if change == "standalone":
+        from tldw_chatbook.Backup_Recovery import effective_roots as proof
+
         isolated = _file(tmp_path / "isolated")
         # Keep this independent alias unenrolled in the profile: it must still
         # fail global admission instead of silently disappearing from the graph.
+        # Registered without TASK-42115's folder evidence, as every root was
+        # before it: only a file registered with that evidence may vanish.
         child.write_bytes(b"temporarily present for registration")
+        monkeypatch.setattr(proof, "file_root_tokens", lambda roots: set())
         authority.register("isolated", (isolated,))
         child.unlink()
         isolated.unlink()

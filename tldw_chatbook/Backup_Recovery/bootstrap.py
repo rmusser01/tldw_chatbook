@@ -489,8 +489,22 @@ def _binding(
     # Declared mapping equality stays exact. Omit only absent aliases covered
     # by this profile's already enrolled and physically verified directory.
     entries = tuple(registry[name] for name in match["namespaces"])
+    deleted = None
     for raw in effective_roots(roots, entries):
-        path = Path(raw).resolve(strict=True)
+        try:
+            path = Path(raw).resolve(strict=True)
+        except FileNotFoundError:
+            # TASK-42115: a deleted file root holds nothing.
+            if deleted is None:
+                from .effective_roots import deleted_file_roots
+
+                deleted = deleted_file_roots(
+                    (value for entry in registry.values() for value in entry["roots"]),
+                    registry.values(),
+                )
+            if Path(raw) in deleted:
+                continue
+            raise
         with pinned_directory(path.parent) as parent:
             info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
             if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
