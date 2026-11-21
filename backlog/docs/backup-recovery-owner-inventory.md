@@ -3781,7 +3781,7 @@ in b5251e9a6e). The seven `settings.*` owners left with the Tools settings windo
 | tldw_chatbook/Tool_Packs/receipt_store.py | ToolPackReceiptStore._commit | os.replace | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/receipt_store.py | ToolPackReceiptStore._commit | write | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/receipt_store.py | ToolPackReceiptStore._ensure_root | mkdir | 1 | unsupported | miscellaneous |
-| tldw_chatbook/Tool_Packs/receipt_store.py | ToolPackReceiptStore._fsync_directory | open | 1 | unsupported | miscellaneous |
+| tldw_chatbook/Tool_Packs/receipt_store.py | ToolPackReceiptStore._fsync_directory | open | 2 | unsupported | miscellaneous |
 | tldw_chatbook/Tool_Packs/receipt_store.py | ToolPackReceiptStore.read | open | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tools/build_remote_worker_bundle.py | main | write_text | 1 | unsupported | miscellaneous |
 | tldw_chatbook/Tools/project_index_scan_worker.py | _directory | open | 2 | unsupported | miscellaneous |
