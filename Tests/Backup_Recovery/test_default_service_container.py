@@ -159,8 +159,11 @@ def test_service_container_proof_retains_all_mutation_boundaries(
         "foreign_bootstrap_registry",
     ],
 )
+# TASK-42151: "elsewhere" maps nothing into the config folder, as a Replace
+# without the Settings group does; the same controls pass and refuse.
+@pytest.mark.parametrize("mapped", ["synthetic", "elsewhere"])
 def test_first_default_config_binding_preserves_exact_service_only(
-    default_container, tmp_path, case
+    default_container, tmp_path, case, mapped
 ):
     from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
     from tldw_chatbook.Backup_Recovery.replacement import _first_config_container
@@ -176,8 +179,12 @@ def test_first_default_config_binding_preserves_exact_service_only(
             StorageItem("config", "config", selector, "included", ()),
         ),
     )
+    mapped_root = destination
+    if mapped == "elsewhere":
+        mapped_root = tmp_path / "elsewhere"
+        mapped_root.mkdir(mode=0o700)
     plan = plan_restore(
-        archive, mode="replace", destinations={"root": destination}, target=target
+        archive, mode="replace", destinations={"root": mapped_root}, target=target
     )
     protected = (
         bootstrap.default_bootstrap_root(),
@@ -274,8 +281,9 @@ def test_other_nested_archive_and_staging_paths_still_refuse(default_container, 
         stage_restore(archive, plan, nested_work / "candidate", Event())
 
 
+@pytest.mark.parametrize("mapped", ["synthetic", "elsewhere"])
 def test_first_default_binding_never_enrolls_control_or_config_parent(
-    default_container, monkeypatch
+    default_container, monkeypatch, tmp_path, mapped
 ):
     from tldw_chatbook.Backup_Recovery import replacement
     from tldw_chatbook.Backup_Recovery.archive_reader import verify_sealed
@@ -291,8 +299,12 @@ def test_first_default_binding_never_enrolls_control_or_config_parent(
             StorageItem("config", "config", selector, "included", ()),
         ),
     )
+    mapped_root = destination
+    if mapped == "elsewhere":  # TASK-42151: no Settings group
+        mapped_root = tmp_path / "elsewhere"
+        mapped_root.mkdir(mode=0o700)
     plan = plan_restore(
-        archive, mode="replace", destinations={"root": destination}, target=target
+        archive, mode="replace", destinations={"root": mapped_root}, target=target
     )
     monkeypatch.setattr(
         replacement, "_first_binding_inventory", lambda _plan, _selector: target

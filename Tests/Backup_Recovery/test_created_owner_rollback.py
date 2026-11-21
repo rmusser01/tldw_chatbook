@@ -567,6 +567,9 @@ try:
             raise RestoreOnly
         operation=restored['result']['journal_operation_id']
         assert present(paths)==set(paths),sorted(set(paths)-present(paths))
+        if case.get('admit_after_restore'):
+            # The next start after the restore (TASK-42151).
+            assert produce('admit')['permission']==[True,'startup_allowed']
         captured={label:value for label,value in case['files'].items() if label not in case.get('uncaptured',())}
         for label,(folder,leaf,text) in captured.items():
             # The pets restore with the source's bytes.
@@ -985,3 +988,42 @@ def test_a_replace_killed_after_publication_recovers_by_finish_or_rollback(
             script=driver,
             timeout=2500 if sys.platform == "win32" else 900,
         )
+
+
+# TASK-42151: at the default config location the config folder holds the
+# fixed recovery controls. A Replace whose groups leave out Settings maps
+# nothing into that folder, and its first binding refused the folder
+# (replacement_config_container_unverified) because the controls were only
+# recognized beside a synthetic restore destination.
+@pytest.mark.timeout(4200 if sys.platform == "win32" else 1500)
+@pytest.mark.parametrize("case", ["library", "projects"])
+def test_a_default_location_replace_without_settings_completes(tmp_path, case):
+    """TASK-42151: the library and projects cases (no Settings group) at the
+    default config location: the Replace completes, the later rollback
+    retires what it created, and the app starts afterwards."""
+    script = (
+        "CASES="
+        + repr(
+            {case: dict(_CASES[case], then="later_rollback", admit_after_restore=True)}
+        )
+        + "\nBOARD_INSERT="
+        + repr(_BOARD_INSERT)
+        + "\nLOCATION='default'\n"
+        + _SCENARIO
+    )
+    for name in ("source", "target"):
+        (tmp_path / name).mkdir(mode=0o700)
+    _run(
+        tmp_path / "source",
+        case,
+        "source",
+        script=script,
+        timeout=1500 if sys.platform == "win32" else 300,
+    )
+    _run(
+        tmp_path / "target",
+        case,
+        "target",
+        script=script,
+        timeout=2500 if sys.platform == "win32" else 900,
+    )
