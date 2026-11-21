@@ -23,6 +23,8 @@ disk.
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 from textual.widgets import Button, Input
 
@@ -43,10 +45,13 @@ from Tests.UI.test_library_shell import (
     _seed_conversations,
     _wait_for_library_shell,
 )
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Library.library_notes_session import (
     NoteFlushOutcome,
     NoteFlushOutcomeKind,
 )
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.Third_Party.textual_fspicker import FileSave
 from tldw_chatbook.Third_Party.textual_fspicker.file_dialog import FileNameInput
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -573,3 +578,46 @@ async def test_a_new_note_settles_on_its_own_backlinks(tmp_path, monkeypatch) ->
             lambda: f"the Blank note's own backlinks (header: "
             f"{_painted_of(host, screen, header)!r})",
         )
+
+
+async def test_the_backlink_lookup_retires_the_connection_its_worker_opened(
+    tmp_path,
+) -> None:
+    """N-26 runs this lookup for every new note; its worker keeps no cache.
+
+    ``list_note_backlinks`` ran on a bare ``asyncio.to_thread`` and left the
+    worker thread's ChaChaNotes connection open, where every other finite
+    Notes read retires it (``run_finite_local_worker``). The executor later
+    gave that warm thread to the blank-note GC's delete, which skipped its
+    connection setup and committed before Back had left the editor
+    (``test_library_shell_blank_note_untouched_is_gc_from_real_db_on_back``
+    read ``'editor'``, r10, 3 runs in 15).
+    """
+    db_dir = tmp_path / "chachanotes"
+    db_dir.mkdir()
+    database = CharactersRAGDB(str(db_dir / "unified.db"), client_id="backlink-app")
+    interop = NotesInteropService(
+        base_db_directory=db_dir,
+        api_client_id="backlink-client",
+        global_db_to_use=database,
+    )
+    service = NotesScopeService(
+        local_notes_service=interop, server_service=None, policy_enforcer=None
+    )
+    worker_connections: list[sqlite3.Connection] = []
+    lookup = interop.get_notes_linking_to
+
+    def recording_lookup(*args, **kwargs):
+        rows = lookup(*args, **kwargs)
+        worker_connections.append(database.get_connection())
+        return rows
+
+    interop.get_notes_linking_to = recording_lookup
+    rows = await service.list_note_backlinks(
+        scope="local_note", note_id="no-such-note", user_id="backlink-user"
+    )
+
+    assert rows == []
+    assert len(worker_connections) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        worker_connections[0].execute("SELECT 1")
