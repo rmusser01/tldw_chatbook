@@ -4,7 +4,7 @@ title: "After a crash at finalize_candidate, finish fails on the missing staged 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 22:23
-updated_date: 2026-11-21 21:52
+updated_date: 2026-11-21 22:13
 labels:
 - follow-up
 - backup
@@ -62,7 +62,7 @@ Priority medium: the app refuses to start until rollback is chosen, though rollb
 - [x] #2 finish completes after that crash, or the finish action is not offered when it cannot complete, and the notes say which and why
 - [x] #3 After each recovery the app starts (startup permission and admission), and rollback keeps working
 - [x] #4 The test runs on a PR or dev-push lane, with its time recorded
-- [x] #5 (coordinator, 2026-11-21; job revised in review rev1) A dev-push job beside the Backup_Recovery owner-suite step runs test_replacement_recovery.py, test_default_service_container.py, the test_first_*binding* files and test_legacy_chat_context_roundtrip.py; any file that cannot pass reliably there is left off with the reason; each added file is measured with the step's flags, the step's new total is recorded against its 70-minute cap, and the Tests/CI pins are updated
+- [x] #5 (coordinator, 2026-11-21; job revised in review rev1) A dev-push job beside the Backup_Recovery owner-suite step runs test_replacement_recovery.py, test_default_service_container.py, the test_first_*binding* files and test_legacy_chat_context_roundtrip.py; any file that cannot pass reliably there is left off with the reason; each added file is measured with the step's flags, the job's total is recorded against its 20-minute step cap, and the Tests/CI pins are updated
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -90,9 +90,9 @@ Priority medium: the app refuses to start until rollback is chosen, though rollb
 
 **Covering runs** (`-n 4 --timeout=1500`, through the wrapper, load 40-57). `test_replacement_recovery.py`: 36 passed. `test_restore_data_groups.py`, `test_publication_crashes.py`, `test_rollback_credentials.py`, `test_selected_owner_finish.py`, `test_settings_finish.py`, `test_replacement_publication_scopes.py`, `test_recovery_service.py` and `test_replacement_abort.py` together: 173 passed, 2 failed. The 2 failures are `test_replacement_publication_scopes.py::test_complete_cli_replacement_admits_mapped_sources[True|False]`: the child hit its fixed 90 s subprocess timeout. They fail the same way at base dc371f0842 with this fix reverted (`2 failed`, both `timed out after 90 s`, load 55-58), and that path never reaches the changed line (its only recovery is `abort`).
 
-**Lane (AC#5, coordinator 2026-11-21, revised in review rev1).** Seven files that ran in no CI lane now run in a new dev-push job of `.github/workflows/derived-artifacts.yml`, `backup-recovery-binding-dev` ("Backup_Recovery recovery and first-binding suites (push to dev)"). The first commit (c3179e708d) put them in the owner-suite step. The review moved them to their own job because that step took 51:23 in CI at dc371f0842 and is projected at 63-75 min with this round's and backupdef's created-owner nodes. The new job copies the owner-suite job's trigger, `needs`, install, runner and flags (`-n 4 --timeout=300 --tb=short`). It is not in the aggregate's needs.
+**Lane (AC#5, coordinator 2026-11-21, revised in review rev1).** Seven files that ran in no CI lane now run in a new dev-push job of `.github/workflows/derived-artifacts.yml`, `backup-recovery-binding-dev` ("Backup_Recovery recovery and first-binding suites (push to dev)"). The first commit (c3179e708d) put them in the owner-suite step. The review moved them to their own job because that step took 51:23 in CI at dc371f0842 and is estimated at 58-70 min on CI with this round's four created-owner nodes and backupdef's net seven (reviewer's estimate, review rev2). The new job copies the owner-suite job's trigger, `needs`, install, runner and flags (`-n 4 --timeout=300 --tb=short`). It is not in the aggregate's needs.
 
-**Caps.** The new job's step cap is 20 min and the job's is 30. The seven files together with the step's flags took 159 nodes in 5.7 min at load 15-23. The owner-suite step's cap rises from 70 to 85 min and its job's from 75 to 90 (coordinator decision), with a dated comment citing the 51:23 CI time, this branch's local 56.8 min run and backupdef's additions. `BACKUP_BINDING_SUITE_TARGETS` and `test_backup_binding_suites_run_on_dev_pushes_only_and_are_never_required` (in `Tests/CI/test_ci_queue_pressure_contract.py`) pin the job. `test_derived_artifacts_workflow.py`'s job list names it. The seven files left `BACKUP_OWNER_SUITE_TARGETS`.
+**Caps.** The new job's step cap is 20 min and the job's is 30. The seven files together with the step's flags took 159 nodes in 5.7 min at load 15-23. The owner-suite step's cap rises from 70 to 85 min and its job's from 75 to 90 (coordinator decision), with a dated comment citing the 51:23 CI time, this branch's local 56.8 min run and backupdef's additions. `BACKUP_BINDING_SUITE_TARGETS` and `test_backup_binding_suites_run_on_dev_pushes_only_and_are_never_required` (in `Tests/CI/test_ci_queue_pressure_contract.py`) pin the job. `test_derived_artifacts_workflow.py`'s job list names it. The seven files left `BACKUP_OWNER_SUITE_TARGETS`. ADR-103 records the new job and both cap changes in a dated 2026-11-21 round-19 paragraph (review rev2).
 
 Each file alone, with `-n 4 --timeout=1500`, two passes, load 11-27:
 

@@ -2209,13 +2209,16 @@ jobs:
     # groups file.
     # Round 19 (2026-11-21, coordinator): CI took 51:23 for this step at dev
     # dc371f0842 (round 18's files doubled it). Round 19 adds four created-owner
-    # nodes (TASK-42154 crash recovery, TASK-42151 default location; 150-170 s
-    # and under 120 s each locally at -n 4) and the backupdef stream four more.
+    # nodes here: TASK-42154's two crash-recovery nodes (locally at -n 4, 184 s
+    # at load 12-22, 215 s at load 20-30, 321 s at load 33-45) and TASK-42151's
+    # two default-location nodes (under 120 s). The backupdef stream adds a net
+    # seven more (23 nodes against 16 at base, 97-181 s each at load 24-45).
     # A local run of this step with this round's four took 56.8 min (load
-    # 17-46); with backupdef's the projection is 63-75 min, over the old
-    # 70-minute cap. The step cap rises 70 -> 85 (10 min over the projection's
-    # top) and the job's 75 -> 90 (the same 5 min for checkout and install).
-    # The recovery and first-binding files run in backup-recovery-binding-dev.
+    # 17-46). The reviewer's estimate with both branches is about 58-70 min on
+    # CI (51:23 plus about 7-15 min of wall at -n 4), at the old 70-minute cap,
+    # so the step cap rises 70 -> 85 and the job's 75 -> 90 (the same 5 min for
+    # checkout and install). The recovery and first-binding files run in
+    # backup-recovery-binding-dev.
     name: Backup_Recovery owner suites (push to dev)
     if: (github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.CI_TIERED_ENABLED != 'true') || (github.event_name == 'workflow_dispatch' && inputs.nightly)
     runs-on: ubuntu-latest

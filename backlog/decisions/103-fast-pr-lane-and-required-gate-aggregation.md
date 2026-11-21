@@ -549,6 +549,22 @@ step's measured time: 31-43 min before, plus about 12.5 min for
 `test_restore_data_groups` and about 7.5 min for the other new files at
 -n 4, is about 51-63 min, inside the 70 min step cap.
 
+2026-11-21 (round 19, TASK-42154 AC#5; coordinator decision at review rev1):
+a second push-to-dev job, `backup-recovery-binding-dev` ("Backup_Recovery
+recovery and first-binding suites (push to dev)"), runs seven sandboxed
+Backup_Recovery files that ran on no lane, whole: the replacement recovery
+file (six of its finish nodes had gone red on dev unseen), the default
+service container file, the four first-binding files and the legacy chat
+context roundtrip. It copies `backup-owner-suites-dev`'s trigger, `needs`,
+install line and flags (`-n 4 --timeout=300`), and like it is never a PR job
+and not in the required check's `needs`: the PR counts above are unchanged.
+A dev push starts one more ubuntu runner, about 10-15 runner-minutes. Run
+together locally the seven took 5.7 min (159 nodes, load 15-23), so its step
+cap is 20 min and its job cap 30. The owner-suite job stays as it was apart
+from its caps: CI took 51:23 for its step at dc371f0842, and round 19's
+created-owner nodes (this task's four and the backupdef stream's net seven)
+bring an estimated 58-70 min, so its caps rise to 85 (step) and 90 (job).
+
 ## Amendment (2026-11-15, TASK-39144): 38 shards, 19 at once
 
 Owner decision, relayed by the coordinator at the round-14 closeout: "38
