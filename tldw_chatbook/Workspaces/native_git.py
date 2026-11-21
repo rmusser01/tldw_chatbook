@@ -68,6 +68,16 @@ async def run_native_git(producer, cmd, env, payload, *, cwd, timeout_seconds):
         raise
 
 
+def scrubbed_git_environment() -> dict[str, str]:
+    """Environment for native Git: ``GIT_*`` scrubbed, prompts disabled."""
+    # Case-INSENSITIVE match: Windows environment variables are
+    # case-insensitive, so `Git_Index_File` reaches git just as
+    # GIT_INDEX_FILE does. Harmless over-scrub on POSIX.
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 def qualified_git_command(
     executable, repository_prefix, args, env, run_process, unavailable
 ):

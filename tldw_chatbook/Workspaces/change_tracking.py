@@ -491,12 +491,9 @@ class ShadowRepo:
 
     def _env(self) -> dict[str, str]:
         """Environment for git calls: ``GIT_*`` scrubbed, prompts disabled."""
-        # Case-INSENSITIVE match: Windows environment variables are
-        # case-insensitive, so `Git_Index_File` reaches git just as
-        # GIT_INDEX_FILE does. Harmless over-scrub on POSIX.
-        env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        return env
+        from .native_git import scrubbed_git_environment
+
+        return scrubbed_git_environment()
 
     def _run(
         self,
