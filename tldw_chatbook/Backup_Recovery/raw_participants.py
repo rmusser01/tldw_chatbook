@@ -187,6 +187,7 @@ def _participant_state(participant):
         "ui.themes",
         "tamagotchi.config",
         "runtime.source_state",
+        "citations.records_choice",
     }:
         binding = settings_files.binding(source)
         if binding is None or not binding[2] or binding[1] != state.selected:
@@ -800,6 +801,7 @@ def scope(
             "pet",
             "runtime_state",
             "runtime_read",
+            "citation_records_choice",
             "config",
         } | chat_sources.ROUTES | {mcp_sources.ROUTE}:
             selected = (
@@ -865,6 +867,7 @@ def scope(
                 "note_templates",
                 "theme_file",
                 "theme_export",
+                "citation_records_choice",
             }
             | chat_sources.ROUTES
             and writing

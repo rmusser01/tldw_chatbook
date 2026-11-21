@@ -205,9 +205,15 @@ def _build_app(db_path: Path, send_path: _SendPath):
     The citation services are composed by the app's own wiring, so the
     repository, its policy (the shipped default config) and its key provider
     are the production ones.
+
+    The app is bound to the bootstrap profile's user-data directory: since
+    TASK-39147 (PR #3480) the stock native preparation refuses a send whose
+    MCP sources are not profile-bound file sources ("Console preparation
+    source unavailable; Send again."), so a factory-owned directory left
+    every send here refused and idle (the e7e70c2278 fixture repair).
     """
 
-    app = _build_test_app()
+    app = _build_test_app(user_data_dir=config_module.get_user_data_dir())
     if send_path.direct:
         app.app_config.setdefault("console", {})["agent_runtime"] = False
     app.chat_api_provider_value = "llama_cpp"

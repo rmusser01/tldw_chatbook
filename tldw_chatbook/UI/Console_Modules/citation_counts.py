@@ -44,6 +44,22 @@ def _read_with_first_use_key(
     return counts
 
 
+def ask_pending_records_question(screen: Any, repository: Any, session_id: Any) -> None:
+    """Ask a waiting citation-records question once its reply has been counted.
+
+    TASK-33620.8.3. Nothing can be waiting unless a capture imported the
+    choice module, so the common case costs one ``sys.modules`` lookup.
+    """
+    import sys
+
+    choice = sys.modules.get("tldw_chatbook.Chat.citation_records_choice")
+    if choice is None or not choice.question_for(repository).pending_for(session_id):
+        return
+    from .citation_records_question import ask_pending_question
+
+    ask_pending_question(screen, repository, session_id)
+
+
 async def read_citation_counts(
     repository: Any,
     reader: Callable[..., dict[str, int]],

@@ -36,6 +36,9 @@ class ConsoleCommandProvider(Provider):
         from tldw_chatbook.UI.Console_Modules import (
             composer_run_controls as run_controls,
         )
+        from tldw_chatbook.UI.Console_Modules.citation_records_question import (
+            open_citation_records_choice,
+        )
         from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
             ACTION_ATTACH_CONTEXT,
             ACTION_IMPERSONATE,
@@ -156,6 +159,13 @@ class ConsoleCommandProvider(Provider):
                 "Console: View chat context",
                 screen.action_view_chat_context,
                 "Show current and next-send context (Ctrl+Shift+P)",
+            ),
+            # TASK-33620.8.3: change the one-time citation-records answer
+            # without editing config.toml.
+            (
+                "Console: Citation records…",
+                partial(open_citation_records_choice, screen),
+                "Choose whether replies keep a record of the Library sources they cite",
             ),
             # TASK-33625.1: keyboard routes to the viewed tab's run that do
             # not depend on the composer row's geometry.

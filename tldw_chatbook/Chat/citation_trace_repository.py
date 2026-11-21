@@ -648,6 +648,13 @@ class CitationTraceRepository:
 
         return self.policy.canonical_writes_enabled
 
+    def set_canonical_writes_enabled(self, enabled: bool) -> None:
+        """Apply a citation-records answer; readers follow (TASK-33620.8.3)."""
+        with self._key_lock:
+            self.policy = self.policy.model_copy(
+                update={"canonical_writes_enabled": bool(enabled)}
+            )
+
     @property
     def legacy_migration_ready(self) -> bool:
         """Return whether migration can safely bind identities and bodies."""
