@@ -499,16 +499,21 @@ async def test_held_run_poll_ticks_request_no_layout_outside_their_owners(
             assert console._console_transcript_sync_timer is not None
             ticks: list[float] = []
             original = console._sync_native_console_chat_ui
+            from tldw_chatbook.UI.Console_Modules import config_sync
 
             async def counted(*args, **kwargs):
-                ticks.append(time.monotonic())
-                return await original(*args, **kwargs)
+                poll = config_sync._POLL_TICK.get()
+                completed = await original(*args, **kwargs)
+                if poll and completed is True:
+                    ticks.append(time.monotonic())
+                return completed
 
             monkeypatch.setattr(console, "_sync_native_console_chat_ui", counted)
             # Let the run's own start-up transitions land first.
             deadline = time.monotonic() + 5
             while len(ticks) < 3 and time.monotonic() < deadline:
                 await pilot.pause(0.05)
+            assert len(ticks) >= 3, "fewer than three setup polls completed"
             # The transcript streams; its rows may legitimately re-lay out.
             # The Character section is collapsed here: its refresh cycle
             # (Refreshing... then the result) renders nothing until it opens

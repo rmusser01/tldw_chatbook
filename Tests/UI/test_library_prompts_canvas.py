@@ -3887,8 +3887,9 @@ async def test_prompt_selection_persists_across_search_page_sort_and_collection(
         assert screen._prompts_state.select_mode is True
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_prompt_selection_basket_crosses_a_real_twenty_row_page_boundary():
+async def test_prompt_selection_basket_crosses_a_real_twenty_row_page_boundary(request):
     app = _build_test_app()
     _wire_empty_non_prompt_services(app)
     prompts = [

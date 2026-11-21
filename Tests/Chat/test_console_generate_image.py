@@ -32,6 +32,7 @@ from tldw_chatbook.Chat.console_generate_image import (
     _shape_llm_context_payload,
     reset_llm_context_executor,
 )
+from tldw_chatbook.Media_Creation import generation_templates
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
     get_template,
@@ -41,6 +42,12 @@ from tldw_chatbook.Image_Generation.exceptions import (
     ImageGenerationCancelled,
     ImageGenerationError,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_builtin_templates(monkeypatch) -> None:
+    monkeypatch.setattr(generation_templates, "load_user_templates", dict)
+    monkeypatch.setattr(generation_templates, "_all_templates_cache", None)
 
 
 @pytest.fixture(autouse=True)

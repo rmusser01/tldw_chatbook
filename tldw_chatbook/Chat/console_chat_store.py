@@ -12,6 +12,7 @@ import time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager, suppress
+from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from collections.abc import Iterator
@@ -13459,12 +13460,24 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 if not self.is_roleplay_projection_plan_current(plan):
                     return None
                 rebased = self.rebase_roleplay_projection_plan_sync(plan)
-                persistence_task = asyncio.create_task(
-                    asyncio.to_thread(
-                        ConsoleChatStore.persist_roleplay_projection_plan,
-                        rebased,
+                submit_resolved = threading.Event()
+                submitted = False
+
+                def persist():
+                    # Failed submit may leave queued work; admit only its returned Future.
+                    submit_resolved.wait()
+                    if submitted:
+                        return ConsoleChatStore.persist_roleplay_projection_plan(
+                            rebased
+                        )
+
+                try:
+                    persistence_task = asyncio.get_running_loop().run_in_executor(
+                        None, copy_context().run, persist
                     )
-                )
+                    submitted = True
+                finally:
+                    submit_resolved.set()
                 try:
                     return await asyncio.shield(persistence_task)
                 except asyncio.CancelledError as cancellation:

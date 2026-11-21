@@ -5522,6 +5522,7 @@ def test_hidden_db_legacy_adapter_cas_race_cannot_overwrite_winner(
         db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_hidden_db_legacy_cas_miss_with_unavailable_reader_marks_live_stale(
     tmp_path,
 ) -> None:

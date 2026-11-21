@@ -5764,10 +5764,10 @@ class ConsoleRuntime:
                 self._bind_view_hooks()
                 return self._attached_generation
             if previous is not view:
-                from tldw_chatbook.Canvas.config_policy import _end_canvas_poll_handoffs
+                from tldw_chatbook.Canvas import config_policy
 
-                _end_canvas_poll_handoffs(previous)
                 self._pause_project_instruction_generation(self._attached_generation)
+                config_policy._retire_console_canvas_attachment(self)
             self._attachment_generation += 1
             generation = self._attachment_generation
             self.view = view
@@ -5829,9 +5829,9 @@ class ConsoleRuntime:
             if host is not None:
                 host.release_hook_review_attachment(self._attached_generation)
             self._pause_project_instruction_generation(self._attached_generation)
-            from tldw_chatbook.Canvas.config_policy import _end_canvas_poll_handoffs
+            from tldw_chatbook.Canvas import config_policy
 
-            _end_canvas_poll_handoffs(self.view)
+            config_policy._retire_console_canvas_attachment(self)
             self._clear_view_hooks()
             self.view = None
             self._attached_generation = None

@@ -510,8 +510,10 @@ async def test_conversation_settings_return_terminal_rejection_consumes_once(
         app.pending_handoffs.release(replacement_claim)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_superseded_route_preserves_latest_handoff(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -565,8 +567,10 @@ async def test_conversation_settings_return_superseded_route_preserves_latest_ha
         assert console._suspended_conversation_settings is snapshot
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_consumed_route_clears_stale_snapshot_with_copy(
+    request,
     monkeypatch,
 ):
     """A consumed/repeated route fails visibly and cannot retain draft ownership."""
@@ -612,8 +616,10 @@ async def test_conversation_settings_return_consumed_route_clears_stale_snapshot
         ) in notices
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_waits_for_exact_in_flight_claim(
+    request,
     monkeypatch,
 ):
     """A fresh consumer must not mistake outgoing ownership for consumption."""
@@ -672,8 +678,10 @@ async def test_conversation_settings_return_waits_for_exact_in_flight_claim(
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_replacement_before_claim_consumes_replacement(
+    request,
     monkeypatch,
 ):
     """A queued consumer must not claim or erase the newer pending return."""
@@ -747,8 +755,10 @@ async def test_conversation_settings_return_replacement_before_claim_consumes_re
         assert "Provider settings saved — checking readiness" in return_copy
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_replacement_during_terminal_restore_is_consumed(
+    request,
     monkeypatch,
 ):
     """A terminal A settlement cannot clear B staged after A was claimed."""
@@ -819,8 +829,10 @@ async def test_conversation_settings_return_replacement_during_terminal_restore_
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_success_preserves_replacement_staged_during_restore(
+    request,
     monkeypatch,
 ):
     """Successful A restoration settles only A when B arrives before its ack."""
@@ -896,8 +908,10 @@ async def test_conversation_settings_return_success_preserves_replacement_staged
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_settles_at_transfer_before_status_and_keeps_replacement(
+    request,
     monkeypatch,
 ):
     """A owns its modal before optional status work; B remains independently live."""
@@ -1054,8 +1068,10 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_releases_transient_modal_mount_failure(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -1129,8 +1145,10 @@ async def test_conversation_settings_return_releases_transient_modal_mount_failu
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_pretransfer_cancellation_retains_retry(
+    request,
     monkeypatch,
 ):
     """Cancellation before modal ownership releases A and retains its exact retry."""
@@ -1197,8 +1215,10 @@ async def test_conversation_settings_return_pretransfer_cancellation_retains_ret
         assert console._suspended_conversation_settings_token == 146
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_transient_cleanup_preserves_new_session_selection(
+    request,
     monkeypatch,
 ):
     """A stale restore worker cannot replace the user's later active session."""
@@ -1266,8 +1286,10 @@ async def test_conversation_settings_return_transient_cleanup_preserves_new_sess
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_missing_environment_credential_stays_blocked(
+    request,
     monkeypatch,
 ):
     app = _build_test_app()
@@ -1324,8 +1346,9 @@ async def test_conversation_settings_return_missing_environment_credential_stays
         assert f"Export {missing_name}, then relaunch Chatbook" in return_copy
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_conversation_settings_return_unavailable_focus_falls_back_to_change():
+async def test_conversation_settings_return_unavailable_focus_falls_back_to_change(request):
     """TASK-33006.4: an unavailable restored target falls back to the MODEL
     row's Change (Connection's provider picker and model search are gone)."""
     app = _build_test_app()
@@ -1509,6 +1532,7 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_warm_console_resume_consumes_staged_chat_handoff():
     """A CHAT handoff staged while away is consumed on the WARM revisit.
@@ -1575,10 +1599,13 @@ async def test_warm_console_resume_consumes_staged_chat_handoff():
         assert launch is not None
         assert launch.title == "Warm revisit handoff"
         assert launch.source == "library"
+        await _wait_for_selector(console, pilot, "#console-pending-launch-card")
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_real_router_suspend_after_transfer_does_not_replay_stale_handoff(
+    request,
     monkeypatch,
 ):
     """Forced dismissal after modal transfer cannot turn A back into pending work."""
@@ -1699,12 +1726,14 @@ async def test_conversation_settings_return_real_router_suspend_after_transfer_d
         assert not any("Chat settings return was stale" in notice for notice in notices)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failure_mode",
     ("false_once", "raise_once", "raise_persistently"),
 )
 async def test_conversation_settings_return_atomic_failure_retains_retry_without_modal_owner(
+    request,
     monkeypatch,
     failure_mode,
 ):
@@ -1809,8 +1838,10 @@ async def test_conversation_settings_return_atomic_failure_retains_retry_without
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_status_fault_blocks_replacement_until_retry(
+    request,
     monkeypatch,
 ):
     """B remains pending until A's terminal state can be confirmed."""
@@ -1961,9 +1992,11 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("settlement_failure", (False, True))
 async def test_conversation_settings_return_covered_mount_cancellation_settles_before_unmount(
+    request,
     monkeypatch,
     settlement_failure,
 ):
@@ -2115,8 +2148,10 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         assert not any("Chat settings return was stale" in notice for notice in notices)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_posttransfer_cancellation_keeps_target_session(
+    request,
     monkeypatch,
 ):
     """A settled modal transfer keeps target A active when cancellation propagates."""
@@ -2192,8 +2227,10 @@ async def test_conversation_settings_return_posttransfer_cancellation_keeps_targ
         assert console._suspended_conversation_settings is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_dirty_return_confirmation_survives_real_router_navigation_away_and_back(
+    request,
     monkeypatch,
 ):
     """A force-dismissed discard dialog must not orphan the pending return."""
@@ -2342,8 +2379,10 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_router_failure_before_mount_keeps_handoff_pending(
+    request,
     monkeypatch,
 ):
     """Applying context to an unmounted target must not acquire its handoff."""
@@ -2410,8 +2449,10 @@ async def test_conversation_settings_return_router_failure_before_mount_keeps_ha
         assert app.pending_handoffs.release(claim)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_handoff_pending(
+    request,
     monkeypatch,
 ):
     """A newly mounted Console can leave before its deferred consumer runs."""
@@ -2470,8 +2511,10 @@ async def test_conversation_settings_return_rapid_unmount_before_consumer_keeps_
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_conversation_settings_return_suspend_releases_acquired_exact_claim(
+    request,
     monkeypatch,
 ):
     """Suspend releases the exact claim without relying on worker cancellation."""
@@ -2556,6 +2599,7 @@ async def test_conversation_settings_return_suspend_releases_acquired_exact_clai
             allow_restore_exit.set()
 
 
+@pytest.mark.bootstrap_profile
 def test_console_store_uses_app_citation_repository_for_matching_database():
     app = _build_test_app()
     db = Mock(name="chachanotes-db")
@@ -2581,6 +2625,7 @@ def test_native_paste_entry_point_advances_edit_serial_for_stale_apply_guard():
     assert composer.capture_draft_snapshot().segments[0].origin == "paste"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_store_rejects_mismatched_citation_repository():
     app = _build_test_app()
     db = Mock(name="chachanotes-db")
@@ -2596,6 +2641,7 @@ def test_console_store_rejects_mismatched_citation_repository():
     assert store.persistence.citation_repository is None
 
 
+@pytest.mark.bootstrap_profile
 def test_console_store_uses_app_citation_repository_only_with_database():
     app = _build_test_app()
     app.chachanotes_db = None
@@ -3274,6 +3320,7 @@ async def test_improvement_disclosure_is_pinned_and_drift_before_click_is_blocke
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("artifact_type", ["prompt", "recipe"])
 async def test_manual_apply_compares_captured_and_fresh_effective_resolution(
@@ -3332,6 +3379,7 @@ async def test_manual_apply_compares_captured_and_fresh_effective_resolution(
         assert service.usage_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("drift", ["session", "draft", "system", "provider"])
 async def test_auto_improvement_live_drift_is_reviewable_and_never_partially_applies(

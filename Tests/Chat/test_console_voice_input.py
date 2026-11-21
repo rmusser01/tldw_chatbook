@@ -1987,10 +1987,13 @@ def test_the_first_run_message_differs_from_later_presses(monkeypatch):
     controller.start()
     controller.stop()
     first = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
+    # Model preparation releases its admission on the retained daemon.
+    assert controller._model_preparation.done.wait(5)
 
     events.clear()
     controller.start()
     second = [e for e in events if isinstance(e, cvi.VoiceModelPreparing)][0]
+    assert controller._model_preparation.done.wait(5)
 
     assert first.first_run is True
     assert second.first_run is False

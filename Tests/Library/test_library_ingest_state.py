@@ -1574,11 +1574,8 @@ def test_a_page_source_offers_its_scope_settings_in_the_canvas_state():
     from tldw_chatbook.Library.ingest_capabilities import get_capabilities
     from tldw_chatbook.Library.ingest_preflight import analyze_path
 
-    # (TASK-19556) The pre-flight no longer probes a URL by default -- that
-    # network call fired from the ingest field's typing debounce and made it
-    # an internal-host scanning oracle. Classification, which is what this
-    # test is about, needs no probe at all now.
-    preflight = analyze_path("https://example.com/some-post")
+    # Like the typing preflight, classify the page without probing it.
+    preflight = analyze_path("https://example.com/some-post", probe_url=False)
 
     assert list(preflight.type_groups) == ["web"], (
         "a page must reach the canvas as the web group, not as an unsupported file"

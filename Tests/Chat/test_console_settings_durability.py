@@ -63,3 +63,35 @@ async def test_cancelled_drain_does_not_cancel_admitted_thread_work() -> None:
     release.set()
     await owner.close_and_drain()
     assert completed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_admission_registers_before_a_configured_task_factory_can_step_work() -> (
+    None
+):
+    """A custom factory must not run storage before its owner retains the task."""
+    owner = ConsoleSettingsDurabilityOwner()
+    lease = owner.try_acquire()
+    assert lease is not None
+    started = []
+
+    async def admitted_work():
+        started.append(True)
+        assert asyncio.current_task() in owner.tasks
+        return "saved"
+
+    def eager_then_raise(_loop, coroutine, **_kwargs):
+        coroutine.send(None)
+        raise RuntimeError("factory lost the started task")
+
+    loop = asyncio.get_running_loop()
+    previous_factory = loop.get_task_factory()
+    loop.set_task_factory(eager_then_raise)
+    try:
+        task = owner.launch(lease, admitted_work(), name="registered-settings")
+        assert started == []
+    finally:
+        loop.set_task_factory(previous_factory)
+    assert await task == "saved"
+    await owner.close_and_drain()
+    assert owner.tasks == set()

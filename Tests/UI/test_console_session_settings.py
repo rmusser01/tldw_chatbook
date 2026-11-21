@@ -8,6 +8,7 @@ import threading
 import time
 import weakref
 from copy import deepcopy
+from contextvars import ContextVar
 from dataclasses import fields, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,6 +30,7 @@ from textual.widgets import (
 )
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
+import tldw_chatbook.Chat.console_settings_durability as durability_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_endpoint_probe_module
 import tldw_chatbook.Widgets.Console.console_settings_modal as settings_modal_module
@@ -1869,12 +1871,17 @@ async def _pick_through_console_change(
     modal.query_one("#console-settings-model-change", Button).press()
     for _ in range(20):
         await pilot.pause(0.05)
-        if isinstance(modal.app.screen, ConsoleModelPopover):
+        popover = modal.app.screen
+        if (
+            isinstance(popover, ConsoleModelPopover)
+            and popover.is_mounted
+            and popover.query("#console-popover-find")
+        ):
             break
     else:
-        raise AssertionError("Change did not open pick mode")
-    assert modal.app.screen._pick_only
-    modal.app.screen.dismiss((provider, model))
+        raise AssertionError("Change did not mount the model picker")
+    assert popover._pick_only
+    popover.dismiss((provider, model))
     for _ in range(20):
         await pilot.pause(0.05)
         if (modal._active_provider, modal._current_model_value()) == (provider, model):
@@ -1907,11 +1914,7 @@ async def _apply_open_console_settings_modal(
 
 async def _visible_console_settings_button(console: ChatScreen, pilot) -> Button:
     """Open the inspector rail and return the actionable settings summary button."""
-    rail_state = replace(
-        console._current_console_rail_state(),
-        right_open=True,
-    )
-    console._sync_console_rail_visibility(rail_state)
+    rail_state = console._set_console_rail_preference(right_open=True)
     assert rail_state.right_open is True
     await _wait_for_selector(console, pilot, "#console-settings-open")
     for _ in range(40):
@@ -2045,8 +2048,10 @@ class RejectingConversationSettingsHarness(ConsoleHarness):
         message.report_completion(False)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_mounted_configure_rejection_restores_change_focus_through_production_route(
+    request,
     monkeypatch,
 ) -> None:
     """A real Configure click reopens the draft at its prior logical input."""
@@ -2659,6 +2664,18 @@ def _mounted_first_chat_projection(console: ChatScreen) -> dict[str, object]:
     }
 
 
+async def _capture_synced_first_chat_projection(
+    console: ChatScreen, pilot
+) -> dict[str, object]:
+    # A competing sync can return before projecting the restored session.
+    async with asyncio.timeout(10):
+        while not await console._sync_native_console_chat_ui():
+            await pilot.pause(0.05)
+    console._focus_console_composer_if_needed(force=True)
+    await pilot.pause()
+    return _mounted_first_chat_projection(console)
+
+
 async def _wait_for_first_chat_projection(
     console: ChatScreen,
     pilot,
@@ -2686,6 +2703,7 @@ def test_console_store_can_reserve_an_exact_first_chat_session_id() -> None:
         store.create_session(session_id=session.id, settings=settings)
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_target_eligibility_query_is_read_only() -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -2724,6 +2742,7 @@ def test_first_chat_target_eligibility_query_is_read_only() -> None:
     assert _first_chat_session_snapshot(session) == changed_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("user_provenance", ["custom-workspace", "renamed-back"])
 def test_first_chat_eligibility_rejects_empty_user_owned_session_without_mutation(
     user_provenance: str,
@@ -2758,6 +2777,7 @@ def test_first_chat_eligibility_rejects_empty_user_owned_session_without_mutatio
     assert _first_chat_session_snapshot(preserved) == before
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_eligibility_rejects_user_created_default_named_session() -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -2776,6 +2796,7 @@ def test_first_chat_eligibility_rejects_user_created_default_named_session() -> 
     assert _first_chat_session_snapshot(preserved) == before
 
 
+@pytest.mark.bootstrap_profile
 def test_session_owner_refuses_session_switch_and_config_generation_races(
     monkeypatch,
 ) -> None:
@@ -2838,6 +2859,7 @@ def test_session_owner_refuses_session_switch_and_config_generation_races(
     assert "Review setup" not in notices[0]
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_unrelated_config_write_before_consume_still_applies(
     monkeypatch,
 ) -> None:
@@ -2876,6 +2898,7 @@ def test_first_chat_unrelated_config_write_before_consume_still_applies(
     assert notices == []
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_acknowledgement_survives_a_write_landing_mid_acknowledge(
     monkeypatch,
 ) -> None:
@@ -2935,6 +2958,7 @@ def test_first_chat_acknowledgement_survives_a_write_landing_mid_acknowledge(
     assert notices == []
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
     monkeypatch,
 ) -> None:
@@ -2983,6 +3007,7 @@ def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
     assert owner.consume_pending_console_first_chat_intent() is False
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_consumer_refuses_absent_nonreserved_target(monkeypatch) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -3005,6 +3030,7 @@ def test_first_chat_consumer_refuses_absent_nonreserved_target(monkeypatch) -> N
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_reserved_target_concurrent_id_claim_is_not_overwritten(
     monkeypatch,
 ) -> None:
@@ -3042,6 +3068,7 @@ def test_first_chat_reserved_target_concurrent_id_claim_is_not_overwritten(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_reserved_target_never_adopts_preexisting_pristine_id(
     monkeypatch,
 ) -> None:
@@ -3158,6 +3185,7 @@ def test_first_chat_reserved_create_preserves_concurrent_active_session_switch(
     acknowledgement.assert_not_called()
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_generation_change_during_reserved_create_rolls_back(
     monkeypatch,
 ) -> None:
@@ -3226,6 +3254,7 @@ def test_first_chat_generation_change_during_reserved_create_rolls_back(
     assert len(notifications) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_generation_change_during_refresh_restores_exact_target(
     monkeypatch,
 ) -> None:
@@ -3275,6 +3304,7 @@ def test_first_chat_generation_change_during_refresh_restores_exact_target(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_generation_publish_at_ack_rolls_back_reserved_creation(
     monkeypatch,
 ) -> None:
@@ -3323,6 +3353,7 @@ def test_first_chat_generation_publish_at_ack_rolls_back_reserved_creation(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_generation_publish_at_ack_restores_existing_refresh(
     monkeypatch,
 ) -> None:
@@ -3368,6 +3399,7 @@ def test_first_chat_generation_publish_at_ack_restores_existing_refresh(
     assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_replacement_and_session_switch_during_create_roll_back_old_target(
     monkeypatch,
 ) -> None:
@@ -3426,6 +3458,7 @@ def test_first_chat_replacement_and_session_switch_during_create_roll_back_old_t
     assert _first_chat_owner(console)._first_chat_handoff_notified_revision is None
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_guarded_ack_replacement_rolls_back_original_claim(
     monkeypatch,
 ) -> None:
@@ -3487,6 +3520,7 @@ def test_first_chat_guarded_ack_replacement_rolls_back_original_claim(
     assert _pending_first_chat(app) == replacement
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_current_claim_fence_blocks_replacement_target_projection(
     monkeypatch,
 ) -> None:
@@ -3564,6 +3598,7 @@ def test_first_chat_current_claim_fence_blocks_replacement_target_projection(
     assert notifications == []
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_failed_acknowledgement_rolls_back_and_requeues(
     monkeypatch,
 ) -> None:
@@ -3733,6 +3768,7 @@ def test_first_chat_exception_log_is_metadata_only() -> None:
     assert "SECRET-FIRST-CHAT-EXCEPTION" not in rendered
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_ack_exception_restores_refresh_and_retries(monkeypatch) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -3786,6 +3822,7 @@ def test_first_chat_ack_exception_restores_refresh_and_retries(monkeypatch) -> N
     assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_config_guard_exception_rolls_back_and_retries(monkeypatch) -> None:
     app = _build_test_app()
     console = ChatScreen(app)
@@ -3841,6 +3878,7 @@ def test_first_chat_config_guard_exception_rolls_back_and_retries(monkeypatch) -
     assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_ack_exception_after_replacement_preserves_replacement(
     monkeypatch,
 ) -> None:
@@ -3905,6 +3943,7 @@ def test_first_chat_ack_exception_after_replacement_preserves_replacement(
     assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_first_chat_failed_notification_tracking_is_bounded_to_latest_revision(
     monkeypatch,
 ) -> None:
@@ -3950,8 +3989,10 @@ def test_first_chat_failed_notification_tracking_is_bounded_to_latest_revision(
     )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
+    request,
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -4037,6 +4078,7 @@ async def test_mounted_first_chat_preserves_restored_and_concurrent_sessions(
         ] == sessions_after_success
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
     monkeypatch,
@@ -4078,13 +4120,10 @@ async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
             has_user_work=True,
         )
         store.restore_state(sessions=[prior], active_session_id=prior.id)
-        await console._sync_native_console_chat_ui()
-        console._focus_console_composer_if_needed(force=True)
-        await pilot.pause()
+        mounted_before = await _capture_synced_first_chat_projection(console, pilot)
         sessions_before = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
-        mounted_before = _mounted_first_chat_projection(console)
         old_intent = ConsoleFirstChatIntent(
             "mounted-old-target",
             "llama_cpp",
@@ -4138,6 +4177,7 @@ async def test_mounted_first_chat_replacement_ack_exception_restores_prior_ui(
         assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_generation_publish_at_ack_restores_reserved_ui(
     monkeypatch,
@@ -4175,13 +4215,10 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_reserved_ui
             has_user_work=True,
         )
         store.restore_state(sessions=[prior], active_session_id=prior.id)
-        await console._sync_native_console_chat_ui()
-        console._focus_console_composer_if_needed(force=True)
-        await pilot.pause()
+        mounted_before = await _capture_synced_first_chat_projection(console, pilot)
         sessions_before = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
-        mounted_before = _mounted_first_chat_projection(console)
         intent = ConsoleFirstChatIntent(
             "mounted-failed-ack-target",
             "llama_cpp",
@@ -4214,6 +4251,7 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_reserved_ui
         assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_generation_publish_at_ack_restores_refresh_ui(
     monkeypatch,
@@ -4247,13 +4285,10 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_refresh_ui(
             canonical_settings_baseline=prior_settings,
         )
         store.restore_state(sessions=[target], active_session_id=target.id)
-        await console._sync_native_console_chat_ui()
-        console._focus_console_composer_if_needed(force=True)
-        await pilot.pause()
+        mounted_before = await _capture_synced_first_chat_projection(console, pilot)
         sessions_before = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
-        mounted_before = _mounted_first_chat_projection(console)
         intent = ConsoleFirstChatIntent(
             target.id,
             "llama_cpp",
@@ -4285,6 +4320,7 @@ async def test_mounted_first_chat_generation_publish_at_ack_restores_refresh_ui(
         assert _pending_first_chat(app) == intent
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_ack_exception_during_mount_is_retryable(
     monkeypatch,
@@ -4337,6 +4373,7 @@ async def test_mounted_first_chat_ack_exception_during_mount_is_retryable(
         assert _pending_first_chat(app) is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_first_chat_ack_exception_during_resume_restores_ui(
     monkeypatch,
@@ -4371,16 +4408,13 @@ async def test_mounted_first_chat_ack_exception_during_resume_restores_ui(
             has_user_work=True,
         )
         store.restore_state(sessions=[prior], active_session_id=prior.id)
-        await console._sync_native_console_chat_ui()
-        console._focus_console_composer_if_needed(force=True)
-        await pilot.pause()
+        mounted_before = await _capture_synced_first_chat_projection(console, pilot)
         prior_focused_widget = console.app.focused
         assert prior_focused_widget is not None
         assert prior_focused_widget.is_mounted is True
         sessions_before = [
             _first_chat_session_snapshot(item) for item in store.sessions()
         ]
-        mounted_before = _mounted_first_chat_projection(console)
         intent = ConsoleFirstChatIntent(
             "mounted-on-resume-exception-target",
             "llama_cpp",
@@ -6089,6 +6123,7 @@ async def test_console_model_resolution_includes_runtime_discovered_models() -> 
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_model_resolution_failure_logs_provider_context(
     monkeypatch,
@@ -6119,6 +6154,7 @@ async def test_console_model_resolution_failure_logs_provider_context(
     ]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_model_resolution_preserves_configured_alternatives() -> (
     None
@@ -6147,6 +6183,7 @@ async def test_console_settings_model_resolution_preserves_configured_alternativ
     assert models["local_llamacpp"] == ["uat-local-model", "uat-alt-local-model"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_model_resolution_keeps_empty_cloud_snapshot_authoritative() -> (
     None
@@ -8884,10 +8921,11 @@ async def test_console_settings_modal_preserves_missing_registry_model_for_curre
     assert app.saved_settings.model == "custom-openai-model"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_settings_modal_can_select_runtime_discovered_model_with_warning() -> (
-    None
-):
+async def test_console_settings_modal_can_select_runtime_discovered_model_with_warning(
+    request,
+) -> None:
     assert save_setting_to_cli_config(
         "api_settings.openai",
         "api_key",
@@ -9088,13 +9126,14 @@ async def test_console_settings_modal_provider_change_does_not_carry_base_url_to
     assert app.saved_settings.base_url is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_inspector_hosts_staged_context_above_source_readiness() -> None:
     """The pinned preamble precedes staged and readiness content.
 
     Project status and next-send authority form the pinned preamble above the
-    Inspector rail body. The staged-context tray follows the task-9
-    Environment/Tasks sections as the body's third child, ahead of the run
+    Inspector rail body. The staged-context tray follows the task-9/10
+    Environment/Tasks/Agents sections as the body's fourth child, ahead of the run
     inspector and its source-readiness content.
     """
     app = _build_test_app()
@@ -9126,11 +9165,12 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         assert project_status not in tuple(rail_body.query("*"))
         assert authority not in tuple(rail_body.query("*"))
         children = list(rail_body.children)
-        # task-9: Environment and Tasks sections now precede the
+        # Tasks 9 and 10: Environment, Tasks and Agents sections precede the
         # staged-context tray.
         assert children[0].id == "console-environment-section"
         assert children[1].id == "console-tasks-section"
-        assert children[2] is staged_context
+        assert children[2].id == "console-agent-section-subagents"
+        assert children[3] is staged_context
         assert children.index(staged_context) < children.index(run_inspector)
         assert children.index(run_inspector) < children.index(live_work)
 
@@ -9166,6 +9206,7 @@ async def test_console_inspector_hosts_staged_context_above_source_readiness() -
         assert staged_context.region.y < readiness.region.y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_left_rail_body_scrolls_below_fixed_header_without_settings_summary() -> (
     None
@@ -9204,8 +9245,11 @@ async def test_console_left_rail_body_scrolls_below_fixed_header_without_setting
         assert viewport_width - workspace_context.region.width <= 2
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_settings_modal_save_updates_active_summary_only(monkeypatch) -> None:
+async def test_console_settings_modal_save_updates_active_summary_only(
+    request, monkeypatch
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -9216,6 +9260,9 @@ async def test_console_settings_modal_save_updates_active_summary_only(monkeypat
         "openai": {"api_key": "test-key", "model": "gpt-4.1"},
     }
     app.providers_models = {"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]}
+    persist_seeded_config(
+        app, "chat_defaults", "api_settings.llama_cpp", "api_settings.openai"
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -9263,8 +9310,10 @@ async def test_console_settings_modal_save_updates_active_summary_only(monkeypat
         assert "Model: model-a" in summary_text
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_console_settings_modal_result_stays_bound_to_opening_session(
+    request,
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
@@ -9331,10 +9380,11 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session(
         assert second.user_display_name_override == "Captain Rowan"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_settings_save_preserves_omitted_prompt_prefill_and_source() -> (
-    None
-):
+async def test_console_settings_save_preserves_omitted_prompt_prefill_and_source(
+    request,
+) -> None:
     """The real general-settings draft preserves prompt-owned session fields."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -9400,7 +9450,9 @@ async def test_console_settings_save_preserves_omitted_prompt_prefill_and_source
         assert roleplay_writes == []
 
 
+@private_profile_test
 def test_console_settings_result_applies_name_override_without_losing_prompt_source(
+    request,
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -9432,10 +9484,11 @@ def test_console_settings_result_applies_name_override_without_losing_prompt_sou
         update_conversation_roleplay_context=lambda **_kwargs: False,
     )
     monkeypatch.setattr(console, "_sync_console_identity_surfaces", lambda: None)
+    queued_work = []
     monkeypatch.setattr(
         console,
         "run_worker",
-        lambda coroutine, **_kwargs: coroutine.close(),
+        lambda work, **kwargs: queued_work.append((work, kwargs)),
     )
 
     console._apply_console_settings_result(
@@ -9447,6 +9500,12 @@ def test_console_settings_result_applies_name_override_without_losing_prompt_sou
         )
     )
 
+    assert queued_work == [
+        (
+            console._sync_native_console_chat_ui,
+            {"exclusive": True, "group": "console-sync"},
+        )
+    ]
     assert store.session_settings(session.id).temperature == 0.5
     assert store.session_settings(session.id).system_prompt == "Protect Captain Rowan."
     assert session.character_system_template == "Protect {{user}}."
@@ -9457,8 +9516,10 @@ def test_console_settings_result_applies_name_override_without_losing_prompt_sou
     ) in notifications
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_console_global_name_refresh_coalesces_and_respects_session_override(
+    request,
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -9543,7 +9604,9 @@ async def test_console_global_name_refresh_coalesces_and_respects_session_overri
     ]
 
 
+@private_profile_test
 def test_console_identity_refresh_request_dispatches_without_transcript_tick(
+    request,
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -9576,8 +9639,10 @@ def test_console_identity_refresh_request_dispatches_without_transcript_tick(
     assert store.get_message(greeting.id).content == "Hello Default Two."
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_real_inactive_console_tab_activation_dispatches_identity_refresh(
+    request,
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -9643,8 +9708,10 @@ async def test_real_inactive_console_tab_activation_dispatches_identity_refresh(
         assert store.get_message(greeting.id).content == "Hello Default Two."
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stale_win(
+    request,
     monkeypatch,
 ) -> None:
     class BlockingPersistence:
@@ -9775,6 +9842,7 @@ async def test_console_roleplay_refresh_serializes_blocked_b_then_c_without_stal
     assert all(thread_id != owner_thread for thread_id in persistence.writer_threads)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_roleplay_refresh_skips_plan_stale_before_writer() -> None:
     class RecordingPersistence:
@@ -9836,6 +9904,7 @@ async def test_console_roleplay_refresh_skips_plan_stale_before_writer() -> None
     assert persistence.message_writes == ["Hello Cecelia."]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_roleplay_writer_cleanup_waits_for_owner_acceptance() -> None:
     class Persistence:
@@ -9879,11 +9948,15 @@ async def test_roleplay_writer_cleanup_waits_for_owner_acceptance() -> None:
     )
     assert plan is not None
     result = store.persist_roleplay_projection_plan(plan)
-    future = asyncio.get_running_loop().create_future()
-    future.set_result(result)
 
-    chat_screen_module._release_console_roleplay_transition_after_writer(
-        future,
+    async def completed_write():
+        return result
+
+    writer = asyncio.create_task(completed_write())
+    await writer
+
+    chat_screen_module._consume_console_roleplay_writer_completion(
+        writer,
         store=store,
         plan=plan,
     )
@@ -9894,12 +9967,18 @@ async def test_roleplay_writer_cleanup_waits_for_owner_acceptance() -> None:
     assert session.id not in store._fork_source_transitions
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure_point", ("constructor", "start"))
+@pytest.mark.parametrize(
+    "failure_point",
+    ("constructor", "start", "enqueue_then_raise", "prestart_cancel", "closed"),
+)
 async def test_roleplay_writer_startup_failure_releases_fork_transition(
     monkeypatch,
     failure_point: str,
 ) -> None:
+    writes = []
+
     class Persistence:
         def create_message(self, **_kwargs):
             return "msg-1"
@@ -9908,18 +9987,12 @@ async def test_roleplay_writer_startup_failure_releases_fork_transition(
             return True
 
         def update_conversation_system_prompt(self, **_kwargs):
+            writes.append("system")
             return True
 
         def update_message_content(self, **_kwargs):
+            writes.append("message")
             return True
-
-    class StartFailureThread:
-        def __init__(self, **_kwargs) -> None:
-            if failure_point == "constructor":
-                raise RuntimeError("thread constructor failed")
-
-        def start(self) -> None:
-            raise RuntimeError("thread start failed")
 
     app = _build_test_app()
     console = ChatScreen(app)
@@ -9951,18 +10024,76 @@ async def test_roleplay_writer_startup_failure_releases_fork_transition(
         force_persistence=True,
     )
     assert plan is not None
-    monkeypatch.setattr(chat_screen_module.threading, "Thread", StartFailureThread)
+    writes.clear()
+    queued = []
+    issuing = ContextVar("roleplay_submission_failure", default=False)
+    loop = asyncio.get_running_loop()
+    original_submit = loop.run_in_executor
 
-    with pytest.raises(RuntimeError, match=f"thread {failure_point} failed"):
-        await console._refresh_console_roleplay_projections(plan)
+    def refuse_task(*_args, **_kwargs):
+        raise RuntimeError("roleplay constructor failed")
 
+    def cancel_before_start(coroutine, *args, **kwargs):
+        task = asyncio.Task(coroutine, *args, **kwargs)
+        task.cancel()
+        return task
+
+    def refuse_submission(_executor, callback, *args):
+        if not issuing.get():
+            return original_submit(_executor, callback, *args)
+        if failure_point == "enqueue_then_raise":
+            queued.append((callback, args))
+        raise RuntimeError(f"roleplay {failure_point} failed")
+
+    with monkeypatch.context() as fault:
+        if failure_point in {"constructor", "prestart_cancel"}:
+            factory = (
+                refuse_task if failure_point == "constructor" else cancel_before_start
+            )
+            fault.setattr(
+                durability_module,
+                "asyncio",
+                SimpleNamespace(
+                    **{**vars(asyncio), "Task": factory, "create_task": factory}
+                ),
+            )
+        elif failure_point == "closed":
+            await console._console_settings_durability_owner().close_and_drain()
+        else:
+            fault.setattr(
+                asyncio.get_running_loop(), "run_in_executor", refuse_submission
+            )
+
+        token = issuing.set(True)
+        try:
+            if failure_point == "closed":
+                await console._refresh_console_roleplay_projections(plan)
+            elif failure_point == "prestart_cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await console._refresh_console_roleplay_projections(plan)
+            else:
+                with pytest.raises(
+                    RuntimeError, match=f"roleplay {failure_point} failed"
+                ):
+                    await console._refresh_console_roleplay_projections(plan)
+        finally:
+            issuing.reset(token)
+
+    for callback, args in queued:
+        callback(*args)
+    await asyncio.sleep(0)
+
+    assert writes == []
     assert store._fork_source_transitions == {}
     assert store._roleplay_fork_transition_leases == {}
     assert store.fork_eligibility(greeting.id).eligible is True
+    assert console._console_settings_durability_owner().tasks == set()
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_cancelled_unmounted_drain_finishes_latest_plan(
+    request,
     monkeypatch,
 ) -> None:
     class BlockingPersistence:
@@ -10032,8 +10163,9 @@ async def test_cancelled_unmounted_drain_finishes_latest_plan(
     assert persistence.durable_greeting == "Hello Cecelia."
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
+async def test_mounted_console_cancel_latest_waiter_keeps_durable_c(request) -> None:
     class BlockingPersistence:
         def __init__(self) -> None:
             self.started = threading.Event()
@@ -10102,10 +10234,15 @@ async def test_mounted_console_cancel_latest_waiter_keeps_durable_c() -> None:
         assert persistence.durable_greeting == "Hello Cecelia."
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume(
+    request,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    # A cancelled asyncio sleep retains its Context until its deadline is reaped.
+    monkeypatch.setattr(chat_screen_module, "CONSOLE_ENVIRONMENT_POLL_SECONDS", 0.05)
+
     class HungFirstWritePersistence:
         """One shared-store double: the FIRST system-prompt write blocks.
 
@@ -10209,6 +10346,13 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         writer_task = hung._console_roleplay_writer_task
         assert writer_task is not None
         assert writer_task.done() is False
+        active_plan = hung._console_roleplay_active_plan
+        assert active_plan is not None
+        transition_token = active_plan.fork_transition_token
+        assert (
+            hung_store._roleplay_fork_transition_leases[transition_token]
+            == hung_session.id
+        )
         old_screen = weakref.ref(hung)
         event_loop = asyncio.get_running_loop()
         loop_errors: list[dict[str, object]] = []
@@ -10224,6 +10368,11 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
             assert elapsed < 0.5
             assert app._console_roleplay_repair_generation == 1
             assert app._console_roleplay_repair_global_name == "Cecelia"
+            assert writer_task.done() is False
+            assert (
+                hung_store._roleplay_fork_transition_leases[transition_token]
+                == hung_session.id
+            )
             hung_persistence.release.set()
             for _ in range(100):
                 if (
@@ -10258,8 +10407,11 @@ async def test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_res
         assert loop_errors == []
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_roleplay_repair_marker_retries_partial_then_consumes(monkeypatch):
+async def test_roleplay_repair_marker_retries_partial_then_consumes(
+    request, monkeypatch
+):
     class PartialPersistence:
         def __init__(self) -> None:
             self.fail_messages = True
@@ -10336,8 +10488,11 @@ async def test_roleplay_repair_marker_retries_partial_then_consumes(monkeypatch)
     assert len([note for note in notifications if note[1] == "warning"]) == 1
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) -> None:
+async def test_console_global_name_refresh_failure_notifies_once(
+    request, monkeypatch
+) -> None:
     class RefusingPersistence:
         def __init__(self) -> None:
             self.system_writes: list[str | None] = []
@@ -10426,8 +10581,8 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     assert provider_system.endswith("Hello Captain Rowan.")
     estimate_result = context_spend_for_test(console)._active_console_settings_context_estimate()
     assert estimate_result.used_tokens == 17
-    assert estimate_calls[-1][0][-1]["content"] == "Hello Captain Rowan."
-    assert estimate_calls[-1][3] == "Protect Captain Rowan."
+    assert estimate_calls[-1][0] == []
+    assert estimate_calls[-1][3] == provider_system
     await queued.pop(0)()
 
     expected = (
@@ -10447,8 +10602,9 @@ async def test_console_global_name_refresh_failure_notifies_once(monkeypatch) ->
     assert store.active_session_id == session.id
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_system_prompt_editor_clears_character_template_source() -> None:
+async def test_system_prompt_editor_clears_character_template_source(request) -> None:
     """The dedicated prompt editor owns explicit prompt replacement."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -10496,6 +10652,7 @@ async def test_system_prompt_editor_clears_character_template_source() -> None:
         assert session.character_system_template is None
 
 
+@pytest.mark.bootstrap_profile
 def test_system_prompt_command_clears_character_template_through_store(
     monkeypatch,
 ) -> None:
@@ -10526,8 +10683,11 @@ def test_system_prompt_command_clears_character_template_through_store(
     assert session.character_system_template is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_settings_are_isolated_between_native_tabs(monkeypatch) -> None:
+async def test_console_settings_are_isolated_between_native_tabs(
+    request, monkeypatch
+) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -10538,6 +10698,9 @@ async def test_console_settings_are_isolated_between_native_tabs(monkeypatch) ->
         "openai": {"api_key": "test-key", "model": "gpt-4.1"},
     }
     app.providers_models = {"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]}
+    persist_seeded_config(
+        app, "chat_defaults", "api_settings.llama_cpp", "api_settings.openai"
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -10574,10 +10737,11 @@ async def test_console_settings_are_isolated_between_native_tabs(monkeypatch) ->
         assert console._build_console_provider_selection().provider == "openai"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_native_tab_click_switches_without_programmatic_fallback() -> (
-    None
-):
+async def test_console_native_tab_click_switches_without_programmatic_fallback(
+    request,
+) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -10613,8 +10777,9 @@ async def test_console_native_tab_click_switches_without_programmatic_fallback()
         assert store.active_session_id != second_id
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_workspace_conversation_row_switches_native_tab() -> None:
+async def test_console_workspace_conversation_row_switches_native_tab(request) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -10649,8 +10814,9 @@ async def test_console_workspace_conversation_row_switches_native_tab() -> None:
         assert store.active_session_id != second_id
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_provider_selection_includes_generation_controls() -> None:
+async def test_console_provider_selection_includes_generation_controls(request) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
@@ -10695,8 +10861,9 @@ async def test_console_provider_selection_includes_generation_controls() -> None
     assert selection.thinking_budget_tokens == 2048
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
+async def test_console_settings_modal_cancel_keeps_original_summary(request) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -10706,6 +10873,9 @@ async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
         "openai": {"api_key": "test-key", "model": "gpt-4.1"},
     }
     app.providers_models = {"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]}
+    persist_seeded_config(
+        app, "chat_defaults", "api_settings.llama_cpp", "api_settings.openai"
+    )
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -10731,10 +10901,10 @@ async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
         assert store.session_settings(session.id).provider == "llama_cpp"
 
 
-# The real ChatScreen/store goes through config-participant admission, which the
-# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+# The real ChatScreen/store needs config-participant admission for the seeded settings.
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_settings_modal_save_disabled_during_active_run() -> None:
+async def test_console_settings_modal_save_disabled_during_active_run(request) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -10743,6 +10913,7 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         "llama_cpp": {"api_url": "http://127.0.0.1:9099", "model": "model-a"}
     }
     app.providers_models = {"llama_cpp": ["model-a"]}
+    persist_seeded_config(app, "chat_defaults", "api_settings.llama_cpp")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -10787,8 +10958,9 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
+async def test_console_settings_save_clears_stale_terminal_run_status(request) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "model-a"
@@ -10845,8 +11017,11 @@ async def test_console_settings_save_clears_stale_terminal_run_status() -> None:
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_send_blocker_uses_saved_unsupported_session_provider() -> None:
+async def test_console_send_blocker_uses_saved_unsupported_session_provider(
+    request,
+) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "local-model"
@@ -10888,8 +11063,9 @@ async def test_console_send_blocker_uses_saved_unsupported_session_provider() ->
 # test_card_choose_model_opens_switch_model_and_sets_the_new_chat_default.
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None:
+async def test_console_llamacpp_saved_missing_model_blocks_before_send(request) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "local-model"
@@ -10937,7 +11113,10 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
         assert composer.draft_text() == "hello"
 
 
-def test_console_default_settings_keep_configured_model_without_legacy_model() -> None:
+@private_profile_test
+def test_console_default_settings_keep_configured_model_without_legacy_model(
+    request,
+) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
@@ -10956,9 +11135,10 @@ def test_console_default_settings_keep_configured_model_without_legacy_model() -
     assert settings.model == "configured-model"
 
 
-def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_defaults() -> (
-    None
-):
+@private_profile_test
+def test_console_settings_summary_uses_effective_config_endpoint_for_llamacpp_defaults(
+    request,
+) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
@@ -11040,6 +11220,7 @@ def test_console_provider_chip_names_a_custom_endpoint_by_its_registry_entry(req
     assert screen._active_console_provider_model_display()[0] == "custom-ep:gpu-box"
 
 
+@pytest.mark.bootstrap_profile
 def test_console_control_state_reads_persona_label_without_storing_it_on_session(
     monkeypatch,
 ) -> None:
@@ -11069,7 +11250,8 @@ def test_console_control_state_reads_persona_label_without_storing_it_on_session
     assert session.assistant_name is None
 
 
-def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
+@private_profile_test
+def test_console_saved_openai_with_key_shows_ready_readiness(request) -> None:
     app = _build_test_app()
     app.app_config["api_settings"] = {
         "openai": {"api_key": "test-key", "model": "gpt-4.1"},
@@ -11094,7 +11276,8 @@ def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     assert screen._console_send_blocked_reason() == ""
 
 
-def test_console_missing_key_recovery_action_is_provider_specific() -> None:
+@private_profile_test
+def test_console_missing_key_recovery_action_is_provider_specific(request) -> None:
     app = _build_test_app()
     app.app_config["api_settings"] = {
         "openai": {"api_key_env_var": "OPENAI_API_KEY", "model": "gpt-4.1"},
@@ -11122,9 +11305,10 @@ def test_console_missing_key_recovery_action_is_provider_specific() -> None:
     )
 
 
-def test_console_unsaved_generic_endpoint_blocks_with_safe_in_modal_recovery() -> (
-    None
-):
+@private_profile_test
+def test_console_unsaved_generic_endpoint_blocks_with_safe_in_modal_recovery(
+    request,
+) -> None:
     app = _build_test_app()
     app.app_config["api_settings"] = {
         "ollama": {"api_url": "http://127.0.0.1:11434", "model": "llama3"},
@@ -11164,9 +11348,10 @@ def test_console_unsaved_generic_endpoint_blocks_with_safe_in_modal_recovery() -
     )
 
 
-def test_console_no_provider_recovery_action_and_card_step_are_provider_actions() -> (
-    None
-):
+@private_profile_test
+def test_console_no_provider_recovery_action_and_card_step_are_provider_actions(
+    request,
+) -> None:
     """FR-05/FR-07: no provider at all -> provider action, no empty '' copy."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {}
@@ -11200,7 +11385,10 @@ def test_console_no_provider_recovery_action_and_card_step_are_provider_actions(
     assert step_two.state == "pending"
 
 
-def test_console_missing_key_no_model_recovery_action_is_provider_action() -> None:
+@private_profile_test
+def test_console_missing_key_no_model_recovery_action_is_provider_action(
+    request,
+) -> None:
     """FR-05: with provider blocked AND model missing, the provider blocker wins."""
     app = _build_test_app()
     app.app_config["api_settings"] = {
@@ -11232,7 +11420,10 @@ def test_console_missing_key_no_model_recovery_action_is_provider_action() -> No
     assert step_two.state == "pending"
 
 
-def test_console_provider_ready_missing_model_keeps_choose_model_action() -> None:
+@private_profile_test
+def test_console_provider_ready_missing_model_keeps_choose_model_action(
+    request,
+) -> None:
     """FR-05 regression: provider ready + model missing -> Choose model, step 1 done."""
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
@@ -11272,9 +11463,10 @@ def test_console_provider_ready_missing_model_keeps_choose_model_action() -> Non
     assert step_two.label == "Pick a model"
 
 
-def test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint() -> (
-    None
-):
+@private_profile_test
+def test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint(
+    request,
+) -> None:
     """FR-05: unsaved endpoint + no model -> Configure endpoint, step 1 active."""
     app = _build_test_app()
     app.app_config["api_settings"] = {
@@ -11309,9 +11501,10 @@ def test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint
     assert step_two.state == "pending"
 
 
-def test_console_invalid_endpoint_no_model_recovery_action_is_configure_endpoint() -> (
-    None
-):
+@private_profile_test
+def test_console_invalid_endpoint_no_model_recovery_action_is_configure_endpoint(
+    request,
+) -> None:
     """FR-05: invalid endpoint + no model -> Configure endpoint, step 1 active."""
     app = _build_test_app()
     app.app_config["api_settings"] = {
@@ -11345,9 +11538,10 @@ def test_console_invalid_endpoint_no_model_recovery_action_is_configure_endpoint
     assert step_two.state == "pending"
 
 
-def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback() -> (
-    None
-):
+@private_profile_test
+def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallback(
+    request,
+) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
@@ -11374,9 +11568,10 @@ def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallb
     )
 
 
-def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fallback() -> (
-    None
-):
+@private_profile_test
+def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fallback(
+    request,
+) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
@@ -11401,8 +11596,11 @@ def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fall
     assert "Select a model before sending" not in summary_state.model_row
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_new_native_tab_receives_default_settings_snapshot() -> None:
+async def test_console_new_native_tab_receives_default_settings_snapshot(
+    request,
+) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = None
@@ -11439,8 +11637,9 @@ async def test_console_new_native_tab_receives_default_settings_snapshot() -> No
         assert settings.model == "configured-model"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_new_native_tab_uses_saved_global_default() -> None:
+async def test_console_new_native_tab_uses_saved_global_default(request) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
@@ -11491,8 +11690,11 @@ async def test_console_new_native_tab_uses_saved_global_default() -> None:
         assert new_settings.model == "gpt-4.1"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_model_switch_inherits_selected_model_default_profile() -> None:
+async def test_console_model_switch_inherits_selected_model_default_profile(
+    request,
+) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
@@ -11537,8 +11739,11 @@ async def test_console_model_switch_inherits_selected_model_default_profile() ->
         assert updated_settings.streaming is False
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_console_model_switch_preserves_explicit_session_overrides() -> None:
+async def test_console_model_switch_preserves_explicit_session_overrides(
+    request,
+) -> None:
     app = _build_test_app()
     app.chat_api_provider_value = "openai"
     app.chat_api_model_value = "gpt-4.1"
@@ -11588,7 +11793,10 @@ def _disk_loaded_snapshot(**overrides) -> dict:
     return snapshot
 
 
-def test_provider_readiness_config_refreshes_disk_loaded_snapshot(monkeypatch) -> None:
+@private_profile_test
+def test_provider_readiness_config_refreshes_disk_loaded_snapshot(
+    request, monkeypatch
+) -> None:
     app = _build_test_app()
     app.app_config = _disk_loaded_snapshot()
     console = ChatScreen(app)
@@ -11598,7 +11806,10 @@ def test_provider_readiness_config_refreshes_disk_loaded_snapshot(monkeypatch) -
     assert console._provider_readiness_app_config() is fresh
 
 
-def test_provider_readiness_config_honors_injected_test_snapshot(monkeypatch) -> None:
+@private_profile_test
+def test_provider_readiness_config_honors_injected_test_snapshot(
+    request, monkeypatch
+) -> None:
     """Fakes without the disk-loaded marker sections stay authoritative."""
     app = _build_test_app()
     app.app_config = {"api_settings": {"openai": {"api_key": "injected"}}}
@@ -11614,7 +11825,9 @@ def test_provider_readiness_config_honors_injected_test_snapshot(monkeypatch) ->
     assert console._provider_readiness_app_config() is app.app_config
 
 
+@private_profile_test
 def test_provider_readiness_config_falls_back_when_load_settings_fails(
+    request,
     monkeypatch,
 ) -> None:
     app = _build_test_app()
@@ -11629,8 +11842,9 @@ def test_provider_readiness_config_falls_back_when_load_settings_fails(
     assert console._provider_readiness_app_config() is app.app_config
 
 
+@private_profile_test
 def test_console_readiness_unblocks_after_provider_save_without_restart(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ) -> None:
     """Save a provider key via the config API after boot; readiness must see it.
 
@@ -11643,7 +11857,7 @@ def test_console_readiness_unblocks_after_provider_save_without_restart(
         build_console_settings_readiness,
     )
 
-    config_path = tmp_path / "console-readiness-config.toml"
+    config_path = config_module.get_cli_config_path()
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     config_module.load_settings(force_reload=True)
@@ -12583,7 +12797,8 @@ async def test_real_journey_settings_save_unblocks_console_without_restart(
         assert worked_settings.model == "Qwen3-Coder-Test.gguf"
 
 
-def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
+@private_profile_test
+def test_console_stale_default_refresh_respects_user_marked_settings(request) -> None:
     """Blocked derived defaults refresh; explicit user selections never do."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "local-model"}
@@ -12613,7 +12828,8 @@ def test_console_stale_default_refresh_respects_user_marked_settings() -> None:
     assert refreshed.source == "derived"
 
 
-def test_console_stale_default_refresh_respects_applied_system_prompt() -> None:
+@private_profile_test
+def test_console_stale_default_refresh_respects_applied_system_prompt(request) -> None:
     """A stale-default refresh must not overwrite an applied `/system` prompt.
 
     The user-work provenance introduced on ``dev`` treats `/system` as an
@@ -13590,6 +13806,7 @@ async def test_console_settings_modal_core_first_hierarchy_and_title() -> None:
     Rewritten on purpose by TASK-33006.1 (AC#1/#13). It pinned TASK-30012's
     connection-first order; Connection now follows the tuning fields as a
     one-row disclosure (blocked chats still open it, see the next test).
+    The Response rules entry precedes the Model controls (ADR-232).
     TASK-33006.4 removed its provider picker and model search: the MODEL
     row's Change is the only way to change the pair.
     """
@@ -13607,7 +13824,8 @@ async def test_console_settings_modal_core_first_hierarchy_and_title() -> None:
             == "Chat settings"
         )
         body = modal.query_one("#console-settings-body")
-        assert [child.id for child in body.children][:5] == [
+        assert [child.id for child in body.children][:6] == [
+            "console-settings-response-rules",
             "console-settings-provider-model-section",
             SAMPLING_DISCLOSURE_ID,
             CONNECTION_DISCLOSURE_ID,

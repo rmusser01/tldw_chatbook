@@ -244,7 +244,7 @@ async def test_live_revision_change_appends_rows_and_follows_tail():
         assert "follow" in str(screen.query_one("#trajectory-hints").render())
 
 
-async def test_scrolling_up_suspends_follow_until_f_resumes():
+async def test_scrolling_up_suspends_follow_until_f_resumes(wait_for_condition):
     # 60 turns overflow any pilot viewport, so scrolling is real.
     state = {"revision": 3, "turns": 60}
     builder = lambda: snapshot_with_turns(state["turns"])  # noqa: E731
@@ -253,12 +253,12 @@ async def test_scrolling_up_suspends_follow_until_f_resumes():
         screen = app.screen_instance
         table = screen.query_one("#trajectory-table", DataTable)
         table.scroll_end(animate=False)
-        await pilot.pause()
+        await wait_for_condition(lambda: 0 < table.max_scroll_y == table.scroll_y)
         assert screen._follow is True
 
         # The reader scrolls up to inspect history.
         table.scroll_to(y=0, animate=False)
-        await pilot.pause()
+        await wait_for_condition(lambda: table.scroll_y == 0)
         screen._sync_follow_from_scroll()
         assert screen._follow is False
 
@@ -276,6 +276,7 @@ async def test_scrolling_up_suspends_follow_until_f_resumes():
         # f re-enables follow and jumps to the tail.
         await pilot.press("f")
         assert screen._follow is True
+        await wait_for_condition(lambda: table.scroll_y == table.max_scroll_y)
         assert table.scroll_y == table.max_scroll_y
 
 
