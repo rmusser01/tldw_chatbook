@@ -1,0 +1,43 @@
+---
+id: TASK-42345
+title: "A Console session reopened under the id of a closed session stays fenced until the app restarts"
+status: To Do
+assignee: []
+created_date: 2026-11-22 16:37
+updated_date: 2026-11-22 16:37
+labels:
+- follow-up
+- console
+- bug
+priority: medium
+references:
+- tldw_chatbook/Chat/console_goal_runs.py
+- tldw_chatbook/Web_Server/mobile_service.py
+- tldw_chatbook/Chat/console_conversation_hydration.py
+- tldw_chatbook/Chat/console_runtime.py
+- tldw_chatbook/Chat/console_chat_controller.py
+dependencies: []
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Found by the review of the PR #3493 port (TASK-34975, round 20). Read at 59cc99e61b (dev 8a55555798 plus the round-20 stack); line numbers are that tree's. Found by reading; not reproduced.
+
+**Why it matters.** A user who closes a goal run's chat, or a chat opened from the mobile view, and later opens it again the same way, gets a chat that refuses to send or close until the app restarts.
+
+**Evidence.**
+- Two paths rehydrate a saved conversation under a session id equal to its conversation id instead of a fresh one: the goal-run resume (`console_goal_runs.py:537-546`, `session_id=goal.conversation_id`) and the mobile persisted-session restore (`mobile_service.py:851-861`). `hydrate_console_session` otherwise picks its own id (`console_conversation_hydration.py:658`).
+- A close records the session id in two sets that nothing clears after a successful close: the runtime's `_admission_fenced_sessions` (added at `console_runtime.py:6027`, discarded only when `begin_session_close` fails at `:6034`) and the controller's `_session_close_generations` (`console_chat_controller.py:14750`). `release_session_close_fences` (`:14952`) releases the fleet and wake fences but not these.
+- So a session re-created under a closed id is refused: `_raise_if_disposed_or_session_fenced` (`console_runtime.py:2933-2938`) raises "Console session is closed." on admission, and `begin_session_close` refuses a second close (`console_chat_controller.py:14622-14625`). TASK-34975's port also makes the context display refuse such a session, retrying up to every 5 s.
+
+The root cause is the id reuse. The latches are deliberate: a close that timed out keeps its generation latched so late callbacks cannot reach a later incarnation of the same chat (`console_runtime.py:6131-6139`).
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 After a clean close, reopening the same conversation through a goal-run resume and through a mobile restore gives a session the user can send in and close
+- [ ] #2 Late callbacks from a closed session, including one whose close timed out, still cannot reach the reopened session
+- [ ] #3 Tests cover both reopen paths after a close and are shown red before the fix
+- [ ] #4 The new tests run on a PR lane
+<!-- AC:END -->
