@@ -1211,6 +1211,10 @@ MINIMUM_FILES = 2445
 # TASK-42140 (2026-11-21): append seven test_console_send_admission_off_pump.py
 # nodes at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2452
+# TASK-34975 (2026-11-22): append the completed-response Stop node of
+# test_console_response_rules.py at the tail. The floor is the measured entry
+# count.
+MINIMUM_FILES = 2453
 
 
 def read_census(path: Path) -> list[str]:
