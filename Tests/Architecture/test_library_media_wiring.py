@@ -941,7 +941,8 @@ _MEDIA_CONTROLLER_BOUND_NAMES: tuple[str, ...] = (
     # -- the 2 prior-extracted media WIRING controller instances (2)
     "_library_media_browse_controller",
     "_library_media_trash_browse_controller",
-    # -- general Library-wide shell helpers, named constructor callables (43)
+    # -- general Library-wide shell helpers (43): named constructor callables
+    #    until TASK-41757, now the host's shell-service protocol members
     "_acknowledge_library_destination_change",
     "_active_review_set_banner",
     "_apply_library_open_item_surface",
@@ -1269,20 +1270,37 @@ def _media_host_members() -> set[str]:
     return {node.name for node in host.body if isinstance(node, ast.FunctionDef)}
 
 
+def _media_service_members() -> dict[str, set[str]]:
+    """TASK-41757: the members of each protocol ``LibraryMediaHost`` extends."""
+    tree = ast.parse(_MEDIA_CONTROLLER_PATH.read_text(encoding="utf-8"))
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    bases = [ast.unparse(base) for base in classes["LibraryMediaHost"].bases]
+    return {
+        base: {
+            node.name
+            for node in classes[base].body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for base in bases
+        if base != "Protocol"
+    }
+
+
 @pytest.mark.unit
 def test_media_controller_takes_a_typed_host_instead_of_the_screen() -> None:
     """TASK-36952.3.8, coordinator ruling R4 (parent AC #2).
 
     The controller's DOM handle is the ``LibraryMediaHost`` Protocol, its
     module never imports ``LibraryScreen``, and everything it reads through
-    that handle is one of the Protocol's framework services: the shell state
-    and shell helpers it needs are named constructor dependencies. The handle
-    is also the identity the four ``<widget>.ancestors`` checks test, so a
-    bare ``self._screen`` may appear only in an ``in``/``not in`` test.
+    that handle is one of the Protocol's framework services or, since
+    TASK-41757, a member of one of the shell-service protocols it extends;
+    the shell state it needs arrives as named constructor accessors. The
+    handle is also the identity the four ``<widget>.ancestors`` checks test,
+    so a bare ``self._screen`` may appear only in an ``in``/``not in`` test.
     """
     tree = ast.parse(_MEDIA_CONTROLLER_PATH.read_text(encoding="utf-8"))
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    members = _media_host_members()
+    members = _media_host_members().union(*_media_service_members().values())
 
     imports = [
         f"line {node.lineno}"
@@ -1336,7 +1354,7 @@ def test_media_controller_takes_a_typed_host_instead_of_the_screen() -> None:
             reaches.append(f"line {node.lineno}: {ast.unparse(parent)[:80]}")
     assert not reaches, (
         "the media controller reads the screen beyond its host's framework "
-        f"services: {reaches}"
+        f"and shell services: {reaches}"
     )
 
 
@@ -1445,4 +1463,181 @@ def test_no_media_controller_argument_calls_a_media_named_screen_method() -> Non
     )
     assert not media_callbacks, (
         f"media controller arguments still call media-named screen methods: {media_callbacks}"
+    )
+
+
+#: TASK-41757 (owner ruling 2026-11-22, "the screen implements protocols"):
+#: the shell services the controller calls on its host, grouped by the
+#: protocol ``LibraryMediaHost`` extends. They were the 43 screen-method
+#: callbacks the controller took at dev 908e9840aa.
+_MEDIA_SERVICE_MEMBERS: dict[str, frozenset[str]] = {
+    "LibraryShellServices": frozenset(
+        {
+            "acknowledge_library_destination_change",
+            "action_library_narrow_stage_return",
+            "apply_library_open_item_surface",
+            "arm_library_list_entry_focus",
+            "arm_stage_pick_landing",
+            "close_open_library_choice_strip",
+            "disarm_library_list_entry_focus",
+            "focus_library_control",
+            "focus_library_list_entry",
+            "focus_library_list_entry_if_current",
+            "focus_library_rail_action",
+            "land_stage_pick",
+            "library_adaptive_reader_allocation_is_current",
+            "library_entry_route_key",
+            "library_open_choice_strip",
+            "library_source_total",
+            "open_library_export_canvas",
+            "open_library_item_by_id",
+            "register_library_footer_shortcuts",
+            "request_library_reader_layout_refresh",
+            "run_library_service_call",
+            "safe_text",
+            "schedule_library_entry_reconcile",
+            "select_library_rail_row",
+            "source_record_id",
+            "update_library_ingest_dynamic_regions",
+        }
+    ),
+    "LibraryReviewSetServices": frozenset(
+        {
+            "active_review_set_banner",
+            "cancel_pending_review_set_resume",
+            "notify_review_set",
+            "review_dismiss_receipt_name",
+            "review_dismiss_undo_worker",
+            "review_selected_worker",
+            "review_set_picker_worker",
+            "review_set_service",
+            "review_these_worker",
+            "toggle_reviewed_unguarded",
+            "walk_active_review_set",
+        }
+    ),
+    "LibraryReaderLayoutSync": frozenset(
+        {
+            "sync_library_conversation_reader_layout_from_shell",
+            "sync_library_notes_reader_layout_from_shell",
+            "sync_library_prompts_reader_layout_from_shell",
+            "sync_library_skills_reader_layout_from_shell",
+        }
+    ),
+    "LibraryWorkspaceDepthServices": frozenset(
+        {
+            "invalidate_library_workspace_depth_state",
+            "library_workspace_depth_state",
+        }
+    ),
+}
+
+
+@pytest.mark.unit
+def test_library_screen_implements_the_media_service_protocols() -> None:
+    """TASK-41757 AC #3: ``LibraryScreen`` implements the host's shell services.
+
+    The member sets are pinned (43). Each member resolves on
+    ``LibraryScreen`` as the same kind of attribute (plain, static or class
+    method) with the same parameters, names, kinds and defaults, as the
+    protocol declares, and none shadows a member ``LibraryScreen`` inherits
+    (``BaseAppScreen.register_footer_shortcuts`` takes the shortcuts, so the
+    screen's own no-argument registration is ``register_library_footer_
+    shortcuts``).
+    """
+    from tldw_chatbook.UI.Library_Modules import library_media_controller
+    from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+
+    members = _media_service_members()
+    assert {name: frozenset(names) for name, names in members.items()} == (
+        _MEDIA_SERVICE_MEMBERS
+    )
+    assert sum(map(len, members.values())) == 43
+
+    def parameters(function: object) -> list[tuple[str, object, object]]:
+        return [
+            (parameter.name, parameter.kind, parameter.default)
+            for parameter in inspect.signature(function).parameters.values()
+        ]
+
+    drift = []
+    for protocol_name, names in sorted(members.items()):
+        protocol = getattr(library_media_controller, protocol_name)
+        for name in sorted(names):
+            declared = inspect.getattr_static(protocol, name)
+            implemented = inspect.getattr_static(LibraryScreen, name, None)
+            inherited = [base.__qualname__ for base in LibraryScreen.__mro__[1:] if name in vars(base)]
+            if inherited:
+                drift.append(f"{name}: shadows {inherited}")
+            elif implemented is None:
+                drift.append(f"{name}: missing on LibraryScreen")
+            elif type(declared) is not type(implemented) or parameters(
+                getattr(protocol, name)
+            ) != parameters(getattr(LibraryScreen, name)):
+                drift.append(f"{protocol_name}.{name}: signature differs")
+    assert not drift, f"LibraryScreen does not implement the media host: {drift}"
+
+
+@pytest.mark.unit
+def test_no_media_controller_argument_calls_a_screen_method() -> None:
+    """TASK-41757 AC #2: the constructor takes no screen-method callback.
+
+    A callback is a keyword whose value is a lambda calling
+    ``self.<name>(...)``, a ``partial`` of ``self.<method>``, or a bound
+    ``self.<method>``; the host's shell-service protocols carry those calls
+    now. The single-field accessors (``lambda: self._x``) and setters
+    (``lambda value: setattr(self, "_x", value)``) call no screen method.
+    """
+    tree = ast.parse(_LIBRARY_SCREEN_PATH.read_text(encoding="utf-8"))
+    cls = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "LibraryScreen"
+    )
+    methods = {
+        node.name for node in cls.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    methods |= {
+        target.id
+        for node in cls.body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in methods
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    calls = [
+        node
+        for node in ast.walk(cls)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "LibraryMediaController"
+    ]
+    assert len(calls) == 1, f"expected one LibraryMediaController(...) call, found {len(calls)}"
+
+    def screen_attribute(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+        )
+
+    callbacks = []
+    for keyword in calls[0].keywords:
+        value = keyword.value
+        if isinstance(value, ast.Lambda):
+            hits = [
+                node.func
+                for node in ast.walk(value.body)
+                if isinstance(node, ast.Call) and screen_attribute(node.func)
+            ]
+        elif isinstance(value, ast.Call) and "partial" in (
+            getattr(value.func, "id", None),
+            getattr(value.func, "attr", None),
+        ):
+            hits = [arg for arg in value.args[:1] if screen_attribute(arg) and arg.attr in methods]
+        else:
+            hits = [value] if screen_attribute(value) and value.attr in methods else []
+        callbacks.extend(f"{keyword.arg}: self.{hit.attr}" for hit in hits)
+    assert not callbacks, (
+        "media controller arguments call screen methods; add the call to the "
+        f"host's shell-service protocols instead: {sorted(callbacks)}"
     )

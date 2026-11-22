@@ -695,7 +695,7 @@ async def test_controller_hosted_media_sync_re_requests_an_armed_list_entry_focu
         await pilot.pause()
         requested: list[int] = []
         monkeypatch.setattr(
-            screen, "_focus_library_list_entry_if_current", requested.append
+            screen, "focus_library_list_entry_if_current", requested.append
         )
         screen._library_pending_list_entry_focus = True
         generation = screen._library_list_entry_focus_generation

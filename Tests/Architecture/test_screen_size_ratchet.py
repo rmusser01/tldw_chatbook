@@ -1547,7 +1547,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-23, TASK-42422 re-review: the lock walk stops below the Screen
     #: and the window-close retry cap is a named constant: 32857 -> 32866
     #: lines, 1288 methods.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32866, 1288),
+    #: 2026-11-22, TASK-41757 (owner ruling 2026-11-22, "the screen implements
+    #: protocols"): the media controller's 43 shell callbacks left its
+    #: constructor call (-128 with their group comment); the screen implements
+    #: the host's four shell-service protocols with a block of 41 public
+    #: names, each an existing method (+51), under a 2-line note at the call:
+    #: 32866 -> 32791 lines, 1288 methods (measured with ``_measure``).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 32791, 1288),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
@@ -1701,7 +1707,11 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
 #: the bound `_notes_state` (-3), and the direct screen reaches became the
 #: `_library_stage_pick_landing` getter and the `_land_stage_pick` and
 #: `_library_source_total` callbacks (+3).
-_LIBRARY_INIT_LAMBDAS = 397
+#: TASK-41757 lowered it to 354: the media controller's 43 screen-method
+#: callbacks became the host's shell-service protocols, which LibraryScreen
+#: implements (owner ruling 2026-11-22); its 30 accessor and setter lambdas
+#: remain.
+_LIBRARY_INIT_LAMBDAS = 354
 #: Measured at dev 26b2e677dd by `_unbound_class_calls` over Tests/**/*.py:
 #: 724 in 59 files. TASK-36952.2 lowered it to 722 (still 59 files): the two
 #: `LibraryScreen.handle_library_media_reader_more(fake, ...)` calls now call
