@@ -601,13 +601,7 @@ class _Native:
                     info.volume,
                     (info.index_high << 32) | info.index_low,
                 )
-            if parent is None:
-                self.ntfs(handle)
-            # A name opened below a parent handle is on that parent's volume:
-            # the only way off it is a reparse point, which info() refused
-            # above. Every parent handle here came from this module, so its
-            # volume was already checked as local NTFS when its own chain was
-            # opened from the drive root (TASK-40608 D1).
+            self.ntfs(handle)
             return handle.value
         except BaseException:
             if _metadata_record is None:

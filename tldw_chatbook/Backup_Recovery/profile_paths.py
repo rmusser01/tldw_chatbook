@@ -45,7 +45,9 @@ DATA_ROOT_LOCK_NAME = ".tldw_cli-data-root.lock"
 #: Windows (TASK-40608 D1): (conventional root, selected root, time.monotonic())
 #: of the last selection. Each one costs two file opens and one Console turn
 #: asked several thousand times; a root that appears or disappears is seen
-#: within a second. One immutable tuple, replaced whole.
+#: within a second. A refusal never rests on it: ``config_participants.selection``
+#: drops it and decides again before it refuses. One immutable tuple, replaced
+#: whole.
 _selected_data_dir = None
 _SELECTED_DATA_DIR_SECONDS = 1.0
 
@@ -69,6 +71,18 @@ def selected_default_base_data_dir() -> Path:
         _selected_data_dir = (conventional, selected, now)
         return selected
     return _select_default_base_data_dir(conventional)
+
+
+def forget_selected_default_base_data_dir() -> bool:
+    """Drop the kept default-root selection.
+
+    Returns:
+        True when there was a kept selection, so the caller's next read
+        observes the disk and may decide differently.
+    """
+    global _selected_data_dir
+    known, _selected_data_dir = _selected_data_dir, None
+    return known is not None
 
 
 def _select_default_base_data_dir(conventional: Path) -> Path:
