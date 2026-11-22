@@ -4,7 +4,7 @@ title: "Record each tool call's before and after file content for Change Review"
 status: To Do
 assignee: []
 created_date: 2026-11-22 16:37
-updated_date: 2026-11-22 16:37
+updated_date: 2026-11-22 16:56
 labels:
 - follow-up
 - console
@@ -30,6 +30,8 @@ Proposed while round 20 corrected TASK-38942 (fu/r20-backlog, 2026-11-22). Read 
 **Why.** Change Review records one Begin and one End snapshot per root per turn (`Workspaces/change_turn_tracker.py`, "Per-turn B/E snapshot"; each `TurnChangeRecord` holds `baseline_sha`, `end_sha`, change counts and any `tracking_error`). It can show a file's net change over a turn, but not what each tool call did to it. TASK-38942 therefore steps through a turn's tool calls beside the net diff, and labels each call's arguments as requested input, not verified file state. It names per-call capture as out of scope until it has its own task and ADR. A user who wants to see which call broke a file, when one file was written several times in a turn or a `shell_exec` wrote files it does not name, needs the file's content before and after each call.
 
 Capturing content per call changes what is stored, how long it is kept, and what a later reader may see under current workspace and exclusion rules. That is why an ADR comes first.
+
+This is probably more than one PR. Planning may split it into subtasks under this id (for example the ADR, per-call capture, and the Change Review display), so every reference stays ordered.
 
 `Workspaces/native_git.py` and `Workspaces/change_review_consent.py` are in another session's open work (tldw-chatbook-30). Coordinate before editing either.
 <!-- SECTION:DESCRIPTION:END -->

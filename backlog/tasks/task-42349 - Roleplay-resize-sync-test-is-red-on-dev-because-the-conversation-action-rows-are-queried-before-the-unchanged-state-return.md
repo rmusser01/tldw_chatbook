@@ -4,7 +4,7 @@ title: "Roleplay resize-sync test is red on dev because the conversation action 
 status: To Do
 assignee: []
 created_date: 2026-11-22 16:37
-updated_date: 2026-11-22 16:37
+updated_date: 2026-11-22 16:56
 labels:
 - follow-up
 - tests
@@ -34,6 +34,6 @@ Either the conversation rows' sizing should also be skipped when nothing changed
 <!-- AC:BEGIN -->
 - [ ] #1 The implementation notes say whether the conversation rows' sizing must run on every resize, with the reason
 - [ ] #2 A resize that changes neither the compact nor the narrow state does no work beyond what #1 requires, and the test asserts exactly that
-- [ ] #3 The test passes through the scratch wrapper on a branch carrying the fix, and the conversation rows still size correctly at 52, 60, 61 and 98 columns
+- [ ] #3 The test passes through the scratch wrapper on a branch carrying the fix, and the conversation rows keep today's sizing (`personas_screen.py:2054-2088`): at 60 columns and below each action button and row is one row high, the navigation row is as tall as its visible buttons, and the actions block is 2 rows plus that; above 60 columns buttons and rows are 3 rows high and the actions block is at least 9 rows
 - [ ] #4 The node runs on a PR lane
 <!-- AC:END -->
