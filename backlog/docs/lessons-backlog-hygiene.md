@@ -17,7 +17,7 @@ git cat-file --batch --buffer < blobs.txt | LC_ALL=C grep -aoiE '(task|draft)-[0
   | tr '[:upper:]' '[:lower:]' | sort -t- -k2,2n -u | tail
 ```
 
-Sort on the number, not the whole string: a plain `sort` puts `task-100` before `task-99` (see `sort -n` under "Task IDs collide constantly"). Do not narrow the pattern to today's id range either; a `4[0-9]{4}` pattern would miss 50000 and up. Scan the worktrees' uncommitted `backlog/` files separately. Before treating a match as an id, check its context: this sweep's largest match, Task-46066, is quoted in DRAFT-42312's renumbering note as an asyncio task name, not a task.
+Sort on the number, not the whole string: a plain `sort` puts `task-100` before `task-99` (see `sort -n` under "Task IDs collide constantly"). Do not narrow the pattern to today's id range either; a `4[0-9]{4}` pattern would miss 50000 and up. Scan the worktrees' uncommitted `backlog/` files separately. Before treating a match as an id, check its context and read past non-ids at the top of the sorted list: the uncapped pattern also catches date-stamped names such as `draft-20260926` (a receipt path quoted in TASK-25907.18), and round 20's largest match under the old `4[0-9]{4}` pattern, Task-46066, is quoted in DRAFT-42312's renumbering note as an asyncio task name, not a task.
 
 ## A "page has no section for X" finding can be a section a squash deleted (TASK-41526, 2026-11-19)
 
