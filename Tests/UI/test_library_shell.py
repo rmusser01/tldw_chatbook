@@ -6922,7 +6922,7 @@ async def _wait_for_details_db_sizes(screen, pilot, needle: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_details_recomputes_db_sizes_on_open():
+async def test_details_recomputes_db_sizes_on_open(tmp_path, monkeypatch):
     """F-014 relocation + task-4023 AC#3 (RC-09): the rail's Details
     disclosure carries the DB-size telemetry (not the footer), and opening
     it RECOMPUTES the sizes from disk -- WAL-sidecar-inclusive (task-2859)
@@ -6933,26 +6933,20 @@ async def test_details_recomputes_db_sizes_on_open():
     (Rewritten by the whole-branch fix wave: the old pin asserted the
     retired cache-fed behaviour and went red the moment RC-09 shipped.)
     """
-    import os
-    import pwd
-
     app = _build_test_app()
     _seed_conversations(app, _two_conversations())
 
-    # Write real DB files (plus a prompts WAL sidecar) at the SAME paths
-    # DBStatusManager.update_db_sizes resolves at call time. Guard first:
-    # the conftest profile isolation must have redirected them out of the
-    # real user home (the live-config trap) before we write anything.
-    prompts_path = app_config.get_prompts_db_path()
-    chachanotes_path = app_config.get_chachanotes_db_path()
-    media_path = app_config.get_media_db_path()
-    real_home = pwd.getpwuid(os.getuid()).pw_dir
-    for db_path in (prompts_path, chachanotes_path, media_path):
-        assert not str(db_path).startswith(real_home + "/"), (
-            f"{db_path} resolves inside the real user profile -- refusing "
-            "to write DB fixtures there."
-        )
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+    # Write fake DB files (plus a prompts WAL sidecar) at paths of this
+    # test's own: DBStatusManager._collect_db_sizes reads the config getters
+    # at call time. Never the profile's real DB paths: this module shares one
+    # bootstrap profile per process, and zero bytes over its ChaChaNotes DB
+    # failed every later test that opened it (TASK-42142).
+    prompts_path = tmp_path / "prompts.db"
+    chachanotes_path = tmp_path / "chachanotes.db"
+    media_path = tmp_path / "media.db"
+    monkeypatch.setattr(app_config, "get_prompts_db_path", lambda: prompts_path)
+    monkeypatch.setattr(app_config, "get_chachanotes_db_path", lambda: chachanotes_path)
+    monkeypatch.setattr(app_config, "get_media_db_path", lambda: media_path)
     prompts_path.write_bytes(b"\0" * 2048)
     prompts_wal = prompts_path.with_name(prompts_path.name + "-wal")
     prompts_wal.write_bytes(b"\0" * 1024)  # 2048 + 1024 -> "3.0 KB"

@@ -14,17 +14,30 @@
 # copied at both boundaries: Textual may mutate that container while building
 # one Stylesheet, so sharing the same list with the next app is unsafe.
 #
+# Bounded (TASK-42144): parses are kept for the latest _VARIABLE_SETS_KEPT
+# variable sets only, an LRU like the app's own TieAwareStylesheet
+# (THEME_PARSE_CACHE_SIZE). Unbounded, the theme-contrast node's 89 themes left
+# ~10.6M gc-tracked objects alive, and every later per-test gc.collect() in
+# that process took ~5.5 s. Each kept set costs ~115k objects; outside theme
+# sweeps a 25-entry census sample parsed under one variable set, so keeping 2
+# cost it 77 re-parses (~2 s), the same as keeping 16.
+#
 # Escape hatch: TLDW_TEST_CSS_CACHE=0 disables installation entirely.
 
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from textual.css.parse import RuleSet
 
-_GLOBAL_PARSE_CACHE: dict[tuple[Any, ...], "list[RuleSet]"] = {}
+_VARIABLE_SETS_KEPT = 2
+# variables fingerprint -> {Textual's own parse key -> rules}, oldest first.
+_GLOBAL_PARSE_CACHE: OrderedDict[
+    tuple[Any, ...], dict[tuple[Any, ...], "list[RuleSet]"]
+] = OrderedDict()
 _installed = False
 
 
@@ -61,21 +74,21 @@ def install() -> bool:
         # them (per-instance safety relies on set_variables() clearing the
         # cache — a guarantee that does not span instances).
         variables_fingerprint = tuple(sorted(self._variables.items()))
-        key = (
-            css,
-            read_from,
-            is_default_rules,
-            tie_breaker,
-            scope,
-            variables_fingerprint,
-        )
-        cached = _GLOBAL_PARSE_CACHE.get(key)
+        parses = _GLOBAL_PARSE_CACHE.get(variables_fingerprint)
+        if parses is None:
+            parses = _GLOBAL_PARSE_CACHE[variables_fingerprint] = {}
+            if len(_GLOBAL_PARSE_CACHE) > _VARIABLE_SETS_KEPT:
+                _GLOBAL_PARSE_CACHE.popitem(last=False)
+        else:
+            _GLOBAL_PARSE_CACHE.move_to_end(variables_fingerprint)
+        key = (css, read_from, is_default_rules, tie_breaker, scope)
+        cached = parses.get(key)
         if cached is not None:
             return list(cached)
         rules = original_parse_rules(
             self, css, read_from, is_default_rules, tie_breaker, scope
         )
-        _GLOBAL_PARSE_CACHE[key] = list(rules)
+        parses[key] = list(rules)
         return rules
 
     # Lets a test that measures the app's own parse caching (TASK-33120)
@@ -88,4 +101,4 @@ def install() -> bool:
 
 def cache_info() -> tuple[bool, int]:
     """Return (installed, cached-entry count) for diagnostics."""
-    return _installed, len(_GLOBAL_PARSE_CACHE)
+    return _installed, sum(len(parses) for parses in _GLOBAL_PARSE_CACHE.values())

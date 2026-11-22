@@ -49,6 +49,7 @@ else:
     os.environ[_TEST_CONFIG_ROOT_ENV] = str(_BOOTSTRAP_CONFIG_ROOT)
     os.environ[_TEST_CONFIG_OWNER_ENV] = str(Path(__file__).resolve())
     _OWNS_BOOTSTRAP_CONFIG_ROOT = True
+    _real_profile_guard.remove_sandbox_at_exit(_BOOTSTRAP_CONFIG_ROOT)  # TASK-42145
 _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
 _BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)

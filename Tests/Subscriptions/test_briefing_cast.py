@@ -91,6 +91,28 @@ class _FakeChat:
         return self.reply
 
 
+async def _wait_for_chat(
+    entered: asyncio.Event, cast: asyncio.Future, timeout: float = 30.0
+) -> None:
+    """Wait until the chat stand-in sets `entered`, failing fast if it never will.
+
+    An unbounded `entered.wait()` turned a cast that died before its chat call
+    into pytest-timeout's 300 s (TASK-42136). Here a cast that ends first
+    re-raises its own error (or fails with the row it returned).
+    """
+    waiter = asyncio.ensure_future(entered.wait())
+    await asyncio.wait(
+        {waiter, cast}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+    )
+    if waiter.done():
+        return
+    waiter.cancel()
+    if not cast.done():
+        cast.cancel()
+        pytest.fail(f"the cast never reached its chat call within {timeout} s")
+    pytest.fail(f"the cast ended before its chat call: {cast.result()!r}")
+
+
 def _db(tmp_path) -> SubscriptionsDB:
     """A real, file-backed `SubscriptionsDB` -- see the module docstring."""
     return SubscriptionsDB(tmp_path / "subs.db", "test")
@@ -862,7 +884,7 @@ async def test_a_concurrent_cast_for_the_same_briefing_is_refused(tmp_path):
     first = asyncio.ensure_future(
         generate_script(db, briefing_id, preset_id=preset_id, chat=_slow_chat)
     )
-    await entered.wait()
+    await _wait_for_chat(entered, first)
 
     assert briefing_id in active_cast_claims()
     with pytest.raises(GenerationInFlightError, match=str(briefing_id)):
@@ -926,7 +948,7 @@ async def test_row_scoped_exclude_sweeps_a_same_briefing_zombie_while_sparing_th
     first = asyncio.ensure_future(
         generate_script(db, briefing_id, preset_id=preset_id, chat=_slow_chat)
     )
-    await entered.wait()
+    await _wait_for_chat(entered, first)
 
     # The live claim now protects its OWN row, not merely its briefing.
     live_ids = active_cast_claim_row_ids()
@@ -1069,7 +1091,7 @@ async def test_row_scoped_exclude_still_sweeps_a_same_briefing_zombie_once_the_i
     first = asyncio.ensure_future(
         generate_script(db, briefing_id, preset_id=preset_id, chat=_slow_chat)
     )
-    await entered.wait()
+    await _wait_for_chat(entered, first)
 
     row_ids = active_cast_claim_row_ids()
     pending = pending_cast_claim_briefing_ids()
@@ -1469,7 +1491,7 @@ async def test_a_concurrent_kept_cast_for_the_same_kept_briefing_is_refused(tmp_
                 chat=_slow_chat,
             )
         )
-        await entered.wait()
+        await _wait_for_chat(entered, first)
 
         assert kept_id in active_kept_cast_claims()
         with pytest.raises(GenerationInFlightError, match=str(kept_id)):
