@@ -1173,6 +1173,12 @@ ADMISSION_4_TARGETS = (
     # unproven return, the driver closing never-launched preparations, and
     # "applied" reporting (14 tests, 6.6 min serially at load 31-44).
     "Tests/Chat/test_workflow_failed_phase_release.py",
+    # TASK-42157: the headless-wake invariants, the off-view wake mark and the
+    # wake-notice staleness files, red locally on the profile trap and on no
+    # lane before (19 tests, 53 s serially at load 32-36).
+    "Tests/Chat/test_console_headless_wake_invariants.py",
+    "Tests/Chat/test_console_fleet_wake_view_mark.py",
+    "Tests/Chat/test_console_fleet_wake_staleness.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the

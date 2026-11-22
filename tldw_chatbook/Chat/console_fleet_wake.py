@@ -1692,6 +1692,16 @@ class ConsoleFleetWakeCoordinator:
             except Exception:  # noqa: BLE001, S110 - mark cleanup must not interrupt close
                 pass
 
+    def fenced_delivery_settling(self) -> bool:
+        """Whether a delivery a session close cancelled is still settling.
+
+        Its ``finally`` still settles the attempt in AgentRuns, so a
+        maintenance drain waits for it (TASK-42152). Only unfinished members
+        count: the weak set keeps finished ones while something holds them.
+        """
+        with self._registry_lock:
+            return any(not task.done() for task in self._fenced_delivery_tasks)
+
     def release_conversation_fence(
         self, conversation_id: str, *, generation: int
     ) -> bool:

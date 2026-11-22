@@ -71,7 +71,12 @@ from Tests.console_provider_doubles import provider_resolution
 # context settings through the guarded config loader, which the per-test
 # TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
 # raw_source_selection_changed).
-pytestmark = pytest.mark.bootstrap_profile
+# TASK-42155: every controller a test or its rig builds is shut down at
+# teardown (Tests/Chat/conftest.py).
+pytestmark = [
+    pytest.mark.bootstrap_profile,
+    pytest.mark.usefixtures("shut_down_console_controllers"),
+]
 
 
 class SummaryGateway:

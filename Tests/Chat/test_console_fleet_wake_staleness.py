@@ -41,6 +41,12 @@ from Tests.Chat.test_console_fleet_wake import (
     _survivor,
 )
 
+# TASK-42157: the wake rig reads config in-process (storage and hook
+# admission). Under the per-test profile redirect those reads refused with
+# RecoveryRequired("raw_source_selection_changed") and no wake delivered, so
+# this file keeps the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @contextmanager
 def _pinned_snapshot(runs_db):

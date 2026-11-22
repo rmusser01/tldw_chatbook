@@ -15,7 +15,12 @@ from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
 
 # The Console bridge reads the tool gates through config, which keeps the
 # collection-time profile only (TASK-41508; RecoveryRequired otherwise).
-pytestmark = pytest.mark.bootstrap_profile
+# TASK-42155: every controller a test or its rig builds is shut down at
+# teardown (Tests/Chat/conftest.py).
+pytestmark = [
+    pytest.mark.bootstrap_profile,
+    pytest.mark.usefixtures("shut_down_console_controllers"),
+]
 
 
 def _privacy(app, enabled):

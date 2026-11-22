@@ -6017,6 +6017,7 @@ class ConsoleChatController:
             self._maintenance_calls
             or self._maintenance_background
             or self._fleet_wake._delivery_tasks
+            or self._fleet_wake.fenced_delivery_settling()
             or self._chat_start.tasks()
         ):
             remaining = deadline - time.monotonic()

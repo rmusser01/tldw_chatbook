@@ -24,6 +24,23 @@
 
 **What to do.** Hold a read by patching the class method the stock path calls (`monkeypatch.setattr(_CapturedSources, "read_permission_payload", ...)`, as `HeldNativeMcpRead` does), not by assigning to the service instance. That keeps `standard_console_sources` True, so admission takes its stock route, but it is not stock everywhere: the method is in `_CONTROLLER_PRECHECK_METHODS`, so `controller_precheck_pipeline_current()` turns False and the run's tool preparation, the tool preview and `capture_standard_controller_composition` take their ordinary routes. Such a hold can only catch admission's read. Give every hold a wait that fails naming the read it waits for, and when a hold never arms, record the app's notices before reasoning about frames: a refusal that ends the send early looks exactly like a hold keyed to the wrong caller.
 
+## A hung Chat run's idle worker and fd growth were not the leaked controllers suspected; count what the workers hold (TASK-42156, 2026-11-21)
+
+**Incident.** A full `Tests/Chat -n 4` run was reported to hang at the end, with one worker idle for about 15 minutes, `fd_leak_sentinel` at +1,501 and 50-180 threads per worker. TASK-42155 named the Console controllers that rigs never shut down as the likely cause. Shutting every controller down in the four controller-heavy files changed neither the threads (3 per worker) nor the fd range. A full run with a throwaway probe (re-armed faulthandler dumps per test, a session-end snapshot) plus `lsof` and `sample` on the live workers found three other things:
+- Threads: 84-212 `chatbook-storage-admission` hold threads per worker. A hold is keyed by the per-test bootstrap root, so each sandboxed test that leaves a database open leaves one behind.
+- fds: 66-86% of each worker's 1,050-1,666 open files were SQLite files of databases tests never closed. `runs.db` alone accounted for 170-495 per worker.
+- Idle: 0% CPU workers were tests waiting out the 300 s timeout and its teardown re-arms. In hooks_v2 nodes an executor thread sat in `legacy_hook_ownership.wait_closed`, which has no timeout; run alone, that process cannot exit (`Py_FinalizeEx` → `_python_exit` join).
+
+One trap cost a round: faulthandler dumps at most 100 threads, newest first. With 90+ hold threads, every dump left out the main thread.
+
+**What to do.** Before blaming a leak for a stall, count what the workers hold:
+- `ps -M -p <pid>` for threads.
+- `lsof -p <pid>` grouped by file name for fds.
+- faulthandler dumps grouped by their first frame outside `threading.py`.
+- `sample <pid>` for the main thread once a worker has more than 100 threads.
+
+Then list each worker's tests that ran 250 s or more, from per-test start times, before calling anything a hang: a 0% CPU worker is usually a test waiting out pytest-timeout.
+
 ## A slow local failure was filed as a DNS timeout, and two reported stalls did not reproduce (TASK-42027, 2026-11-20)
 
 **Incident.** TASK-32907 (2026-09-22) reported that two AllTalk test nodes paid a DNS timeout (about 21 s for the pair) and then failed on `assert provider_id == "alltalk"`. It also reported two silent stalls: `Tests/TTS` killed at 17 minutes and `Tests/Subscriptions` + `Tests/Utils` killed at 20 minutes. It stayed open two months and fed TASK-41708. At d85e90bc9e the plain run gives the same numbers (10.0 s per node), but the network guard, which now reports every `getaddrinfo`, records no lookup: both fail with `RecoveryRequired: raw_source_selection_changed` in the backend's config read. The quoted assertion is the source line pytest prints above the `>` marker in `manager_factory`'s frame; it had passed. The test had used `httpx.MockTransport` since the commit that added it. Neither stall reproduced: `Tests/TTS` finished in 563 s with no timeout. `Tests/Subscriptions` + `Tests/Utils` finished in 1,368 s, 1,200 s of it four `test_briefing_cast.py` tests that `await entered.wait()` with no bound. Locally the task under test dies on the same trap before it sets the event, so each waits out pytest-timeout's 300 s. That run still printed an `F` every 5 minutes, and the 300 s timeout was already configured in September, so it does not explain 20 silent minutes.

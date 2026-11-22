@@ -118,7 +118,12 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 # TLDW_CONFIG_PATH redirect refuses (RecoveryRequired
 # raw_source_selection_changed; hook admission reports it as "Hooks
 # unavailable"). Keep the collection-time sandbox profile for the whole file.
-pytestmark = pytest.mark.bootstrap_profile
+# TASK-42155: every controller a test or its rig builds is shut down at
+# teardown (Tests/Chat/conftest.py).
+pytestmark = [
+    pytest.mark.bootstrap_profile,
+    pytest.mark.usefixtures("shut_down_console_controllers"),
+]
 
 
 class ConsoleChatStore(_ConsoleChatStore):

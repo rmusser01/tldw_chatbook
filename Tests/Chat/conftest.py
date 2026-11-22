@@ -10,6 +10,8 @@ duplicating the fixture or importing across test modules.
 from __future__ import annotations
 
 import asyncio
+import functools
+import warnings
 
 import pytest
 import pytest_asyncio
@@ -49,6 +51,60 @@ async def owned_console_databases():
                 errors.append(error)
         if errors:
             raise BaseExceptionGroup("Console test-owner retirement failed", errors)
+
+
+#: The one shutdown failure ``shut_down_console_controllers`` tolerates.
+_PENDING_DISPATCH_REFUSAL = "Resolve pending dispatch before changing conversation branches."
+
+
+@pytest_asyncio.fixture
+async def shut_down_console_controllers():
+    """Shut down every Console controller the test builds (TASK-42155).
+
+    A rig that builds a ``ConsoleChatController`` and never shuts it down
+    leaves its scratch directory and owned work behind. This records each
+    controller built while the test runs, shuts down the ones still open at
+    teardown, and fails the test if one is still open after that.
+
+    One shutdown failure is only a warning: a test that leaves a dispatch
+    checkpoint pending on purpose makes ``_finish_begin_shutdown`` refuse to
+    delete its preparation's row with exactly ``_PENDING_DISPATCH_REFUSAL``,
+    and that refusal is the product's. Any other shutdown error fails the
+    test, raised after every controller has been tried. ``shutdown()``
+    absorbs cancellation, so the 5 s bound is soft: a stuck shutdown runs to
+    pytest-timeout, which fails the test.
+
+    Yields:
+        The controllers built so far, in build order.
+    """
+    built = []
+    real_init = ConsoleChatController.__init__
+
+    @functools.wraps(real_init)
+    def init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        built.append(self)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ConsoleChatController, "__init__", init)
+        yield built
+    errors = []
+    for controller in reversed(built):
+        if controller._disposed:
+            continue
+        try:
+            await asyncio.wait_for(controller.shutdown(), 5)
+        except ValueError as error:
+            if str(error) != _PENDING_DISPATCH_REFUSAL:
+                errors.append(error)
+                continue
+            warnings.warn(f"Console controller shutdown refused: {error}", stacklevel=1)
+        except Exception as error:  # noqa: BLE001 - raised after every controller
+            errors.append(error)
+    running = [controller for controller in built if not controller._disposed]
+    assert not running, f"{len(running)} Console controller(s) left running"
+    if errors:
+        raise BaseExceptionGroup("Console controller shutdown failed", errors)
 
 
 class StreamingGateway:

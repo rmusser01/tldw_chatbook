@@ -69,6 +69,12 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+# TASK-42157: the wake rig reads config in-process (storage and hook
+# admission). Under the per-test profile redirect those reads refused with
+# RecoveryRequired("raw_source_selection_changed") and no wake delivered, so
+# this file keeps the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 async def _leave_console(rig) -> ConsoleRuntime:
     """Attach a view, then end the visit through the production seam.

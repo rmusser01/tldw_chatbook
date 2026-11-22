@@ -920,6 +920,8 @@ jobs:
       # bootstrap_profile suites, kept out of a sandboxed invocation for the
       # reason pr-fast-lane-admission's note gives (TASK-32873)
       # (Tests/CI's ADMISSION_4_TARGETS names them).
+      # TASK-42157 appends the three Console wake files (19 tests, 53 s
+      # serially at load 32-36), red locally on the trap and on no lane before.
       - name: Run admission-sensitive suites 4
         run: |
           pytest \
@@ -939,6 +941,9 @@ jobs:
             Tests/UI/test_console_right_rail.py \
             Tests/UI/test_console_rail_reconciliation.py \
             Tests/Chat/test_workflow_failed_phase_release.py \
+            Tests/Chat/test_console_headless_wake_invariants.py \
+            Tests/Chat/test_console_fleet_wake_view_mark.py \
+            Tests/Chat/test_console_fleet_wake_staleness.py \
             --timeout=300 \
             --tb=short
 
