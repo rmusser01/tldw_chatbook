@@ -202,25 +202,46 @@ async def test_a_burst_of_keystrokes_runs_the_debounced_pass_once():
     This is the point of the change: pre-task-15454 each of these six calls
     ran the full derivation chain, and only the persisted-row worker was
     spared.
+
+    TASK-42149: count the debounced pass itself, not context syncs. One pass
+    is followed by syncs from the work it starts (its search worker twice,
+    the persisted-row refresh, and the workspace-files availability refresh
+    once that 1 s cache has expired), and a boot-time refresh can still land.
+    A sync count over a fixed window measured how many of those landed in it:
+    under load it read 5 or 6 with one pass.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
     async with host.run_test(size=APP_SIZE) as pilot:
         console, search_input = await _mounted_rail_search(host, pilot)
+        workspace = console._workspace
+        start_pass = workspace._start_console_conversation_browser_search
+        passes: list[str] = []
 
+        def counting_pass(query: str, token: int) -> None:
+            passes.append(query)
+            start_pass(query, token)
+
+        # The keystroke schedules `partial(self._start_...)`, so an instance
+        # attribute is what its timer calls.
+        workspace._start_console_conversation_browser_search = counting_pass
         with _KeystrokeWorkCounter(console) as counter:
             for text in ("a", "al", "alp", "alph", "alpha", "alpha6"):
                 console.on_console_workspace_conversation_search_changed(
                     _changed_event(text, search_input)
                 )
+            assert passes == []
             assert counter.context_syncs == 0
-            await pilot.pause(0.35)
-            # One debounced pass; its own worker syncs again as results land.
-            # The 0.2 s native Console tick may contribute one independent
-            # context sync during this 0.35 s observation window.
-            # What matters is that six keystrokes did not cost six passes.
-            assert counter.context_syncs <= 4
+            for _ in range(250):
+                if passes:
+                    break
+                await pilot.pause(0.02)
+            assert passes == ["alpha6"]
+            # A second pass (a superseded timer left running) would land
+            # within one more debounce interval.
+            await pilot.pause(0.25)
+            assert passes == ["alpha6"]
 
         assert console._console_conversation_browser_query == "alpha6"
 
