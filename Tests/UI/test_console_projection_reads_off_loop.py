@@ -561,7 +561,9 @@ async def test_run_poll_repaints_send_when_a_completed_turn_releases_its_queue(
             async def project_poll(screen):
                 config_sync.begin_console_sync(screen)
                 # Isolate the queue's repaint from unrelated storage admission.
-                assert storage._lock.acquire(timeout=30), "storage coordinator stayed busy"
+                assert storage._lock.acquire(timeout=30), (
+                    "storage coordinator stayed busy"
+                )
                 try:
                     return config_sync.project_console_tick(screen)
                 finally:
