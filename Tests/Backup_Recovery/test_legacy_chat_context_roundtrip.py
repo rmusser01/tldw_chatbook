@@ -37,6 +37,11 @@ def unchanged(receipt):
 """
 
 
+# TASK-42146: since TASK-33620.8 (f7d5b91542) citation writes ship on and the
+# fingerprint key is made on first use, so every start below has writes on
+# and the migration not ready. Only the app's idle unit migrates a sidecar,
+# and these children never run the app, so the sidecar stays the legacy
+# fallback throughout.
 _SEED = (
     _PRIVATE
     + r"""
@@ -48,7 +53,10 @@ async def main():
  try:
   service=app.local_chat_conversation_service;assert service is not None
   migration=app.citation_legacy_migration_service;assert migration is service.citation_legacy_migration
-  assert migration.writes_enabled is False and migration.ready is False
+  assert migration.writes_enabled is True and migration.ready is False
+  # This fixture explicitly selects a Research path; initialize its lazy store
+  # (TASK-42146, as TASK-42010: absent, the capture preview stopped at missing_required).
+  assert app.local_research_service.list_sessions()==[]
   conversation_id=service.create_conversation(title='Retained legacy citation context',source='local')
   user_id=app.chachanotes_db.add_message({'conversation_id':conversation_id,'sender':'user','content':'What does the retained local note say?'})
   answer='The retained local note says the archive keeps its citation [1].'
@@ -113,7 +121,7 @@ async def main():
  app=TldwCli();monitoring=asyncio.create_task(monitor_app(app));cancel=threading.Event();watchdog=asyncio.get_running_loop().call_later(50,cancel.set)
  try:
   service=app.local_chat_conversation_service;migration=app.citation_legacy_migration_service
-  assert migration is service.citation_legacy_migration and migration.writes_enabled is False and migration.ready is False
+  assert migration is service.citation_legacy_migration and migration.writes_enabled is True and migration.ready is False
   assert migration.get_journal(seed['conversation_id']) is None
   messages=service.get_messages_with_context(seed['conversation_id'])
   assert [row['id'] for row in messages]==[seed['user_message_id'],seed['assistant_message_id']]
@@ -211,7 +219,7 @@ async def main():
  try:
   service=app.local_chat_conversation_service;migration=app.citation_legacy_migration_service
   assert service.rag_context_store_path==sidecar and migration is service.citation_legacy_migration
-  assert migration.writes_enabled is False and migration.ready is False and migration.get_journal(seed['conversation_id']) is None
+  assert migration.writes_enabled is True and migration.ready is False and migration.get_journal(seed['conversation_id']) is None
   messages=service.get_messages_with_context(seed['conversation_id'])
   assert [row['id'] for row in messages]==[seed['user_message_id'],seed['assistant_message_id']]
   assert [row['content'] for row in messages]==['What does the retained local note say?',seed['answer']]

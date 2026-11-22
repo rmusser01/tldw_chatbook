@@ -831,6 +831,40 @@ def _first_binding_inventory(plan, selector):
     return selected
 
 
+def _untouched_service_work(path, parent, plan):
+    """TASK-42151: service work beside a config folder this plan leaves alone.
+
+    Without the Settings group nothing maps into the default config folder, so
+    it is no synthetic destination. Its fixed service store and the work under
+    it are still the excluded siblings ``is_preserved_service_container``
+    recognizes, provided nothing the plan places or retires overlaps it.
+    """
+    from .bootstrap import _overlap
+    from .service_storage import is_private_service_work
+
+    return (
+        plan.mode == "replace"
+        and any(
+            item.path is not None
+            and parent in item.path.parents
+            and (item.logical_id, item.path) in plan.preserve
+            and is_private_service_work(path, item)
+            for item in plan.target.items
+        )
+        and parent.is_dir()
+        and not parent.is_symlink()
+        and not any(
+            _overlap(parent, target)
+            for _, target in (
+                *plan.destinations,
+                *plan.restore,
+                *plan.retire,
+                *plan.containers,
+            )
+        )
+    )
+
+
 def _preserved_default_controls(plan, document, parent, protected):
     """Recognize excluded native siblings without granting their parent authority."""
     from .bootstrap import _overlap, default_bootstrap_root
@@ -845,6 +879,7 @@ def _preserved_default_controls(plan, document, parent, protected):
     )
     if not any(
         is_preserved_service_container(path, parent, plan, synthetic=synthetic)
+        or _untouched_service_work(path, parent, plan)
         for path in protected
     ):
         return ()
@@ -912,6 +947,7 @@ def _first_profile_container(
             or path == default_bootstrap_root()
             and path in controls
             or is_preserved_service_container(path, parent, plan, synthetic=True)
+            or _untouched_service_work(path, parent, plan)
         )
 
     configs = [item for item in inventory.items if item.owner == "config"]
@@ -2402,7 +2438,11 @@ def recover_replacement(
             _apply_replacement_credentials(
                 candidate, journal, session=session, cancel=cancel
             )
-            if records[-1].event != "committed":
+            # TASK-42154: here and in replace() the keys were installed before
+            # publication_started was journaled. Once it is, the staged files
+            # may have moved, so the stage cannot prove the archive again (the
+            # same gate publish_candidate uses for its own _descriptor check).
+            if not any(row.event == "publication_started" for row in records):
                 _install_personal_context_keys(
                     _acquired_source(candidate, plan, cancel), plan, candidate, cancel
                 )

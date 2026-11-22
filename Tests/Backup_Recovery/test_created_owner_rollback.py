@@ -567,6 +567,9 @@ try:
             raise RestoreOnly
         operation=restored['result']['journal_operation_id']
         assert present(paths)==set(paths),sorted(set(paths)-present(paths))
+        if case.get('admit_after_restore'):
+            # The next start after the restore (TASK-42151).
+            assert produce('admit')['permission']==[True,'startup_allowed']
         captured={label:value for label,value in case['files'].items() if label not in case.get('uncaptured',())}
         for label,(folder,leaf,text) in captured.items():
             # The pets restore with the source's bytes.
@@ -814,6 +817,197 @@ def test_a_default_location_pet_replace_refuses_and_keeps_the_pets(
     script = (
         "CASES="
         + repr({case: spec})
+        + "\nBOARD_INSERT="
+        + repr(_BOARD_INSERT)
+        + "\nLOCATION='default'\n"
+        + _SCENARIO
+    )
+    for name in ("source", "target"):
+        (tmp_path / name).mkdir(mode=0o700)
+    _run(
+        tmp_path / "source",
+        case,
+        "source",
+        script=script,
+        timeout=1500 if sys.platform == "win32" else 300,
+    )
+    _run(
+        tmp_path / "target",
+        case,
+        "target",
+        script=script,
+        timeout=2500 if sys.platform == "win32" else 900,
+    )
+
+
+# TASK-42154: a Replace killed at finalize_candidate, after publication has
+# moved the candidate's files into place, is recovered in a fresh process.
+# finish used to re-prove the archive from the stage (TASK-40135's key
+# install), so it raised FileNotFoundError and startup stayed refused.
+_CRASH_CASE = {
+    "groups": _PET_GROUPS,
+    "stores": (),
+    "extra": (),
+    "files": {},
+    "delete": (),
+    "refusal": None,
+}
+_CRASH_POINT = "        restored=reviewed(service,"
+# A missing anchor would leave the scenario uncrashed; fail at import instead.
+assert _SCENARIO.count(_CRASH_POINT) == 1
+_CRASH_SCENARIO = _SCENARIO.replace(
+    _CRASH_POINT,
+    "        from tldw_chatbook.Backup_Recovery import publication as crashed\n"
+    "        crashed.finalize_candidate=lambda *args,**kwargs:os._exit(17)\n"
+    + _CRASH_POINT,
+)
+
+# Each child is a fresh process: the crashed Replace, each recovery step, and
+# every start (startup permission, then startup admission).
+_CRASH_RECOVERY = r"""
+RECOVER = r'''
+import json,os,sys
+from pathlib import Path
+from Tests import network_guard
+network_guard.install()
+os.environ['PYTHON_KEYRING_BACKEND']='keyring.backends.null.Keyring'
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+from tldw_chatbook.Backup_Recovery import credentials
+from tldw_chatbook.Backup_Recovery.recovery_copies import _journal
+from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService,default_control_root
+from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
+credential_store=KeyringServerCredentialStore(keyring_backend=Keyring())
+credentials._credential_store=lambda:credential_store
+step,location=sys.argv[1:3]
+selector=Path(os.environ['TLDW_CONFIG_PATH'])
+service=RecoveryService(default_control_root() if location=='default' else Path.home()/'recovery-control')
+try:
+    if step=='later_rollback':
+        # The finished restore can still be rolled back (after credential
+        # review, as the scenario's reviewed() does).
+        operation=json.loads((Path.home()/'recovered.json').read_text())
+        def later(issues=()):
+            approved=service.preview_rollback(operation,old_password=b'rollback-test-password',
+                target=service.preview_backup((selector,),options={}),acknowledged_credential_issues=issues)
+            return service.wait(service.start_rollback(operation,approved,old_password=b'rollback-test-password',new_password=b'second-safety-password'))
+        result=later()
+        if result['state']=='recovery_required' and result['review_issues']:
+            issues=tuple(result['review_issues'])
+            assert all(code.startswith('credential_') for code in issues),issues
+            aborted=service.wait(service.start_recovery(result['result']['journal_operation_id'],action='abort'))
+            assert aborted['state']=='succeeded',dict(aborted)
+            result=later(issues)
+    else:
+        (pending,)=service.pending_operations()
+        operation=pending['operation_id']
+        journal=_journal(service.control_root,operation)
+        with journal._locked(exclusive=False) as parent:events=[row.event for row in journal._records(parent)]
+        # Killed after publication, before the commit.
+        assert 'artifact_published' in events and 'committed' not in events,events
+        assert service.status(operation)['actions']==('finish','rollback'),dict(service.status(operation))
+        result=service.wait(service.start_recovery(operation,action=step,rollback_password=b'rollback-test-password'))
+        (Path.home()/'recovered.json').write_text(json.dumps(operation))
+    assert result['state']=='succeeded',dict(result)
+finally:
+    service.close()
+print(json.dumps(result['phase']))
+'''
+ADMIT = r'''
+import json,os,sys
+from pathlib import Path
+from Tests import network_guard
+network_guard.install()
+for module in ('sounddevice','pyaudio'):sys.modules[module]=None
+from tldw_chatbook.Backup_Recovery import bootstrap
+from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+permission=bootstrap.startup_permission(Path(os.environ['TLDW_CONFIG_PATH']),bootstrap.default_bootstrap_root())
+if permission[0]:
+    with acquire_storage():pass
+print(json.dumps(list(permission)))
+'''
+import json,os,subprocess,sys
+from pathlib import Path
+name,action=sys.argv[1:3]
+env=dict(os.environ)
+if LOCATION=='default':
+    env['TLDW_CONFIG_PATH']=str(Path.home()/'.config'/'tldw_cli'/'config.toml')
+def child(code,*args,expect=0):
+    result=subprocess.run([sys.executable,'-X','utf8','-c',code,*args],env=env,capture_output=True,text=True,timeout=900 if sys.platform=='win32' else 300)
+    assert result.returncode==expect,(result.returncode,result.stdout[-3000:],result.stderr[-6000:])
+    return json.loads(result.stdout.strip().splitlines()[-1]) if expect==0 else None
+child(SCENARIO,name,'target',expect=17)
+assert child(ADMIT)==[False,'recovery_pending']
+phases={'finish':'committed','rollback':'rolled_back','later_rollback':'restoration_validated'}
+for step in (action,'later_rollback') if action=='finish' else (action,):
+    phase=child(RECOVER,step,LOCATION)
+    assert phase==phases[step],(step,phase)
+    assert child(ADMIT)==[True,'startup_allowed'],step
+print('retired and reopened')
+"""
+
+
+@pytest.mark.timeout(4200 if sys.platform == "win32" else 1500)
+@pytest.mark.parametrize("location", ["separate", "default"])
+def test_a_replace_killed_after_publication_recovers_by_finish_or_rollback(
+    tmp_path, location
+):
+    """TASK-42154: a Replace killed at finalize_candidate, after publication,
+    recovers in a fresh process by finish (a later rollback still undoes it)
+    and by rollback, at the default config location and on a separate config
+    folder. The app starts after each."""
+    scenario = (
+        "CASES="
+        + repr({"control": _CRASH_CASE})
+        + "\nBOARD_INSERT="
+        + repr(_BOARD_INSERT)
+        + "\nLOCATION="
+        + repr(location)
+        + "\n"
+    )
+    (tmp_path / "source").mkdir(mode=0o700)
+    _run(
+        tmp_path / "source",
+        "control",
+        "source",
+        script=scenario + _SCENARIO,
+        timeout=1500 if sys.platform == "win32" else 300,
+    )
+    driver = (
+        scenario
+        + "SCENARIO="
+        + repr(scenario + _CRASH_SCENARIO)
+        + "\n"
+        + _CRASH_RECOVERY
+    )
+    for action in ("finish", "rollback"):
+        (tmp_path / action).mkdir(mode=0o700)
+        _run(
+            tmp_path / action,
+            "control",
+            action,
+            script=driver,
+            timeout=2500 if sys.platform == "win32" else 900,
+        )
+
+
+# TASK-42151: at the default config location the config folder holds the
+# fixed recovery controls. A Replace whose groups leave out Settings maps
+# nothing into that folder, and its first binding refused the folder
+# (replacement_config_container_unverified) because the controls were only
+# recognized beside a synthetic restore destination.
+@pytest.mark.timeout(4200 if sys.platform == "win32" else 1500)
+@pytest.mark.parametrize("case", ["library", "projects"])
+def test_a_default_location_replace_without_settings_completes(tmp_path, case):
+    """TASK-42151: the library and projects cases (no Settings group) at the
+    default config location: the Replace completes, the later rollback
+    retires what it created, and the app starts afterwards."""
+    script = (
+        "CASES="
+        + repr(
+            {case: dict(_CASES[case], then="later_rollback", admit_after_restore=True)}
+        )
         + "\nBOARD_INSERT="
         + repr(_BOARD_INSERT)
         + "\nLOCATION='default'\n"

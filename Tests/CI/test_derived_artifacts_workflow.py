@@ -136,6 +136,9 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         # TASK-40307 (owner decision 2026-11-12, "Push-to-dev job only"): the
         # Backup_Recovery owner suites on pushes to dev; never a PR job.
         "backup-owner-suites-dev",
+        # TASK-42154 AC#5 (coordinator decision 2026-11-21): the recovery and
+        # first-binding files on pushes to dev, out of the owner-suite step.
+        "backup-recovery-binding-dev",
     ]
 
 
