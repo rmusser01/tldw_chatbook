@@ -1691,7 +1691,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-11-20, rebased onto dev d85e90bc9e: 32828 -> 33532 lines,
     #: 1288 -> 1314 methods (polish-1b's own +704 lines, +26 methods; same
     #: owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33532, 1314),
+    #: 2026-11-22, review r11s Probe B (owner decision: expand limits, don't
+    #: contort code): ``on_screen_resume`` suppresses Textual's nav-bar
+    #: auto-focus and lands the route's entry when nothing is focused:
+    #: 33532 -> 33537 lines, methods unchanged (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33537, 1314),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

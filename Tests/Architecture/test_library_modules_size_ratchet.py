@@ -934,7 +934,11 @@ _BUDGETS: dict[str, int] = {
     # replaced in place).
     # 2026-11-19, TASK-41715 (review r17ls-rev1): `present_pending_repair`
     # reads `is_attached` on its own line before `app.screen`: 202 -> 203.
-    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 203,
+    # 2026-11-22, review r11s Probe B (owner decision: expand limits, don't
+    # contort code): `land_entry_focus_after_resume` lands a Library that
+    # resumed with nothing focused on its route's own entry, never the nav
+    # bar: 203 -> 256 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 256,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     # 2026-09-09, task-32129 (Obsidian mode for Import once): 587 -> 602
     # (+15), a BEHAVIOUR ADD -- `set_obsidian_mode` (6 lines) plus the
