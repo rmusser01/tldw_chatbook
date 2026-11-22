@@ -108,7 +108,9 @@ def _fail_directory_fsync(monkeypatch, directory, error_number: int) -> None:
         return fd
 
     def controlled_fsync(fd):
-        if directory_fd and fd == directory_fd[-1]:
+        # Match the directory itself, not its fd number: storage admission
+        # opens and closes the directory first, and mkstemp reuses the number.
+        if directory_fd and os.path.samestat(os.fstat(fd), os.stat(directory)):
             raise OSError(error_number, os.strerror(error_number))
         return original_fsync(fd)
 

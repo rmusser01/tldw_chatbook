@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-21 13:40
-updated_date: 2026-11-22 19:00
+updated_date: 2026-11-22 19:14
 labels:
 - tests
 - tool-packs
@@ -71,6 +71,6 @@ Verification (Windows 10, Python 3.12, `Tests/windows_private_fixture_runner` pr
 
 **Port (2026-11-22).** PR #3687's branch was 141+ commits behind `dev` with red CI, so its commit (63e840579a) was cherry-picked with `-x` onto `fu/r21-staletests` from `dev` ddd3c02052. The Windows evidence above is from the original branch on `dev` e5626ea043 and was not re-run on this port. `dev` has not repaired any of the five tests another way.
 - **Red/green on macOS** (CPython 3.12.11), the four touched files, `-n 4`: on `dev` ddd3c02052's versions of the files, 9 failed / 77 passed, including all four POSIX-reachable targets (C7 `test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private` and `test_v1_zero_tool_namespace_receives_a_portable_fallback`, C8 `test_process_control_exception_propagates_without_marker_clear`, C9 `test_two_store_instances_share_one_path_fence`). With the port, 5 failed / 81 passed, and all four targets pass. C10's `nt` branch and skip cannot run here.
-- **The other 5 reds are not Windows-only, and this port does not fix them.** `test_save_propagates_real_directory_fsync_failure` and the four `test_save_tolerates_unsupported_directory_fsync[*]` cases fail on macOS on `dev` and on this port. `_fail_directory_fsync`'s POSIX branch remembers the directory's fd *number*. Storage admission (`storage_admission._resolved`) now opens and closes that directory first, so `mkstemp` reuses the number and the injected failure fires on the temp file's own `os.fsync` in `_save_locked`. That fsync tolerates nothing, so the tolerance cases raise, and the propagate case fails before `os.replace`. Matching the directory by identity (`os.path.samestat(os.fstat(fd), os.stat(directory))`) made the file 21 of 21 green in a reverted probe. This is outside this task's criteria, so it is left as a proposed follow-up. POSIX always hands out the lowest free fd, so Linux should fail the same way (not run).
-- Whole `Tests/Tool_Packs` with the port: 415 passed, 5 failed (those five).
+- **The other 5 reds were not Windows-only either; fixed here as an addition beyond the criteria** (coordinator decision, 2026-11-22). The reason: the same file's stale fixture left this repair incomplete on POSIX. `test_save_propagates_real_directory_fsync_failure` and the four `test_save_tolerates_unsupported_directory_fsync[*]` cases failed on macOS on `dev` and on the cherry-picked port. `_fail_directory_fsync`'s POSIX branch remembered the directory's fd *number*. Storage admission (`storage_admission._resolved`) now opens and closes that directory first, so `mkstemp` reused the number. The injected failure then fired on the temp file's own `os.fsync` in `_save_locked`, which tolerates nothing. `controlled_fsync` now matches the directory by identity (`os.path.samestat(os.fstat(fd), os.stat(directory))`). Red/green, macOS, `-n 4`: the file went from 5 failed / 16 passed to 21 passed. The propagate case asserts the injected `EIO`, which shows the matcher still fires on the directory. POSIX always hands out the lowest free fd, so Linux should behave the same (not run).
+- Whole `Tests/Tool_Packs` on this branch: 420 passed, 0 failed. The other two Tool Pack ports (TASK-42225, PR #3684) fix Windows-only paths, so no reds remain for them here.
 <!-- SECTION:NOTES:END -->
