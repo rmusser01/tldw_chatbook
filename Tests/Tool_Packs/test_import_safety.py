@@ -636,17 +636,13 @@ class _WindowsOsView:
     (the CRT reads in text mode without it). ``fstat`` reports ChangeTime as
     ``st_ctime`` while ``stat`` reports CreationTime. Both report the same
     ``st_birthtime_ns`` (POSIX hosts lack it; a constant stands in).
-    ``change_drift`` moves fstat's ChangeTime after the first call, as a write
-    during the read would.
     """
 
     name = "nt"
     O_BINARY = getattr(os, "O_BINARY", 0x8000)  # Windows' value elsewhere
 
-    def __init__(self, birthtime_drift: int = 0, change_drift: int = 0) -> None:
+    def __init__(self, birthtime_drift: int = 0) -> None:
         self._drift = birthtime_drift
-        self._change_drift = change_drift
-        self._fstats = 0
 
     def __getattr__(self, name: str) -> object:
         if name == "O_NOFOLLOW":
@@ -661,11 +657,9 @@ class _WindowsOsView:
 
     def fstat(self, descriptor: int) -> _StatView:
         real = os.fstat(descriptor)
-        self._fstats += 1
-        drift = self._change_drift if self._fstats > 1 else 0
         return _StatView(
             real,
-            st_ctime_ns=real.st_ctime_ns + 1 + drift,
+            st_ctime_ns=real.st_ctime_ns + 1,
             st_birthtime_ns=getattr(real, "st_birthtime_ns", 0),
         )
 
@@ -676,27 +670,20 @@ class _WindowsOsView:
         )
 
 
-@pytest.mark.parametrize(
-    ("birthtime_drift", "change_drift"),
-    [(0, 0), (1, 0), (0, 1)],
-    ids=["same-file", "drifted", "changed-during-read"],
-)
+@pytest.mark.parametrize("birthtime_drift", [0, 1], ids=["same-file", "drifted"])
 def test_windows_os_semantics_read_the_archive_and_keep_the_identity_check(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     birthtime_drift: int,
-    change_drift: int,
 ) -> None:
     # Runs the nt branches on any host, so POSIX runs of this file (laned in
     # dreams-tracking, round 21) cover them; the tests above reach them only
     # on a Windows host.
     archive, _tool_value = _valid_archive(tmp_path)
     raw = archive.read_bytes()
-    monkeypatch.setattr(
-        importer_module, "os", _WindowsOsView(birthtime_drift, change_drift)
-    )
+    monkeypatch.setattr(importer_module, "os", _WindowsOsView(birthtime_drift))
 
-    if birthtime_drift == change_drift == 0:
+    if birthtime_drift == 0:
         assert importer_module._read_regular_archive(archive) == raw
     else:
         with pytest.raises(ToolPackError) as raised:

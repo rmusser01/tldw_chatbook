@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-21 13:30
-updated_date: 2026-11-22 20:03
+updated_date: 2026-11-22 20:45
 labels:
 - tool-packs
 - windows
@@ -36,7 +36,6 @@ The receipt store's separate Windows failure (C1) is handled in PR #3684 and is 
 - [x] #3 A path whose identity differs from the descriptor that was read is refused with `archive_invalid` on every platform, and the test proves the identity comparison is reached
 - [x] #4 The new regression tests are not platform-skipped
 - [x] #5 Against `dev` on Windows, the touched test files show no new failures, and the 25 archive-reader tests pass across repeated runs (one also needs PR #3684's receipt store)
-- [x] #6 On native Windows, an archive written in place during the read (fstat's ChangeTime moves between the two descriptor reads) is refused with `archive_invalid` (added 2026-11-22 from the port's review)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -103,5 +102,5 @@ So `O_BINARY` ships in the same change. The triage's C4 makes the same fix in `p
 - **Review fixes (2026-11-22).**
   - **O_BINARY pin:** red with `O_BINARY` dropped from the importer (3 of 3 cases: "the archive was opened without O_BINARY").
   - **Module-scoped `stat`:** the two cherry-picked identity tests now replace `stat` on the importer's own `os` view, not the global `os.stat`, keeping their assertions.
-  - **AC #6 hardening:** on `nt` the reader also compares fstat's `st_ctime_ns` before and after the read. The new `changed-during-read` case failed with DID NOT RAISE before the change and passes after it. `test_import_safety.py` is 50 of 50.
+  - **ChangeTime hardening reverted (coordinator decision, second review).** The first review suggested also comparing fstat's `st_ctime_ns` before and after the read on `nt`; it was added and then removed. It changed the reader after the native Windows evidence was taken, was only shown with simulated `nt` semantics, and could refuse a plain read on real Windows if anything (for example a sync client) moves ChangeTime mid-read. The manifest and content digests and the commit-time re-read already catch torn bytes. The shipped reader is the original PR's, so the Windows evidence above still describes it.
 <!-- SECTION:NOTES:END -->
