@@ -24217,22 +24217,23 @@ async def test_library_shell_blank_note_typed_then_deleted_all_is_gc_from_real_d
         )
 
         _press_note_back(screen)
-        for _ in range(150):
-            if (
-                await app.notes_scope_service.count_notes(
-                    scope="local_note", user_id="default_user"
-                )
-                == 0
-            ):
-                break
-            await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                "A blank note typed into and then emptied out again was "
-                "not GC'd -- an empty 'Untitled' row survived, exactly "
-                "what AC#5 forbids."
+        # Back awaits the GC delete before it resets the view to the list, so
+        # once the list shows, the count is final.
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.view == "list",
+            message="Back never returned to the list view.",
+        )
+        assert (
+            await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
             )
-        assert screen._notes_state.view == "list"
+            == 0
+        ), (
+            "A blank note typed into and then emptied out again was "
+            "not GC'd -- an empty 'Untitled' row survived, exactly "
+            "what AC#5 forbids."
+        )
         assert screen._notes_state.session_blank_id is None
 
 
@@ -25264,9 +25265,13 @@ async def _enter_task8_editor_state(screen, pilot, state: str) -> None:
         body.text += "\nnew local edit"
         await pilot.pause()
         screen.query_one("#library-note-save").press()
+        # The coordinator records the conflict before the UI applies the save outcome.
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_session.snapshot.in_conflict,
+            lambda: (
+                screen._library_note_session.snapshot.in_conflict
+                and screen.query_one("#library-note-conflict-region").display
+            ),
             message="Conflict geometry state never appeared.",
         )
     elif state == "delete-confirmation":
@@ -34885,9 +34890,13 @@ async def test_library_note_escape_hierarchy_cannot_bypass_conflict() -> None:
         await pilot.pause()
         _bump_note_version_externally(app.notes_scope_service, "n-1")
         screen.query_one("#library-note-save").press()
+        # The coordinator records the conflict before the UI applies the save outcome.
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_note_session.snapshot.in_conflict,
+            lambda: (
+                screen._library_note_session.snapshot.in_conflict
+                and screen.query_one("#library-note-conflict-region").display
+            ),
             message="Visible Save did not surface the expected conflict.",
         )
 
@@ -35026,13 +35035,19 @@ async def test_library_note_pilot_conflict_can_originate_from_every_region(
 
         _bump_note_version_externally(app.notes_scope_service, "n-1")
         screen.query_one("#library-note-save").press()
+        # The coordinator records the conflict before the UI applies the save outcome.
         await _wait_for_condition(
             pilot,
             lambda: bool(
                 screen._library_note_session.snapshot
                 and screen._library_note_session.snapshot.in_conflict
+                and screen.query_one("#library-note-conflict-region").display
             ),
-            message=f"{origin} did not surface its save conflict.",
+            message=lambda: (
+                f"{origin} did not surface its save conflict (in_conflict="
+                f"{bool(screen._library_note_session.snapshot and screen._library_note_session.snapshot.in_conflict)!r}, "
+                f"region_displayed={bool(screen.query('#library-note-conflict-region')) and screen.query_one('#library-note-conflict-region').display!r})."
+            ),
         )
 
         snapshot = screen._library_note_session.snapshot
