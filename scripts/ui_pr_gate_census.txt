@@ -3991,3 +3991,15 @@ Tests/UI/test_console_library_auto_outcome.py::test_shelf_action_on_a_timed_out_
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[retry-library-search]
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[send-once-without-library]
 Tests/UI/test_console_library_auto_outcome.py::test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says[cancel-send]
+# TASK-33621.4, TASK-33620.1 (2026-11-22, review of the readiness-copy branch):
+# Send reads Held at 80 and 160 columns, and a Held Send names the stop over
+# any other blocker; an agent chat reads Ready, then May pause, and its send
+# holds; a prefill, staged or history images and unmodelled memory shapes
+# count and only may pause. Serially, plain flags, load ~10: Held 2 x 5.6 s,
+# agreement 5 x <1 s, agent chat 13.0 s, prefill/staged 3.3 s, the rest <1 s.
+Tests/UI/test_console_emergency_stop_hold.py::test_send_reads_held_at_every_width_and_send_again_once_lifted
+Tests/UI/test_console_emergency_stop_hold.py::test_a_held_send_names_the_stop_over_any_other_blocker
+Tests/UI/test_console_compaction_hold_flow.py::test_a_default_agent_chat_reads_ready_then_may_pause_and_the_send_holds
+Tests/UI/test_console_compaction_forecast.py::test_a_prefill_or_staged_image_is_counted_and_never_reads_a_false_ready
+Tests/UI/test_console_compaction_forecast.py::test_history_images_count_at_the_send_estimate_and_make_it_may
+Tests/UI/test_console_compaction_forecast.py::test_an_unmodelled_memory_shape_counts_its_turns_in_full
