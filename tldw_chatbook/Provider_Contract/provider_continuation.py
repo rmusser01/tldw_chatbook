@@ -31,53 +31,10 @@ from tldw_chatbook.Utils.input_validation import (
 )
 
 
-# Typing only: a Literal cannot be computed. A parity test pins it to
-# provider_registry.CONTINUATION_PROVIDER_KEYS, which the runtime checks use.
-ContinuationProvider = Literal[
-    "moonshot",
-    "zai",
-    "deepseek",
-    "databricks",
-    # ADR-179 Phase 2 Task 6: the engine-driven keys join the canonical
-    # format (custom-hosted is the swapped custom-endpoint execution key;
-    # together/fireworks/cerebras are the Task 5 presets).
-    "custom-hosted",
-    "together",
-    "fireworks",
-    "cerebras",
-    # TASK-33201 doc-derived presets.
-    "sambanova",
-    "nvidia",
-    "deepinfra",
-    "nebius",
-    "novita",
-    "minimax",
-    # TASK-33350 model-maker presets.
-    "mimo",
-    "tokenhub",
-    "byteplus",
-    "stepfun",
-    # TASK-33351 gateway/host presets.
-    "vercel",
-    "zenmux",
-    "kilo",
-    "siliconflow",
-    "baseten",
-    "gmi",
-    "ollama_cloud",
-    "upstage",
-    "arcee",
-    "qianfan",
-    "nous",
-    "venice",
-    "meta",
-    # TASK-33505..33509 follow-up presets.
-    "azure",
-    "wandb",
-    "cloudflare",
-    "opencode_zen",
-    "commandcode",
-]
+# The closed set is provider_registry.CONTINUATION_PROVIDER_KEYS (derived from
+# the records), which _PAIRINGS enforces when a checkpoint is parsed. A Literal
+# would have to repeat it by hand for every new preset (TASK-36946.3).
+ContinuationProvider = str
 ContinuationProtocol = Literal["chat_completions", "responses"]
 ContinuationState = Literal["active", "complete"]
 ContinuationCallState = Literal["pending", "executing", "completed", "failed"]

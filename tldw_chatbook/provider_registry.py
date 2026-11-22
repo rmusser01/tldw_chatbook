@@ -26,7 +26,10 @@ test in ``Tests/test_provider_registry.py`` unless noted):
   ``Chat/provider_catalog.py::provider_display_name`` (TASK-33002.5).
 - ``native_tools``: ``Agents/native_tools.py::NATIVE_TOOLS_PROVIDERS``.
 - ``auto_refresh``: ``LLM_Provider_Catalog/model_catalog_settings.py::
-  AUTO_REFRESH_PROVIDER_LIST_KEYS``.
+  AUTO_REFRESH_PROVIDER_LIST_KEYS`` (whose engine-preset entries now derive
+  from this field, TASK-36946.3).
+- ``seed_models``: the engine presets' ``[providers]`` lists, moved here from
+  the default config template, which now renders them (TASK-36946.3).
 - ``classification`` cloud keys: ``config.py::_cloud_provider_keys``.
 
 ``reasoning_effort`` is True only where the hosted chat path consumes a
@@ -37,6 +40,7 @@ xAI/Grok is deliberately absent (ADR-179: maintainer decision).
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from typing import Mapping
@@ -89,6 +93,9 @@ class ProviderRecord:
             resolution after explicit kwargs and the settings table.
         pricing_seeds: Seed per-model pricing (USD input/output token
             pairs) for the pricing catalog; empty when pricing is deferred.
+        seed_models: An engine preset's ``[providers]`` model list in the
+            default config (``ENGINE_PRESET_MODEL_LISTS_TOML``); empty when
+            the list fills by discovery.
         engine_driven: Whether dispatch executes this provider through the
             strict hosted engine (``hosted_provider_engine``) instead of a
             hand-written ``LLM_Calls`` module.
@@ -184,6 +191,7 @@ class ProviderRecord:
     auto_refresh: bool = False
     settings_defaults: Mapping[str, object] = field(default_factory=dict)
     pricing_seeds: Mapping[str, tuple[float, float]] = field(default_factory=dict)
+    seed_models: tuple[str, ...] = ()
     # --- preset fields (engine-driven providers only) ---
     engine_driven: bool = False
     base_url_suffix: str | None = None
@@ -649,6 +657,18 @@ MINIMAX = ProviderRecord(
         **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},
+    # [providers] seed: no /models route; the `model` enum of its chat API reference, 2026-09-27.
+    seed_models=(
+        "MiniMax-M3",
+        "MiniMax-M3.1-Flash-Preview",
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+        "MiniMax-M2.5",
+        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2.1",
+        "MiniMax-M2.1-highspeed",
+        "MiniMax-M2",
+    ),
     engine_driven=True,
     base_url_suffix=None,
     finish_provider_errors=frozenset({"content_filter"}),
@@ -713,6 +733,14 @@ MIMO = ProviderRecord(
         "timeout": 300,
     },
     pricing_seeds={},
+    # [providers] seed: no usable models route; its documented model IDs.
+    seed_models=(
+        "mimo-v2.6-flash",
+        "mimo-v2.6-pro",
+        "mimo-v2.6-pro-ultraspeed",
+        "mimo-v2.5-pro",
+        "mimo-v2.5",
+    ),
     engine_driven=True,
     base_url_suffix=None,
     finish_terminal=frozenset({"stop", "tool_calls", "length", "repetition_truncation"}),
@@ -753,6 +781,11 @@ BYTEPLUS = ProviderRecord(
         **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},
+    # [providers] seed: no usable models route; it also accepts your own ep-... endpoint IDs.
+    seed_models=(
+        "seed-2-0-lite-260228",
+        "seed-1-8-251228",
+    ),
     engine_driven=True,
     base_url_suffix=None,
     finish_provider_errors=frozenset({"content_filter"}),
@@ -1099,6 +1132,15 @@ UPSTAGE = ProviderRecord(
         **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},
+    # [providers] seed: no models route; its API reference.
+    seed_models=(
+        "solar-pro4",
+        "solar-mini4",
+        "solar-pro3",
+        "solar-pro2",
+        "solar-mini",
+        "syn-pro",
+    ),
     engine_driven=True,
     base_url_suffix=None,
     choice_allowances=frozenset({"logprobs"}),
@@ -1162,6 +1204,15 @@ QIANFAN = ProviderRecord(
         **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},
+    # [providers] seed: no models route; its API reference.
+    seed_models=(
+        "ernie-5.1",
+        "ernie-5.0",
+        "ernie-5.0-thinking-latest",
+        "ernie-4.5-turbo-128k",
+        "ernie-4.5-turbo-32k",
+        "ernie-3.5-8k",
+    ),
     engine_driven=True,
     base_url_suffix=None,
     finish_provider_errors=frozenset({"content_filter"}),
@@ -1401,6 +1452,19 @@ CLOUDFLARE = ProviderRecord(
         **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},
+    # [providers] seed: no models route; Chat Completions models from its docs, 2026-09-29.
+    seed_models=(
+        "@cf/moonshotai/kimi-k2.6",
+        "@cf/zai-org/glm-5.3",
+        "@cf/zai-org/glm-5.3-flash",
+        "@cf/deepseek-ai/deepseek-v4-pro-0813",
+        "@cf/deepseek-ai/deepseek-v4-flash-0731",
+        "@cf/openai/gpt-oss-120b",
+        "@cf/qwen/qwen3.8-27b",
+        "@cf/google/gemma-4-26b-a4b-it",
+        "@cf/meta/llama-4-scout-17b-16e-instruct",
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    ),
     engine_driven=True,
     base_url_suffix=None,
     choice_allowances=frozenset({"logprobs"}),
@@ -1442,6 +1506,24 @@ OPENCODE_ZEN = ProviderRecord(
         **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},
+    # [providers] seed: /models mixes protocols; Chat Completions models from its docs, 2026-09-29.
+    seed_models=(
+        "qwen3.8-max",
+        "deepseek-v4.1-flash",
+        "deepseek-v4-pro",
+        "deepseek-v4-flash",
+        "minimax-m3",
+        "minimax-m2.7",
+        "glm-5.3",
+        "glm-5.3-flash",
+        "glm-5.2",
+        "kimi-k3",
+        "kimi-k2.7-code",
+        "kimi-k2.6",
+        "big-pickle",
+        "mimo-v2.6-flash-free",
+        "nemotron-3-ultra-free",
+    ),
     engine_driven=True,
     base_url_suffix=None,
     response_allowances=frozenset({"cost"}),
@@ -1477,6 +1559,24 @@ COMMANDCODE = ProviderRecord(
         **_HOSTED_TRANSPORT_DEFAULTS,
     },
     pricing_seeds={},
+    # [providers] seed: /models lists Messages-only rows; Chat Completions models, 2026-09-29.
+    seed_models=(
+        "gpt-5.5",
+        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4.1-flash",
+        "Qwen/Qwen3.7-Max",
+        "Qwen/Qwen3.6-Plus",
+        "moonshotai/Kimi-K3",
+        "moonshotai/Kimi-K2.6",
+        "zai-org/GLM-5.3",
+        "zai-org/GLM-5.1",
+        "MiniMaxAI/MiniMax-M3",
+        "MiniMaxAI/MiniMax-M2.7",
+        "stepfun/Step-3.5-Flash",
+        "xiaomi/mimo-v2.5-pro",
+        "google/gemini-3.5-flash",
+    ),
     engine_driven=True,
     base_url_suffix=None,
     message_allowances=frozenset({"refusal", "annotations"}),
@@ -1788,6 +1888,15 @@ NATIVE_TOOLS_KEYS: frozenset[str] = frozenset(
 )
 #: Every dispatch key (canonical + aliases) — the sensitive-audit universe.
 AUDITED_ENDPOINT_KEYS: frozenset[str] = frozenset(RECORDS_BY_KEY) | frozenset(ALIASES)
+#: The engine presets' ``[providers]`` lines, in record order. ``config.py``
+#: puts them in the default config template in place of its
+#: ``# __ENGINE_PRESET_MODEL_LISTS__`` line, so a new preset needs no
+#: ``[providers]`` edit there (TASK-36946.3).
+ENGINE_PRESET_MODEL_LISTS_TOML: str = "".join(
+    f"{record.config_key} = {json.dumps(list(record.seed_models), ensure_ascii=False)}\n"
+    for record in ENGINE_RECORDS
+    if record.key != "custom-hosted"  # execution-only: no [providers] list
+)
 
 
 # --- Lookup tables derived from the records (TASK-36946.1) -------------------

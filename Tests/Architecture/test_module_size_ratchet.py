@@ -978,7 +978,9 @@ _BUDGETS: dict[str, int] = {
     # the v1-appended shapes on QwenCloud's China host and Cohere's old host.
     # 2026-11-21, TASK-42131: 8913 -> 8928 (+15) -- one helper runs every
     # load-time migration for the full load and both rebuilds from a raw mapping.
-    "tldw_chatbook/config.py": 8928,
+    # 2026-11-22, TASK-36946.3: 8928 -> 8929 (+1) -- the import of the engine
+    # presets' registry-rendered [providers] lines.
+    "tldw_chatbook/config.py": 8929,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.
     # 2026-11-07, TASK-36947.6 (owner rule 2026-10-04: raise by the change's own lines):

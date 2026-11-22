@@ -7,14 +7,13 @@ map hit for the hand-written policies, registry-driven
 ``HostedPresetFinishPolicy`` for engine-driven providers -- instead of the
 bare provider-class lookup.
 """
-import typing
-
 from tldw_chatbook.Chat.console_provider_gateway import resolve_finish_policy
-from tldw_chatbook.Chat.provider_continuation import _PAIRINGS, ContinuationProvider
+from tldw_chatbook.Chat.provider_continuation import _PAIRINGS
+from tldw_chatbook.provider_registry import CONTINUATION_PROVIDER_KEYS
 
 
 def test_continuation_provider_and_pairings_cover_databricks():
-    assert "databricks" in typing.get_args(ContinuationProvider)
+    assert "databricks" in CONTINUATION_PROVIDER_KEYS
     assert ("databricks", "chat_completions") in _PAIRINGS
 
 

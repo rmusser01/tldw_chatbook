@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
 
+from tldw_chatbook.provider_registry import PROVIDERS_REQUIRING_API_KEY_KEYS
+
 Locality = Literal["local", "cloud"]
 CheckKind = Literal["model_list", "authenticated", "none"]
 
@@ -43,48 +45,12 @@ KEY_URLS: dict[str, str] = {
     "huggingface": "huggingface.co/settings/tokens",
 }
 
-#: Keyed providers whose key page was not confirmed from their docs. They
-#: show the dashboard fallback; add a row to ``KEY_URLS`` (and drop it here)
-#: once the page is sourced, never a guessed URL (review provider-25).
-KEY_URL_UNCONFIRMED: frozenset[str] = frozenset(
-    {
-        "arcee",
-        "azure",
-        "baseten",
-        "byteplus",
-        "cerebras",
-        "cloudflare",
-        "commandcode",
-        "databricks",
-        "deepinfra",
-        "fireworks",
-        "gmi",
-        "kilo",
-        "meta",
-        "mimo",
-        "minimax",
-        "moonshot",
-        "nebius",
-        "nous",
-        "novita",
-        "nvidia",
-        "ollama_cloud",
-        "opencode_zen",
-        "qianfan",
-        "qwencloud",
-        "sambanova",
-        "siliconflow",
-        "stepfun",
-        "together",
-        "tokenhub",
-        "upstage",
-        "venice",
-        "vercel",
-        "wandb",
-        "zai",
-        "zenmux",
-    }
-)
+#: Keyed providers whose key page was not confirmed from their docs: every
+#: keyed provider without a ``KEY_URLS`` row (registry-derived, so a new preset
+#: needs no edit here, TASK-36946.3). They show the dashboard fallback; add a
+#: row to ``KEY_URLS`` once the page is sourced, never a guessed URL (review
+#: provider-25).
+KEY_URL_UNCONFIRMED: frozenset[str] = PROVIDERS_REQUIRING_API_KEY_KEYS.difference(KEY_URLS)
 
 #: Per-account base URLs (``provider_registry.PROVIDERS_REQUIRING_BASE_URL_KEYS``):
 #: the field's label and an example, shown above the key (review provider-05).

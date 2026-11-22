@@ -43,9 +43,14 @@ def test_every_keyed_row_has_a_sourced_key_url_or_is_on_the_allowlist(entry):
 
 
 def test_the_allowlist_names_only_keyed_catalog_rows():
+    from tldw_chatbook.provider_registry import PROVIDERS_REQUIRING_API_KEY_KEYS
+
     keyed = {entry.readiness_key for entry in _CATALOG if entry.requires_api_key}
     assert KEY_URL_UNCONFIRMED <= keyed
     assert not set(KEY_URLS) - keyed
+    # TASK-36946.3: the allowlist is derived, so a new keyed preset falls back
+    # to the dashboard copy with no edit to the setup facts.
+    assert KEY_URL_UNCONFIRMED == PROVIDERS_REQUIRING_API_KEY_KEYS - set(KEY_URLS)
 
 
 def test_the_catalog_record_carries_the_facts_the_form_needs():

@@ -702,7 +702,9 @@ def test_propagation_follows_imports_not_names():
 # unused api_url.
 # TASK-42002: a fresh config carries config schema version 2.
 # TASK-42153: and now version 3 (config migration 3).
-_TEMPLATE_SHA256 = "2199410528eeca0e5de3fadd612c987867d87531d9db0c5c6fc0b9500d4448d9"
+# TASK-36946.3: the engine presets' [providers] lines became one placeholder,
+# rendered from their registry records.
+_TEMPLATE_SHA256 = "b73d1cb4a7fa6cf8871929273a09ce3f06590c9c279d5f45f5f9bcd19b35e9f1"
 _TEMPLATE_RELATIVE = "tldw_chatbook/Config_Files/default_config.toml"
 
 
@@ -728,8 +730,13 @@ def test_config_toml_content_is_the_data_file_with_placeholders_resolved():
     expected = raw.replace(
         "__DEFAULT_TRANSCRIPTION_PROVIDER__", config._default_stt_provider_for_platform()
     ).replace("__DEFAULT_SPLASH_DURATION__", str(config.DEFAULT_SPLASH_DURATION_SECONDS))
+    # TASK-36946.3: the engine presets' [providers] lines render from the registry.
+    placeholder = "# __ENGINE_PRESET_MODEL_LISTS__\n"
+    assert raw.count(placeholder) == 1
+    expected = expected.replace(placeholder, config.ENGINE_PRESET_MODEL_LISTS_TOML)
     assert config.CONFIG_TOML_CONTENT == expected
     assert "__DEFAULT_" not in config.CONFIG_TOML_CONTENT
+    assert "__ENGINE_PRESET_" not in config.CONFIG_TOML_CONTENT
 
 
 def test_config_py_no_longer_embeds_the_template():

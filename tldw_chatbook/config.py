@@ -65,6 +65,7 @@ from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
 from tldw_chatbook.provider_registry import (  # noqa: F401 - normalize_provider_config_key is re-exported
     ALL_RECORDS,
     CLOUD_PROVIDER_CONFIG_KEYS,
+    ENGINE_PRESET_MODEL_LISTS_TOML,
     RECORDS_BY_KEY,
     _ENGINE_CONFIG_KEY_ALIASES,
     normalize_provider_config_key,
@@ -3771,10 +3772,10 @@ CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
 # Same single-substitution discipline for the splash duration (PR #2329):
 # the placeholder keeps the literal out of the template and every reader --
 # the widget, the app fallback, the Settings viewer -- shares the one
-# constant from Constants.py.
+# constant from Constants.py. The engine presets' [providers] lines come from the registry.
 CONFIG_TOML_CONTENT = CONFIG_TOML_CONTENT.replace(
     "__DEFAULT_SPLASH_DURATION__", str(DEFAULT_SPLASH_DURATION_SECONDS)
-)
+).replace("# __ENGINE_PRESET_MODEL_LISTS__\n", ENGINE_PRESET_MODEL_LISTS_TOML)
 
 try:
     DEFAULT_CONFIG_FROM_TOML: Dict[str, Any] = tomllib.loads(CONFIG_TOML_CONTENT)
