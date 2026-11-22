@@ -4,7 +4,7 @@ title: "The Console live report save test is red on dev because its spawned sub-
 status: To Do
 assignee: []
 created_date: 2026-11-22 22:10
-updated_date: 2026-11-22 22:10
+updated_date: 2026-11-22 22:40
 labels:
 - follow-up
 - console
@@ -32,7 +32,7 @@ Found during round 21 of the follow-up burn-down (2026-11-22): one of the 12 loc
 
 The other three reds in this file are the known `RecoveryRequired: raw_source_selection_changed` local trap and are not part of this task.
 
-**Coordination.** `Agents/run_hooks.py` and `.github/workflows/derived-artifacts.yml` are under open work in another session: coordinate with tldw-chatbook-30 (#3683 / TASK-42281) before editing either.
+**Coordination.** `Agents/run_hooks.py` and `.github/workflows/derived-artifacts.yml` are under open work in another session: coordinate with tldw-chatbook-30's open PRs (#3656, #3683, #3688) and its coming TASK-42281 lanes PR before editing either.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

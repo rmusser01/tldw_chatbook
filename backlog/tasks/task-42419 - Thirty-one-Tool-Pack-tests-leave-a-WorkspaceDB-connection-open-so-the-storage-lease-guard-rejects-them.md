@@ -4,7 +4,7 @@ title: "Thirty-one Tool Pack tests leave a WorkspaceDB connection open, so the s
 status: To Do
 assignee: []
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-22 21:17
+updated_date: 2026-11-22 22:40
 labels:
 - follow-up
 - tests
@@ -37,5 +37,5 @@ Other Workspaces tests close theirs with `registry.db.close()` (for example `Tes
 <!-- AC:BEGIN -->
 - [ ] #1 Every WorkspaceDB the Tool Pack tests open is closed when its test ends, including when the test fails
 - [ ] #2 `Tests/Tool_Packs` passes with `--storage-lease-guard` (serial and at `-n 4`) with no teardown errors
-- [ ] #3 The lane note in `derived-artifacts.yml` that says Tool_Packs cannot run under the lease guard is updated to match (coordinate with tldw-chatbook-30, #3683 / TASK-42281, before editing that workflow)
+- [ ] #3 The lane note in `derived-artifacts.yml` that says Tool_Packs cannot run under the lease guard is updated to match (coordinate with tldw-chatbook-30's open PRs (#3656, #3683, #3688) and its coming TASK-42281 lanes PR before editing that workflow)
 <!-- AC:END -->

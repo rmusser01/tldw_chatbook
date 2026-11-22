@@ -4,7 +4,7 @@ title: "Four Console chat-start tests on no PR lane are red on dev because the n
 status: To Do
 assignee: []
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-22 22:10
+updated_date: 2026-11-22 22:40
 labels:
 - follow-up
 - console
@@ -37,7 +37,7 @@ TASK-41958 (open) records `OriginalSourceChanged: original agent storage source 
 
 The other local reds from the same run are filed as their own round-21 tasks (the agent-progress live report save, the three staged-evidence tests and the read-barrier `same_session_drain` case); three agent-progress nodes are the known `RecoveryRequired: raw_source_selection_changed` trap.
 
-**Coordination.** Laning these nodes edits `.github/workflows/derived-artifacts.yml`: coordinate with tldw-chatbook-30 (#3683 / TASK-42281) before editing it.
+**Coordination.** Laning these nodes edits `.github/workflows/derived-artifacts.yml`: coordinate with tldw-chatbook-30's open PRs (#3656, #3683, #3688) and its coming TASK-42281 lanes PR before editing it.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

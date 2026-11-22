@@ -4,7 +4,7 @@ title: "The recovered-suites PR lane runs within about five minutes of its 30-mi
 status: To Do
 assignee: []
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-22 21:17
+updated_date: 2026-11-22 22:40
 labels:
 - follow-up
 - ci
@@ -36,7 +36,7 @@ Overall: 122 jobs, median 20.9, 90th percentile 23.4, max 25.7 (run 44727522321,
 
 The job's own structure suggests a split: one invocation runs the sandboxed suites first, then the `bootstrap_profile` ones, which must not be followed by a sandboxed suite that reads config in-process (TASK-32873). Each block could be its own job. Each new job is one more runner per PR (ADR-103's notes), so the split is an owner decision; moving targets to lanes with room is the alternative.
 
-**Coordination.** Another session has open work on `.github/workflows/derived-artifacts.yml` and `Tests/CI/test_ci_queue_pressure_contract.py`: coordinate with tldw-chatbook-30 (#3683 / TASK-42281) before editing either.
+**Coordination.** Another session has open work on `.github/workflows/derived-artifacts.yml` and `Tests/CI/test_ci_queue_pressure_contract.py`: coordinate with tldw-chatbook-30's open PRs (#3656, #3683, #3688) and its coming TASK-42281 lanes PR before editing either.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

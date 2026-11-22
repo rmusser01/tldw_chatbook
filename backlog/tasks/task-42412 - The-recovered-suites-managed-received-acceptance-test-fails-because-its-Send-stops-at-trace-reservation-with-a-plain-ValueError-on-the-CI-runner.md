@@ -4,7 +4,7 @@ title: "The recovered-suites managed received acceptance test fails because its 
 status: To Do
 assignee: []
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-22 21:17
+updated_date: 2026-11-22 22:40
 labels:
 - follow-up
 - ci
@@ -38,7 +38,7 @@ So raising the bound would not help. 767c15cffb (2026-11-19) already turned `set
 
 **Where the ValueError comes from.** `console_send_diagnostics.py:140-168` walks the cause chain and records the innermost exception's type. A `ValueError` whose single argument is a known trace-failure code would be recorded under that code, and a `TraceReservationRefused` or `TraceSurfaceChangeRefused` would be recorded under its own class name (`console_trace_errors.py:39-56`). So the root is a plain `ValueError` with some other message, raised inside `_reserve_trace_call` (`Chat/console_provider_gateway.py:3582-3671`), whose broad `except Exception` turns it into `TraceCallPersistenceError(reservation_status="unknown")`. The diagnostic records only the type, never the message, and the stage's `entered` INFO line is not in the child's captured output, so the CI logs cannot say more.
 
-**Coordination.** If the fix touches `.github/workflows/derived-artifacts.yml`, coordinate with tldw-chatbook-30 (#3683 / TASK-42281) before editing it.
+**Coordination.** If the fix touches `.github/workflows/derived-artifacts.yml`, coordinate with tldw-chatbook-30's open PRs (#3656, #3683, #3688) and its coming TASK-42281 lanes PR before editing it.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
