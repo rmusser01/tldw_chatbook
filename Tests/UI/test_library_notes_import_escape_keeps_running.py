@@ -59,10 +59,16 @@ from tldw_chatbook.Notes.note_import_executor import (
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.UI.Library_Modules.library_skills_browse_controller import (
+    LibrarySkillsBrowseController,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    LIBRARY_ADAPTIVE_READER_GRIP_CLASS,
+)
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
@@ -266,6 +272,19 @@ async def _review_the_folder(host, screen, pilot) -> None:
         lambda: _shown(screen, "#note-import-import")
         and not screen.query("#note-import-import").first(Button).disabled,
         "the check to reach its review",
+    )
+
+
+async def _clear_focus(screen, pilot) -> None:
+    """Leave the Library with nothing focused, failing closed if it re-lands.
+
+    A restore parked behind a recompose could otherwise put focus back before
+    F1 opens, and the pin would test a focused resume instead.
+    """
+    screen.set_focus(None)
+    await pilot.pause()
+    assert screen.focused is None, (
+        f"a parked restore re-landed focus on {getattr(screen.focused, 'id', None)!r}"
     )
 
 
@@ -662,8 +681,12 @@ async def test_f1_closing_over_an_unfocused_import_keeps_focus_in_library(
             )
             await pilot.pause()
 
-            screen.set_focus(None)
+            await _clear_focus(screen, pilot)
             await _f1_shortcuts(host, screen, pilot)
+            # Review R0 M-7: the progress region, never Cancel import.
+            assert getattr(screen.focused, "id", None) == "note-import-body", (
+                f"F1's close landed {getattr(screen.focused, 'id', None)!r}"
+            )
             await pilot.press("escape")
             await _until(
                 pilot,
@@ -685,14 +708,14 @@ async def test_f1_closing_over_an_unfocused_import_keeps_focus_in_library(
 async def test_f1_closing_over_an_unfocused_list_lands_its_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The same resume rule outside Notes: focus comes back into Library.
+    """The same resume rule outside Notes: a list lands its own entry row.
 
     Before the fix, Conversations (like Media, Skills, Collections, Ingest
     and New note) ended on ``nav-home`` when F1 closed over nothing focused.
-    The resume lands the list-entry channel (its first row), but the resume's
-    own list reload can still replace that row and leave Textual's reset on
-    the pane grip, which this channel does not tolerate outside Notes. So
-    the pin holds the fix's contract, inside Library content, not one row.
+    The one tolerated miss is the pane grip: the resume's own list reload can
+    replace the row just focused, and Textual's reset parks focus there --
+    the list-entry channel outside Notes does not take that back (seen once
+    in 26 loaded runs).
     """
     profile = _Profile(tmp_path, monkeypatch)
     host = profile.host()
@@ -708,18 +731,122 @@ async def test_f1_closing_over_an_unfocused_list_lands_its_entry(
                 lambda: f"the entry row: {getattr(screen.focused, 'id', None)!r}",
             )
             await pilot.pause()
-            screen.set_focus(None)
+            await _clear_focus(screen, pilot)
             await _f1_shortcuts(host, screen, pilot)
             await _until(
                 pilot,
                 lambda: screen.focused is not None
-                and any(
-                    node.id == "screen-content" for node in screen.focused.ancestors
+                and (
+                    screen.focused.id == "library-conversation-row-0"
+                    or screen.focused.has_class(LIBRARY_ADAPTIVE_READER_GRIP_CLASS)
                 ),
                 lambda: (
-                    "F1's close to land focus inside Library content, found "
+                    "F1's close to land the Conversations entry row, found "
                     f"{getattr(screen.focused, 'id', None)!r}"
                 ),
             )
     finally:
+        profile.close()
+
+
+async def test_f1_closing_over_unfocused_folder_files_lands_its_arrival_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Folder files lands where arriving on it does, never the source toggle.
+
+    Review r11n I-1: the resume landing's last resort was the first content
+    control, Notes' "Database" source toggle, where a blind Enter leaves
+    Folder files. With no folder linked, arrival lands Choose folder.
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _press(host, screen, pilot, "#library-row-browse-notes")
+            await _press(host, screen, pilot, "#library-notes-source-files")
+            await _until(
+                pilot,
+                lambda: screen._file_notes_active()
+                and getattr(screen.focused, "id", None) == "file-notes-choose-root",
+                lambda: f"the arrival, found {getattr(screen.focused, 'id', None)!r}",
+            )
+            await pilot.pause()
+            await _clear_focus(screen, pilot)
+            await _f1_shortcuts(host, screen, pilot)
+            await _until(
+                pilot,
+                lambda: getattr(screen.focused, "id", None) == "file-notes-choose-root",
+                lambda: (
+                    "F1's close to land Folder files' arrival target, found "
+                    f"{getattr(screen.focused, 'id', None)!r}"
+                ),
+            )
+            assert screen._file_notes_active()
+    finally:
+        profile.close()
+
+
+async def test_f1_closing_over_a_slow_skills_list_lands_its_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A list whose rows outlive the entry window still gets focus back.
+
+    Review r11n I-2: the resume armed the list-entry channel, and the last
+    resort stood down while it was armed. Rows arriving after its 2 s window
+    ended it with nothing landed (it lands from None on Notes only), so
+    focus stayed on None for good. The Skills filter is that route's entry
+    while its page loads.
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    page = threading.Event()
+    service_page = LibrarySkillsBrowseController._service_page
+
+    async def held_page(self, *args, **kwargs):
+        await asyncio.to_thread(page.wait, HOLD)
+        return await service_page(self, *args, **kwargs)
+
+    monkeypatch.setattr(LibrarySkillsBrowseController, "_service_page", held_page)
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _press(host, screen, pilot, "#library-row-browse-skills")
+            await _until(
+                pilot,
+                lambda: screen._library_selected_row_id == "browse-skills"
+                and screen._library_skills_browse_controller.result.status
+                == "loading",
+                "the Skills page to start loading",
+            )
+            await _clear_focus(screen, pilot)
+            await _f1_shortcuts(host, screen, pilot)
+            await _until(
+                pilot,
+                lambda: not screen._library_pending_list_entry_focus,
+                "the list-entry window to end",
+            )
+            await _until(
+                pilot,
+                lambda: getattr(screen.focused, "id", None) == "library-skills-filter",
+                lambda: (
+                    "the Skills filter while its page loads, found "
+                    f"{getattr(screen.focused, 'id', None)!r}"
+                ),
+            )
+            page.set()
+            await _until(
+                pilot,
+                lambda: screen._library_skills_browse_controller.result.status
+                != "loading"
+                and getattr(screen.focused, "id", None) == "library-skills-filter",
+                lambda: (
+                    "the loaded Skills list to keep its filter, found "
+                    f"{getattr(screen.focused, 'id', None)!r}"
+                ),
+            )
+    finally:
+        page.set()
         profile.close()

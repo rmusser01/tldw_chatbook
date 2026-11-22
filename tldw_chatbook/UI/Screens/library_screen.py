@@ -20778,6 +20778,12 @@ class LibraryScreen(BaseAppScreen):
     def _restore_library_lifecycle_focus(self, selector: str) -> None:
         """Restore settlement focus only while the user has not moved it."""
         if self.focused is None:
+            # Review r11n M-1: a landing action (the hub's Import) is restored
+            # in place; the rail lookup alone sent it to the rail's Import.
+            found = self.query(selector) if selector else ()
+            if found and found.first() in self.focus_chain:
+                self.set_focus(found.first(), scroll_visible=False)
+                return
             self._focus_library_rail_action(selector)
 
     async def _call_library_onboarding_owner(
