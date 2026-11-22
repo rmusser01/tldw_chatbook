@@ -47,10 +47,12 @@ from ...Chat.console_trace_projection import ProjectedTraceCall
 from ...Chat.provider_readiness import provider_config_key
 from ...Chat.provider_usage import ProviderUsage
 from ...Widgets.Console import ConsoleSettingsSummary
+from ...Utils.token_counter import NON_TEXT_PART_TOKEN_ESTIMATE
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
     compaction_forecast_rows,
+    compaction_may_pause_reason,
 )
 from ...Widgets.Console.console_status_chips import ConsoleStatusChips
 from ..Console_Modules import console_spend_projection as spend
@@ -175,6 +177,37 @@ def _build_console_inspector_exchanges_loader(
         return await asyncio.to_thread(_read)
 
     return _exchanges_loader
+
+
+def _forecast_history_images(messages: Sequence[Any], memory: Any) -> int:
+    """Image parts on the turns the compaction forecast counts.
+
+    Review B1 (2026-11-22): history media used to drop the forecast. The send
+    charges each image part a flat estimate; so does the forecast, for the
+    turns after a prefix memory's boundary (all turns for any other shape).
+    """
+    from ...Chat.console_context_compaction import EffectiveMemoryKind
+
+    record = memory.memory
+    start = 0
+    if memory.kind is EffectiveMemoryKind.GENERATED_PREFIX and record is not None:
+        start = next(
+            (
+                index + 1
+                for index, message in enumerate(messages)
+                if message.persisted_message_id == record.boundary_message_id
+            ),
+            0,
+        )
+    return sum(
+        len(getattr(message, "attachments", ()) or ())
+        for message in messages[start:]
+        if message.role is not ConsoleMessageRole.SYSTEM
+        and (
+            message.role is not ConsoleMessageRole.ASSISTANT
+            or message.status == "complete"
+        )
+    )
 
 
 class ConsoleContextSpendController:
@@ -623,19 +656,26 @@ class ConsoleContextSpendController:
             accounting = controller.context_breakdown_accounting(session_id)
         except Exception:  # noqa: BLE001 - Preserve optional accounting display fallback.
             accounting = None
-        forecast_tokens, forecast_units = self._console_compaction_forecast_inputs(
-            session_id, settings, overrides, global_overrides, memory
+        forecast_tokens, forecast_units, history_causes = (
+            self._console_compaction_forecast_inputs(
+                session_id, settings, overrides, global_overrides, memory
+            )
         )
-        mandatory = self._console_compaction_mandatory_estimate(
+        mandatory, causes = self._console_compaction_mandatory_estimate(
             session_id,
             settings,
             estimate,
             controller=controller,
         )
+        if mandatory is not None and "tools" in causes and accounting is not None:
+            # Review B1 (2026-11-22): the agent's tools as the last prepared
+            # request carried them; never previewed here (permission reads).
+            mandatory += max(0, int(getattr(accounting, "tool_schema_tokens", 0)))
         caps = spend.model_token_caps_for_display(self._screen, settings)
+        causes = (*causes, *history_causes, *(() if caps is not None else ("limits",)))
         unavailable = ""
         estimated_history = forecast_tokens
-        if forecast_units and (mandatory is None or caps is None):
+        if forecast_units and (mandatory is None or causes):
             unavailable = "Current mandatory input or tool overhead is not measured."
             forecast_tokens = None
         state = build_console_context_control_state(
@@ -667,17 +707,14 @@ class ConsoleContextSpendController:
             and trigger is not None
             and estimated_history >= trigger
         ):
-            # An advisory about the displayed estimate, never an ASK verdict:
-            # unknown mandatory material may make compaction impossible.
+            # An advisory about the displayed estimate, never an ASK verdict.
             # Owner decision 2026-11-20 ("ready, then may pause"): below the
-            # trigger an unmeasured forecast shows nothing; over it, this.
+            # trigger an inexact forecast shows nothing; over it, this.
             state = replace(
                 state,
                 forecast_high_context=True,
-                forecast_unavailable_reason=(
-                    f"the estimated history (~{estimated_history:,} conversation "
-                    "tokens) is over the trigger. Tools and other request input "
-                    "are not counted here, so the send itself checks."
+                forecast_unavailable_reason=compaction_may_pause_reason(
+                    estimated_history, causes
                 ),
             )
         return state
@@ -689,36 +726,53 @@ class ConsoleContextSpendController:
         estimate: ConsoleSettingsContextEstimate,
         *,
         controller: ConsoleChatController,
-    ) -> int | None:
-        """Separate current static input from history; unknown tools stay unknown.
+    ) -> tuple[int | None, tuple[str, ...]]:
+        """Separate current static input from history, naming what is inexact.
 
-        Count only the current prompt, greeting, draft and staged evidence,
-        with the existing display estimator's single framing base. Historical
-        text is not re-tokenized here. Last-request accounting cannot qualify
-        an agent's current tool surface.
-        This never runs hooks, permission readers, or request previews.
+        Count the current prompt, greeting, draft, staged evidence, response
+        prefill and staged attachments (each at the send's flat per-part
+        estimate), with the existing display estimator's single framing base.
+        Historical text is not re-tokenized here. Last-request accounting
+        cannot qualify an agent's current tool surface: the caller adds its
+        tool schemas. This never runs hooks, permission readers, or request
+        previews.
+
+        Returns:
+            ``(tokens, causes)``. ``tokens`` is None only when nothing can be
+            counted (tokenizer cold). ``causes`` names the inputs counted only
+            approximately ("tools", "prefill", "media"); with any, the
+            forecast may pause rather than will (review B1, 2026-11-22: the
+            agent check used to drop the whole static estimate, a false Ready).
         """
         if estimate.used_tokens is None or not spend.console_tokenizer_display_ready(
             self._screen, settings.model, settings.provider
         ):
-            return None
-        if (
-            controller._agent_runtime_enabled and controller._agent_bridge is not None
-        ) or controller._resolve_submit_prefill(session_id)[0]:
-            return None
+            return None, ()
+        causes: list[str] = []
+        if controller._agent_runtime_enabled and controller._agent_bridge is not None:
+            causes.append("tools")
+        prefill = controller._resolve_submit_prefill(session_id)[0]
+        if prefill:
+            causes.append("prefill")
         store = self._ensure_console_chat_store()
-        if store.pending_attachments(session_id):
-            return None
+        images = sum(
+            1
+            for pending in store.pending_attachments(session_id)
+            if pending.insert_mode == "attachment" and pending.data is not None
+        )
+        if images:
+            causes.append("media")
         _key, messages, _history = self._console_display_history(
             store, session_id, controller
         )
-        if any(message.attachments for message in messages):
-            return None
         active = store.active_session_id == session_id
         composer = self._console_composer_or_none() if active else None
         draft = composer.draft_text() if composer is not None else ""
+        rows = [{"role": "user", "content": draft}] if draft.strip() else []
+        if prefill:
+            rows.append({"role": "assistant", "content": prefill})
         mandatory = self._build_context_estimate(
-            [{"role": "user", "content": draft}] if draft.strip() else [],
+            rows,
             settings.provider,
             settings.model,
             system_prompt=spend.fold_system_prompt(
@@ -729,7 +783,11 @@ class ConsoleContextSpendController:
             if active
             else "",
         )
-        return mandatory.used_tokens
+        if mandatory.used_tokens is None:
+            return None, tuple(causes)
+        return mandatory.used_tokens + images * NON_TEXT_PART_TOKEN_ESTIMATE, tuple(
+            causes
+        )
 
     def _console_compaction_forecast_inputs(
         self,
@@ -738,15 +796,22 @@ class ConsoleContextSpendController:
         overrides: Any,
         global_overrides: Any,
         memory: Any,
-    ) -> tuple[int | None, int]:
+    ) -> tuple[int | None, int, tuple[str, ...]]:
         """The next send's conversation tokens and turns, under Ask only.
 
         TASK-33621.4 AC#3. Counted from the rows ``compaction_forecast_rows``
         selects (memory text plus turns after its boundary, no system prompt,
         sources or draft), once per transcript/memory/model change. Nothing
         is measured until the memory read has warmed (``memory`` None).
+        History images count at the send's flat per-part estimate ("media").
+        A memory shape those rows do not model (a range, or a boundary off
+        this path) counts every turn in full ("memory", an over-count); a
+        legacy prefix never asks, so it forecasts nothing.
         """
-        from ...Chat.console_context_compaction import EffectiveMemoryResult
+        from ...Chat.console_context_compaction import (
+            EffectiveMemoryKind,
+            EffectiveMemoryResult,
+        )
         from ...Chat.console_context_policy import (
             ContextCompactionMode,
             merge_context_policy,
@@ -755,14 +820,14 @@ class ConsoleContextSpendController:
         if not spend.console_tokenizer_display_ready(
             self._screen, settings.model, settings.provider
         ):
-            return None, 0
+            return None, 0, ()
         if not isinstance(memory, EffectiveMemoryResult) or (
             merge_context_policy(
                 global_overrides=global_overrides, conversation_overrides=overrides
             ).compaction_mode
             is not ContextCompactionMode.ASK
         ):
-            return None, 0
+            return None, 0, ()
         store = self._ensure_console_chat_store()
         history_key, messages, history = self._console_display_history(
             store, session_id, self._ensure_console_chat_controller()
@@ -784,14 +849,25 @@ class ConsoleContextSpendController:
             for message in messages
             if history.request_ids is None or message.id in history.request_ids
         ]
+        causes: tuple[str, ...] = ()
         projected = compaction_forecast_rows(admitted, memory)
-        result: tuple[int | None, int] = (None, 0)
+        if projected is None and memory.kind is not EffectiveMemoryKind.LEGACY_PREFIX:
+            causes = ("memory",)
+            projected = compaction_forecast_rows(
+                admitted, EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+            )
+        result: tuple[int | None, int, tuple[str, ...]] = (None, 0, ())
         if projected is not None:
             rows, units = projected
             estimate = self._build_context_estimate(
                 list(rows), settings.provider, settings.model
             )
-            result = (estimate.used_tokens, units)
+            images = _forecast_history_images(admitted, memory)
+            tokens = estimate.used_tokens
+            if tokens is not None and images:
+                tokens += images * NON_TEXT_PART_TOKEN_ESTIMATE
+                causes = (*causes, "media")
+            result = (tokens, units, causes)
         self._console_compaction_forecast_cache = (key, result)
         return result
 

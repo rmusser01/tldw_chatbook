@@ -42,10 +42,10 @@ Top to bottom:
   word's place: **Blocked** for a blocked turn, **Held · emergency stop**
   while an emergency stop holds new runs, **Next send pauses to compact**
   when the next send will compact first, and **May pause to compact** when
-  an agent chat's history is over its compaction trigger (its tools are not
-  counted, so the pause is not certain; below the trigger the badge keeps
-  the readiness word). Below 84 columns, where the word does not fit, the
-  badge reads **Ready** or **Blocked**.
+  the history is over the compaction trigger but some input is only
+  estimated, as in an agent chat (the default), so the pause is not certain;
+  below the trigger the badge keeps the readiness word. Below 84 columns,
+  where the word does not fit, the badge reads **Ready** or **Blocked**.
 - **Control bar** — one row of buttons: **New tab**, **Settings**, **⚓**
   (hook permissions), **Context rail**, **Search Library**, **Help**.
   (**Save as Chatbook** lives in the composer's **Menu** button, left of

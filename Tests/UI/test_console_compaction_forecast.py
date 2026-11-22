@@ -222,29 +222,14 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
             app.app_config = config_module.load_settings(force_reload=True)
             await _sync_console_control_bar_now(console)
             assert controller._agent_runtime_enabled
-            assert await memory.warm(controller, session.id)
+            assert controller._agent_bridge is not None
 
             def no_preview(*_args, **_kwargs):
                 raise AssertionError(
                     "forecast must not invoke permission-bearing preview"
                 )
 
-            monkeypatch.setattr(
-                controller._agent_bridge, "preview_tool_surface", no_preview
-            )
-            states = []
-            assert projection.run(
-                lambda: states.append(
-                    console._context_spend._console_context_control_state_for_session(
-                        session.id
-                    )
-                )
-            )
-            # Owner decision 2026-11-20, "ready, then may pause": an agent
-            # chat's exact next-send check is unavailable (its tools are not
-            # counted), and below a displayed trigger it reads Ready, never
-            # "Forecast unavailable" (dev's copy, pinned here until then).
-            def set_budget(budget: int | None) -> None:
+            def set_policy(budget: int | None) -> None:
                 controller.store.set_session_context_policy_overrides(
                     session.id,
                     ConsoleContextPolicyOverrides(
@@ -258,8 +243,193 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
                     ),
                 )
 
-            for budget in (None, 100_000):
-                set_budget(budget)
+            async def agent_state_and_real_hold():
+                """The displayed state, then the real preflight's verdict."""
+                projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+                await _sync_console_control_bar_now(console)
+                assert await memory.warm(controller, session.id)
+                states = []
+                with pytest.MonkeyPatch.context() as patch:
+                    patch.setattr(
+                        controller._agent_bridge, "preview_tool_surface", no_preview
+                    )
+                    assert projection.run(
+                        lambda: states.append(
+                            console._context_spend._console_context_control_state_for_session(
+                                session.id
+                            )
+                        )
+                    )
+                resolution = await gateway.resolve_for_send(
+                    controller._provider_selection_for_session(session.id)
+                )
+                rows = controller._provider_messages_for_session(
+                    session.id,
+                    annotate_ids=True,
+                    turn_context=controller.resolve_turn_execution_context(session.id),
+                )
+                hold, alert = await controller._assess_context_compaction(
+                    session_id=session.id,
+                    resolution=resolution,
+                    provider_messages=[*rows, {"role": "user", "content": "next"}],
+                    uncommitted_user_message_id=None,
+                )
+                assert alert is None
+                return states[-1], hold
+
+            # Owner decision 2026-11-20, "ready, then may pause". Review B1
+            # (2026-11-22): an agent chat's static input (here a 3,000-token
+            # system prompt) used to be dropped with its tools, so the
+            # displayed Automatic trigger was 6,400 of 8,000 and the header
+            # read Ready while the real preflight held at 4,000 of 5,000.
+            set_policy(None)
+            over, hold = await agent_state_and_real_hold()
+            assert hold is not None and (
+                hold.used_tokens,
+                hold.budget_tokens,
+                hold.trigger_tokens,
+            ) == (5000, 5000, 4000), hold
+            assert over.compaction_trigger_tokens == hold.trigger_tokens, (
+                over.compaction_trigger_tokens,
+                hold,
+            )
+            assert over.forecast_high_context, "Ready shown where the send holds"
+            assert over.compaction_pause_forecast is None  # may, not will
+            shown = build_console_context_cost_state(over, _COST)
+            assert shown.label.startswith("May pause to compact · "), shown.label
+            assert shown.compact_label.startswith("May pause to compact · ")
+            assert (
+                "May pause to compact: the estimated history (~5,003 conversation "
+                "tokens) is over the trigger." in shown.tooltip
+            ), shown.tooltip
+            assert "The agent's tools are only estimated here" in shown.tooltip
+            assert "you approve before anything is summarized" in shown.tooltip
+            assert "forecast unavailable" not in shown.label.lower()
+            assert "Next send pauses" not in shown.tooltip
+
+            # Without the 8,000-token input cap the same chat is under its
+            # trigger (5,600 of 7,000): Ready, and the real preflight agrees.
+            caps.clear()
+            caps.update(max_output_tokens=256)
+            session.settings_revision += 1
+            await console._sync_native_console_chat_ui()
+            below, hold = await agent_state_and_real_hold()
+            assert hold is None, hold
+            assert below.compaction_trigger_tokens == 5600
+            assert below.compaction_pause_forecast is None
+            assert not below.forecast_high_context
+            shown = build_console_context_cost_state(below, _COST)
+            visible = f"{shown.label}\n{shown.compact_label}\n{shown.tooltip}"
+            # ("On next send unavailable" is the spend estimate, not this.)
+            assert "forecast unavailable" not in visible.lower(), visible
+            assert "May pause to compact" not in visible, visible
+
+            set_policy(1500)
+            advisory, hold = await agent_state_and_real_hold()
+            assert hold is not None and hold.trigger_tokens == 1200
+            assert advisory.forecast_high_context
+            assert advisory.compaction_pause_forecast is None
+            shown = build_console_context_cost_state(advisory, _COST)
+            assert shown.label.startswith("May pause to compact · "), shown.label
+            assert adapter_calls == []
+    finally:
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
+
+
+@pytest.mark.asyncio
+async def test_a_prefill_or_staged_image_is_counted_and_never_reads_a_false_ready(
+    request, monkeypatch, tmp_path
+):
+    """Review B1 (2026-11-22): a response prefill or a staged image used to
+    drop the whole static estimate, so the displayed Automatic trigger ignored
+    the system prompt and the chat read Ready. Each now counts (an image at
+    the send's flat per-part estimate) and only says it *may* pause."""
+    from dataclasses import replace
+    from Tests.UI.test_console_compaction_hold_flow import _ask_console, _held_console
+    from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
+    from tldw_chatbook.Chat import console_prepared_request, console_session_settings
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+    from tldw_chatbook.Utils.token_counter import (
+        NON_TEXT_PART_TOKEN_ESTIMATE,
+        ContextWindowResolution,
+    )
+    from tldw_chatbook import config as config_module, model_capabilities
+
+    def words(messages, _model, *_args, **_kwargs):
+        return 3 + sum(len(str(row.get("content", "")).split()) for row in messages)
+
+    monkeypatch.setattr(
+        console_prepared_request, "count_console_messages_tokens", words
+    )
+    monkeypatch.setattr(console_session_settings, "_estimate_tokens_locally", words)
+    window = ContextWindowResolution(tokens=10_768, verified=True, source="test")
+    catalog = model_capabilities.get_model_capabilities()
+    monkeypatch.setattr(
+        catalog, "get_model_capabilities", lambda *_args: {"max_output_tokens": 256}
+    )
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    assert config_module.save_settings_to_cli_config(
+        {"console": {"agent_runtime": False}}
+    )
+    app.app_config = config_module.load_settings(force_reload=True)
+    console = None
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, controller, session, runtime, tasks = await _ask_console(
+                host, pilot, monkeypatch, adapter
+            )
+            trust = await app.ensure_local_skill_trust_service()
+            assert app.local_skills_service.trust_service is trust
+            gateway = controller.provider_gateway
+            resolve = gateway.resolve_for_send
+
+            async def current_resolution(selection):
+                return replace(
+                    await resolve(selection), context_window=window, max_tokens=256
+                )
+
+            monkeypatch.setattr(gateway, "resolve_for_send", current_resolution)
+            monkeypatch.setattr(
+                console._context_spend, "_context_window_for_display", lambda _s: window
+            )
+            for _ in range(2):
+                controller.store.append_message(
+                    session.id, role=ConsoleMessageRole.USER, content="q", persist=True
+                )
+                controller.store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="detail " * 2499,
+                    persist=True,
+                )
+            controller.store.set_session_context_policy_overrides(
+                session.id,
+                ConsoleContextPolicyOverrides(
+                    budget_mode=ContextBudgetMode.AUTOMATIC,
+                    compaction_mode=ContextCompactionMode.ASK,
+                ),
+            )
+            session.settings = replace(
+                controller.store.session_settings(session.id),
+                source="user",
+                max_tokens=256,
+                system_prompt="mandatory " * 2996,
+            )
+            session.settings_revision += 1
+            await console._sync_native_console_chat_ui()
+            console._console_composer_or_none().load_draft("next")
+
+            async def state_and_real_hold():
+                projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+                await _sync_console_control_bar_now(console)
+                memory = spend.ConsoleContextReadSnapshot.for_screen(
+                    console, max_age=1.0
+                )
                 assert await memory.warm(controller, session.id)
                 states = []
                 assert projection.run(
@@ -269,39 +439,62 @@ async def test_automatic_forecast_matches_real_preflight_with_overhead_and_cap(
                         )
                     )
                 )
-                below = states[-1]
-                assert below.compaction_pause_forecast is None
-                assert below.forecast_unavailable_reason
-                assert not below.forecast_high_context, budget
-                shown = build_console_context_cost_state(below, _COST)
-                visible = f"{shown.label}\n{shown.compact_label}\n{shown.tooltip}"
-                # ("On next send unavailable" is the spend estimate, not this.)
-                assert "forecast unavailable" not in visible.lower(), (budget, visible)
-                assert "May pause to compact" not in visible, (budget, visible)
-            set_budget(1500)
-            assert await memory.warm(controller, session.id)
-            states = []
-            assert projection.run(
-                lambda: states.append(
-                    console._context_spend._console_context_control_state_for_session(
-                        session.id
-                    )
+                resolution = await gateway.resolve_for_send(
+                    controller._provider_selection_for_session(session.id)
                 )
-            )
-            advisory = states[-1]
-            assert advisory.forecast_high_context
-            assert advisory.compaction_pause_forecast is None
-            shown = build_console_context_cost_state(advisory, _COST)
-            # Over the displayed trigger it may pause: qualified, not promised.
-            assert shown.label.startswith("May pause to compact · "), shown.label
-            assert shown.compact_label.startswith("May pause to compact · ")
-            assert (
-                "May pause to compact: the estimated history (~5,003 conversation "
-                "tokens) is over the trigger." in shown.tooltip
-            ), shown.tooltip
-            assert "you approve before anything is summarized" in shown.tooltip
-            assert "forecast unavailable" not in shown.label.lower()
-            assert "Next send pauses" not in shown.tooltip
+                rows = controller._provider_messages_for_session(
+                    session.id,
+                    annotate_ids=True,
+                    turn_context=controller.resolve_turn_execution_context(session.id),
+                )
+                hold, _alert = await controller._assess_context_compaction(
+                    session_id=session.id,
+                    resolution=resolution,
+                    provider_messages=[*rows, {"role": "user", "content": "next"}],
+                    uncommitted_user_message_id=None,
+                )
+                return states[-1], hold
+
+            # Measured and under its trigger (5,003 of 5,600): Ready, exact.
+            ready, hold = await state_and_real_hold()
+            assert hold is None
+            assert ready.request_overhead_tokens == 3000
+            assert ready.compaction_trigger_tokens == 5600
+            assert not ready.forecast_high_context
+
+            # A 2,000-token one-shot prefill is counted: 4,000 of 5,000.
+            controller.store.set_session_one_shot_prefill(session.id, "p " * 2000)
+            prefilled, hold = await state_and_real_hold()
+            assert prefilled.request_overhead_tokens == 5000, prefilled
+            assert prefilled.compaction_trigger_tokens == 4000
+            assert prefilled.compaction_pause_forecast is None  # may, not will
+            assert prefilled.forecast_high_context, "a false Ready with a prefill"
+            assert hold is None or hold.trigger_tokens >= 4000, hold
+            tooltip = build_console_context_cost_state(prefilled, _COST).tooltip
+            assert "The response prefill is only estimated here" in tooltip, tooltip
+            controller.store.set_session_one_shot_prefill(session.id, None)
+
+            # Three staged images count at the send's per-part estimate.
+            for index in range(3):
+                assert controller.store.add_pending_attachment(
+                    session.id,
+                    PendingAttachment(
+                        file_path=f"/tmp/image-{index}.png",
+                        display_name=f"image-{index}.png",
+                        file_type="image",
+                        insert_mode="attachment",
+                        data=b"x",
+                        mime_type="image/png",
+                    ),
+                )
+            staged, hold = await state_and_real_hold()
+            images = 3 * NON_TEXT_PART_TOKEN_ESTIMATE
+            assert staged.request_overhead_tokens == 3000 + images, staged
+            assert staged.compaction_trigger_tokens == int(0.8 * (7000 - images))
+            assert staged.compaction_pause_forecast is None
+            assert staged.forecast_high_context, "a false Ready with staged images"
+            tooltip = build_console_context_cost_state(staged, _COST).tooltip
+            assert "Images are only estimated here" in tooltip, tooltip
             assert adapter_calls == []
     finally:
         if console is not None:
@@ -539,6 +732,96 @@ def test_a_memory_shape_the_forecast_cannot_model_forecasts_nothing(effective) -
     assert compaction_forecast_rows(_exchanges(), effective) is None
 
 
+def _spend_over(monkeypatch, messages):
+    """A spend controller over fixed history, counting one token per word."""
+    from types import SimpleNamespace
+    from tldw_chatbook.UI.Console_Modules.context_spend import (
+        ConsoleContextSpendController,
+    )
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+
+    controller = ConsoleContextSpendController.__new__(ConsoleContextSpendController)
+    controller._screen = object()
+    controller._console_compaction_forecast_cache = None
+    controller._ensure_console_chat_store = lambda: object()
+    controller._ensure_console_chat_controller = lambda: object()
+    controller._console_display_history = lambda *_args: (
+        ("history",),
+        messages,
+        SimpleNamespace(request_ids=None),
+    )
+    controller._build_context_estimate = lambda rows, *_args, **_kwargs: (
+        SimpleNamespace(
+            used_tokens=sum(len(str(row["content"]).split()) for row in rows)
+        )
+    )
+    monkeypatch.setattr(spend, "console_tokenizer_display_ready", lambda *_args: True)
+    return controller
+
+
+def _forecast_inputs(controller, memory):
+    return controller._console_compaction_forecast_inputs(
+        "session",
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1"),
+        ConsoleContextPolicyOverrides(compaction_mode=ContextCompactionMode.ASK),
+        None,
+        memory,
+    )
+
+
+def test_history_images_count_at_the_send_estimate_and_make_it_may(
+    monkeypatch,
+) -> None:
+    """Review B1: historical media used to drop the forecast (a false Ready)."""
+    from dataclasses import replace
+    from tldw_chatbook.Chat.console_chat_models import MessageAttachment
+    from tldw_chatbook.Utils.token_counter import NON_TEXT_PART_TOKEN_ESTIMATE
+
+    messages = _exchanges()
+    image = MessageAttachment(
+        data=b"x", mime_type="image/png", display_name="a.png", position=0
+    )
+    messages[3] = replace(messages[3], attachments=(image, image))
+    raw = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+    tokens, units, causes = _forecast_inputs(_spend_over(monkeypatch, messages), raw)
+    # "text of u1" ... four rows of three words, plus two image parts.
+    assert tokens == 12 + 2 * NON_TEXT_PART_TOKEN_ESTIMATE
+    assert units == 2
+    assert causes == ("media",)
+    assert _forecast_inputs(_spend_over(monkeypatch, _exchanges()), raw) == (12, 2, ())
+
+
+@pytest.mark.parametrize(
+    ("effective", "expected"),
+    [
+        # Planned differently by the preflight: count every turn in full.
+        (
+            EffectiveMemoryResult(
+                EffectiveMemoryKind.GENERATED_RANGE, memory=_memory("p-a1")
+            ),
+            (12, 2, ("memory",)),
+        ),
+        (
+            EffectiveMemoryResult(
+                EffectiveMemoryKind.GENERATED_PREFIX, memory=_memory("gone")
+            ),
+            (12, 2, ("memory",)),
+        ),
+        # The preflight never asks under a legacy prefix: nothing to forecast.
+        (EffectiveMemoryResult(EffectiveMemoryKind.LEGACY_PREFIX), (None, 0, ())),
+    ],
+    ids=["range", "boundary-off-path", "legacy"],
+)
+def test_an_unmodelled_memory_shape_counts_its_turns_in_full(
+    monkeypatch, effective, expected
+) -> None:
+    """Review B2(b): these shapes forecast nothing, so they read Ready at any
+    size. A range or an off-path boundary now counts every turn in full (an
+    over-count) and may pause; a legacy prefix never asks, so it stays quiet."""
+    controller = _spend_over(monkeypatch, _exchanges())
+    assert _forecast_inputs(controller, effective) == expected
+
+
 def test_cold_forecast_does_not_read_history_or_count(monkeypatch) -> None:
     from tldw_chatbook.UI.Console_Modules.context_spend import (
         ConsoleContextSpendController,
@@ -560,7 +843,7 @@ def test_cold_forecast_does_not_read_history_or_count(monkeypatch) -> None:
         ConsoleContextPolicyOverrides(),
         None,
         EffectiveMemoryResult(EffectiveMemoryKind.RAW),
-    ) == (None, 0)
+    ) == (None, 0, ())
 
 
 def test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above() -> None:
@@ -576,8 +859,10 @@ def test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above() -> No
     from dataclasses import replace
 
     may_pause = "May pause to compact"
+    # Review follow-up 6: the below fixture is below everywhere (dev's said
+    # "~1,658 / 1,500" in the tooltip of a state meant to be under 1,200).
     below = replace(
-        _state(tokens=900, units=3),
+        _state(tokens=900, units=3, used=900),
         forecast_tokens=None,
         forecast_unavailable_reason="Current tool overhead is unknown.",
     )
@@ -586,8 +871,24 @@ def test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above() -> No
     # ("On next send unavailable" is the spend estimate's word, not this.)
     assert "forecast unavailable" not in visible.lower(), visible
     assert may_pause not in visible
-    reason = "the estimated history (~1,656 conversation tokens) is over the trigger."
-    above = replace(below, forecast_high_context=True, forecast_unavailable_reason=reason)
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        compaction_may_pause_reason,
+    )
+
+    reason = compaction_may_pause_reason(1_656, ("tools", "limits"))
+    assert reason == (
+        "the estimated history (~1,656 conversation tokens) is over the trigger. "
+        "The agent's tools and this provider's input and output limits are only "
+        "estimated here, so the send itself checks."
+    )
+    assert compaction_may_pause_reason(1_656, ("prefill",)).endswith(
+        "The response prefill is only estimated here, so the send itself checks."
+    )
+    above = replace(
+        _state(tokens=None, units=3),
+        forecast_high_context=True,
+        forecast_unavailable_reason=reason,
+    )
     assert above.compaction_pause_forecast is None
     shown = build_console_context_cost_state(above, _COST)
     assert shown.label.startswith(f"{may_pause} · "), shown.label
@@ -679,13 +980,13 @@ def test_an_agent_chat_reads_ready_below_the_trigger_and_may_pause_above() -> No
     assert screen._console_active_run_copy() == ""
 
 
-def _state(*, tokens, units, mode=ContextCompactionMode.ASK):
+def _state(*, tokens, units, mode=ContextCompactionMode.ASK, used=1_658):
     return build_console_context_control_state(
         settings=ConsoleSessionSettings(
             provider="anthropic", model="claude-haiku-4-5", max_tokens=4_096
         ),
         estimate=ConsoleSettingsContextEstimate(
-            used_tokens=1_658, token_limit=200_000, label="1,658 / 200,000 tokens"
+            used_tokens=used, token_limit=200_000, label=f"{used:,} / 200,000 tokens"
         ),
         overrides=ConsoleContextPolicyOverrides(
             budget_mode=ContextBudgetMode.CUSTOM,

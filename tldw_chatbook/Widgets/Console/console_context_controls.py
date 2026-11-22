@@ -62,9 +62,49 @@ from tldw_chatbook.Provider_Contract.thinking_blocks import (
 #: chat is over its Ask trigger (Inspect's Run line spells it out in full).
 COMPACTION_PAUSE_FORECAST_COPY = "Next send pauses to compact"
 #: TASK-33621.4 AC#3, owner decision 2026-11-20 ("ready, then may pause"): the
-#: same surfaces, and the run chip, once an agent chat (the default) is over
-#: its displayed trigger. Its tools are not counted, so a pause is not certain.
+#: header badge, Inspect's Run line and the Context chip's lead (and an idle
+#: run chip) once an inexactly measured chat, such as an agent chat (the
+#: default), is over its displayed trigger: a pause is likely, not certain.
 COMPACTION_MAY_PAUSE_COPY = "May pause to compact"
+
+#: Review S1 (2026-11-22): what each inexact cause names in the tooltip.
+_MAY_PAUSE_CAUSES = {
+    "tools": "the agent's tools",
+    "limits": "this provider's input and output limits",
+    "prefill": "the response prefill",
+    "media": "images",
+    "memory": "the memory summary",
+}
+
+
+def compaction_may_pause_reason(history_tokens: int, causes: Sequence[str]) -> str:
+    """The may-pause tooltip's reason, naming what is only estimated.
+
+    Args:
+        history_tokens: The estimated conversation tokens over the trigger.
+        causes: Inexact inputs ("tools", "limits", "prefill", "media",
+            "memory"), in order; unknown names are skipped.
+
+    Returns:
+        Lower-case-led copy that follows "May pause to compact: ".
+    """
+    named = [
+        _MAY_PAUSE_CAUSES[cause]
+        for cause in dict.fromkeys(causes)
+        if cause in _MAY_PAUSE_CAUSES
+    ]
+    reason = (
+        f"the estimated history (~{history_tokens:,} conversation tokens) is over "
+        "the trigger."
+    )
+    if not named:
+        return reason
+    listed = " and ".join(filter(None, (", ".join(named[:-1]), named[-1])))
+    singular = len(named) == 1 and named[0].endswith(("prefill", "summary"))
+    return (
+        f"{reason} {listed[0].upper()}{listed[1:]} {'is' if singular else 'are'} "
+        "only estimated here, so the send itself checks."
+    )
 
 
 @dataclass(frozen=True, slots=True)
