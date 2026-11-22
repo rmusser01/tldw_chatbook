@@ -2300,10 +2300,12 @@ jobs:
     # Install: the owner-suite line plus what two of these files need. The
     # first-binding fixture builds a wheel with `python -m build --no-isolation`
     # (build, and setuptools>=77 from pyproject's build-system, as in
-    # native-credential-backup.yml), and the replacement recovery file's native
+    # native-credential-backup.yml; no wheel, since setuptools has built
+    # bdist_wheel in since 70.1), and the replacement recovery file's native
     # projection test opens a real Chroma store (chromadb, pinned to the
-    # version backup-recovery-qualification.yml uses). The first dev run
-    # (44975330028, 2026-11-22) had 19 setup errors and one failure without them.
+    # version backup-recovery-qualification.yml uses; bump both together).
+    # The first dev run (44975330028, 2026-11-22) had 19 setup errors and one
+    # failure without them.
     # Timeouts: alone at -n 4 (two passes, load 11-27) they took 65-93 s,
     # 9-15 s, 7-10 s, 5 s, 266-268 s (first replacement binding, whose
     # slowest node is 65 s), 11-12 s and 58-72 s. Run together with this
