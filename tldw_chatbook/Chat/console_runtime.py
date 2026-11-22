@@ -6102,7 +6102,9 @@ class ConsoleRuntime:
         )
         from .console_preparation_reads import drain_preparation_reads
 
-        cancel_requested |= await drain_preparation_reads(self._preparation_reads, session_id)
+        # Finalize refuses on any controller read, observed here or not (TASK-42342).
+        for reads in (self._preparation_reads, getattr(controller, "_preparation_reads", set())):
+            cancel_requested |= await drain_preparation_reads(reads, session_id)
         cancel_requested |= await self._drain_hook_review_operations(session_id)
         pending = {task for task in pending if not task.done()}
         fleet_fenced = callable(getattr(bridge, "fence_fleet", None))

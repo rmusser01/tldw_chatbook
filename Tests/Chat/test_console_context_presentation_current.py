@@ -171,6 +171,168 @@ async def test_session_close_drains_context_display_and_refuses_a_new_read(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["snapshot", "attempt_snapshot"])
+async def test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one(
+    tmp_path, monkeypatch, kind
+):
+    """TASK-42342: a controller-owned read the bound runtime never observed."""
+    from Tests.Chat.test_console_first_send_atomicity import _controller
+    from tldw_chatbook.Backup_Recovery import runtime_producer_lifetime
+    from tldw_chatbook.Chat import console_preparation_reads
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_prompt_mixin_service import (
+        ConsolePromptMixinService,
+    )
+    from tldw_chatbook.Chat.console_prompt_mixins import (
+        MixinPreferences,
+        MixinSelection,
+        MixinSnapshotUnavailableError,
+        MixinSourceChangedError,
+        MixinSourceRef,
+    )
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+    from tldw_chatbook.Prompt_Management.prompt_scope_service import (
+        LocalPromptService,
+        PromptScopeService,
+    )
+
+    database, store, controller, _gateway = _controller(tmp_path)
+    prompts = PromptsDatabase(tmp_path / "prompts.db", client_id="task-42342")
+    scope = PromptScopeService(LocalPromptService(prompts), None)
+    # ConsoleChatController.prompt_mixin_service()'s composition, minus an app.
+    service = ConsolePromptMixinService(
+        store=store,
+        prompt_scope_service=scope,
+        persistence=store.persistence,
+        preparation_owner=controller,
+    )
+    session_id = "session-1"
+    saved = await scope.save_prompt(
+        mode="local",
+        name="Held",
+        artifact_type="mixin",
+        prompt_format="structured",
+        prompt_schema_version=3,
+        prompt_definition={
+            "kind": "text_mixin",
+            "schema_version": 3,
+            "body": "literal",
+            "placement": "before",
+        },
+    )
+    source = MixinSourceRef(
+        scope.mixin_source_identity(mode="local")[0], "local", saved["uuid"]
+    )
+    service.replace_preferences(
+        session_id,
+        expected_revision=0,
+        value=MixinPreferences(
+            entries=(MixinSelection(source, True, "Held", "before"),)
+        ),
+    )
+    store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="hello", persist=True
+    )
+    reply = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="hi", persist=True
+    )
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    entered, drain_entered = asyncio.Event(), asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    calls, registered, held = [], [], []
+    if kind == "snapshot":
+        target, name = prompts, "fetch_mixin_snapshot"
+        refusal = MixinSourceChangedError
+
+        def read_mixins():
+            revision = service.preferences(session_id).revision
+            return service.capture(session_id, expected_revision=revision)
+
+    else:
+        target, name = ChatPersistenceService, "get_conversation_mixin_attempt"
+        refusal = MixinSnapshotUnavailableError
+
+        def read_mixins():
+            return service.retry_snapshot(session_id, assistant_message_id=reply.id)
+
+    original = getattr(target, name)
+
+    def hold_first(*args, **kwargs):
+        # The native callback's own database read, on its worker thread.
+        calls.append(threading.get_ident())
+        if len(calls) == 1:
+            loop.call_soon_threadsafe(entered.set)
+            assert release.wait(20)
+        return original(*args, **kwargs)
+
+    original_observe = runtime_producer_lifetime._observe_locked
+
+    def record_registration(read, observer):
+        if observer is controller._preparation_reads and read.session_id == session_id:
+            registered.append(read)
+        return original_observe(read, observer)
+
+    original_drain = console_preparation_reads.drain_preparation_reads
+
+    async def observe_drain(reads, selected_session=None):
+        if selected_session == session_id and any(read in reads for read in held):
+            drain_entered.set()
+        return await original_drain(reads, selected_session)
+
+    monkeypatch.setattr(target, name, hold_first)
+    monkeypatch.setattr(runtime_producer_lifetime, "_observe_locked", record_registration)
+    monkeypatch.setattr(
+        console_preparation_reads, "drain_preparation_reads", observe_drain
+    )
+    issuing = asyncio.create_task(read_mixins())
+    close = None
+    try:
+        async with asyncio.timeout(15):
+            await entered.wait()
+            (read,) = controller._preparation_reads
+            # The runtime bound before this read existed, so it never saw it.
+            assert read not in runtime._preparation_reads
+            held.append(read)
+            close = asyncio.create_task(
+                runtime.close_session(
+                    session_id,
+                    expected_revision=controller.lifecycle_impact(
+                        session_id=session_id
+                    ).revision,
+                    timeout_seconds=0.01,
+                )
+            )
+            draining = asyncio.create_task(drain_entered.wait())
+            await asyncio.wait({close, draining}, return_when=asyncio.FIRST_COMPLETED)
+            draining.cancel()
+            assert not close.done(), close.cancelled() or close.exception()
+            assert issuing.cancelling() and not read.retired.done()
+            assert any(session.id == session_id for session in store.sessions())
+            with pytest.raises(refusal):
+                await read_mixins()
+            assert registered == [read] and len(calls) == 1
+            release.set()
+            await close
+            with pytest.raises(asyncio.CancelledError):
+                await issuing
+        assert all(session.id != session_id for session in store.sessions())
+        assert not controller._preparation_reads and not runtime._preparation_reads
+    finally:
+        release.set()
+        await asyncio.gather(issuing, return_exceptions=True)
+        if close is not None:
+            await asyncio.gather(close, return_exceptions=True)
+        await runtime.dispose()
+        prompts.close_connection()
+        database.close()
+
+
+@pytest.mark.asyncio
 async def test_custom_context_reader_keeps_issuing_thread_and_live_result(
     tmp_path, monkeypatch
 ):

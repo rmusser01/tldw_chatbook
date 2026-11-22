@@ -107,6 +107,8 @@ INHERITED = {
         "Tests/Chat/test_console_trace_discarded_tool_run.py",
         "Tests/Chat/test_console_agent_call_thinking.py",
         "Tests/Performance/test_console_skill_discovery_genuine_capture.py",
+        # TASK-42342 (2026-11-22): the held prompt mix-in reads.
+        "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one",
         # TASK-34975 (PR #3493 port, 2026-11-22): the held context-display read.
         "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_context_display_and_refuses_a_new_read",
         "Tests/Chat/test_console_trace_graph_gc.py::test_stale_mark_never_sweeps_after_concurrent_reachability_change",

@@ -1240,6 +1240,9 @@ jobs:
       # TASK-34975 (PR #3493 port, 2026-11-22), just before the PR3023 nodes: the
       # held context-display read that Close must drain. 1 passed in 2.2 s
       # serially with this step's flags at load 30-34.
+      # TASK-42342 (2026-11-22), just before TASK-34975's node: the held prompt
+      # mix-in reads (both kinds) that Close must drain. 2 passed in 2.8 s
+      # serially with this step's flags at load 28.
       - name: Run the admission-sensitive Console P0 regression tests
         if: ${{ !cancelled() && matrix.profile == 'admission-sensitive' }}
         run: |
@@ -1292,6 +1295,7 @@ jobs:
             Tests/Chat/test_console_trace_discarded_tool_run.py \
             Tests/Chat/test_console_agent_call_thinking.py \
             Tests/Performance/test_console_skill_discovery_genuine_capture.py \
+            "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one" \
             "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_context_display_and_refuses_a_new_read" \
             "Tests/Chat/test_console_trace_graph_gc.py::test_stale_mark_never_sweeps_after_concurrent_reachability_change" \
             "Tests/Chat/test_console_trace_admission_gc.py::test_collection_between_admission_and_reservation_preserves_exact_revision" \
