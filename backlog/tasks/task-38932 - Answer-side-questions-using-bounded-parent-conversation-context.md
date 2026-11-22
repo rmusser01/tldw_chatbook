@@ -3,7 +3,7 @@ id: TASK-38932
 title: Answer side questions using bounded parent conversation context
 status: To Do
 created_date: 2026-11-05 16:08
-updated_date: 2026-11-22 15:51
+updated_date: 2026-11-22 16:10
 labels:
 - console
 - side-chat
@@ -23,7 +23,7 @@ documentation:
 <!-- SECTION:DESCRIPTION:BEGIN -->
 Let users ask a contextual question about ongoing work without selecting and copying all of its surrounding conversation or redirecting the primary task. Preserve the existing ephemeral side-chat experience while making its available context explicit.
 
-Today the side chat (`Chat/console_side_chat.py`, `ConsoleSideChatService`) sends only a fixed system prompt plus the selected transcript text, to the `[console] sidechat_model` destination when set (else the session's provider/model), with no tools and nothing persisted. This task adds the bounded parent-conversation snapshot; the destination rules and the no-tools, no-persistence posture stay as they are.
+Today the side chat (`Chat/console_side_chat.py`, `ConsoleSideChatService`) sends a fixed system prompt plus one user message: the user's prompt (the rendered More Details template or a typed question) followed by the selected transcript text, to the `[console] sidechat_model` destination when set (else the session's provider/model), with no tools and nothing persisted. This task adds the bounded parent-conversation snapshot; the destination rules and the no-tools, no-persistence posture stay as they are.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

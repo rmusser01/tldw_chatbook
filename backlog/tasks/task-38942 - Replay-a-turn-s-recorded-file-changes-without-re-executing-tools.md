@@ -3,7 +3,7 @@ id: TASK-38942
 title: Replay a turn's recorded file changes without re-executing tools
 status: To Do
 created_date: 2026-11-05 16:09
-updated_date: 2026-11-22 15:51
+updated_date: 2026-11-22 16:10
 labels:
 - console
 - review
@@ -29,7 +29,7 @@ What is recorded: Change Review takes one Begin (B) and one End (E) snapshot per
 
 Scope: step through the turn's file-related tool calls in transcript order beside each file's net B-to-E diff. A call's arguments are shown as what the agent asked for, never as the file's verified state after that call. Per-tool-call before/after capture is out of scope; it would need its own task and ADR first.
 
-This task does not change `Workspaces/native_git.py` or `Workspaces/change_review_consent.py`. Both had open work on another branch on 2026-11-22; check for it before editing either.
+This task does not change `Workspaces/native_git.py` or `Workspaces/change_review_consent.py`.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
