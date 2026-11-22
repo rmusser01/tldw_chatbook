@@ -617,10 +617,10 @@ def _roleplay_import_filters() -> Any:
     )
 
 
-# 80-column terminals need a tighter three-pane split than the default
-# 2:4:2 workbench minimums. Keep this screen-owned so a later rail-collapse
-# task can replace it without changing pane widgets.
-PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 90
+# The 2:4:2 split needs its min-widths ($ds-size-24/-40/-30 for library, work
+# area, inspector in css/components/_agentic_terminal.tcss) plus the
+# workbench's 4 border and padding cells; narrower is compact (test-pinned).
+PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 24 + 40 + 30 + 4 - 1
 PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH = 13
 PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
 
