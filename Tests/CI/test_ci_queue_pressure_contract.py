@@ -2124,8 +2124,18 @@ def test_tool_packs_bootstrap_nodes_are_the_pinned_two() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for item in tree.body:
             name = getattr(item, "name", "")
-            if name.startswith(("test_", "Test")) and uses_bootstrap(f"{relative}::{name}"):
-                found.append(f"{relative}::{name}")
+            if not name.startswith(("test_", "Test")):
+                continue
+            nodes = [f"{relative}::{name}"]
+            if isinstance(item, ast.ClassDef):
+                # A mark on one method inside a class enrolls that node too.
+                nodes += [
+                    f"{relative}::{name}::{method.name}"
+                    for method in item.body
+                    if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and method.name.startswith("test_")
+                ]
+            found += [node for node in nodes if uses_bootstrap(node)]
     assert tuple(found) == TOOL_PACKS_BOOTSTRAP_NODES
 
 
