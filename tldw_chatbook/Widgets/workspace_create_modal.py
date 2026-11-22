@@ -578,8 +578,9 @@ class WorkspaceCreateModal(
         resumed. In process-backed Console that resume takes long enough that
         the previous workspace stayed active for about a second after the
         dialog closed. The profile-interview path keeps deferring activation to
-        the caller's continuation. A failure here is left to the caller, which
-        retries and reports it.
+        the caller's continuation. Any failure here is left to the caller,
+        which retries and reports it under its own policy (Library catches
+        every exception there), so none may escape the dialog.
         """
         if (
             not self._make_active_result
@@ -591,7 +592,7 @@ class WorkspaceCreateModal(
             return
         try:
             self._registry.set_active_workspace(self._created_workspace_id)
-        except WorkspaceRegistryServiceError:
+        except Exception:  # noqa: BLE001 - the caller's own activation reports it
             return
 
     async def _show_binding_retry(self) -> None:

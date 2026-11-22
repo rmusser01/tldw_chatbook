@@ -279,6 +279,35 @@ async def test_make_active_takes_effect_before_the_dialog_closes(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_any_early_activation_failure_is_left_to_the_caller(request, tmp_path):
+    """The dialog still closes with its result, so the caller's own activation
+    call meets the failure and reports it as before (Library catches every
+    exception there and says the workspace could not be activated)."""
+    inner = _registry(tmp_path)
+    inner.ensure_default_workspace()
+    log: list = []
+    registry = _ActivationOrderRegistry(inner, log)
+
+    def fail(workspace_id):
+        log.append(("activate", workspace_id))
+        raise RuntimeError("simulated activation failure")
+
+    registry.set_active_workspace = fail
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Unswitched"
+        modal.query_one("#workspace-create-make-active", Checkbox).value = True
+        await _click_visible(pilot, "#workspace-create-confirm")
+        await pilot.pause()
+    assert app.result.make_active is True
+    assert log == [("activate", app.result.workspace_id)]
+    assert inner.get_active_workspace().workspace_id == "workspace-default"
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_profile_interview_offer_is_opt_in_and_carried_on_result(
     request, tmp_path
 ):
