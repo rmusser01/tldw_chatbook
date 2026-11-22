@@ -3,6 +3,21 @@
 Mechanical traps in the task board and the plumbing around it. Cheap to avoid once
 known, expensive to rediscover. Every entry states the incident that produced it.
 
+## Sweep cited ids by reading each distinct blob once, not with `git grep` across every ref (round 20 filing, 2026-11-22)
+
+**Incident.** Round 20's backlog fix (5083c52f7b) needed the highest task id cited anywhere, including ids cited in text before their task file lands. A `git grep` for task ids across the 723 ref tips ran for more than 12 minutes at load average 33. The tips share almost all of their files, so `git grep` read the same blobs once per ref. Listing the blob ids at every tip, keeping the distinct ones (93,746 blobs under the directories that cite ids), and scanning them in one `git cat-file --batch` pass took minutes. The round's filing sweep used the same method on 1,104 refs at load 12-15: whole-tree listing gave 101,427 distinct blobs in 3 min 17 s, and the scan took 4 min.
+
+**What to do.** Take file names from `git rev-list --objects --all` (6 s here). For content, read each distinct blob once:
+
+```bash
+git for-each-ref --format='%(refname)' | while read -r r; do
+  git ls-tree -r "$r" -- backlog Docs tldw_chatbook Tests scripts .github | awk '$2=="blob"{print $3}'
+done | sort -u > blobs.txt
+git cat-file --batch --buffer < blobs.txt | LC_ALL=C grep -aoiE '(task|draft)-4[0-9]{4}' | sort -u
+```
+
+Scan the worktrees' uncommitted `backlog/` files separately. Before treating a match as an id, check its context: this sweep's largest match, Task-46066, is quoted in DRAFT-42312's renumbering note as an asyncio task name, not a task.
+
 ## A "page has no section for X" finding can be a section a squash deleted (TASK-41526, 2026-11-19)
 
 **Incident.** TASK-41101's stamp sweep reported that no User Guide page covered Change Review's commit and push dialogs, and TASK-41526 was filed to write them. `console/agent-runs-and-tools.md` had a full "Git actions in change review" section, kept current by TASK-19701 and TASK-19703, until 6a6242ce3a (2026-09-12) squashed a feature branch onto dev. That squash removed 16 headings from the page. Thirteen came back later. Three never did:
