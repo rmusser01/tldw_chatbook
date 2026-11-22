@@ -3597,3 +3597,7 @@ Tests/UI/test_console_send_admission_off_pump.py::test_leaving_a_tab_while_its_s
 Tests/UI/test_console_send_admission_off_pump.py::test_an_enter_made_while_the_sent_draft_still_shows_never_takes_later_keys
 Tests/UI/test_console_send_admission_off_pump.py::test_a_bare_second_enter_never_sends_a_committed_draft_again
 Tests/UI/test_console_send_admission_off_pump.py::test_an_image_only_enter_never_takes_text_typed_after_it
+# TASK-34975 (PR #3493 port, 2026-11-22): the completed-response Stop test,
+# on no lane before. Serially with the lane's flags at load 30-32: 1 passed in
+# 13.3 s. Appended at the tail.
+Tests/UI/test_console_response_rules.py::test_actual_stop_after_generation_cancels_rule_check

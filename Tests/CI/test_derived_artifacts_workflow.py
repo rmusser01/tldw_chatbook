@@ -614,6 +614,25 @@ def test_pr3023_critical_targets_run_in_required_admission_step():
         assert sum(targets.count(target) for _, targets in steps) == 1, target
 
 
+# TASK-34975 (PR #3493 port, 2026-11-22): the held context-display read that
+# Close must drain. It runs in the same step just before the PR3023 nodes, in
+# its own group: TASK-34406's tuple above is a bounded set that stays last.
+# 1 passed in 2.2 s serially with this step's flags at load 30-34.
+_TASK34975_CLOSE_DRAIN_TARGETS = (
+    "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_context_display_and_refuses_a_new_read",
+)
+
+
+def test_task34975_close_drain_target_runs_just_before_the_pr3023_witnesses():
+    steps = _pytest_step_targets()
+    targets = dict(steps)[_PR3023_STEP]
+    end = len(targets) - len(_PR3023_CRITICAL_TARGETS)
+    start = end - len(_TASK34975_CLOSE_DRAIN_TARGETS)
+    assert tuple(targets[start:end]) == _TASK34975_CLOSE_DRAIN_TARGETS
+    for target in _TASK34975_CLOSE_DRAIN_TARGETS:
+        assert sum(targets.count(target) for _, targets in steps) == 1, target
+
+
 @pytest.mark.parametrize("mutation", ["missing", "wrong-step", "duplicate", "order"])
 def test_pr3023_membership_rejects_actual_workflow_drift(monkeypatch, mutation):
     workflow = _workflow()
