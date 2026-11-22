@@ -1413,10 +1413,26 @@ jobs:
     # Subscriptions, and a skipped job fails the aggregate's
     # `!= 'success'` verdict anyway.
     #
-    # Sandboxed only (no bootstrap_profile node), so one invocation; same
-    # minimal dependency set and serial pytest as the other lanes.
+    # Sandboxed (Tool_Packs' two bootstrap_profile nodes aside, below), so one
+    # invocation; same minimal dependency set and serial pytest as the other
+    # lanes.
     # timeout-minutes: the first run's 6m50s leaves ~13 min, and one hung
     # test at --timeout=180 still ends ~10 min under the cap.
+    #
+    # Round 21 ports (2026-11-22, TASK-42191): riders that ran on no PR lane.
+    # Two Workspaces create-dialog files (pure, and @private_profile_test
+    # children), then the whole Tests/Tool_Packs directory LAST: it is
+    # sandboxed except two bootstrap_profile nodes in test_catalog_snapshot.py
+    # and test_export.py. Its later sandboxed files read no config in-process,
+    # so they pass after those nodes (the exception Tests/CI's
+    # RECOVERED_SUITES_TARGETS note allows).
+    # Keep any new sandboxed target before it (TASK-32873). Not dreams-boundary:
+    # 31 Tool_Packs tests leave a WorkspaceDB lease that its
+    # --storage-lease-guard fails. Serially at load 15-17: 3.5 s, 66.6 s
+    # and 43.1 s (437 tests), together 107 s; the whole step, 724 tests,
+    # 500.7 s at load 14-21. This job ran median 6.7 / max 8.0 min of its 20
+    # over 22 PR runs to 2026-11-22, so even at CI's 2.6x quiet-host factor
+    # for the additions (UI census note) it stays about 7 min under the cap.
     name: Dreams tracking tests
     if: needs.preflight.outputs.full == 'true' && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.nightly || inputs.release || inputs.pr != '' || github.ref != 'refs/heads/dev')))
     runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.CI_TEST_RUNNER || 'ubuntu-latest' }}
@@ -1438,6 +1454,9 @@ jobs:
         run: |
           pytest \
             Tests/Dreams/test_track_service.py \
+            Tests/Workspaces/test_console_workspace_create_handler.py \
+            Tests/Workspaces/test_workspace_create_modal.py \
+            Tests/Tool_Packs \
             --timeout=180 \
             --tb=short
 

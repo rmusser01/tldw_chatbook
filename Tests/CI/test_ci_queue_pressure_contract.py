@@ -453,6 +453,14 @@ DREAMS_BOUNDARY_TARGETS = (
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
+#: Round 21 ports (TASK-42191): riders on no PR lane before. Tool_Packs last:
+#: its two bootstrap_profile nodes may precede only its own sandboxed files,
+#: which read no config in-process (TASK-32873).
+DREAMS_TRACKING_RIDERS = (
+    "Tests/Workspaces/test_console_workspace_create_handler.py",
+    "Tests/Workspaces/test_workspace_create_modal.py",
+    "Tests/Tool_Packs",
+)
 #: TASK-38989: Architecture guards red on dev in no PR lane, in their own job.
 #: The profile inventory runs by node, without its CLI test: preflight runs the
 #: same CLI (without `--print-occurrences`, so that one check is unlaned).
@@ -2042,18 +2050,22 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
         "pytest",
         DREAMS_TRACKING_TARGET,
+        *DREAMS_TRACKING_RIDERS,
         "--timeout=180",
         "--tb=short",
     )
-    # It runs once: no other PR-lane step lists the file or one of its tests.
+    # Each runs once: no other PR-lane step lists one of them or a test in one.
+    owned = (DREAMS_TRACKING_TARGET, *DREAMS_TRACKING_RIDERS)
     others = [
         f"{key}: {candidate['name']}"
         for key, other in workflow["jobs"].items()
         if key != "dreams-tracking"
         for candidate in other.get("steps", ())
         if any(
-            target.split("::", 1)[0] == DREAMS_TRACKING_TARGET
+            target.split("::", 1)[0] == path
+            or target.split("::", 1)[0].startswith(path + "/")
             for target in _pytest_targets(str(candidate.get("run", "")))
+            for path in owned
         )
     ]
     assert others == []
