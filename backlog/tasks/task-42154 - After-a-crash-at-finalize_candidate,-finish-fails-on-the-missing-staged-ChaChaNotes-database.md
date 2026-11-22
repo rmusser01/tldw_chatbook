@@ -4,7 +4,7 @@ title: "After a crash at finalize_candidate, finish fails on the missing staged 
 status: Done
 assignee: ['@claude']
 created_date: 2026-11-20 22:23
-updated_date: 2026-11-21 22:13
+updated_date: 2026-11-22 06:20
 labels:
 - follow-up
 - backup
@@ -113,3 +113,5 @@ Run one at a time that is about 8 minutes (436 s and 460 s); run together, 5.7 m
 **Review rev1, minor items.** `test_created_owner_rollback.py` now asserts at import that `_SCENARIO` holds the crash anchor exactly once, so a missing anchor fails loudly. The `recover_replacement` comment now says the keys were installed before `publication_started` was journaled, and that once it is the staged files may have moved.
 
 **Checks:** `Tests/CI` at `-n 4`: 1812 passed, 2 skipped. The crash and default-location tests pass, and so does preflight.
+
+**First dev run (2026-11-22, coordinator).** The new job failed on its first dev push, run 44975330028 at fe84affafc: 19 setup errors in `test_first_replacement_binding.py` (`No module named build`, from the fixture that builds a wheel with `python -m build --no-isolation`) and one failure in `test_replacement_recovery.py::test_actual_native_projection_group_is_reversed_and_readable` (`No module named chromadb`). The local measurements above used the dev venv, which has both. The job now installs `setuptools>=77`, `build` and `chromadb==1.5.8` on top of the owner-suite line.
