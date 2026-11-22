@@ -1951,9 +1951,12 @@ def test_backup_binding_suites_run_on_dev_pushes_only_and_are_never_required() -
     """TASK-42154 AC#5 (coordinator decision 2026-11-21).
 
     The recovery, first-binding and legacy roundtrip files run whole in their
-    own push-to-dev job, set up like backup-owner-suites-dev: the same trigger,
-    install and flags, never on a pull request and never in the aggregate. No
-    other step lists one of these files whole.
+    own push-to-dev job, set up like backup-owner-suites-dev: the same trigger
+    and flags, never on a pull request and never in the aggregate. No other
+    step lists one of these files whole. Its install is the owner-suite line
+    plus what two of its files need: setuptools and build for the first-binding
+    fixture's wheel, chromadb for the native projection test (the job's first
+    dev run, 2026-11-22, failed without them).
     """
     workflow = _workflow("derived-artifacts.yml")
     jobs = workflow["jobs"]
@@ -1976,7 +1979,13 @@ def test_backup_binding_suites_run_on_dev_pushes_only_and_are_never_required() -
     assert job["runs-on"] == owner["runs-on"] == "ubuntu-latest"
     assert "strategy" not in job
     assert len(job["steps"]) == 4
-    assert job["steps"][:3] == owner["steps"][:3]
+    assert job["steps"][:2] == owner["steps"][:2]
+    assert shlex.split(_named_step(job, "Install fast-lane dependencies")["run"]) == [
+        *shlex.split(_named_step(owner, "Install fast-lane dependencies")["run"]),
+        "setuptools>=77",
+        "build",
+        "chromadb==1.5.8",
+    ]
     step = _named_step(
         job, "Run the Backup_Recovery recovery and first-binding suites"
     )
