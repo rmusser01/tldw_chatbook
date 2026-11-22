@@ -3,6 +3,7 @@ id: TASK-38931
 title: Report skill and extension context costs and observed session usage
 status: To Do
 created_date: 2026-11-05 16:08
+updated_date: 2026-11-22 15:51
 labels:
 - console
 - skills

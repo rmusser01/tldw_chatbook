@@ -3,6 +3,7 @@ id: TASK-38939
 title: Extend Doctor with active Console extension and instruction health
 status: To Do
 created_date: 2026-11-05 16:09
+updated_date: 2026-11-22 15:51
 labels:
 - console
 - diagnostics

@@ -3,6 +3,7 @@ id: TASK-38935
 title: Find and reopen current conversation outputs with provenance
 status: To Do
 created_date: 2026-11-05 16:08
+updated_date: 2026-11-22 15:51
 labels:
 - console
 - artifacts

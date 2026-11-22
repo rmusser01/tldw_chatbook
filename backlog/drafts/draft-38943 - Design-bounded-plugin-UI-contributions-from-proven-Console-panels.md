@@ -3,6 +3,7 @@ id: draft-38943
 title: Design bounded plugin UI contributions from proven Console panels
 status: Draft
 created_date: 2026-11-05 16:09
+updated_date: 2026-11-22 15:51
 labels:
 - plugins
 - console

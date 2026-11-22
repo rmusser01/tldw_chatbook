@@ -3,6 +3,7 @@ id: TASK-38940
 title: Show per-request context growth using existing token accounting
 status: To Do
 created_date: 2026-11-05 16:09
+updated_date: 2026-11-22 15:51
 labels:
 - console
 - context
