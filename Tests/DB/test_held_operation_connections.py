@@ -55,8 +55,13 @@ def _closed(connection) -> bool:
 
 
 @pytest.fixture(autouse=True)
-def no_held_connections_leak():
-    """Every test starts and ends with no held handle from another test."""
+def no_held_connections_leak(monkeypatch):
+    """Every test starts and ends with no held handle from another test.
+
+    Holding is off under pytest by default (``held_connections._holding``);
+    these tests select the app's rule through its environment override.
+    """
+    monkeypatch.setenv(held_connections.HOLD_ENVIRONMENT_VARIABLE, "1")
     assert retire_held_connections()
     yield
     assert retire_held_connections(), "a held handle was still in use at teardown"
@@ -307,6 +312,42 @@ def test_the_project_index_accepts_a_held_registry_handle(tmp_path):
             assert not is_held_connection(seen["connection"])
     finally:
         _close(db)
+
+
+@pytest.mark.parametrize(
+    ("pinned", "override", "under_pytest", "expected_on_windows"),
+    [
+        (None, None, False, True),  # the app
+        (None, None, True, False),  # the suite's default
+        (None, "1", True, True),
+        (None, "true", True, True),
+        (None, "0", False, False),
+        (None, "false", False, False),
+        (None, "", False, False),
+        (True, "0", True, True),
+        (False, "1", False, False),
+    ],
+)
+def test_holding_is_the_app_default_and_off_under_pytest(
+    monkeypatch, pinned, override, under_pytest, expected_on_windows
+):
+    """The app holds on Windows; the suite does not unless a test asks.
+
+    Most tests of a finite operation pin the per-call close and lease
+    release. With handles held, 68 of them failed on Windows only in the
+    first 324 files compared with dev (2026-11-22).
+    """
+    monkeypatch.setattr(held_connections, "_HOLD_OPERATION_CONNECTIONS", pinned)
+    if override is None:
+        monkeypatch.delenv(held_connections.HOLD_ENVIRONMENT_VARIABLE, raising=False)
+    else:
+        monkeypatch.setenv(held_connections.HOLD_ENVIRONMENT_VARIABLE, override)
+    if under_pytest:
+        monkeypatch.setenv("PYTEST_CURRENT_TEST", "a test")
+    else:
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    expected = pinned if pinned is not None else expected_on_windows and os.name == "nt"
+    assert held_connections._holding() is expected
 
 
 def test_the_project_index_still_proves_a_per_call_close(tmp_path, monkeypatch):

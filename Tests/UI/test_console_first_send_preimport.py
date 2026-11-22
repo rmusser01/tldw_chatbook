@@ -985,9 +985,14 @@ def test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm(startup_out
 def test_send_guard_requires_the_reply_steps_transitive_warm_closure(
     startup_outcome, tmp_path
 ):
-    """Omitting the reply step leaves its real ordinary-turn dependencies cold."""
+    """Omitting the reply step leaves its real ordinary-turn dependency cold.
+
+    TASK-40608: ``Agents.execution_capacity`` used to be in this record too.
+    The project-chat block at the end of the warm-up list now loads it as
+    well, so omitting the reply step alone no longer leaves it cold;
+    ``console_ordinary_tree`` is still reached only through the reply step.
+    """
     record = {
-        "tldw_chatbook.Agents.execution_capacity": "ordinary submission",
         "tldw_chatbook.Chat.console_ordinary_tree": "ordinary submission",
     }
     assert _not_warmed(record, _warm_at_ui_ready(startup_outcome), set()) == record

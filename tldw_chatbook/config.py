@@ -2028,7 +2028,7 @@ def _posture_unchanged(active_config_path: Path, cached: dict, posture: tuple) -
         and seen[3] == active_config_path
     ):
         return True
-    if _config_file_posture(active_config_path) != posture:
+    if not profile_paths.posture_holds(active_config_path, cached, posture, _config_file_posture):
         return False
     stretch.seen = (loop, cached, posture, active_config_path)
     loop.call_soon(_end_posture_stretch, stretch)

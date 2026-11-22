@@ -711,6 +711,177 @@ print(json.dumps({"worker_source": str(worker_source), "result": result}))
     assert "size: 5" in payload["result"]
 
 
+_SPARE_WORKER_HARNESS = """
+import site
+import sys
+# The fixture lists dependency folders as plain paths; process their own .pth
+# files too (pywin32's adds the DLL folder the file-lock library needs).
+for folder in [value for value in sys.path if value.endswith("site-packages")]:
+    site.addsitedir(folder)
+from Tests import network_guard
+network_guard.install()
+import json
+import os
+import subprocess
+import time
+from pathlib import Path
+from tldw_chatbook.Tools import workspace_tool_executor as executor_module
+from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutor
+
+workspace, other = Path(sys.argv[1]), Path(sys.argv[2])
+report = {"taken": [], "results": []}
+take = executor_module._take_spare
+
+
+def recorded_take(key):
+    process = take(key)
+    report["taken"].append(None if process is None else process.pid)
+    return process
+
+
+executor_module._take_spare = recorded_take
+
+
+def wait_for_spare(previous=None):
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        pid = executor_module.spare_worker_pid()
+        if pid is not None and pid != previous:
+            return pid
+        time.sleep(0.02)
+    raise RuntimeError("no spare worker appeared")
+
+
+def alive(pid):
+    held = executor_module._spare
+    return held is not None and held[1].pid == pid and held[1].poll() is None
+
+
+executor = WorkspaceToolExecutor(workspace)
+report["before_first_call"] = executor_module.spare_worker_pid()
+report["results"].append(executor.execute("stat_path", {"path": "note.txt"}, intent="read"))
+first_spare = wait_for_spare()
+report["first_spare_alive"] = alive(first_spare)
+report["results"].append(executor.execute("stat_path", {"path": "note.txt"}, intent="read"))
+second_spare = wait_for_spare(first_spare)
+report["spares"] = [first_spare, second_spare]
+
+# Another project folder has another environment only when PATH points inside
+# it; an identical environment is the same worker command, so force a change.
+os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + str(other.parent)
+report["results"].append(
+    WorkspaceToolExecutor(other).execute("stat_path", {"path": "other.txt"}, intent="read")
+)
+third_spare = wait_for_spare(second_spare)
+report["spares"].append(third_spare)
+
+# A replaced constructor observes every spawn: no spare is taken or started.
+real_popen = subprocess.Popen
+spawned = []
+
+
+def counting_popen(*args, **kwargs):
+    process = real_popen(*args, **kwargs)
+    spawned.append(process.pid)
+    return process
+
+
+subprocess.Popen = counting_popen
+try:
+    report["results"].append(
+        WorkspaceToolExecutor(other).execute("stat_path", {"path": "other.txt"}, intent="read")
+    )
+finally:
+    subprocess.Popen = real_popen
+report["spawned_through_replacement"] = len(spawned)
+report["spare_untouched_by_replacement"] = executor_module.spare_worker_pid() == third_spare
+
+# A storage pause ends the idle worker and stops new ones.
+from tldw_chatbook.Backup_Recovery import storage_admission
+
+held = executor_module._spare[1]
+for listener in tuple(storage_admission._pause_listeners):
+    listener()
+report["pause_listener_registered"] = (
+    executor_module.retire_spare_worker in storage_admission._pause_listeners
+)
+report["ended_by_pause"] = executor_module.spare_worker_pid() is None and held.poll() is not None
+storage_admission._pause = object()
+try:
+    report["results"].append(executor.execute("stat_path", {"path": "note.txt"}, intent="read"))
+    time.sleep(0.5)
+    report["spare_while_paused"] = executor_module.spare_worker_pid()
+finally:
+    storage_admission._pause = None
+
+executor_module._SPARE_WORKERS = False
+report["results"].append(executor.execute("stat_path", {"path": "note.txt"}, intent="read"))
+time.sleep(0.5)
+report["spare_when_disabled"] = executor_module.spare_worker_pid()
+print(json.dumps(report))
+"""
+
+
+def test_one_spare_worker_serves_the_next_call_and_is_ended_on_demand(
+    tmp_path: Path, isolated_runtime_python: Path
+) -> None:
+    """TASK-40608: the next call takes the idle worker; each serves one request.
+
+    Runs in the isolated interpreter (real ``-I`` workers of this checkout).
+    The first call starts its own worker and leaves a spare; the second takes
+    exactly that process and a new spare replaces it; a call with another
+    environment never takes it; a replaced ``subprocess.Popen`` sees its own
+    spawn and nothing else; a storage pause ends the idle worker and stops new
+    ones; with spares switched off none is started.
+
+    Args:
+        tmp_path: Holds the two workspaces.
+        isolated_runtime_python: Interpreter that imports this checkout under ``-I``.
+    """
+    workspace = tmp_path / "real-workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("hello", encoding="utf-8")
+    other = tmp_path / "other-workspace"
+    other.mkdir()
+    (other / "other.txt").write_text("other!", encoding="utf-8")
+    completed = subprocess.run(
+        [
+            str(isolated_runtime_python),
+            "-I",
+            "-c",
+            _SPARE_WORKER_HARNESS,
+            str(workspace),
+            str(other),
+        ],
+        # Windows cannot load its socket provider (asyncio's import) without these.
+        env=_isolated_harness_environment()
+        | {name: os.environ[name] for name in ("SYSTEMROOT", "WINDIR") if name in os.environ},
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout.splitlines()[-1])
+    first_spare, second_spare, third_spare = report["spares"]
+    assert report["before_first_call"] is None
+    assert report["first_spare_alive"] is True
+    # Call 1 had no spare; call 2 took exactly the spare call 1 left; call 3
+    # (another environment) took nothing and replaced the idle worker.
+    assert report["taken"][:3] == [None, first_spare, None]
+    assert len({first_spare, second_spare, third_spare}) == 3
+    assert report["spawned_through_replacement"] == 1
+    assert report["spare_untouched_by_replacement"] is True
+    assert report["pause_listener_registered"] is True
+    assert report["ended_by_pause"] is True
+    assert report["spare_while_paused"] is None
+    assert report["spare_when_disabled"] is None
+    assert len(report["results"]) == 6
+    for index, result in enumerate(report["results"]):
+        name, size = ("other.txt", 6) if index in (2, 3) else ("note.txt", 5)
+        assert f"path: {name}" in result and f"size: {size}" in result
+
+
 @pytest.mark.parametrize(
     ("response", "code"),
     [

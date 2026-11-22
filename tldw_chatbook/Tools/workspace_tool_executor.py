@@ -151,6 +151,161 @@ def workspace_worker_environment(workspace_root: Path) -> dict[str, str]:
     return environment
 
 
+# --- One spare worker (TASK-40608, owner decision 2026-11-21) ----------------
+#
+# Every local tool call started its own ``python -I -m`` worker: about 0.15 s
+# alone and 0.4-0.5 s inside a Console turn, two or three times per turn. The
+# worker reads its whole request from stdin before it does anything, so a
+# process started ahead of time is the same process, earlier. One idle worker
+# is kept: after a call takes or starts its worker, the next one is started in
+# the background with the same command and environment. Each process still
+# serves exactly one request and exits.
+#
+# A spare is only taken when it was started with exactly this call's command
+# and environment and is still running; anything else starts a worker as
+# before. It is ended at interpreter exit, when storage pauses for a backup or
+# restore, and when a call needs a different environment (another project
+# folder or PATH). If this process dies, the spare reads end-of-file and exits.
+
+#: The real constructor. Tests that replace ``subprocess.Popen`` observe every
+#: spawn; no spare is started or taken through a replacement.
+_REAL_POPEN = subprocess.Popen
+#: Tests of the per-call spawn set this to False.
+_SPARE_WORKERS = True
+_spare_lock = threading.Lock()
+#: ((argv, environment items), process) of the idle worker, if any.
+_spare: tuple[tuple, subprocess.Popen[bytes]] | None = None
+#: Keys with a background start in flight (at most one start per key).
+_spare_starting: set[tuple] = set()
+_spare_hooks_installed = False
+
+
+def _worker_argv() -> list[str]:
+    return [sys.executable, "-I", "-m", _FIXED_WORKER_MODULE]
+
+
+def _spawn_worker(environment: dict[str, str]) -> subprocess.Popen[bytes]:
+    """Start one worker process; it blocks reading its request from stdin."""
+    return subprocess.Popen(
+        _worker_argv(),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        shell=False,
+        start_new_session=(os.name == "posix"),
+    )
+
+
+def _spare_key(environment: dict[str, str]) -> tuple:
+    return (tuple(_worker_argv()), tuple(sorted(environment.items())))
+
+
+def _spares_usable() -> bool:
+    """Whether a spare may be started or taken right now."""
+    if not _SPARE_WORKERS or subprocess.Popen is not _REAL_POPEN:
+        return False
+    storage = sys.modules.get("tldw_chatbook.Backup_Recovery.storage_admission")
+    return storage is None or storage._pause is None
+
+
+def _end_idle_worker(process: subprocess.Popen[bytes]) -> None:
+    """Kill a worker that never received a request and release its pipes."""
+    try:
+        process.kill()
+    except OSError:
+        pass
+    for stream in (process.stdin, process.stdout, process.stderr):
+        try:
+            if stream is not None:
+                stream.close()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=5.0)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def retire_spare_worker() -> None:
+    """End the idle worker, if any (quit, storage pause, tests)."""
+    global _spare
+    with _spare_lock:
+        held, _spare = _spare, None
+    if held is not None:
+        _end_idle_worker(held[1])
+
+
+def spare_worker_pid() -> int | None:
+    """The idle worker's pid, or None (diagnostics, tests)."""
+    with _spare_lock:
+        return None if _spare is None else _spare[1].pid
+
+
+def _take_spare(key: tuple) -> subprocess.Popen[bytes] | None:
+    """Return the idle worker for exactly ``key`` if it is still running."""
+    global _spare
+    with _spare_lock:
+        held, _spare = _spare, None
+    if held is None:
+        return None
+    if held[0] == key and held[1].poll() is None:
+        return held[1]
+    _end_idle_worker(held[1])
+    return None
+
+
+def _install_spare_hooks() -> None:
+    global _spare_hooks_installed
+    with _spare_lock:
+        if _spare_hooks_installed:
+            return
+        _spare_hooks_installed = True
+    import atexit
+
+    atexit.register(retire_spare_worker)
+    try:
+        from tldw_chatbook.Backup_Recovery import storage_admission
+
+        storage_admission._pause_listeners.append(retire_spare_worker)
+    except Exception:  # noqa: BLE001 - without the hook a pause still stops new spares
+        pass
+
+
+def _start_spare(key: tuple, environment: dict[str, str]) -> None:
+    """Start the next idle worker for ``key`` in the background."""
+    with _spare_lock:
+        if (_spare is not None and _spare[0] == key) or key in _spare_starting:
+            return
+        _spare_starting.add(key)
+
+    def start() -> None:
+        global _spare
+        process = None
+        try:
+            _install_spare_hooks()
+            if not _spares_usable():
+                return
+            process = _spawn_worker(dict(environment))
+            with _spare_lock:
+                previous = _spare
+                if _spares_usable():
+                    _spare, process = (key, process), None
+                else:
+                    previous = None
+            if previous is not None:
+                _end_idle_worker(previous[1])
+        except Exception:  # noqa: BLE001 - a spare is an optimisation only
+            pass
+        finally:
+            with _spare_lock:
+                _spare_starting.discard(key)
+            if process is not None:
+                _end_idle_worker(process)
+
+    threading.Thread(target=start, name="workspace-worker-spare", daemon=True).start()
+
+
 class WorkspaceToolExecutor:
     """Launch one contained helper for one workspace operation.
 
@@ -306,16 +461,15 @@ class WorkspaceToolExecutor:
         cleanup_supervisor: _CleanupSupervisor | None = None
         cleanup_attempted = False
         try:
-            argv = [sys.executable, "-I", "-m", _FIXED_WORKER_MODULE]
-            process = subprocess.Popen(
-                argv,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=workspace_worker_environment(self._workspace_root),
-                shell=False,
-                start_new_session=(os.name == "posix"),
-            )
+            environment = workspace_worker_environment(self._workspace_root)
+            spares = _spares_usable()
+            key = _spare_key(environment) if spares else None
+            if key is not None:
+                process = _take_spare(key)
+            if process is None:
+                process = _spawn_worker(environment)
+            if key is not None:
+                _start_spare(key, environment)
             adapter = _PopenProcessAdapter(process)
             identity = WorkerContainmentIdentity(
                 pid=process.pid,

@@ -138,6 +138,37 @@ def test_a_change_from_outside_is_refused_once_the_window_ends(
     assert after[0] == "refused", after
 
 
+def test_a_fresh_observation_sees_a_change_from_outside_at_once(
+    local_scope, settled, tmp_path  # noqa: F811
+):
+    """The OpenAI reconnect gates do not use the window.
+
+    ``LLM_Calls.recovery_review._history`` reads inside ``fresh_observation``:
+    with the window, a review, its approval and a request were accepted
+    against an activation record deleted a moment earlier
+    (``Tests/Backup_Recovery/test_activation_openai_reconnect.py``).
+    """
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(3):
+            assert _verdict(target)[0] == "allowed"
+        MUTATIONS["registry-intent-file"](root, config, data, tmp_path)
+        assert storage._observation_window() == 1.0
+        with storage.fresh_observation():
+            assert storage._observation_window() == 0.0
+            with storage.fresh_observation():
+                fresh = _verdict(target)
+            assert storage._observation_window() == 0.0
+        assert storage._observation_window() == 1.0
+    finally:
+        startup.close()
+
+    assert fresh[0] == "refused", fresh
+
+
 def test_an_in_process_admission_write_ends_the_window_at_once(
     local_scope, settled, monkeypatch  # noqa: F811
 ):

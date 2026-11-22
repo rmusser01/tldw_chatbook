@@ -27,7 +27,10 @@ from tldw_chatbook.Backup_Recovery.activation import (
 )
 from tldw_chatbook.Backup_Recovery.generation_witnesses import _witnesses
 from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
-from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+from tldw_chatbook.Backup_Recovery.storage_admission import (
+    acquire_storage,
+    fresh_observation,
+)
 from tldw_chatbook.Utils.platform_files import os
 
 if TYPE_CHECKING:
@@ -236,8 +239,19 @@ def _selection(path, auth_source=None, *, resolve=False):
 
 
 def _history(path, lease):
+    """The paired witnesses for ``path``, read now.
+
+    Every caller decides whether a provider may be reached: the reconnect
+    review, recording its approval, and the per-request gate that compares
+    this with what it read when the operation began. Inside the evidence
+    observation window a pairing record removed or rewritten by anything but
+    this process's writers stayed invisible for up to a second, and all three
+    then accepted damaged history (TASK-40608, found 2026-11-22). Two reads
+    per provider request; the Console's other gates keep the window.
+    """
     try:
-        return tuple(_witnesses(path, lease))
+        with fresh_observation():
+            return tuple(_witnesses(path, lease))
     except (OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError):
         raise ProviderReconnectRequired() from None
 

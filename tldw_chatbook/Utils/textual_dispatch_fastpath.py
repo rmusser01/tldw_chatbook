@@ -17,7 +17,12 @@ arity cache removes one ``inspect.signature`` call per widget on top of that.
 The same per-message cost is paid by every timer tick, refresh and app message
 in normal use.
 
-Both replacements keep upstream as the definition of behaviour:
+Every ``Idle`` event also runs ``Widget._check_refresh``, which walks up to the
+screen before it looks at the widget's four refresh flags. With none of them
+set it does nothing else, so the replacement reads the flags first and only
+then calls upstream.
+
+All replacements keep upstream as the definition of behaviour:
 
 * ``count_parameters`` only changes the ``partial`` case, and only when the
   wrapped callable is a plain Python function object. Upstream's own
@@ -31,8 +36,10 @@ Both replacements keep upstream as the definition of behaviour:
   class, and it re-checks the three lookups for every class in the MRO that is
   not a message-pump class (plain mixins), so a patched handler is always seen.
 
+* ``Widget._check_refresh`` calls upstream whenever a refresh flag is set.
+
 ``Tests/Performance/test_textual_dispatch_fastpath.py`` pins the upstream
-source both replacements were derived from and compares their results with
+source the replacements were derived from and compares their results with
 upstream's, so a Textual upgrade fails there instead of changing dispatch.
 """
 
@@ -46,6 +53,7 @@ from typing import Any
 import textual._callback as _callback
 from textual.message import Message
 from textual.message_pump import MessagePump, _MessagePumpMeta
+from textual.widget import Widget
 
 __all__ = ["install_dispatch_fastpath", "is_installed", "upstream"]
 
@@ -203,6 +211,20 @@ def install_dispatch_fastpath() -> bool:
     _upstream["count_parameters"] = upstream_count
     _callback.count_parameters = count_parameters
 
+    upstream_check_refresh = Widget._check_refresh
+
+    def _check_refresh(self: Widget) -> None:
+        if (
+            self._layout_required
+            or self._repaint_required
+            or self._scroll_required
+            or self._refresh_styles_required
+        ):
+            upstream_check_refresh(self)
+
+    _upstream["check_refresh"] = upstream_check_refresh
+    Widget._check_refresh = _check_refresh  # type: ignore[method-assign]
+
     setattr(_fast_get_dispatch_methods, _MARKER, True)
     _upstream["get_dispatch_methods"] = upstream_dispatch
     MessagePump._get_dispatch_methods = _fast_get_dispatch_methods  # type: ignore[method-assign]
@@ -212,8 +234,9 @@ def install_dispatch_fastpath() -> bool:
 
 
 def upstream(name: str) -> Any:
-    """The upstream callable a fast path replaced (``"count_parameters"`` or
-    ``"get_dispatch_methods"``), for tests that compare the two."""
+    """The upstream callable a fast path replaced (``"count_parameters"``,
+    ``"get_dispatch_methods"`` or ``"check_refresh"``), for tests that compare
+    the two."""
     return _upstream[name]
 
 
