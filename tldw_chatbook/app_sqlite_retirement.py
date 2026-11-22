@@ -13,6 +13,7 @@ async def retire_app_sqlite_handles(app: Any) -> None:
         core_cached_connection,
         repository_participant,
     )
+    from tldw_chatbook.Backup_Recovery.held_connections import retire_held_connections
     from tldw_chatbook.DB.base_db import SqliteRetirementIncomplete
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Evals_DB import EvalsDB
@@ -60,6 +61,8 @@ async def retire_app_sqlite_handles(app: Any) -> None:
         ),
     )
     incomplete = []
+    # Idle handles that owned calls left open on worker threads (TASK-40608).
+    retire_held_connections()
     for name, owner, source_type, local_attribute, connection_attribute in owners:
         if type(owner) is not source_type or owner.is_memory_db:
             continue  # Custom/memory owners retain their existing contract.

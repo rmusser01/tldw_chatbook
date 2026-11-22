@@ -2015,7 +2015,7 @@ def _posture_unchanged(active_config_path: Path, cached: dict, posture: tuple) -
 
     loop = asyncio._get_running_loop()
     if loop is None:
-        return _config_file_posture(active_config_path) == posture
+        return profile_paths.posture_holds(active_config_path, cached, posture, _config_file_posture)
     if _POSTURE_STRETCH is None:
         _POSTURE_STRETCH = _threading.local()
     stretch = _POSTURE_STRETCH

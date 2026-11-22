@@ -77,6 +77,31 @@ def _nofollow_any_flag() -> int:
 
 
 _NOFOLLOW_ANY = _nofollow_any_flag()
+#: TASK-40608 D1 (ADR-126 amendment 2026-11-21, owner decisions O1 and O3). On
+#: Windows every stamp is a native handle open per path component, so a positive
+#: re-observation of confirmed evidence stays valid for this long instead of
+#: being repeated on every call. In-process changes still advance the admission
+#: epoch at once, and a local pause discards the window. POSIX keeps the
+#: per-call observation (0 disables the window).
+_EVIDENCE_OBSERVATION_SECONDS = 1.0 if os.name == "nt" else 0.0
+#: Path -> (time.monotonic() when resolving began, resolved path). Windows only.
+_resolutions: dict[Path, tuple[float, Path]] = {}
+_RESOLUTIONS_MAX = 1024
+#: Path -> (time.monotonic() when the stat began, stat result or None when
+#: absent). One observation window of checked stats shared by every evidence
+#: entry, so a file many entries depend on is read once per window.
+_observed_stats: dict[Path, tuple[float, object]] = {}
+_OBSERVED_STATS_MAX = 4096
+
+
+def _in_pinned_folder(path: Path) -> bool:
+    """Whether ``path`` is in (or is) a folder this process holds pinned (Windows)."""
+    from tldw_chatbook.Utils.windows_files import pinned_start
+
+    try:
+        return pinned_start(path) is not None
+    except (OSError, ValueError):
+        return False
 
 
 def _resolved(path: Path) -> Path:
@@ -96,7 +121,26 @@ def _resolved(path: Path) -> Path:
     Only the parent directory is opened, never the leaf: the leaf is often a
     SQLite database, and closing any descriptor of it would drop every POSIX
     lock this process holds on that file.
+
+    On Windows a resolution of a path in a pinned profile folder is reused
+    inside the evidence observation window (TASK-40608 D1): each one opens the
+    file to read its final path, and one Console turn asked for the same few
+    paths thousands of times. A path outside the pinned folders resolves on
+    every call, as before.
     """
+    window = _EVIDENCE_OBSERVATION_SECONDS
+    if window and _in_pinned_folder(path):
+        started = time.monotonic()
+        with _lock:
+            known = _resolutions.get(path)
+            if known is not None and started - known[0] < window:
+                return known[1]
+        resolved = path.resolve()
+        with _lock:
+            if len(_resolutions) >= _RESOLUTIONS_MAX:
+                _resolutions.clear()
+            _resolutions[path] = (started, resolved)
+        return resolved
     if _NOFOLLOW_ANY:
         text = str(path)
         if (
@@ -158,7 +202,7 @@ class _Operation:
             raise bootstrap.RecoveryRequired("operation_provenance_invalid")
         if path is not None:
             selected = lexical_path(path)
-            parent = os.stat(self.path.parent)
+            parent = _parent_stat(self.path.parent)
             if (
                 selected != self.path
                 or _resolved(selected) != self.resolved_path
@@ -177,6 +221,26 @@ class _Operation:
                 or hold.error is not None
             ):
                 raise bootstrap.RecoveryRequired("operation_native_scope_unqualified")
+
+
+def _parent_stat(parent: Path):
+    """Stat an operation's parent folder; a pinned folder once per window.
+
+    Every check of a running operation compares the parent's identity again.
+    A pinned profile folder cannot be renamed or replaced while its pin is
+    held, so for it the comparison can only repeat itself, and on Windows each
+    repeat is a security read (TASK-40608 D1). Any other parent is read on
+    every check, so a replaced folder is still refused at once.
+    """
+    window = _EVIDENCE_OBSERVATION_SECONDS
+    if window:
+        from tldw_chatbook.Utils.windows_files import is_pinned_root
+
+        if is_pinned_root(parent):
+            _, info = _observed_stat(parent, time.monotonic(), window)
+            if info is not None:
+                return info
+    return os.stat(parent)
 
 
 def _check_operation(operation, path=None):
@@ -225,7 +289,7 @@ def _repository_operation(participant):
         operation.path = participant.path
         operation.resolved_path = _resolved(participant.path)
         try:
-            parent = os.stat(participant.path.parent)
+            parent = _parent_stat(participant.path.parent)
         except FileNotFoundError:
             # Preserve the ordinary SQLite private-parent refusal contract.
             from tldw_chatbook.Utils.private_paths import (
@@ -559,6 +623,8 @@ def _begin_local_pause() -> _LocalPause:
         for attempt in _pending_acquisitions:
             if attempt.operation is None:
                 attempt.cancel.set()
+        # A backup or restore may now change anything a stamp describes.
+        _forget_observations()
         _changed.notify_all()
     # Native handle closes stay off the coordinator lock; the pause owner only
     # starts backup or restore work after this returns.
@@ -657,6 +723,8 @@ class _Hold:
         self.evidence: dict[str, _Evidence] = {}
         self.path_evidence: OrderedDict[tuple, _Evidence] = OrderedDict()
         self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = OrderedDict()
+        # TASK-40608 D1: control-record reads valid for one selector evidence.
+        self.control_reads: OrderedDict[tuple, tuple[_Evidence, object]] = OrderedDict()
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -1043,15 +1111,14 @@ _EVIDENCE_REUSE = True
 _EVIDENCE_SETTLE_NS = 1_000_000_000
 #: Per-path containment evidence kept per hold (LRU).
 _EVIDENCE_PATHS_MAX = 256
+#: Control-record reads kept per hold (see _control_snapshot).
+_CONTROL_READS_MAX = 64
 _NOT_BOOTSTRAP_RECORDS = ("admission", "unbound-owner", "projection-dependencies")
 _QUALIFICATION_FILE = Path(__file__).with_name("native_qualification.json")
 
 
-def _posture(path: Path) -> tuple | None:
-    """Identity and permission posture, or None when the path is absent."""
-    try:
-        info = os.stat(path, follow_symlinks=False)
-    except FileNotFoundError:
+def _posture_of(info) -> tuple | None:
+    if info is None:
         return None
     return (
         info.st_dev,
@@ -1062,13 +1129,46 @@ def _posture(path: Path) -> tuple | None:
     )
 
 
+def _content_of(info) -> tuple | None:
+    if info is None:
+        return None
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _posture(path: Path) -> tuple | None:
+    """Identity and permission posture, or None when the path is absent."""
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return _posture_of(info)
+
+
 def _content(path: Path) -> tuple | None:
     """Identity plus change stamps, or None when the path is absent."""
     try:
         info = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
         return None
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    return _content_of(info)
+
+
+def _observed_stat(path: Path, now: float, window: float) -> tuple[float, object]:
+    """One checked stat per path per observation window: ``(began, result)``."""
+    with _lock:
+        known = _observed_stats.get(path)
+        if known is not None and now - known[0] < window:
+            return known
+    began = time.monotonic()
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError:
+        info = None
+    with _lock:
+        if len(_observed_stats) >= _OBSERVED_STATS_MAX:
+            _observed_stats.clear()
+        _observed_stats[path] = (began, info)
+    return began, info
 
 
 def _chain(path: Path) -> tuple[Path, ...]:
@@ -1079,7 +1179,7 @@ def _chain(path: Path) -> tuple[Path, ...]:
 class _Evidence:
     """Stamps over one derivation's inputs; immutable once published on a hold."""
 
-    __slots__ = ("names", "posture", "content", "epoch", "confirmed")
+    __slots__ = ("names", "posture", "content", "epoch", "confirmed", "verified_at")
 
     def __init__(self, names, posture_paths, content_paths):
         self.names = names
@@ -1087,6 +1187,9 @@ class _Evidence:
         self.content = tuple((p, _content(p)) for p in content_paths)
         self.epoch = bootstrap._admission_epoch
         self.confirmed = False
+        # time.monotonic() of the last observation that matched these stamps;
+        # read and written under _lock (see _current_stamps).
+        self.verified_at = 0.0
 
     def dependencies(self) -> tuple:
         return (
@@ -1110,6 +1213,61 @@ class _Evidence:
         return all(
             s is None or s[4] <= when_ns - _EVIDENCE_SETTLE_NS for _, s in self.content
         )
+
+
+def _current_stamps(entry: _Evidence) -> tuple:
+    """Observe the inputs of ``entry`` now, or reuse a recent matching observation.
+
+    With ``_EVIDENCE_OBSERVATION_SECONDS`` at 0 this is ``entry.observe()``.
+    Otherwise an observation that matched the published stamps is reused until
+    the window ends, so a change made by another process (a permission or owner
+    change, or new record bytes) is seen within that window. The window starts
+    when the matching observation began, never when it finished.
+    """
+    window = _EVIDENCE_OBSERVATION_SECONDS
+    if not window:
+        return entry.observe()
+    started = time.monotonic()
+    with _lock:
+        if started - entry.verified_at < window:
+            return entry.stamps()
+    # Entries share inputs (the registry, the records, the ancestor chain), so
+    # each path is read once per window. The entry is only as fresh as the
+    # oldest read it used.
+    oldest = started
+    posture, content = [], []
+    for path, _ in entry.posture:
+        began, info = _observed_stat(path, started, window)
+        oldest = min(oldest, began)
+        posture.append(_posture_of(info))
+    for path, _ in entry.content:
+        began, info = _observed_stat(path, started, window)
+        oldest = min(oldest, began)
+        content.append(_content_of(info))
+    observed = (tuple(posture), tuple(content))
+    if observed == entry.stamps():
+        with _lock:
+            if oldest > entry.verified_at:
+                entry.verified_at = oldest
+    return observed
+
+
+#: Drive anchor -> time.monotonic() of its last writable observation (Windows).
+_writable_volumes: dict[str, float] = {}
+
+
+def _forget_observations() -> None:
+    """Make all held evidence observe again on its next use (call under _lock)."""
+    _writable_volumes.clear()
+    _observed_stats.clear()
+    _resolutions.clear()
+    for hold in (*_holds.values(), *_retiring_holds):
+        for entry in hold.evidence.values():
+            entry.verified_at = 0.0
+        for entry in hold.path_evidence.values():
+            entry.verified_at = 0.0
+        for entry, _ in hold.derived_evidence.values():
+            entry.verified_at = 0.0
 
 
 def _no_links(evidence: _Evidence) -> bool:
@@ -1173,6 +1331,79 @@ def _path_evidence(names, selected: Path) -> _Evidence | None:
     return evidence if _no_links(evidence) else None
 
 
+def _control_snapshot(root: Path, key: tuple, read):
+    """Reuse one control-record read while its inputs are verified unchanged.
+
+    TASK-40608 D1, Windows only. The registry and the bootstrap records are
+    read by the admission derivation, by every activation check, by the config
+    scopes and by the maintenance probe, each time through a verified folder
+    walk. Their bytes, their folders and every ancestor are exactly the inputs
+    the live hold's confirmed selector evidence stamps, so while that evidence
+    is current (same epoch, stamps equal inside the observation window) a read
+    returns a private copy of the previous result. Any other state reads the
+    files: no serving hold, unconfirmed or changed evidence, a local pause, a
+    maintenance thread, or the kill switch.
+
+    Args:
+        root: The bootstrap root the read is for.
+        key: The reader and its options.
+        read: The unmodified reader. Its exceptions are never kept.
+    """
+    if not _EVIDENCE_OBSERVATION_SECONDS or not _EVIDENCE_REUSE:
+        return read()
+    selector = str(effective_config_path())
+    with _lock:
+        hold = _holds.get((os.getpid(), str(root)))
+        evidence = (
+            hold.evidence.get(selector)
+            if _pause is None
+            and not getattr(_local, "admitted", False)
+            and _hold_serving(hold)
+            else None
+        )
+        if (
+            evidence is None
+            or not evidence.confirmed
+            or evidence.epoch != bootstrap._admission_epoch
+            or evidence.names != hold.names
+        ):
+            evidence = None
+    if evidence is None:
+        return read()
+    try:
+        current = _current_stamps(evidence) == evidence.stamps()
+    except OSError:
+        current = False
+    if not current:
+        return read()
+    with _lock:
+        known = hold.control_reads.get(key)
+        if (
+            known is not None
+            and known[0] is evidence
+            and evidence.epoch == bootstrap._admission_epoch
+        ):
+            hold.control_reads.move_to_end(key)
+            return copy.deepcopy(known[1])
+    value = read()
+    with _lock:
+        if (
+            _holds.get(hold.key) is hold
+            and hold.evidence.get(selector) is evidence
+            and evidence.epoch == bootstrap._admission_epoch
+            and _pause is None
+        ):
+            hold.control_reads[key] = (evidence, copy.deepcopy(value))
+            hold.control_reads.move_to_end(key)
+            while len(hold.control_reads) > _CONTROL_READS_MAX:
+                hold.control_reads.popitem(last=False)
+    return value
+
+
+if os.name == "nt":
+    bootstrap._control_snapshot = _control_snapshot
+
+
 def _hold_serving(hold) -> bool:
     return (
         hold is not None
@@ -1184,6 +1415,27 @@ def _hold_serving(hold) -> bool:
 
 def _mount_read_only(path: Path) -> bool:
     """Qualification refuses a read-only mount; the reuse path must too."""
+    if os.name == "nt":
+        from tldw_chatbook.Utils.windows_files import volume_read_only
+
+        # One drive-root open; reused inside the observation window like any
+        # other positive stamp (a volume is not remounted under open handles).
+        key = Path(path).anchor
+        started = time.monotonic()
+        with _lock:
+            known = _writable_volumes.get(key)
+            if known is not None and started - known < _EVIDENCE_OBSERVATION_SECONDS:
+                return False
+        try:
+            read_only = volume_read_only(path)
+        except (OSError, ValueError):
+            return True
+        with _lock:
+            if read_only:
+                _writable_volumes.pop(key, None)
+            else:
+                _writable_volumes[key] = started
+        return read_only
     statvfs = getattr(os, "statvfs", None)
     if statvfs is None:
         return True
@@ -1206,7 +1458,6 @@ def _ordinary_hold(authority=None, lease=None):
     with _lock:
         if (
             not _EVIDENCE_REUSE
-            or os.name == "nt"
             or _pause is not None
             or getattr(_local, "admitted", False)
         ):
@@ -1229,7 +1480,7 @@ def _derived_before(hold, key):
         return epoch, None
     entry, _ = item
     try:
-        return epoch, (entry, entry.observe(), time.time_ns())
+        return epoch, (entry, _current_stamps(entry), time.time_ns())
     except OSError:
         return epoch, None
 
@@ -1431,7 +1682,14 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
     # Snapshot only under _lock. New child stamps, like final observations,
     # perform filesystem work outside the coordinator lock.
     for item in fresh_children:
-        entry = _path_evidence(hold.names, item)
+        try:
+            entry = _path_evidence(hold.names, item)
+        except OSError:
+            if os.name != "nt":
+                raise
+            # A checked Windows stat refuses what lstat merely reports (a
+            # reparse point, a non-NTFS volume): leave it to the derivation.
+            return None
         if entry is None:
             return None
         per_path.append(entry)
@@ -1456,12 +1714,14 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
     # Native filesystem observation never runs under the coordinator lock.
     try:
         unchanged = (
-            evidence.observe() == evidence.stamps()
-            and all(entry.observe() == entry.stamps() for entry in per_path)
+            _current_stamps(evidence) == evidence.stamps()
+            and all(_current_stamps(entry) == entry.stamps() for entry in per_path)
             and evidence.epoch == bootstrap._admission_epoch
         )
-    except BaseException:
+    except BaseException as error:
         token.close()  # as the derivation does: a counted lease never leaks
+        if os.name == "nt" and isinstance(error, OSError):
+            return None  # the derivation is the only source of refusals
         raise
     if not unchanged:
         token.close()
@@ -1485,11 +1745,16 @@ def _observe_candidates(root, selector, path, related_paths):
             directory_key = ("directory", str(selector), str(item.parent))
             wanted[directory_key] = hold.path_evidence.get(directory_key)
     now = time.time_ns()
-    return epoch, {
-        name: (entry, entry.observe(), now)
-        for name, entry in wanted.items()
-        if entry is not None
-    }
+    try:
+        return epoch, {
+            name: (entry, entry.observe(), now)
+            for name, entry in wanted.items()
+            if entry is not None
+        }
+    except OSError:
+        if os.name != "nt":
+            raise
+        return epoch, {}  # nothing observed: this derivation confirms nothing
 
 
 def _note_evidence(hold, root, selector, path, related_paths, names, roots, before):
@@ -1671,7 +1936,7 @@ def _acquire_storage(
         ):
             raise bootstrap.RecoveryRequired("operation_native_scope_changed")
     before = None
-    if _EVIDENCE_REUSE and type(attempt) is _Acquisition and os.name != "nt":
+    if _EVIDENCE_REUSE and type(attempt) is _Acquisition:
         reused = _reuse_evidence(
             root, selector, path, related_paths, check, execution_selection
         )
@@ -1756,10 +2021,16 @@ def _acquire_storage(
             ):
                 raise bootstrap.RecoveryRequired("storage_scope_changed")
         if before is not None:
-            _note_evidence(
-                hold, root, selector, path, related_paths, names,
-                attempt.scope_roots, before,
-            )
+            try:
+                _note_evidence(
+                    hold, root, selector, path, related_paths, names,
+                    attempt.scope_roots, before,
+                )
+            except OSError:
+                if os.name != "nt":
+                    raise
+                # Stamps are optional evidence. A checked Windows stat that
+                # refuses (reparse point, non-NTFS) publishes none.
         return token
     except BaseException:
         token.close()

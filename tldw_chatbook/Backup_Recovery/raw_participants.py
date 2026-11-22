@@ -757,6 +757,31 @@ def _pin_parent(state, anchor):
         raise
 
 
+#: Windows (TASK-40608 D1): (hold identities, time.monotonic()) of the last
+#: probe that found no maintenance request. The app's maintenance monitor asks
+#: the same native question once a second; a raw operation does not need to
+#: ask it again in between.
+_quiet_pause_probe = None
+
+
+def _raw_pause_requested(holds):
+    """``_raw_holds_pause_requested``, at most once a second on Windows."""
+    global _quiet_pause_probe
+    window = storage._EVIDENCE_OBSERVATION_SECONDS
+    if not window:
+        return _raw_holds_pause_requested(holds)
+    identity = tuple(id(hold) for hold in holds)
+    now = time.monotonic()
+    quiet = _quiet_pause_probe
+    if quiet is not None and quiet[0] == identity and now - quiet[1] < window:
+        with storage._lock:
+            if storage._pause is None:
+                return False
+    requested = _raw_holds_pause_requested(holds)
+    _quiet_pause_probe = None if requested else (identity, now)
+    return requested
+
+
 def _raw_holds_pause_requested(holds):
     """Probe each exact stock hold once; custom queries keep their original route."""
     (
@@ -1157,7 +1182,7 @@ def scope(
             settings_files.preflight(state, route, attempt)
         if route == "theme_export":
             settings_files.check_export_parent(state)
-        if _raw_holds_pause_requested(state.holds):
+        if _raw_pause_requested(state.holds):
             raise bootstrap.RecoveryRequired("storage_locally_paused")
         gate = _participant_state(participant) if participant is not None else None
         with storage._changed:

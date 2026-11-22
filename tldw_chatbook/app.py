@@ -108,15 +108,15 @@ from textual.binding import Binding
 from textual.timer import Timer
 from textual.css.query import NoMatches, QueryError
 
-# Install the ordered-candidate fast path on `Stylesheet.apply` before any App
-# exists, so every style application in the process takes it. Upstream's apply
-# walks the whole rule list per node to recover source order, which made CSS
-# matching the #1 sampled frame during 399 ms screen-switch stalls (2026-08-29
-# holistic perf review). Idempotent; see the module for the A/B numbers and
-# Tests/Performance/test_textual_css_fastpath.py for the fidelity guard.
+# Install the Textual fast paths before any App exists: ordered CSS candidates
+# for `Stylesheet.apply` (2026-08-29 perf review) and cached message-handler
+# lookup (TASK-40608). Idempotent; each module has its A/B numbers, and
+# Tests/Performance/test_textual_{css,dispatch}_fastpath.py guard fidelity.
 from tldw_chatbook.Utils.textual_css_fastpath import install_stylesheet_fastpath
+from tldw_chatbook.Utils.textual_dispatch_fastpath import install_dispatch_fastpath
 
 install_stylesheet_fastpath()
+install_dispatch_fastpath()
 
 from pathlib import Path
 

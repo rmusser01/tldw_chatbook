@@ -226,6 +226,17 @@ One trap cost a round: faulthandler dumps at most 100 threads, newest first. Wit
 - `sample <pid>` for the main thread once a worker has more than 100 threads.
 
 Then list each worker's tests that ran 250 s or more, from per-test start times, before calling anything a hang: a 0% CPU worker is usually a test waiting out pytest-timeout.
+## A stack sampler that keeps frames alive makes the app fail (TASK-40608, 2026-11-21)
+
+**Incident.** The Windows journey was profiled with an in-process sampler thread that calls `sys._current_frames()` every 10 ms. Three sampled runs passed. A fourth failed at startup with `cannot commit transaction - SQL statements in progress` in the Media schema setup and at shutdown with `index_operation_retirement_unproven`; the same tree passed unsampled. The sampler kept each sample's frame dictionary until the next sample, so a returned frame's locals, a SQLite cursor among them, outlived the call by up to 10 ms. A widget census added to the same thread used `gc.get_objects()`, which holds a reference to every object while it runs.
+
+**What to do.** Release the frames inside the sampling loop (`del frames` after reading them) and never call `gc.get_objects()` in a process whose behaviour you are measuring. Treat a sampled run as a profile only: take pass/fail and timings from unsampled runs.
+
+## A test can pass only because a cache has not warmed up yet (TASK-40608, 2026-11-21)
+
+**Incident.** `test_storage_initialization_wait.py` parks a follower acquisition behind a held initializer, and `test_raw_source_coordinator_io.py` requires the paired-witness reader to run. Both were green on Linux with PERF-07/08 evidence reuse on. Turning the same reuse on for Windows made all six cases of the first and both cases of the second fail every time. Reuse needs two derivations and inputs at least one second old; the Linux child process reached the measured call sooner than that, and the slower Windows child did not, so there the acquisition was served from evidence and never entered the code under test. A stack dump of the child (`faulthandler.dump_traceback_later` armed just before the stuck step) showed the follower had already finished.
+
+**What to do.** When a test is about the uncached path, switch the cache off in the test (`storage._EVIDENCE_REUSE = False`) instead of relying on it being cold. When a platform change turns a green test red, check whether the test ever selected the path it names.
 
 ## A slow local failure was filed as a DNS timeout, and two reported stalls did not reproduce (TASK-42027, 2026-11-20)
 

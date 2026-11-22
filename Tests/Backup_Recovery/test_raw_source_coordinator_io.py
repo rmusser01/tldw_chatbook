@@ -167,9 +167,16 @@ async def test_native_parent_proof_cannot_return_revoked_custody(
 
 @pytest.mark.parametrize("entry", ["participant", "scope"])
 @pytest.mark.usefixtures("local_root")
-def test_remaining_source_entry_proofs_do_not_hold_coordinator(permission, entry):
+def test_remaining_source_entry_proofs_do_not_hold_coordinator(
+    permission, entry, monkeypatch
+):
     from tldw_chatbook.Backup_Recovery import generation_witnesses
 
+    # The reader must run for the lock assertion below to mean anything. With
+    # evidence reuse on (all platforms since TASK-40608; POSIX before it) a
+    # settled, twice-derived result is served without calling it, which a slow
+    # fixture reaches before this call.
+    monkeypatch.setattr(storage, "_EVIDENCE_REUSE", False)
     reader = generation_witnesses._paired_witnesses.__code__
     target = (
         raw._raw_participant.__code__

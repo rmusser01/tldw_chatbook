@@ -16,6 +16,10 @@ from tldw_chatbook.Backup_Recovery.participants import core_operation
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 case=sys.argv[1]
+# This test is about the full derivation's initializer. Reused evidence (all
+# platforms since TASK-40608; POSIX before it) admits a warm acquisition without
+# entering it, which a slow start reaches before the follower runs.
+storage._EVIDENCE_REUSE=False
 db=CharactersRAGDB(data/'fixture'/'wait.db',client_id='initialization-wait')
 db.close_connection()
 path=db.db_path
