@@ -153,6 +153,11 @@ class ConsolePromptMixinService:
             raise MixinPreferenceConflictError("mixin_session_changed")
         return session
 
+    def _closing(self, session_id: str) -> bool:
+        """Whether Close has fenced the session, so no new native read may start."""
+        closing = getattr(self.preparation_owner, "_session_close_generations", ())
+        return session_id in closing
+
     def preferences(self, session_id: str) -> MixinPreferences:
         """Return understood live choices; preserve unavailable formats."""
         from .console_prompt_mixins import MixinPreferenceConflictError
@@ -357,6 +362,7 @@ class ConsolePromptMixinService:
                 or store._sessions.get(session_id) is not session
                 or session.incarnation_id != incarnation
                 or session.conversation_binding_revision != binding
+                or self._closing(session_id)
             ):
                 raise MixinSourceChangedError("mixin_session_changed")
             if self.preferences(session_id).revision != expected_revision:
@@ -805,6 +811,7 @@ class ConsolePromptMixinService:
                 or session.incarnation_id != incarnation
                 or session.conversation_binding_revision != binding
                 or self.store.persistence is not persistence
+                or self._closing(session_id)
             ):
                 raise MixinSnapshotUnavailableError("mixin_retry_unavailable")
 

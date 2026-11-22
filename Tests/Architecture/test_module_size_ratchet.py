@@ -1177,7 +1177,15 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-20, TASK-42074 (owner rule: raise by the change's own lines):
     # 7087 -> 7089 (+2) -- dispose also joins the wake deliveries a session
     # close cancelled.
-    "tldw_chatbook/Chat/console_runtime.py": 7089,
+    # 2026-11-22, TASK-42342 (owner rule: raise by the change's own lines):
+    # 7089 -> 7091 (+2) -- a session close also drains the controller's own
+    # preparation reads, which finalize checks.
+    # 2026-11-22, TASK-42342 review (owner rule: raise by the change's own
+    # lines): 7091 -> 7093 (+2) -- the close drains the controller's reads
+    # again right before finalize, for reads that started meanwhile.
+    # 2026-11-22, TASK-42342 review 2 (owner rule: raise by the change's own
+    # lines): 7093 -> 7095 (+2) -- that drain call is wrapped under 100 columns.
+    "tldw_chatbook/Chat/console_runtime.py": 7095,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-337 amendment 2026-10-27). The proof itself lives in

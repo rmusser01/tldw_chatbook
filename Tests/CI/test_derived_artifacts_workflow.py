@@ -632,6 +632,30 @@ def test_task34975_close_drain_target_runs_just_before_the_pr3023_witnesses():
         assert sum(targets.count(target) for _, targets in steps) == 1, target
 
 
+# TASK-42342 (2026-11-22): the held prompt mix-in reads that Close must drain,
+# a controller-owned read the runtime never observed, and a controller read
+# started during Close's hook drain. Its own group, just before TASK-34975's,
+# so that group's slice above stays exact.
+_TASK42342_CLOSE_DRAIN_TARGETS = (
+    "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_a_prompt_mixin_read_and_refuses_a_new_one",
+    "Tests/Chat/test_console_context_presentation_current.py::test_session_close_drains_a_controller_read_issued_during_its_hook_drain",
+)
+
+
+def test_task42342_close_drain_target_runs_just_before_the_task34975_group():
+    steps = _pytest_step_targets()
+    targets = dict(steps)[_PR3023_STEP]
+    end = (
+        len(targets)
+        - len(_PR3023_CRITICAL_TARGETS)
+        - len(_TASK34975_CLOSE_DRAIN_TARGETS)
+    )
+    start = end - len(_TASK42342_CLOSE_DRAIN_TARGETS)
+    assert tuple(targets[start:end]) == _TASK42342_CLOSE_DRAIN_TARGETS
+    for target in _TASK42342_CLOSE_DRAIN_TARGETS:
+        assert sum(targets.count(target) for _, targets in steps) == 1, target
+
+
 @pytest.mark.parametrize("mutation", ["missing", "wrong-step", "duplicate", "order"])
 def test_pr3023_membership_rejects_actual_workflow_drift(monkeypatch, mutation):
     workflow = _workflow()
