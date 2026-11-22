@@ -261,10 +261,20 @@ def _normalize_destination_id(value: object) -> str:
 
 
 def _read_regular_archive(path: Path) -> bytes:
-    no_follow = getattr(os, "O_NOFOLLOW", None)
+    # Windows has no O_NOFOLLOW; there a symlink swapped in at open is still
+    # refused by the descriptor-versus-lstat identity check below. POSIX
+    # without O_NOFOLLOW stays fail-closed.
+    no_follow = getattr(os, "O_NOFOLLOW", 0 if os.name == "nt" else None)
     if type(no_follow) is not int:
         raise ToolPackError("import", "archive_invalid")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow
+    # O_BINARY: the Windows CRT opens in text mode by default, which drops
+    # CR before LF and stops at the first Ctrl-Z byte.
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_BINARY", 0)
+        | no_follow
+    )
     try:
         descriptor = os.open(path, flags)
     except (OSError, TypeError, ValueError):
@@ -302,7 +312,9 @@ def _read_regular_archive(path: Path) -> bytes:
                 value.st_ino,
                 value.st_size,
                 value.st_mtime_ns,
-                value.st_ctime_ns,
+                # On Windows, fstat's st_ctime is ChangeTime but stat's is
+                # CreationTime, so compare the creation time both report.
+                value.st_birthtime_ns if os.name == "nt" else value.st_ctime_ns,
             )
 
         if identity(before) != identity(after) or identity(after) != identity(current):
