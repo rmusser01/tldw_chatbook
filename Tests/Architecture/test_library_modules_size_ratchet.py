@@ -942,7 +942,12 @@ _BUDGETS: dict[str, int] = {
     # contort code): Folder files' own landing, a re-check after the
     # list-entry window, and each route's entry control in the last resort:
     # 256 -> 323 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 323,
+    # 2026-11-22, review r11n2 (same owner decision: expand limits, don't
+    # contort code): the last resort lands the route's own rail row (an open
+    # prompt's or note's name field instead), Collections' and Artifacts'
+    # entries, the marked Folder files landing, the named re-check margin:
+    # 323 -> 370 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 370,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     # 2026-09-09, task-32129 (Obsidian mode for Import once): 587 -> 602
     # (+15), a BEHAVIOUR ADD -- `set_obsidian_mode` (6 lines) plus the
