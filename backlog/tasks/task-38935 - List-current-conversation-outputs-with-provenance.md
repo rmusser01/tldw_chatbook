@@ -1,9 +1,9 @@
 ---
 id: TASK-38935
-title: Find and reopen current conversation outputs with provenance
+title: List current conversation outputs with provenance
 status: To Do
 created_date: 2026-11-05 16:08
-updated_date: 2026-11-22 15:51
+updated_date: 2026-11-22 15:55
 labels:
 - console
 - artifacts
@@ -22,17 +22,19 @@ documentation:
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Give users one reliable place to find deliverables created during a conversation and continue working with them. Preserve the distinction between temporary output, saved content, and generated files that are no longer available.
+Give users one reliable place to find deliverables created during a conversation. Preserve the distinction between temporary output, saved content, and generated files that are no longer available.
+
+This task is the read-only list. Acting on an entry (open, revise, export, locate in Library) is separate follow-up work that builds on it.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 A current-conversation Outputs section lists supported generated files, Canvas revisions, and saved notes/artifacts only when their existing owners establish a valid relationship to that conversation.
 - [ ] #2 Each entry identifies its type, actual source turn/run where known, and temporary/saved/missing status; unlinked or legacy provenance is labeled unknown.
-- [ ] #3 Open, revise, export, and locate-in-Library actions appear only when the item's actual owner supports and authorizes them.
+- [ ] #3 The list is read-only: it offers no open, revise, export, or locate actions, and rendering it changes no item.
 - [ ] #4 Items retain their canonical storage and lifecycle owners; the feature creates no aggregate artifact database, duplicate content store, or automatic retention promise.
 - [ ] #5 Entries follow exact conversation, branch/revision, workspace, and file authority; missing files, revoked bindings, and owner read failures remain explicit.
-- [ ] #6 Mounted and targeted owner-integration checks cover mixed output kinds, revisions, empty/unavailable states, and session switching without stale actions.
+- [ ] #6 Mounted and targeted owner-integration checks cover mixed output kinds, revisions, empty/unavailable states, and session switching without stale entries.
 <!-- AC:END -->
 
 ## Definition of Done
