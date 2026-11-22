@@ -4,7 +4,7 @@ title: "Console runtime dispose refuses sqlite_retirement_incomplete:AgentRuns i
 status: To Do
 assignee: []
 created_date: 2026-11-22 22:10
-updated_date: 2026-11-22 22:40
+updated_date: 2026-11-22 22:44
 labels:
 - follow-up
 - ci
@@ -19,8 +19,7 @@ references:
 - tldw_chatbook/DB/AgentRuns_DB.py
 - tldw_chatbook/Chat/console_activity_receipts.py
 - backlog/decisions/225-app-scoped-sqlite-retirement.md
-dependencies:
-- TASK-34661
+dependencies: []
 ---
 
 ## Description
@@ -44,6 +43,6 @@ Both cases pass locally at the base.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 The holder of the AgentRuns connection when these disposes refuse is identified and recorded in the notes
-- [ ] #2 The holder found in AC#1 is settled by its owner before the dispose, so retirement succeeds; a genuinely foreign or unsettled holder still refuses, as ADR-225 requires. Shown with a test that fails before the change (a temporary delay in the holder, reverted)
-- [ ] #3 Both cases pass in repeated runs of the file under parallel load (at least 20 runs, or a soak recorded in the notes)
+- [ ] #2 If the holder found in AC#1 has an owner that can settle it, it is settled before the dispose, so retirement succeeds, shown with a test that fails before the change (a temporary delay in the holder, reverted). If the refusal is correct for that holder (genuinely foreign or unsettled, as ADR-225 requires), the test settles the holder itself or asserts the refusal; the notes say which
+- [ ] #3 Both cases pass, as AC#2 leaves them, in repeated runs of the file under parallel load (at least 20 runs, or a soak recorded in the notes)
 <!-- AC:END -->

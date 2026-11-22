@@ -4,7 +4,7 @@ title: "The MCP permission store lets a Windows file-facade ValueError escape ra
 status: To Do
 assignee: []
 created_date: 2026-11-22 21:17
-updated_date: 2026-11-22 22:40
+updated_date: 2026-11-22 22:44
 labels:
 - follow-up
 - mcp
@@ -31,6 +31,6 @@ The PR #3684 port fixed the same shape in the Tool Pack receipt store by catchin
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A refusal the native facade raises as ValueError during the Windows parent-directory flush surfaces from a permission-store save exactly as an OSError from that flush does, and the error the caller receives says the new file may already be in place
+- [ ] #1 A refusal the native facade raises as ValueError during the Windows parent-directory flush surfaces from a permission-store save the same way an OSError from that flush does, and for both the error the caller receives says the new file may already be in place
 - [ ] #2 A test that simulates the Windows branch with the facade raising ValueError fails before the change and passes after it, and runs on the platforms CI uses
 <!-- AC:END -->
