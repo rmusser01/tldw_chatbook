@@ -57,6 +57,8 @@ from tldw_chatbook.Utils.input_validation import (
 
 from ...Chat.console_display_state import (
     CONSOLE_BLOCKER_MODEL_LIMITS,
+    CONSOLE_EMERGENCY_STOP_SEND_LABEL,
+    CONSOLE_EMERGENCY_STOP_SEND_TOOLTIP,
     ConsoleAttachmentBlock,
     QUEUE_REASON_PREPARING,
     QUEUE_REASON_RECEIVED_PREPARING,
@@ -2691,6 +2693,7 @@ class ConsoleComposerBar(Horizontal):
 
         normalized_send_label = send_label.strip() or "Send"
         self._send_label = normalized_send_label
+        held = normalized_send_label == CONSOLE_EMERGENCY_STOP_SEND_LABEL
         raw_cli_ready = self._raw_cli_prefix_typed and self.draft_text().startswith(
             "! "
         )
@@ -2747,6 +2750,8 @@ class ConsoleComposerBar(Horizontal):
         send_button.disabled = not send_ready
         if raw_presentation:
             send_button.tooltip = raw_presentation[2]
+        elif effective_send_blocked and held:  # The send gate checks the stop first.
+            send_button.tooltip = CONSOLE_EMERGENCY_STOP_SEND_TOOLTIP
         elif effective_send_blocked and dispatch_recovery_blocked:
             send_button.tooltip = "Resolve the response recovery above before sending."
         elif effective_send_blocked and wake_turn_active:
@@ -2800,6 +2805,7 @@ class ConsoleComposerBar(Horizontal):
             # TASK-33621.11: by the blocker's code; an image refusal is not setup.
             and console_blocker_opens_setup(setup_blocked_reason)
             and not wake_turn_active
+            and not held
             # Recovery is resolved at its own controls, not the setup wizard.
             and not dispatch_recovery_blocked,
             "console-composer-setup-blocked",
@@ -2811,6 +2817,7 @@ class ConsoleComposerBar(Horizontal):
             and console_blocked_reason(setup_blocked_reason).code
             == CONSOLE_BLOCKER_MODEL_LIMITS
             and not wake_turn_active
+            and not held  # A Held Send's strip names the stop (TASK-33620.1).
             and not dispatch_recovery_blocked,
             "console-composer-limits-blocked",
         )

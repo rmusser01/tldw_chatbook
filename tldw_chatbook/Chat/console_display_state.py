@@ -289,8 +289,14 @@ CONSOLE_EMERGENCY_STOP_HEADER_SHORT_LABEL = "Held"
 CONSOLE_EMERGENCY_STOP_STRIP_LABEL = "Emergency stop: runs and schedules held"
 CONSOLE_EMERGENCY_STOP_CLEAR_LABEL = "Clear"
 CONSOLE_EMERGENCY_STOP_SEND_REASON = "Send held — emergency stop is on"
-#: Owner decision 2026-11-20: Send itself reads this, at every width.
+#: Owner decision 2026-11-20: Send itself reads this, at every width. The send
+#: gate checks the stop first, so a Held Send's tooltip and reason name it over
+#: any other blocker, and the tooltip says how to resume (review, 2026-11-22).
 CONSOLE_EMERGENCY_STOP_SEND_LABEL = "Held"
+CONSOLE_EMERGENCY_STOP_SEND_TOOLTIP = (
+    "Send held — emergency stop is on. Clear it in the status strip or with "
+    "/emergency-stop clear."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -569,6 +575,8 @@ def build_console_disabled_reason(
     if action_id != "send":
         return ""
 
+    if send_blocked and send_label == CONSOLE_EMERGENCY_STOP_SEND_LABEL:
+        return CONSOLE_EMERGENCY_STOP_SEND_REASON
     if send_blocked and dispatch_recovery_blocked:
         return "Send blocked — resolve response recovery first"
     if send_blocked and wake_turn_active:

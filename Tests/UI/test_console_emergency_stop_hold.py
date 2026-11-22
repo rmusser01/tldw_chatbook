@@ -42,6 +42,10 @@ from tldw_chatbook.Widgets.Console.console_status_chips import (
 HEADER_HOLD = "Held · emergency stop"
 STRIP_HOLD = "Emergency stop: runs and schedules held"
 SEND_HOLD = "Send held — emergency stop is on"
+HELD_TOOLTIP = (
+    "Send held — emergency stop is on. Clear it in the status strip or with "
+    "/emergency-stop clear."
+)
 
 # Mounted-app tests that build app config in their body keep the
 # collection-time profile (Tests/conftest.py ``bootstrap_profile``).
@@ -461,7 +465,8 @@ async def test_send_reads_held_at_every_width_and_send_again_once_lifted(
         await pilot.pause(0.2)
         assert str(send.label) == "Held", "a typed draft turned Held back into Send"
         assert send.disabled
-        assert "emergency stop" in str(send.tooltip), send.tooltip
+        # Review follow-up (2026-11-22): the tooltip says how to resume.
+        assert str(send.tooltip) == HELD_TOOLTIP, send.tooltip
         # The chip beside it names the stop, on the strip's visible start.
         chips = chat.query_one("#console-status-chips", ConsoleStatusChips)
         assert chips.segment_text("estop") == STRIP_HOLD
@@ -486,3 +491,60 @@ async def test_send_reads_held_at_every_width_and_send_again_once_lifted(
         assert not send.disabled
         assert gateway.payloads == []
     assert not read_emergency_stop(persisted_stop).active
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other", ["none", "setup", "recovery", "wake", "attachment"])
+async def test_a_held_send_names_the_stop_over_any_other_blocker(other) -> None:
+    """Review follow-up (2026-11-22): with a setup blocker or a pending
+    recovery as well, Send read "Held" while its tooltip and reason named the
+    other cause. The send gate checks the stop first, so all three name it."""
+    from textual.app import App, ComposeResult
+
+    from tldw_chatbook.Chat.console_display_state import (
+        CONSOLE_BLOCKER_PROVIDER_SETUP,
+        ConsoleAttachmentBlock,
+        ConsoleBlockedReason,
+    )
+
+    class _Composer(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ConsoleComposerBar(id="console-native-composer")
+
+    blocker = {
+        "none": {},
+        "setup": {
+            "setup_blocked_reason": ConsoleBlockedReason(
+                "Add an API key before sending.", code=CONSOLE_BLOCKER_PROVIDER_SETUP
+            )
+        },
+        "recovery": {"dispatch_recovery_blocked": True},
+        "wake": {"wake_turn_active": True},
+        "attachment": {
+            "attachment_block": ConsoleAttachmentBlock(
+                notice="model-x can't accept images",
+                reason="model-x can't accept images; remove the image to send.",
+            )
+        },
+    }[other]
+    app = _Composer()
+    async with app.run_test(size=(160, 8)) as pilot:
+        composer = app.query_one(ConsoleComposerBar)
+        composer.load_draft("say held")
+        composer.sync_action_state(
+            has_draft=True,
+            run_active=False,
+            can_save_chatbook=False,
+            send_blocked=True,
+            queue_blocked_reason=SEND_HOLD,
+            send_label="Held",
+            **blocker,
+        )
+        await pilot.pause()
+        send = composer.query_one("#console-send-message", Button)
+        assert str(send.label) == "Held"
+        assert send.disabled
+        assert str(send.tooltip) == HELD_TOOLTIP, (other, send.tooltip)
+        reason = composer.query_one("#console-send-disabled-reason", Static)
+        assert str(reason.content) == SEND_HOLD, (other, reason.content)
+        assert not composer.has_class("console-composer-setup-blocked")

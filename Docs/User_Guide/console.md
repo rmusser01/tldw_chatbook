@@ -1639,7 +1639,9 @@ cleared, not just in the five-second toast: the header badge reads
 Ready, the status strip starts with **Emergency stop: runs and schedules
 held · Clear**, the Send button reads **Held** and is disabled at every
 window width (where there is room beside it, the reason "Send held —
-emergency stop is on" shows too), and an empty chat says the stop is active.
+emergency stop is on" shows too; its tooltip says to clear it in the status
+strip or with `/emergency-stop clear`), and an empty chat says the stop is
+active.
 Pressing **Held** does nothing; Enter is refused with a notice that names
 `/emergency-stop clear`, and your draft stays. Once the stop is cleared the
 button reads **Send** again. A stop still

@@ -126,7 +126,10 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-21, TASK-33620.1 AC#3 (owner rule: raise by the change's own
     # lines): 2884 -> 2886 (+2), Send's "Held" label (owner decision 2026-11-20).
     # 2026-11-24 rebase onto dev 9fa2bf1b1d: dev's 2,915 plus this branch's +2, exact.
-    "tldw_chatbook/Chat/console_display_state.py": 2917,
+    # 2026-11-22, same task and rule: 2886 -> 2894 (+8), the Held Send's tooltip
+    # says how to resume, and its reason names the stop over other blockers.
+    # 2026-11-24 rebase onto dev 9fa2bf1b1d: exact measurement.
+    "tldw_chatbook/Chat/console_display_state.py": 2925,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     # PR #3361, 2026-11-07 (owner size waiver, 2026-11-02 audit TASK-38580..38613):
     # 244 -> 257 (+13), TASK-38585 renders labels literally, not as markup.
@@ -1295,7 +1298,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-11-23, PR #3517's port onto dev b31e3e9241 (round 24; owner decision
     # 2026-10-04, expand limits): dev measures 7,208, plus this branch's
     # +35, exact: 7,243.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7243,
+    # 2026-11-22, TASK-33620.1 (owner rule: raise by the change's own lines):
+    # 7213 -> 7214, a Held Send's tooltip and setup link follow the stop (+6
+    # lines over dev's 7208, 5 of them inside the row's existing headroom).
+    # 2026-11-24 rebase onto dev 9fa2bf1b1d: exact measurement.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7250,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
