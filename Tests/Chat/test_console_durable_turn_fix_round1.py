@@ -6,6 +6,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from threading import Barrier
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -456,18 +457,24 @@ async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ephemeral", [False, True])
+@pytest.mark.parametrize("hook", [False, True], ids=["plain", "hook-context"])
+@pytest.mark.parametrize("ephemeral", [False, True], ids=["durable", "temporary"])
 async def test_frozen_nothing_staged_keeps_checkpoint_reconstructable(
     tmp_path,
+    monkeypatch,
     owned_durable_controllers,
     ephemeral,
+    hook,
 ) -> None:
     """TASK-33621.70: freezing "nothing staged" froze no evidence.
 
     Every composer send freezes its staged-evidence decision (TASK-34352).
     With nothing staged the request is rebuilt exactly, so neither the
     durable checkpoint nor a temporary chat's in-memory one may disable
-    Retry anyway the way staged evidence (above) does.
+    Retry anyway the way staged evidence (above) does. Context a
+    UserPromptSubmit hook added is another matter: it reaches the provider
+    but is saved only as a system audit row the rebuild drops, so such a
+    send stays unreconstructable on both (the temporary chat's once missed).
     """
     state: dict[str, object] = {"launch": None, "released": []}
     retrieval = _real_retrieval_controller_for_launch(state)
@@ -482,15 +489,21 @@ async def test_frozen_nothing_staged_keeps_checkpoint_reconstructable(
     async def observe_checkpoint(*args: Any, **kwargs: Any):
         if ephemeral:
             recovery = store._dispatch_recoveries_by_session[session.id]
-            captured.append(recovery.checkpoint.reconstructability.evidence_reconstructable)
+            captured.append(
+                recovery.checkpoint.reconstructability.evidence_reconstructable
+            )
         else:
             row = (
                 db.get_connection()
-                .execute("SELECT reconstructability_json FROM console_dispatch_checkpoints")
+                .execute(
+                    "SELECT reconstructability_json FROM console_dispatch_checkpoints"
+                )
                 .fetchone()
             )
             assert row is not None
-            captured.append(json.loads(row["reconstructability_json"])["evidence_reconstructable"])
+            captured.append(
+                json.loads(row["reconstructability_json"])["evidence_reconstructable"]
+            )
         async for chunk in original_stream(*args, **kwargs):
             yield chunk
 
@@ -501,11 +514,19 @@ async def test_frozen_nothing_staged_keeps_checkpoint_reconstructable(
         **_retrieval_evidence_owner(retrieval),
     )
     owned_durable_controllers(db, controller)
+    if hook:
+
+        async def hook_input(self, draft, session_id, hook_read=None):
+            return SimpleNamespace(blocked=False, reason="", context="HOOK-CONTEXT")
+
+        monkeypatch.setattr(
+            ConsoleChatController, "_legacy_submission_hook_input", hook_input
+        )
 
     result = await controller.submit_draft("no evidence", session_id=session.id)
 
     assert result.accepted is True
-    assert captured == [True]
+    assert captured == [not hook]
 
 
 @pytest.mark.asyncio

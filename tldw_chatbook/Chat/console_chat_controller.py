@@ -11497,8 +11497,10 @@ class ConsoleChatController:
                     resolved_destination=turn_context.resolved_destination,
                     reconstructability=ConsoleDispatchReconstructability(
                         attachments_reconstructable=True,
-                        # TASK-33621.70: frozen "nothing staged" is exact.
-                        evidence_reconstructable=not bool(
+                        # TASK-33621.70: frozen "nothing staged" is exact;
+                        # hook context is not (the rebuild drops its row).
+                        evidence_reconstructable=not hook_context
+                        and not bool(
                             prepared_continuation is not None
                             and prepared_continuation.staged_evidence is not None
                         ),
