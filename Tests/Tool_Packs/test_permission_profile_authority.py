@@ -73,7 +73,9 @@ def _temporary_store_paths(path) -> list:
     return private_paths
 
 
-def _fail_directory_fsync(monkeypatch, directory, error_number: int) -> None:
+def _fail_directory_fsync(monkeypatch, directory, error_number: int) -> list[int]:
+    """Make the store's directory barrier raise; return a one-item hit count."""
+    injected = [0]
     if os.name == "nt":
         # Windows opens the directory through platform_files.os and flushes it
         # with the native barrier (TASK-33422); stdlib os.open never sees it.
@@ -91,31 +93,25 @@ def _fail_directory_fsync(monkeypatch, directory, error_number: int) -> None:
 
         def controlled_flush(fd):
             if native_fd and fd == native_fd[-1]:
+                injected[0] += 1
                 raise OSError(error_number, os.strerror(error_number))
             return native_flush(fd)
 
         monkeypatch.setattr(platform_files.os, "open", tracked_native_open)
         monkeypatch.setattr(file_durability, "flush_directory", controlled_flush)
-        return
-    original_open = permission_store_module.os.open
+        return injected
     original_fsync = permission_store_module.os.fsync
-    directory_fd: list[int] = []
-
-    def tracked_open(path, flags, mode=0o777):
-        fd = original_open(path, flags, mode)
-        if os.fspath(path) == os.fspath(directory):
-            directory_fd.append(fd)
-        return fd
 
     def controlled_fsync(fd):
-        # Match the directory itself, not its fd number: storage admission
+        # Match the directory itself, not an fd number: storage admission
         # opens and closes the directory first, and mkstemp reuses the number.
-        if directory_fd and os.path.samestat(os.fstat(fd), os.stat(directory)):
+        if os.path.samestat(os.fstat(fd), os.stat(directory)):
+            injected[0] += 1
             raise OSError(error_number, os.strerror(error_number))
         return original_fsync(fd)
 
-    monkeypatch.setattr(permission_store_module.os, "open", tracked_open)
     monkeypatch.setattr(permission_store_module.os, "fsync", controlled_fsync)
+    return injected
 
 
 def _imported_profile(*, first_bind_required: bool = True) -> dict:
@@ -333,10 +329,12 @@ def test_save_tolerates_unsupported_directory_fsync(
     tmp_path, monkeypatch, unsupported_errno
 ):
     path = tmp_path / "permissions.json"
-    _fail_directory_fsync(monkeypatch, tmp_path, unsupported_errno)
+    injected = _fail_directory_fsync(monkeypatch, tmp_path, unsupported_errno)
 
     MCPPermissionStore(path).set_kill_switch(True)
 
+    # The barrier ran and its failure was tolerated, not skipped.
+    assert injected == [1]
     assert MCPPermissionStore(path).get_kill_switch() is True
     assert _temporary_store_paths(path) == []
 
