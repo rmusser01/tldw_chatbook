@@ -563,6 +563,12 @@ async def test_a_check_started_with_focus_outside_the_import_says_esc_cancel(
             # Folder recognition and every queued post-recompose focus restore
             # land first, so moving focus to the grip is the last focus move.
             # (Where that restore lands varies: one run here ended on None.)
+            canvases = [
+                widget
+                for widget in screen.query("*")
+                if isinstance(widget, PostRecomposeCallback)
+            ]
+            assert canvases, "no canvas to settle: the wait would check workers only"
             await _until(
                 pilot,
                 lambda: not any(

@@ -1238,17 +1238,16 @@ def _sync_library_canvas(
                 return False
         return True
         # NOTE (task-15457 review): a footer re-derivation was added here and
-        # then REMOVED after probing. Both footer tiers that a targeted sync
-        # can flip -- the Notes tier (select mode / sort-strip visibility) and
-        # the shared choice-strip tier -- are already kept honest by dev's own
-        # mechanism: ``LibraryScreen.refresh`` calls
-        # ``_apply_library_notes_footer_context()`` on EVERY refresh, not only
-        # on ``recompose=True``, and every footer-flipping sync has a focus
-        # follow-up whose ``set_focus``/``scroll_visible`` triggers one.
-        # Verified by disabling both branches: the Notes select-mode and the
-        # media type-strip footers both stayed current. Keeping an
-        # unfalsifiable branch is worse than the coupling it guards, so it is
-        # gone; the coupling itself is recorded in the task file's residuals.
+        # then REMOVED after probing. The Notes tier (select mode / sort-strip
+        # visibility) and the shared choice-strip tier stay honest because
+        # ``LibraryScreen.refresh`` calls ``_apply_library_notes_footer_context()``
+        # on EVERY refresh and their syncs' focus follow-ups trigger one (verified
+        # by disabling both branches). Not every flip moves focus: the import's
+        # CHECKING chip did not (UI Fast Lane 30, 2026-11-22), so
+        # ``_publish_library_note_import_snapshot`` re-derives the footer itself.
+        # A state that flips the footer without a focus move must do the same at
+        # its own publish seam; an unfalsifiable branch here would not catch it.
+        # The coupling itself is recorded in the task file's residuals.
 
     except Exception:
         # TASK-32089 (phase C): the design record's second ruling was to NARROW
