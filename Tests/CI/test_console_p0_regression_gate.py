@@ -235,7 +235,7 @@ def _lanes() -> dict[str, tuple[str, ...]]:
             "dreams-boundary", "Run Dreams admission-sensitive contracts"
         ),
         "Dreams tracking (sandboxed)": _step_targets(
-            "dreams-tracking", "Run the Dreams tracking tests"
+            "dreams-tracking", "Run the Dreams tracking tests and unlaned riders"
         ),
     }
 

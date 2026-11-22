@@ -28,10 +28,16 @@ class _Stub:
         self.calls.append("context")
 
     def _sync_native_console_chat_ui(self):
-        return "ui-sync-sentinel"
+        """Only its identity matters: run_worker receives the callable."""
 
     def run_worker(self, work, **kw):
-        self.calls.append(f"worker:{work}")
+        # Since d043e22438 the worker gets the sync callable itself, not a
+        # coroutine the caller already created by calling it.
+        self.calls.append(
+            "worker:native-ui-sync"
+            if work == self._sync_native_console_chat_ui
+            else f"worker:{work!r}"
+        )
 
 
 def _registry(tmp_path):
@@ -51,7 +57,7 @@ def test_make_active_runs_full_console_sequence(tmp_path):
         "core",
         "activate:workspace-local-1",
         "context",
-        "worker:ui-sync-sentinel",
+        "worker:native-ui-sync",
     ]
     assert any("switched Console" in n for n in stub.notifications)
 

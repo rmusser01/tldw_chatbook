@@ -1071,7 +1071,10 @@ _BUDGETS: dict[str, int] = {
     # Three scope docstrings name the control-bar syncs as openers (+7 lines).
     # TASK-36511.2 Qodo fold, 2026-11-05 (same waiver): 8942 -> 8961 (+19).
     # The control-bar syncs' shared build reads the registry live.
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8961,
+    # TASK-42382 review, 2026-11-22: 8961 -> 8958 (-3), the reconcile
+    # docstring no longer claims only a cross-screen change writes the
+    # registry alone.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8958,
     # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
     # credential/readiness repair, exact integrated measurement (8181 -> 8183).
     # PR3304, 2026-11-01: user size waiver; exact integration measurement.

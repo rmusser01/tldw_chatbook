@@ -22936,17 +22936,17 @@ class ChatScreen(BaseAppScreen):
         # own. An explicit saved-chat resume is the sole exception: its
         # canonical opener activates the target workspace last, while this
         # reconciliation can switch sessions and schedule an intermediate
-        # native sync. Every in-Console activation path (Alt+W
-        # switcher, the shared create modal, conversation-browser row-open)
-        # already keeps the registry and the store's active session in
-        # lockstep, so the common case is an O(1) early exit; the mount
-        # path itself never reconciles against the registry, and the store
-        # is app-level (it can carry a session that predates this screen's
-        # first mount), so skipping it here on the mount's own resume would
-        # leave that gap uncaught. Cross-screen activation (Settings'
-        # create-modal/"Set active" button, Library's create-workspace
-        # flow) only updates the registry -- this is the seam that repairs
-        # the resulting drift. See
+        # native sync. The Alt+W switcher and conversation-browser row-open
+        # keep the registry and the store's active session in lockstep, so
+        # the common case is an O(1) early exit; the mount path itself never
+        # reconciles against the registry, and the store is app-level (it
+        # can carry a session that predates this screen's first mount), so
+        # skipping it here on the mount's own resume would leave that gap
+        # uncaught. Cross-screen activation (Settings' create-modal/"Set
+        # active" button, Library's create-workspace flow) and the shared
+        # create modal's early "make active" (before the Console handler's
+        # result callback, which may run after this resume) only update the
+        # registry -- this is the seam that repairs the resulting drift. See
         # `ConsoleWorkspaceController._reconcile_console_session_with_registry`.
         if not ordered_resume_active:
             try:

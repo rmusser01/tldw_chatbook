@@ -5962,30 +5962,27 @@ class ConsoleWorkspaceController:
     def _reconcile_console_session_with_registry(self) -> None:
         """Align the Console session with the registry's active workspace.
 
-        TASK-18310: every IN-Console workspace-activation path -- the Alt+W
-        switcher (``_open_console_workspace_switcher``'s ``_switch_to``), the
-        shared create modal's Console handler
-        (``_handle_workspace_create_result``), and conversation-browser
-        row-open (``_activate_console_workspace_for_browser_row`` plus the
-        session lookup around it) -- calls ``set_active_workspace`` on the
-        registry AND ``_activate_console_session_for_workspace`` on this
-        controller together, so the registry and the Console chat store's
-        active session can never drift apart from any of those paths.
-        Cross-screen activation -- Settings' create-modal ``_done``,
-        Library's ``create_local_workspace`` ``_done``, and Settings' "Set
-        active" button (Qodo finding 5 on PR #1809) -- only calls
-        ``set_active_workspace`` on the registry, so registry/session
-        misalignment can arise EXCLUSIVELY from a cross-screen change.
+        TASK-18310: the Alt+W switcher (``_open_console_workspace_switcher``'s
+        ``_switch_to``) and conversation-browser row-open
+        (``_activate_console_workspace_for_browser_row`` plus the session
+        lookup around it) call ``set_active_workspace`` on the registry AND
+        ``_activate_console_session_for_workspace`` on this controller
+        together. Two kinds of change write the registry alone:
+        cross-screen activation (Settings' create-modal ``_done``, Library's
+        ``create_local_workspace`` ``_done``, Settings' "Set active" button,
+        Qodo finding 5 on PR #1809), and the shared create modal itself,
+        which activates a "make active" workspace before it dismisses
+        (``WorkspaceCreateModal._activate_before_dismiss``). The Console
+        create handler (``_handle_workspace_create_result``) then syncs the
+        session, but this resume-time reconcile may run first.
 
         Called from ``ChatScreen.on_screen_resume`` on every Console resume
         (including the mount's own -- the store is app-level and can carry
         a session that predates the first mount). When already aligned --
-        the overwhelmingly common case, since every in-Console path keeps
-        them in lockstep -- this is an O(1) early exit. Only on an actual
-        cross-screen divergence does it re-run the same Console-side
-        activation sequence the create handler uses, minus the registry
-        write (already done by the other surface) and the toast (the
-        originating surface already announced the switch).
+        the common case -- this is an O(1) early exit. On a divergence it
+        re-runs the same Console-side activation sequence the create handler
+        uses, minus the registry write (already done) and the toast (the
+        originating surface, or the create handler, announces the switch).
 
         Deliberately conservative: any read of the registry is guarded, and
         a ``None`` registry or ``None`` active workspace returns quietly --

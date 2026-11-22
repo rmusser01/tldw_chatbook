@@ -3606,3 +3606,24 @@ Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_workbench_panes_an
 Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_workbench_panes_fit_at_every_width_from_80_to_220
 Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_compact_cut_off_is_the_widest_width_the_minimums_cannot_fill
 Tests/UI/test_personas_generation_wiring.py::test_blank_after_generate_whole_character_closes_the_concept_row
+# Round 21 ports (2026-11-22; TASK-42382 notes): on no lane before. The
+# Console [New] workspace file (3 @private_profile_test tests) serially with
+# the lane's flags at load 13-15: 3 passed in 28.9 s, whole file. The Library
+# workspace-depth file runs 114.1 s (15 private-profile tests, load 13-15),
+# over the 30 s per-entry budget, so one node per test function: 6.4-8.7 s
+# each, 15.4 s for the two-theme one. Appended at the tail.
+Tests/UI/test_console_new_workspace.py
+Tests/UI/test_post_release_workspaces_library_depth.py::test_workspace_receipts_and_actions_follow_mounted_source_transitions
+Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff
+Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_empty_state_keeps_recovery_copy_compact
+Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_can_create_and_select_local_workspace
+Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_local_workspace_mouse_clicks
+Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_create_skips_archived_local_workspace_identity
+Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_active_workspace_label_escapes_markup_text
+Tests/UI/test_post_release_workspaces_library_depth.py::test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actions
+Tests/UI/test_post_release_workspaces_library_depth.py::test_library_details_section_renders_grouped_headers_and_drops_policy_prose
+Tests/UI/test_post_release_workspaces_library_depth.py::test_library_create_workspace_notification_names_console_retarget
+Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_recomposes_after_activation_failure
+Tests/UI/test_post_release_workspaces_library_depth.py::test_blocked_use_in_console_press_explains_inline
+Tests/UI/test_post_release_workspaces_library_depth.py::test_create_workspace_preserves_rail_scroll
+Tests/UI/test_post_release_workspaces_library_depth.py::test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate

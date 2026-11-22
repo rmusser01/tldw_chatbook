@@ -1,15 +1,13 @@
 """Tests for the TASK-18310 resume-time reconcile seam.
 
-Every IN-Console workspace-activation path (the Alt+W switcher, the shared
-create modal's Console handler, and conversation-browser row-open) calls
+The Alt+W switcher and conversation-browser row-open call
 ``set_active_workspace`` and ``_activate_console_session_for_workspace``
-together, so the registry and the Console chat store's active session can
-never drift apart from any of those paths. Cross-screen activation --
-Settings' create-modal ``_done``, Library's ``create_local_workspace``
-``_done``, and Settings' "Set active" button (Qodo finding 5 on PR #1809) --
-only calls ``set_active_workspace`` on the registry, so a stale Console
-session can only arise from a cross-screen change. ``_reconcile_console_
-session_with_registry`` repairs exactly that gap on every Console resume.
+together. Cross-screen activation -- Settings' create-modal ``_done``,
+Library's ``create_local_workspace`` ``_done``, and Settings' "Set active"
+button (Qodo finding 5 on PR #1809) -- and the shared create modal's early
+"make active" (which may land before the Console handler's result callback)
+only call ``set_active_workspace`` on the registry. ``_reconcile_console_
+session_with_registry`` repairs that gap on every Console resume.
 """
 
 from types import SimpleNamespace
@@ -69,10 +67,16 @@ class _Stub:
         self.calls.append("context")
 
     def _sync_native_console_chat_ui(self):
-        return "ui-sync-sentinel"
+        """Only its identity matters: run_worker receives the callable."""
 
     def run_worker(self, work, **kw):
-        self.calls.append(f"worker:{work}")
+        # Since d043e22438 the worker gets the sync callable itself, not a
+        # coroutine the caller already created by calling it.
+        self.calls.append(
+            "worker:native-ui-sync"
+            if work == self._sync_native_console_chat_ui
+            else f"worker:{work!r}"
+        )
 
 
 def _registry(tmp_path, *, active_id=None):
@@ -115,7 +119,7 @@ def test_cross_screen_change_runs_full_sequence_in_order(tmp_path):
         "core",
         "activate:workspace-b",
         "context",
-        "worker:ui-sync-sentinel",
+        "worker:native-ui-sync",
     ]
 
 
@@ -129,7 +133,7 @@ def test_no_active_session_activates_registry_workspace(tmp_path):
         "core",
         "activate:workspace-a",
         "context",
-        "worker:ui-sync-sentinel",
+        "worker:native-ui-sync",
     ]
 
 
@@ -259,7 +263,7 @@ def test_stale_active_session_id_is_repaired_before_core_sync(tmp_path):
 
     active_session = store.ensure_session()
     assert active_session.workspace_id == "workspace-b"
-    assert stub.calls == ["core", "context", "worker:ui-sync-sentinel"]
+    assert stub.calls == ["core", "context", "worker:native-ui-sync"]
 
 
 def test_end_to_end_library_style_cross_screen_activation_switches_session(tmp_path):

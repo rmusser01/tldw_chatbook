@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-21 13:40
-updated_date: 2026-11-22 20:01
+updated_date: 2026-11-22 20:15
 labels:
 - tests
 - tool-packs
@@ -40,6 +40,7 @@ This task repairs the tests only. The product behaviour they now contradict is c
 - [x] #5 The four touched test files show no new failures against `dev` on Windows
 - [x] #6 No product code changes
 - [x] #7 On POSIX, the directory-fsync injection matches the directory itself rather than a reused fd number, so `test_save_propagates_real_directory_fsync_failure` and every `test_save_tolerates_unsupported_directory_fsync` case pass, and each tolerance case proves its injected failure fired (added 2026-11-22 by coordinator decision: the same file's stale fixture left this repair incomplete on POSIX)
+- [x] #8 `Tests/Tool_Packs` runs whole in a required PR lane (dreams-tracking), ordered so its two bootstrap_profile nodes follow every other sandboxed target (added 2026-11-22 by coordinator decision: no PR lane ran the directory, which is how these tests went stale unseen)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -75,4 +76,13 @@ Verification (Windows 10, Python 3.12, `Tests/windows_private_fixture_runner` pr
 - **The other 5 reds were not Windows-only either; fixed here as an addition beyond the criteria** (coordinator decision, 2026-11-22). The reason: the same file's stale fixture left this repair incomplete on POSIX. `test_save_propagates_real_directory_fsync_failure` and the four `test_save_tolerates_unsupported_directory_fsync[*]` cases failed on macOS on `dev` and on the cherry-picked port. `_fail_directory_fsync`'s POSIX branch remembered the directory's fd *number*. Storage admission (`storage_admission._resolved`) now opens and closes that directory first, so `mkstemp` reused the number. The injected failure then fired on the temp file's own `os.fsync` in `_save_locked`, which tolerates nothing. `controlled_fsync` now matches the directory by identity (`os.path.samestat(os.fstat(fd), os.stat(directory))`). Red/green, macOS, `-n 4`: the file went from 5 failed / 16 passed to 21 passed. The propagate case shows the matcher hits the directory, not a file. It asserts `path.exists()` after the injected `EIO`, so the failure came after `os.replace`, at the directory barrier. A temp-file hit raises the same `EIO` before the replace. POSIX always hands out the lowest free fd, so Linux should behave the same (not run).
 - Whole `Tests/Tool_Packs` on this branch: 420 passed, 0 failed. The other two Tool Pack ports (TASK-42225, PR #3684) fix Windows-only paths, so no reds remain for them here.
 - **Review fixes (2026-11-22).** `tracked_open` is gone, and the samestat match is the only gate. `_fail_directory_fsync` now returns a hit count, and each tolerance case asserts `injected == [1]`. Before this, the four tolerance cases passed with `_save_locked`'s `_fsync_parent_directory` call removed; now all four fail without it. With the barrier in place the file is 21 of 21 green. AC #7 records the samestat repair.
+
+**Lanes for the round 21 ports (2026-11-22, coordinator decision).** This task records the Tool_Packs lane. The four stacked ports are PRs #3687 (this task), #3689 (TASK-42225), #3684 (no task file; its receipt-store fix is AC32 of @codex's TASK-34406, which this round leaves untouched; overlap noted in the PR body), and #3682. TASK-42382 records #3682's port and the Workspaces and UI lanes. Measured serially on macOS, CPython 3.12.11.
+- **`dreams-tracking` ("Run the Dreams tracking tests and unlaned riders", `--timeout=180`): `Tests/Tool_Packs` whole, after `Tests/Dreams/test_track_service.py` and TASK-42382's Workspaces riders.**
+  - 437 tests, 43.1 s (load 15-17). The whole step, before the reconcile rider, ran 724 tests in 500.7 s (load 14-21).
+  - The job ran median 6.7 / max 8.0 min of its 20 over 22 PR runs.
+  - `Tests/Tool_Packs` goes last because of its two `bootstrap_profile` nodes (C7). Their enrollment poisons config access for every later test in the process (TASK-32873). So a Tool_Packs file must not read config in-process: one that did would pass at `-n 4` locally and fail only in this lane.
+  - `Tests/CI`'s `test_tool_packs_bootstrap_nodes_are_the_pinned_two` pins those two nodes. A config read cannot be found statically, so the pin catches the other way the hazard grows: a new enrolling node. A synthetic `bootstrap_profile` mark on another Tool_Packs test turns it red.
+  - Not `dreams-boundary`: under its `--storage-lease-guard`, 31 Tool_Packs tests error at teardown on a leftover WorkspaceDB lease (a follow-up for the coordinator).
+  - Not `pr-fast-lane` (near its cap), not `recovered-suites` (reserved), and not an admission lane (a bootstrap invocation would poison the sandboxed tests).
 <!-- SECTION:NOTES:END -->

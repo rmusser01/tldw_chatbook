@@ -7,6 +7,7 @@ import time
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     StaticLibraryConversationScopeService,
@@ -29,7 +30,10 @@ class LibraryWorkspaceHarness(DestinationHarness):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
-async def test_workspace_receipts_and_actions_follow_mounted_source_transitions(theme):
+@private_profile_test
+async def test_workspace_receipts_and_actions_follow_mounted_source_transitions(
+    request, theme
+):
     """A snapshot refresh must not leave the retained Workspace body stale."""
     app = _build_test_app()
     _seed_cross_workspace_library(app)
@@ -196,9 +200,10 @@ def _seed_cross_workspace_library(app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff() -> (
-    None
-):
+@private_profile_test
+async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cross_workspace_handoff(
+    request,
+) -> None:
     app = _build_test_app()
     _seed_cross_workspace_library(app)
     host = LibraryWorkspaceHarness(app, "library")
@@ -284,7 +289,10 @@ async def test_library_workspaces_mode_preserves_global_visibility_and_blocks_cr
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> None:
+@private_profile_test
+async def test_library_workspaces_empty_state_keeps_recovery_copy_compact(
+    request,
+) -> None:
     app = _build_test_app()
     host = LibraryWorkspaceHarness(app, "library")
 
@@ -345,7 +353,10 @@ async def test_library_workspaces_empty_state_keeps_recovery_copy_compact() -> N
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_can_create_and_select_local_workspace() -> None:
+@private_profile_test
+async def test_library_workspaces_can_create_and_select_local_workspace(
+    request,
+) -> None:
     app = _build_test_app()
     host = LibraryWorkspaceHarness(app, "library")
 
@@ -385,7 +396,8 @@ async def test_library_workspaces_can_create_and_select_local_workspace() -> Non
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
+@private_profile_test
+async def test_library_workspaces_create_local_workspace_mouse_clicks(request) -> None:
     """Verify mouse clicks can create and activate a local workspace."""
     app = _build_test_app()
     host = LibraryWorkspaceHarness(app, "library")
@@ -438,9 +450,10 @@ async def test_library_workspaces_create_local_workspace_mouse_clicks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_create_skips_archived_local_workspace_identity() -> (
-    None
-):
+@private_profile_test
+async def test_library_workspaces_create_skips_archived_local_workspace_identity(
+    request,
+) -> None:
     app = _build_test_app()
     service = app.workspace_registry_service
     service.create_workspace(
@@ -481,7 +494,10 @@ async def test_library_workspaces_create_skips_archived_local_workspace_identity
 
 
 @pytest.mark.asyncio
-async def test_library_workspaces_active_workspace_label_escapes_markup_text() -> None:
+@private_profile_test
+async def test_library_workspaces_active_workspace_label_escapes_markup_text(
+    request,
+) -> None:
     """The workspace summary label still escapes user-provided markup.
 
     Formerly this also covered per-source title escaping in the now-removed
@@ -514,7 +530,9 @@ async def test_library_workspaces_active_workspace_label_escapes_markup_text() -
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actions(
+    request,
     monkeypatch,
 ) -> None:
     """Opening the rail Details disclosure must not rebuild the Workspaces
@@ -550,9 +568,10 @@ async def test_library_workspaces_refresh_reuses_depth_state_for_panel_and_actio
 
 
 @pytest.mark.asyncio
-async def test_library_details_section_renders_grouped_headers_and_drops_policy_prose() -> (
-    None
-):
+@private_profile_test
+async def test_library_details_section_renders_grouped_headers_and_drops_policy_prose(
+    request,
+) -> None:
     """The Details section groups content under three bold headers and no
     longer restates the blocked-handoff state three different ways (a line +
     two bordered callouts + a "Next:" line)."""
@@ -631,7 +650,10 @@ async def test_library_details_section_renders_grouped_headers_and_drops_policy_
 
 
 @pytest.mark.asyncio
-async def test_library_create_workspace_notification_names_console_retarget() -> None:
+@private_profile_test
+async def test_library_create_workspace_notification_names_console_retarget(
+    request,
+) -> None:
     """TASK-713: the Library create toast must say the new workspace became
     active and that Console now targets it - the cross-screen side effect was
     previously unstated."""
@@ -661,7 +683,8 @@ async def test_library_create_workspace_notification_names_console_retarget() ->
 
 
 @pytest.mark.asyncio
-async def test_create_workspace_recomposes_after_activation_failure() -> None:
+@private_profile_test
+async def test_create_workspace_recomposes_after_activation_failure(request) -> None:
     """Finding 2: activation failure must not skip the depth-state
     invalidation, rail-scroll preservation, or recompose seam -- the
     workspace WAS created (it just could not be switched to), so the rail
@@ -725,7 +748,8 @@ async def test_create_workspace_recomposes_after_activation_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_blocked_use_in_console_press_explains_inline() -> None:
+@private_profile_test
+async def test_blocked_use_in_console_press_explains_inline(request) -> None:
     """TASK-716: pressing the blocked action must surface the reason as a
     warning toast - previously the button was disabled, Pressed never fired,
     and the only explanation lived in a hover tooltip."""
@@ -747,7 +771,8 @@ async def test_blocked_use_in_console_press_explains_inline() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_workspace_preserves_rail_scroll() -> None:
+@private_profile_test
+async def test_create_workspace_preserves_rail_scroll(request) -> None:
     """TASK-716: the create-workspace recompose must not reset the rail
     scroll - the user is acting at the bottom-of-rail Workspace group and
     loses their place (and the updated Active row) when it snaps to top."""
@@ -783,9 +808,10 @@ async def test_create_workspace_preserves_rail_scroll() -> None:
 
 
 @pytest.mark.asyncio
-async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate() -> (
-    None
-):
+@private_profile_test
+async def test_single_item_handoff_gates_on_the_selected_row_not_the_aggregate(
+    request,
+) -> None:
     """TASK-15423: an eligible conversation hands off despite a blocked row.
 
     The single-item actions used the aggregate `context_handoff_enabled`

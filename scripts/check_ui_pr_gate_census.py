@@ -1220,6 +1220,11 @@ MINIMUM_FILES = 2453
 # Roleplay workbench width nodes and the Generate-whole-then-Blank concept-row
 # node at the tail. The floor is the measured entry count.
 MINIMUM_FILES = 2457
+# Round 21 ports (2026-11-22, TASK-42382): append the Console [New] workspace
+# file whole (28.9 s serially) and the Library workspace-depth file's 14 test
+# functions as nodes (the file runs 114.1 s, over the 30 s per-entry budget)
+# at the tail. The floor is the measured entry count.
+MINIMUM_FILES = 2472
 
 
 def read_census(path: Path) -> list[str]:

@@ -216,6 +216,144 @@ async def test_make_active_checkbox_carried_on_result(request, tmp_path):
     assert app.result.make_active is False
 
 
+class _ActivationOrderRegistry:
+    """Wraps a real registry and logs ``set_active_workspace`` calls."""
+
+    def __init__(self, inner: LocalWorkspaceRegistryService, log: list) -> None:
+        self._inner = inner
+        self._log = log
+
+    def set_active_workspace(self, workspace_id):
+        self._log.append(("activate", workspace_id))
+        return self._inner.set_active_workspace(workspace_id)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("make_active", "interview"),
+    [(True, False), (True, True), (False, False)],
+    ids=["make-active", "interview-defers", "not-active"],
+)
+async def test_make_active_takes_effect_before_the_dialog_closes(
+    request, tmp_path, monkeypatch, make_active, interview
+):
+    """The caller's result callback runs later, queued on the opener's pump.
+
+    In process-backed Console the opener resumes first, so a callback-only
+    activation left the previous workspace active for about a second after the
+    dialog closed (TASK-40608 journey: zero bindings on the "active" workspace).
+    With "make active" and no profile interview, the new workspace must already
+    be active when the dialog dismisses. The interview path still defers to the
+    caller's continuation, and an unchecked box never activates.
+    """
+    inner = _registry(tmp_path)
+    inner.ensure_default_workspace()
+    log: list = []
+    original = WorkspaceCreateModal.dismiss_safe_once
+
+    def dismiss(self, result):
+        active = inner.get_active_workspace()
+        log.append(("dismiss", active.workspace_id if active else None))
+        return original(self, result)
+
+    monkeypatch.setattr(WorkspaceCreateModal, "dismiss_safe_once", dismiss)
+    app = _HarnessApp(_ActivationOrderRegistry(inner, log))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Ordered"
+        modal.query_one("#workspace-create-make-active", Checkbox).value = make_active
+        modal.query_one("#workspace-create-profile-interview", Checkbox).value = interview
+        await _click_visible(pilot, "#workspace-create-confirm")
+        await pilot.pause()
+    created = app.result.workspace_id
+    if make_active and not interview:
+        assert log == [("activate", created), ("dismiss", created)]
+    else:
+        assert log == [("dismiss", "workspace-default")]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_any_early_activation_failure_is_left_to_the_caller(request, tmp_path):
+    """The dialog still closes with its result, so the caller's own activation
+    call meets the failure and reports it as before (Library catches every
+    exception there and says the workspace could not be activated)."""
+    inner = _registry(tmp_path)
+    inner.ensure_default_workspace()
+    log: list = []
+    registry = _ActivationOrderRegistry(inner, log)
+
+    def fail(workspace_id):
+        log.append(("activate", workspace_id))
+        raise RuntimeError("simulated activation failure")
+
+    registry.set_active_workspace = fail
+    app = _HarnessApp(registry)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Unswitched"
+        modal.query_one("#workspace-create-make-active", Checkbox).value = True
+        await _click_visible(pilot, "#workspace-create-confirm")
+        await pilot.pause()
+    assert app.result.make_active is True
+    assert log == [("activate", app.result.workspace_id)]
+    assert inner.get_active_workspace().workspace_id == "workspace-default"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("second_press", ["retry", "escape"])
+async def test_binding_retry_activates_only_when_the_retry_closes_the_dialog(
+    request, tmp_path, second_press
+):
+    """After a folder binding fails, a successful Retry activates the new
+    workspace before the dialog closes, as a first-try success does. Escape
+    instead delivers the partial result and leaves activation to the caller."""
+    inner = _registry(tmp_path)
+    inner.ensure_default_workspace()
+    log: list = []
+    flaky = _FlakyBindRegistry(_ActivationOrderRegistry(inner, log))
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _HarnessApp(flaky)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Retried"
+        modal.query_one("#workspace-create-make-active", Checkbox).value = True
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await _click_visible(pilot, "#workspace-create-folder-add")
+        await pilot.pause()
+        await _click_visible(pilot, "#workspace-create-confirm")
+        await pilot.pause()
+        assert app.result == "unset"
+        assert log == []
+
+        flaky.should_fail = False
+        if second_press == "retry":
+            modal.query_one("#workspace-create-confirm", Button).press()
+        else:
+            await pilot.press("escape")
+        await pilot.pause()
+
+    result = app.result
+    assert isinstance(result, WorkspaceCreateResult)
+    assert result.make_active is True
+    active = inner.get_active_workspace().workspace_id
+    if second_press == "retry":
+        assert log == [("activate", result.workspace_id)]
+        assert active == result.workspace_id
+    else:
+        assert log == []
+        assert active == "workspace-default"
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_profile_interview_offer_is_opt_in_and_carried_on_result(
