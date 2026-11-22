@@ -493,7 +493,8 @@ class ToolPackReceiptStore:
             self._fsync_directory(self.root.parent)
         except ToolPackError:
             raise
-        except OSError:
+        except (OSError, ValueError):
+            # ValueError: the Windows facade's refusals (windows_path_too_long).
             raise _fail("activation_failed") from None
 
     def reserve(self, projected_bytes: int) -> ReceiptReservation:
@@ -617,7 +618,8 @@ class ToolPackReceiptStore:
                 self._fsync_directory(self.root)
             except FileNotFoundError:
                 return False
-            except OSError:
+            except (OSError, ValueError):
+                # ValueError: the Windows facade's refusals, as in _ensure_root.
                 raise _fail("activation_uncertain") from None
         return True
 

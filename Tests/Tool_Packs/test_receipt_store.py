@@ -372,8 +372,9 @@ def test_root_creation_directory_sync_failure_is_activation_failed(
 def test_windows_directory_barrier_flushes_through_the_native_facade(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: int | None
 ) -> None:
-    # Simulates Windows on any host, so POSIX CI covers the nt branch: stdlib
-    # os.open refuses a directory there, which failed every receipt store.
+    # Simulates Windows on any host, so POSIX runs of this file (laned in
+    # dreams-tracking, round 21) cover the nt branch: stdlib os.open refuses a
+    # directory there, which failed every receipt store.
     from types import SimpleNamespace
 
     from tldw_chatbook.Utils import file_durability, platform_files
@@ -394,14 +395,17 @@ def test_windows_directory_barrier_flushes_through_the_native_facade(
         if error is not None:
             raise OSError(error, "native_directory_flush_failed")
 
-    def close(descriptor: int) -> None:
+    def native_close(descriptor: int) -> None:
         assert descriptor == 57
         events.append("close")
+
+    def stdlib_close(descriptor: int) -> None:
+        events.append(f"stdlib-close:{descriptor}")
 
     monkeypatch.setattr(
         receipt_store_module,
         "os",
-        SimpleNamespace(name="nt", O_RDONLY=0, open=stdlib_open, close=close),
+        SimpleNamespace(name="nt", O_RDONLY=0, open=stdlib_open, close=stdlib_close),
     )
     monkeypatch.setattr(
         platform_files,
@@ -411,7 +415,7 @@ def test_windows_directory_barrier_flushes_through_the_native_facade(
             O_DIRECTORY=0b010,
             O_NOFOLLOW=0b100,
             open=native_open,
-            close=close,
+            close=native_close,
         ),
     )
     monkeypatch.setattr(file_durability, "flush_directory", flush)
@@ -423,7 +427,35 @@ def test_windows_directory_barrier_flushes_through_the_native_facade(
         with pytest.raises(OSError) as raised:
             ToolPackReceiptStore._fsync_directory(tmp_path)
         assert raised.value.errno == error
+    # The native descriptor is closed by the native facade, never stdlib os.
     assert events == ["open", "flush", "close"]
+
+
+@pytest.mark.parametrize(
+    ("operation", "category"),
+    [("create", "activation_failed"), ("delete", "activation_uncertain")],
+)
+def test_a_facade_value_error_maps_like_an_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, category: str
+) -> None:
+    # The Windows facade refuses with ValueError (windows_path_too_long and
+    # others) where stdlib os raises OSError; neither may escape raw.
+    root = tmp_path / "receipts"
+    store = _store(root)
+    handle = _commit(store)
+
+    def facade_refusal(_path: Path) -> None:
+        raise ValueError("windows_path_too_long")
+
+    monkeypatch.setattr(
+        ToolPackReceiptStore, "_fsync_directory", staticmethod(facade_refusal)
+    )
+
+    with pytest.raises(ToolPackError, match=rf"{category}$"):
+        if operation == "create":
+            _store(root)
+        else:
+            store.delete_owned(handle)
 
 
 def test_capacity_enforces_projection_actual_and_committed_files(
