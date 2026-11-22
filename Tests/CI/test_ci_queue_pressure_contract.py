@@ -1153,6 +1153,12 @@ ADMISSION_3_TARGETS = (
     # typed text painted at AA on every measurable theme (bootstrap_profile;
     # 89 themes in one app, about 45 s).
     "Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme",
+    # TASK-33621.153: the Ask-hold wall-clock pins, on no PR lane before. The
+    # ledger's fake-clock file (bootstrap profile by its Tests/DB directory,
+    # 3.9 s serial) and the real-controller compaction-hold file (module
+    # bootstrap_profile, 77 s serial), both at load 22-27.
+    "Tests/DB/test_automatic_work_deadlines.py",
+    "Tests/Chat/test_console_automatic_turn_compaction_hold.py",
 )
 
 #: Follow-ups burn-down lanes (owner decision 2026-11-18, "New job"): the

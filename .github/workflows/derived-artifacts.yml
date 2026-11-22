@@ -876,6 +876,12 @@ jobs:
       # later per-test gc.collect() cost ~5-9 s. TASK-42144 bounded that cache
       # (0.27-0.73 s teardowns after the node), so the order no longer matters
       # for teardown cost; it stays as measured.
+      # TASK-33621.153 appends its Ask-hold wall-clock pins, which ran on no
+      # PR lane before: the ledger's fake-clock file (bootstrap profile by its
+      # Tests/DB directory, 25 tests, 3.9 s serial) and the real-controller
+      # compaction-hold file (module bootstrap_profile, 12 tests, 77 s serial),
+      # both at load 22-27. This lane ran a median 16.3 / max 21.3 of its 35 min
+      # over 56 runs from 2026-11-20 to 2026-11-22.
       - name: Run admission-sensitive suites 3
         run: |
           pytest \
@@ -883,6 +889,8 @@ jobs:
             Tests/UI/test_roleplay_import_app.py \
             Tests/UI/test_roleplay_item_list_app.py \
             Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme \
+            Tests/DB/test_automatic_work_deadlines.py \
+            Tests/Chat/test_console_automatic_turn_compaction_hold.py \
             --timeout=300 \
             --tb=short
 
