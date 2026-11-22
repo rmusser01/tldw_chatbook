@@ -16,6 +16,7 @@ from tldw_chatbook.Tool_Packs.receipt_store import (
     ToolPackReceipt,
     ToolPackReceiptStore,
 )
+from tldw_chatbook.Utils.platform_files import os as platform_os
 
 
 _ZERO_HASH = "0" * 64
@@ -305,29 +306,156 @@ def test_capacity_uses_strictest_limit_across_store_instances(tmp_path: Path) ->
     second.reserve(301).release()
 
 
+def _inject_directory_sync_failures(
+    monkeypatch: pytest.MonkeyPatch, failure_for_call
+) -> list[int]:
+    """Make the receipt store's directory barrier raise ``failure_for_call(n)``.
+
+    POSIX stores fsync an ``os.open``-ed directory; Windows stores flush a
+    native-facade descriptor through ``file_durability.flush_directory``
+    (TASK-33422's barrier). Returns a one-item list counting directory syncs.
+    """
+    calls = [0]
+
+    def observe(descriptor: int, real) -> None:
+        calls[0] += 1
+        failure = failure_for_call(calls[0])
+        if failure is not None:
+            raise failure
+        real(descriptor)
+
+    if os.name == "nt":
+        from tldw_chatbook.Utils import file_durability
+
+        real_flush = file_durability.flush_directory
+        monkeypatch.setattr(
+            file_durability,
+            "flush_directory",
+            lambda descriptor: observe(descriptor, real_flush),
+        )
+        return calls
+
+    real_fsync = receipt_store_module.os.fsync
+
+    def fsync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            observe(descriptor, real_fsync)
+            return
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(receipt_store_module.os, "fsync", fsync)
+    return calls
+
+
 def test_root_creation_directory_sync_failure_is_activation_failed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "receipts"
-    real_fsync = receipt_store_module.os.fsync
-    directory_syncs = 0
-
-    def fail_parent_sync(descriptor: int) -> None:
-        nonlocal directory_syncs
-        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
-            directory_syncs += 1
-            if directory_syncs == 2:
-                raise OSError(errno.EIO, "parent directory fsync failed")
-        real_fsync(descriptor)
-
-    monkeypatch.setattr(receipt_store_module.os, "fsync", fail_parent_sync)
+    directory_syncs = _inject_directory_sync_failures(
+        monkeypatch,
+        lambda call: OSError(errno.EIO, "parent directory fsync failed")
+        if call == 2
+        else None,
+    )
 
     with pytest.raises(ToolPackError, match=r"activation_failed$"):
         _store(root)
 
-    assert directory_syncs == 2
+    assert directory_syncs == [2]
     assert root.is_dir()
-    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    # platform_files projects the Windows DACL to POSIX bits; pathlib's stat
+    # reports 0o777 there whatever the ACL says.
+    assert stat.S_IMODE(platform_os.stat(root).st_mode) == 0o700
+
+
+@pytest.mark.parametrize("error", [None, errno.EIO, errno.EINVAL])
+def test_windows_directory_barrier_flushes_through_the_native_facade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: int | None
+) -> None:
+    # Simulates Windows on any host, so POSIX runs of this file (laned in
+    # dreams-tracking, round 21) cover the nt branch: stdlib os.open refuses a
+    # directory there, which failed every receipt store.
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Utils import file_durability, platform_files
+
+    events: list[str] = []
+
+    def stdlib_open(*_args: object) -> int:
+        raise PermissionError(errno.EACCES, "Access is denied")
+
+    def native_open(path: Path, flags: int) -> int:
+        assert (path, flags) == (tmp_path, 0b111)
+        events.append("open")
+        return 57
+
+    def flush(descriptor: int) -> None:
+        assert descriptor == 57
+        events.append("flush")
+        if error is not None:
+            raise OSError(error, "native_directory_flush_failed")
+
+    def native_close(descriptor: int) -> None:
+        assert descriptor == 57
+        events.append("close")
+
+    def stdlib_close(descriptor: int) -> None:
+        events.append(f"stdlib-close:{descriptor}")
+
+    monkeypatch.setattr(
+        receipt_store_module,
+        "os",
+        SimpleNamespace(name="nt", O_RDONLY=0, open=stdlib_open, close=stdlib_close),
+    )
+    monkeypatch.setattr(
+        platform_files,
+        "os",
+        SimpleNamespace(
+            O_RDONLY=0b001,
+            O_DIRECTORY=0b010,
+            O_NOFOLLOW=0b100,
+            open=native_open,
+            close=native_close,
+        ),
+    )
+    monkeypatch.setattr(file_durability, "flush_directory", flush)
+
+    if error is None:
+        ToolPackReceiptStore._fsync_directory(tmp_path)
+    else:
+        # The barrier is mandatory (TASK-26069): no errno counts as success.
+        with pytest.raises(OSError) as raised:
+            ToolPackReceiptStore._fsync_directory(tmp_path)
+        assert raised.value.errno == error
+    # The native descriptor is closed by the native facade, never stdlib os.
+    assert events == ["open", "flush", "close"]
+
+
+@pytest.mark.parametrize(
+    ("operation", "category"),
+    [("create", "activation_failed"), ("delete", "activation_uncertain")],
+)
+def test_a_facade_value_error_maps_like_an_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str, category: str
+) -> None:
+    # The Windows facade refuses with ValueError (windows_path_too_long and
+    # others) where stdlib os raises OSError; neither may escape raw.
+    root = tmp_path / "receipts"
+    store = _store(root)
+    handle = _commit(store)
+
+    def facade_refusal(_path: Path) -> None:
+        raise ValueError("windows_path_too_long")
+
+    monkeypatch.setattr(
+        ToolPackReceiptStore, "_fsync_directory", staticmethod(facade_refusal)
+    )
+
+    with pytest.raises(ToolPackError, match=rf"{category}$"):
+        if operation == "create":
+            _store(root)
+        else:
+            store.delete_owned(handle)
 
 
 def test_capacity_enforces_projection_actual_and_committed_files(
@@ -442,14 +570,11 @@ def test_unsupported_receipt_directory_sync_is_uncertain_and_visible(
     root = tmp_path / "receipts"
     store = _store(root)
     digest = hashlib.sha256(_receipt_bytes()).hexdigest()
-    real_fsync = receipt_store_module.os.fsync
-
-    def fail_directory_sync(descriptor: int) -> None:
-        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
-            raise OSError(errno.EINVAL, "directory fsync unsupported")
-        real_fsync(descriptor)
-
-    monkeypatch.setattr(receipt_store_module.os, "fsync", fail_directory_sync)
+    # An unsupported directory fsync is not success: TASK-26069 makes the
+    # barrier mandatory, so the committed receipt is reported as uncertain.
+    _inject_directory_sync_failures(
+        monkeypatch, lambda call: OSError(errno.EINVAL, "directory fsync unsupported")
+    )
 
     with store.reserve(len(_receipt_bytes())) as reservation:
         with pytest.raises(ToolPackError, match=r"activation_uncertain$"):

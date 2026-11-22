@@ -493,7 +493,8 @@ class ToolPackReceiptStore:
             self._fsync_directory(self.root.parent)
         except ToolPackError:
             raise
-        except OSError:
+        except (OSError, ValueError):
+            # ValueError: the Windows facade's refusals (windows_path_too_long).
             raise _fail("activation_failed") from None
 
     def reserve(self, projected_bytes: int) -> ReceiptReservation:
@@ -617,7 +618,8 @@ class ToolPackReceiptStore:
                 self._fsync_directory(self.root)
             except FileNotFoundError:
                 return False
-            except OSError:
+            except (OSError, ValueError):
+                # ValueError: the Windows facade's refusals, as in _ensure_root.
                 raise _fail("activation_uncertain") from None
         return True
 
@@ -792,6 +794,25 @@ class ToolPackReceiptStore:
 
     @staticmethod
     def _fsync_directory(path: Path) -> None:
+        # The directory barrier is mandatory and every failure propagates
+        # (TASK-26069): an unsupported directory fsync is not success here.
+        if os.name == "nt":
+            # Windows refuses os.open on a directory (PermissionError), which
+            # made every receipt store, and so every Tool Pack composition,
+            # fail there. Flush it through the native facade instead, as
+            # MCP/permission_store.py does (TASK-33422).
+            from tldw_chatbook.Utils import file_durability
+            from tldw_chatbook.Utils.platform_files import os as native_os
+
+            descriptor = native_os.open(
+                path,
+                native_os.O_RDONLY | native_os.O_DIRECTORY | native_os.O_NOFOLLOW,
+            )
+            try:
+                file_durability.flush_directory(descriptor)
+            finally:
+                native_os.close(descriptor)
+            return
         descriptor = -1
         try:
             descriptor = os.open(
