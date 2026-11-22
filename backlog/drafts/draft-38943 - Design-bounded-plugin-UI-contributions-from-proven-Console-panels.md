@@ -43,7 +43,7 @@ Determine whether reusable plugin UI contributions would serve demonstrated Cons
 ## Definition of Done
 <!-- DOD:BEGIN -->
 - [ ] #1 Implementation planning records ADR required: yes/no, ADR path, and reason; any required new or amended ADR is accepted and linked before implementation begins.
-- [ ] #2 Applicable targeted automated checks, formatting/lint checks, and live UI or real-provider evidence are recorded before completion; full test sweeps require user opt-in.
+- [ ] #2 Automated tests (unit + integration) cover any new logic, the linter and formatter pass, and `./scripts/preflight.sh` passes, per CLAUDE.md's Definition of Done.
 - [ ] #3 Relevant user guidance and living Architecture documentation describe the delivered behavior and its limits.
 - [ ] #4 Design-only completion includes a reviewed written contract and ADR disposition; implementation, installation, or activation is not part of this draft.
 <!-- DOD:END -->

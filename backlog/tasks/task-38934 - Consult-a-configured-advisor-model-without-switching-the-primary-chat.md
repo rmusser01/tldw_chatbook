@@ -38,6 +38,6 @@ Let users obtain focused strategic advice from a chosen second model while their
 ## Definition of Done
 <!-- DOD:BEGIN -->
 - [ ] #1 Implementation planning records ADR required: yes/no, ADR path, and reason; any required new or amended ADR is accepted and linked before implementation begins.
-- [ ] #2 Applicable targeted automated checks, formatting/lint checks, and live UI or real-provider evidence are recorded before completion; full test sweeps require user opt-in.
+- [ ] #2 Automated tests (unit + integration) cover any new logic, the linter and formatter pass, and `./scripts/preflight.sh` passes, per CLAUDE.md's Definition of Done.
 - [ ] #3 Relevant user guidance and living Architecture documentation describe the delivered behavior and its limits.
 <!-- DOD:END -->
