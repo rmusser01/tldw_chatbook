@@ -846,6 +846,12 @@ jobs:
     # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-30): moved from admission lane 1, whose worst case with B2b's cases was 32.3-32.7 of 35 min
     # (the item list's mounted file, Tests/UI/test_roleplay_item_list_app.py).
     # Roleplay frame B2b (TASK-33910.4, owner decision 2026-10-31): a third admission lane, because on PR #3334's run 41169081459 lane 2 with these suites hit its 35-min cap at 99% (about 17 CI-min for 211 mounted tests, ~485 s serial locally). One more runner per PR (ADR-103 note, 2026-10-31).
+    # TASK-33620.15.61 puts two mounted Console MCP catalog files (bootstrap_profile,
+    # 22 tests) after the Skills import file, ahead of the Roleplay suites. Before
+    # TASK-42144 bounded the theme node's parse cache, appended at the tail, each
+    # file's total teardown grew from 2.4 s to 51 s (both files: 162 s against 69 s).
+    # Re-timed 2026-11-22 (serial, load 8-37): 93 s of the step's 1122 s here, 114 s
+    # of 1131 s at the tail; 101 s in CI run 44944358256.
     #
     # Same runner, install line, cap and --timeout=300 as
     # pr-fast-lane-admission-2, and its own pytest process and bootstrap
@@ -876,16 +882,22 @@ jobs:
       # later per-test gc.collect() cost ~5-9 s. TASK-42144 bounded that cache
       # (0.27-0.73 s teardowns after the node), so the order no longer matters
       # for teardown cost; it stays as measured.
-      # TASK-33621.153 appends its Ask-hold wall-clock pins, which ran on no
-      # PR lane before: the ledger's fake-clock file (bootstrap profile by its
-      # Tests/DB directory, 25 tests, 3.9 s serial) and the real-controller
-      # compaction-hold file (module bootstrap_profile, 12 tests, 77 s serial),
-      # both at load 22-27. This lane ran a median 16.3 / max 21.3 of its 35 min
-      # over 56 runs from 2026-11-20 to 2026-11-22.
+      # TASK-33620.15.61's two mounted Console MCP catalog files follow it
+      # (the job's note).
+      # TASK-33621.153 appends its Ask-hold wall-clock pins at the tail, which
+      # ran on no PR lane before: the ledger's fake-clock file (bootstrap
+      # profile by its Tests/DB directory, 25 tests, 3.9 s serial) and the
+      # real-controller compaction-hold file (module bootstrap_profile, 12
+      # tests, 77 s serial), both at load 22-27. This lane ran a median 16.3 /
+      # max 21.3 of its 35 min over 56 runs from 2026-11-20 to 2026-11-22; with
+      # both round-21 additions (about 1.7 + 1.4 CI-minutes) the expected max
+      # is about 24.5 of 35.
       - name: Run admission-sensitive suites 3
         run: |
           pytest \
             Tests/Skills/test_skills_import.py \
+            Tests/UI/test_console_mcp_catalog_reuse.py \
+            Tests/UI/test_console_mcp_catalog_anchor.py \
             Tests/UI/test_roleplay_import_app.py \
             Tests/UI/test_roleplay_item_list_app.py \
             Tests/UI/test_theme_contrast.py::test_roleplay_items_search_placeholder_and_typed_text_clear_aa_on_every_theme \
@@ -1770,6 +1782,9 @@ jobs:
       # the companion record-evidence file with its bootstrap digest pin),
       # sandboxed, follow the config participant lifetimes; timings in the
       # task's notes.
+      # Round 21: TASK-33620.15.61's four sandboxed Console MCP catalog files
+      # (30 tests, about 18 s in this step, 22 s in CI) join the sandboxed block
+      # after the Skills recovery controls file.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -1817,6 +1832,10 @@ jobs:
             Tests/Actor_Packs/test_actor_pack_export.py \
             Tests/Actor_Packs/test_persona_actor_pack_coordinator.py \
             Tests/Backup_Recovery/test_skills_recovery_controls.py \
+            Tests/Chat/test_console_run_start_reuse_key.py \
+            Tests/MCP/test_catalog_fingerprint.py \
+            Tests/Chat/test_console_run_start_anchor.py \
+            Tests/MCP/test_run_catalog_fingerprint_off_loop.py \
             Tests/Prompt_Management/test_prompt_improvement_service.py \
             Tests/RAG_Search/test_keyword_leg_chacha.py \
             Tests/RAG_Search/test_keyword_leg_db_resolution.py \
