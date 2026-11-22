@@ -9375,6 +9375,11 @@ class LibraryScreen(BaseAppScreen):
                 group="library_nav_character",
             )
         self._refresh_library_visit_surfaces()
+        # Review r11s: Textual's resume auto-focus (run next, same dispatch)
+        # sends a Library with nothing focused to the nav bar, where Enter leaves.
+        self.AUTO_FOCUS = "" if self.focused is None else None
+        if self.focused is None:
+            self._navigation_controller.land_entry_focus_after_resume()
 
     def _stop_library_media_selection_debounce(self) -> None:
         return self._media_controller._stop_library_media_selection_debounce()

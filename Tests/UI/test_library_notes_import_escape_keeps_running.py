@@ -617,3 +617,101 @@ async def test_a_check_started_with_focus_outside_the_import_says_esc_cancel(
     finally:
         check.release.set()
         profile.close()
+
+
+async def test_f1_closing_over_an_unfocused_import_keeps_focus_in_library(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Library left with nothing focused gets focus back from F1's close.
+
+    Review r11s, Probe B: with Library focus on None over the running
+    import, closing F1 let Textual's ``AUTO_FOCUS = "*"`` land on the nav
+    bar's first tab (``nav-home``), where a blind Enter leaves Library. The
+    Escape after it stayed there: the list-entry arm clears only a pane
+    grip, and its expiry lands only from None. That is the lane's end state
+    (view 'list', focus 'nav-home').
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    write = _Gate()
+    monkeypatch.setattr(
+        LocalNoteImportTarget,
+        "create_note",
+        write.wrap(LocalNoteImportTarget.create_note),
+    )
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            controller = screen._library_note_import_controller
+            _batch_of_one(controller)
+            await _open_import_once_on_the_folder(host, screen, pilot, profile.folder)
+            await _review_the_folder(host, screen, pilot)
+            await _press(host, screen, pilot, "#note-import-import")
+            await _until(pilot, write.entered.is_set, "the first note write to start")
+            # The running import's pre-write progress publishes were all
+            # scheduled before the write was entered; let their recomposes and
+            # focus restores drain, or a pending restore re-lands focus first.
+            await _until(
+                pilot,
+                lambda: getattr(screen.focused, "id", None) == "note-import-cancel",
+                lambda: f"the import's focus: {getattr(screen.focused, 'id', None)!r}",
+            )
+            await pilot.pause()
+            assert getattr(screen.focused, "id", None) == "note-import-cancel"
+
+            screen.set_focus(None)
+            await _f1_shortcuts(host, screen, pilot)
+            await pilot.press("escape")
+            await _until(
+                pilot,
+                lambda: screen._notes_state.view == "list"
+                and getattr(screen.focused, "id", None) == "library-notes-filter",
+                lambda: (
+                    "Escape to return to the Notes list: "
+                    f"view={screen._notes_state.view!r} "
+                    f"cancel_requested={controller.snapshot.cancel_requested} "
+                    f"focused={getattr(screen.focused, 'id', None)!r}"
+                ),
+            )
+            assert controller.snapshot.phase is NoteImportPhase.IMPORTING
+    finally:
+        write.release.set()
+        profile.close()
+
+
+async def test_f1_closing_over_an_unfocused_list_lands_its_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same resume rule outside Notes: a list lands its own entry row.
+
+    Before the fix, Conversations (like Media, Skills, Collections, Ingest
+    and New note) ended on ``nav-home`` when F1 closed over nothing focused.
+    """
+    profile = _Profile(tmp_path, monkeypatch)
+    host = profile.host()
+    try:
+        async with host.run_test(size=SIZE) as pilot:
+            screen = _active_library_screen(host)
+            await _wait_for_library_shell(screen, pilot)
+            await _press(host, screen, pilot, "#library-row-browse-conversations")
+            await _until(
+                pilot,
+                lambda: getattr(screen.focused, "id", None)
+                == "library-conversation-row-0",
+                lambda: f"the entry row: {getattr(screen.focused, 'id', None)!r}",
+            )
+            await pilot.pause()
+            screen.set_focus(None)
+            await _f1_shortcuts(host, screen, pilot)
+            await _until(
+                pilot,
+                lambda: getattr(screen.focused, "id", None)
+                == "library-conversation-row-0",
+                lambda: (
+                    "F1's close to land the Conversations entry row, found "
+                    f"{getattr(screen.focused, 'id', None)!r}"
+                ),
+            )
+    finally:
+        profile.close()

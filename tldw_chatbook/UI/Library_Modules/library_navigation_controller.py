@@ -24,7 +24,22 @@ from ...Library.library_shell_state import (
     LIBRARY_ROW_BROWSE_COLLECTIONS,
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LIBRARY_ROW_BROWSE_MEDIA,
+    LIBRARY_ROW_BROWSE_NOTES,
     LIBRARY_ROW_BROWSE_PROMPTS,
+    LIBRARY_ROW_BROWSE_SKILLS,
+)
+
+#: The list canvases a resume lands through the list-entry channel, as a
+#: rail press onto them does (Collections arms it on a non-rail entry too).
+_LIST_ENTRY_ROWS = frozenset(
+    {
+        LIBRARY_ROW_BROWSE_COLLECTIONS,
+        LIBRARY_ROW_BROWSE_CONVERSATIONS,
+        LIBRARY_ROW_BROWSE_MEDIA,
+        LIBRARY_ROW_BROWSE_NOTES,
+        LIBRARY_ROW_BROWSE_PROMPTS,
+        LIBRARY_ROW_BROWSE_SKILLS,
+    }
 )
 
 if TYPE_CHECKING:
@@ -183,6 +198,44 @@ class LibraryNavigationController:
         self.repair_controller = controller
         self.repair_present_on_resume = False
         screen.app.push_screen(LibraryCharacterRepairDialog(controller, context))
+
+    def land_entry_focus_after_resume(self) -> None:
+        """Land a Library that resumed with nothing focused inside Library.
+
+        Review r11s (Probe B): a modal (F1, Ctrl+P) closing over a Library
+        with nothing focused left focus to Textual's ``AUTO_FOCUS = "*"``,
+        the nav bar's first tab, where a blind Enter leaves Library, and the
+        list-entry expiry never took it back. The screen suppresses that
+        auto-focus (Settings' TASK-33007.11 shape); this lands the route
+        where arriving on it would, and the first content control otherwise.
+        """
+        screen = self.screen
+        row = screen._library_selected_row_id
+        files = screen._file_notes_active()
+        region = "" if files else screen._library_notes_focus_region()
+        if region == "import":
+            # Review R0 M-7: the progress region, never Cancel import.
+            screen._notes_controller._focus_library_note_import_control()
+        elif region and region != "navigator":
+            screen._restore_library_notes_focus_identity(
+                screen._capture_library_notes_focus_identity()
+            )
+        elif row in _LIST_ENTRY_ROWS and not files:
+            screen._arm_library_list_entry_focus()
+        elif not row:
+            screen._focus_library_hub_entry()
+        else:
+            screen._arm_library_row_entry_focus(row)
+        screen.call_after_refresh(self._land_content_focus_if_unfocused)
+
+    def _land_content_focus_if_unfocused(self) -> None:
+        """The last resort: the first content control, never the nav bar."""
+        screen = self.screen
+        if screen.focused is not None or screen._library_pending_list_entry_focus:
+            return
+        target = screen._first_focusable_in_content()
+        if target is not None:
+            screen.set_focus(target, scroll_visible=False)
 
     def invalidate_keyword_candidates(self) -> None:
         self.keyword_generation += 1
