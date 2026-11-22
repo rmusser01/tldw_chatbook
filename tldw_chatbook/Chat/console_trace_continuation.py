@@ -1199,9 +1199,15 @@ def _redispatched_head_call(
 
     The trace card's Retry answers in a second run of the same turn, and
     that run reuses the turn's own surface row, appended under the first
-    call of the earlier run. Only that one row may name the earlier run, and
+    call of the earlier run. The caller lets rows appended under the
+    returned call name the earlier run: the turn's own row and, inside a
+    project transition's prefix, the project-instruction rows appended with
+    it (both still need that call's route and sequence 0). It is returned
     only when the run is an earlier first-call run of the same turn whose
-    every call ended in error, so nothing it sent was answered.
+    every call ended in error with a boundary before the origin's. An error
+    call may have started a response (a stream cut mid-way); that is
+    harmless here, because the reply that answered the turn still has to
+    pass its own proof.
     """
     head = next((row for row in rows if row[0] == origin_head.sequence), None)
     if head is None or head[4] == origin.run_id or head[7] != 0:

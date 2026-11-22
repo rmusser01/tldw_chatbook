@@ -1338,8 +1338,8 @@ ADMISSION_4_TARGETS = (
     "Tests/Agents/test_native_legacy_hooks.py::test_prompt_hook_runs_while_the_submit_task_holds_its_agent_admission",
     # TASK-33621.6 / TASK-33621.70 (2026-11-21): trace-blocked recovery after a
     # provider 429 on a mounted ChatScreen, on no PR lane before (its Retry
-    # capture node sat red on dev from #3346, 2026-11-02, to this fix). 15
-    # tests, about 2.2 min serially at load ~50: over the UI census's 30 s
+    # capture node sat red on dev from #3346, 2026-11-02, to this fix). 16
+    # tests, about 2.6 min serially (2026-11-22): over the UI census's 30 s
     # per-entry bar, so here.
     "Tests/UI/test_console_trace_recovery_after_provider_error.py",
 )

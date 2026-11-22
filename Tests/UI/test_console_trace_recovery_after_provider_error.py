@@ -428,18 +428,33 @@ async def test_a_recovered_retry_keeps_regenerate_and_the_next_turn_captured(
         assert {row[1] for row in attempts} == {int(mixin)}, attempts
 
 
+# The run-1 first call's state, forged after the Retry (each with its boundary
+# kept, so only the lineage rule's state clause can refuse it).
+FORGED_FIRST_CALL = {
+    "left_open": (
+        "state='reserved', outcome=NULL, dispatch_started_at=NULL, "
+        "response_started_at=NULL, settled_at=NULL"
+    ),
+    "delivery_unknown": "state='dispatch_unknown', outcome=NULL",
+    "answered": (
+        "state='complete', outcome='complete', response_started_at=settled_at"
+    ),
+}
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("forged", ["call_left_open", "first_call_answered"])
+@pytest.mark.parametrize("forged", list(FORGED_FIRST_CALL))
 async def test_a_recovered_retry_is_not_proved_unless_its_earlier_run_all_failed(
     tmp_path, monkeypatch, forged
 ):
     """Negative controls for the lineage rule above: only an all-error run counts.
 
     The recovered turn's row may name its earlier run only when every call
-    of that run ended in error. A call of that run left open (reserved,
-    never settled: delivery unknown), or a first call that was answered,
-    must keep the next captured turn from proving the recovered answer, so
-    it stops on the trace card. Both states are forged after the Retry.
+    of that run ended in error. If the run's first call was left open
+    (reserved, never settled), ended with its delivery unknown, or was
+    answered, the next captured turn must not prove the recovered answer,
+    so it stops on the trace card. The call keeps its call boundary, so the
+    rule's state clause (not its missing-boundary clause) is what refuses it.
     """
     async with _mounted_console(tmp_path, monkeypatch, (160, 52)) as h:
         select_a_mixin(h, monkeypatch)
@@ -455,29 +470,15 @@ async def test_a_recovered_retry_is_not_proved_unless_its_earlier_run_all_failed
         )
         with h.database.transaction() as cursor:
             first = cursor.execute(
-                "SELECT owner_id, segment_id, turn_id, run_id, policy_id, call_id "
-                "FROM console_trace_calls WHERE state='error'"
-            ).fetchone()
-            if forged == "call_left_open":
-                ConsoleTraceRepository().reserve_call(
-                    cursor,
-                    owner_id=first[0],
-                    segment_id=first[1],
-                    turn_id=first[2],
-                    run_id=first[3],
-                    call_sequence=1,
-                    idempotency_key="u06-open-call",
-                    policy_id=first[4],
-                )
-            else:
-                for guard in ("lifecycle", "terminal", "immutable", "set_once"):
-                    cursor.execute(f"DROP TRIGGER console_trace_calls_{guard}_guard")
-                cursor.execute(
-                    "UPDATE console_trace_calls SET state='complete', "
-                    "outcome='complete', response_started_at=settled_at "
-                    "WHERE call_id=?",
-                    (first[5],),
-                )
+                "SELECT call_id FROM console_trace_calls WHERE state='error'"
+            ).fetchone()[0]
+            for guard in ("lifecycle", "terminal", "immutable", "set_once"):
+                cursor.execute(f"DROP TRIGGER console_trace_calls_{guard}_guard")
+            cursor.execute(
+                f"UPDATE console_trace_calls SET {FORGED_FIRST_CALL[forged]} "
+                "WHERE call_id=?",
+                (first,),
+            )
         await _send(h, "Name another color")
         await _until(
             h.pilot,
