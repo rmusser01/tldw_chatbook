@@ -342,6 +342,7 @@ _BUDGETS: dict[str, int] = {
     # branch (net 0: the temporary-chat checkpoint no longer reads a frozen
     # "nothing staged" as unreconstructable, and still treats hook context as
     # unreconstructable, as the durable one does): 28764 -> 28758.
+    # 2026-11-22: re-measured after rebasing onto dev ddd3c02052 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 28758 -> 28759.
     "tldw_chatbook/Chat/console_chat_controller.py": 28777,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     # TASK-41637, 2026-11-18: +9, a round armed with no running app and no
