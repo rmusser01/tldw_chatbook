@@ -36,8 +36,16 @@ that remove their children themselves (``SettingsRegion`` and the Console
 tray's kept filter row). A forwarded press runs only the handlers whose
 selector the button matches on its own, so two more tests hold a press across
 the recompose of the two containers whose handlers were switched to a class
-on the button (``ExternalModelView``, ``SpeechTTSSettingsPanel``). The last
-test fails when an override removes children without the keeper.
+on the button (``ExternalModelView``, ``SpeechTTSSettingsPanel``).
+
+TASK-42150 moved the keeper again, to ``App._prune``, which every removal goes
+through: two more routes hold a press across a child swap that is not a
+recompose (``remove_children()`` or ``remove()``, then ``mount()``), the
+message tests hold Enter in an Input and on a ListView across a recompose, a
+Select's mount echo from a removed generation is not handed on, a press below
+a popped screen still never reaches the App, and the last test pins the
+install. Since review r19rc-rev1 the holds are driven by real input (a click,
+or Enter on the focused sender).
 
 Fast lane: a bare Textual app (``run_test``), no product app boot; the
 fallback and recompose tests mount one ``LibraryNotesCanvas`` under the app
@@ -46,9 +54,11 @@ stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
 
 from __future__ import annotations
 
-import ast
 import asyncio
+import dataclasses
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -60,12 +70,40 @@ from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import (
+    Button,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Select,
+    Static,
+)
 
+from Tests.UI.conftest import (  # noqa: F401 -- fixture re-exports
+    meeting_folder_media_item,
+    tmp_media_db,
+)
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.test_personal_context_review_modal import (
+    _Coordinator as _ReviewCoordinator,
+    _Host as _ReviewHost,
+    _push as _push_review,
+)
 from Tests.Widgets.Library.test_library_notes_canvas import _editor_state
-import tldw_chatbook
-from tldw_chatbook import RECOMPOSE_PRESS_KEEPER
+from Tests.UI.test_evals_bench_editor import (  # noqa: F401 -- fixture re-exports
+    _REALISTIC_SIZE,
+    bench_with_mixed_readiness,
+    evals_app,
+    evals_db,
+)
+from tldw_chatbook.UI.Evals.bench_editor import BenchEditor
+from tldw_chatbook.UI.Evals.evals_state import EvalsViewModel
+from tldw_chatbook import QUEUED_MESSAGE_KEEPER
+from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+from tldw_chatbook.Library.library_media_viewer_state import (
+    build_library_media_viewer_state,
+)
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import PARAKEET_V2_MODEL
 from tldw_chatbook.STT.parakeet_sources import (
     ParakeetSourceKey,
@@ -75,8 +113,18 @@ from tldw_chatbook.STT.parakeet_sources import (
 from tldw_chatbook.UI.Screens.model_external_view import ExternalModelView
 from tldw_chatbook.UI.Screens.settings_screen import SettingsRegion
 from tldw_chatbook.UI.Speech.settings_speech_tts import load_global_speech_tts_state
+from tldw_chatbook.UI.Watchlists_Modules.briefing_preset_modal import (
+    BriefingPresetModal,
+    _blank_speaker,
+)
+from tldw_chatbook.Widgets.Settings_Widgets.personal_context_review_modal import (
+    PersonalContextReviewModal,
+)
 from tldw_chatbook.Widgets.Settings_Widgets.speech_tts_settings_panel import (
     SpeechTTSSettingsPanel,
+)
+from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+    ConsoleHooksReviewModal,
 )
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     _CONVERSATION_FILTER_ROW_ID,
@@ -84,6 +132,7 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 )
 from tldw_chatbook.Widgets.Library import library_notes_canvas as canvas_module
 from tldw_chatbook.Widgets.Library.library_canvas_sync import PostRecomposeCallback
+from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     LibraryNotesCanvas,
@@ -404,8 +453,11 @@ async def test_a_press_queued_below_a_removed_canvas_child_still_reaches_the_scr
         assert screen.query_one("#opener") is not opener, "the canvas never recomposed"
 
 
-def _toolbar() -> Horizontal:
-    return Horizontal(Button("type", id="opener"), id="toolbar")
+def _toolbar(sender: Widget | None = None) -> Horizontal:
+    # Not ``sender or ...``: an unmounted ListView has no children, so it is falsy.
+    if sender is None:
+        sender = Button("type", id="opener")
+    return Horizontal(sender, id="toolbar")
 
 
 class _Container(Vertical):
@@ -450,6 +502,21 @@ def _awaited(container):
     return asyncio.ensure_future(container.recompose())
 
 
+async def _swap_children(container) -> None:
+    await container.remove_children()
+    await container.mount(_toolbar())
+
+
+async def _swap_child(container) -> None:
+    await container.query_one("#toolbar").remove()
+    await container.mount(_toolbar())
+
+
+def _on_its_pump(swap):
+    """A swap the container runs on its own pump, as its own method would."""
+    return lambda container: container.call_later(swap, container)
+
+
 # route: (the screen's children, the recomposing node (None: the screen),
 #         the child its recompose removes above the button, the trigger)
 _ROUTES = {
@@ -469,6 +536,19 @@ _ROUTES = {
     ),
     "console-kept-filter-row": (
         lambda: [_KeptRowTray(id="container")], "#container", "#toolbar", _recompose
+    ),
+    # TASK-42150: child swaps that are not recomposes.
+    "remove-children-then-mount": (
+        lambda: [_Container(id="container")],
+        "#container",
+        "#toolbar",
+        _on_its_pump(_swap_children),
+    ),
+    "remove-then-mount": (
+        lambda: [_Container(id="container")],
+        "#container",
+        "#toolbar",
+        _on_its_pump(_swap_child),
     ),
 }
 
@@ -501,33 +581,45 @@ class _RouteApp(App):
         return _RouteScreen(self._children)
 
 
-async def _hold_a_press_across(opener: Button, closing, trigger) -> None:
-    """Press ``opener`` while its pump is held, run ``trigger``, and release
-    the press only once ``closing`` (the child being removed above it) is
-    closing, so the order is driven, not timed."""
+async def _hold_a_press_across(
+    pilot, opener: Widget, closing, trigger, action="press", user=None
+) -> None:
+    """Drive real input on ``opener`` (a click, or ``user``: a key), hold the
+    message its ``action`` posts in the sender's own queue, run ``trigger``,
+    and release the message only once ``closing`` (the child being removed
+    above it) is closing, so the order is driven, not timed."""
     held = asyncio.Event()
     release = asyncio.Event()
+    real = getattr(opener, action)
 
-    async def hold() -> None:
-        held.set()
-        await release.wait()
+    def hold_then_act(*args, **kwargs):
+        delattr(opener, action)  # once
 
-    opener.call_later(hold)
+        async def hold() -> None:
+            held.set()
+            await release.wait()
+
+        opener.call_later(hold)  # ahead of the message ``real`` posts
+        return real(*args, **kwargs)
+
+    setattr(opener, action, hold_then_act)
+    # Pilot waits for every pump to go idle, so it runs beside the hold.
+    acting = asyncio.ensure_future(user() if user else pilot.click(opener))
     pending = None
     try:
         await asyncio.wait_for(held.wait(), timeout=5)
-        opener.press()  # queued in the button, behind ``hold``
         pending = trigger()
         deadline = asyncio.get_running_loop().time() + 5
         while not closing._closing:
             assert asyncio.get_running_loop().time() < deadline, (
-                "the recompose never closed the child above the button"
+                "the recompose never closed the child above the sender"
             )
             await asyncio.sleep(0)
     finally:
         release.set()
     if isinstance(pending, asyncio.Future):  # an awaited ``recompose()``
         await asyncio.wait_for(pending, timeout=5)
+    await asyncio.wait_for(acting, timeout=30)
 
 
 async def _settle_until(pilot, done) -> None:
@@ -539,14 +631,16 @@ async def _settle_until(pilot, done) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", sorted(_ROUTES))
-async def test_every_recompose_route_keeps_a_press_queued_below_a_removed_child(route):
-    """TASK-42014: no container's recompose drops a pending press.
+async def test_every_removal_route_keeps_a_press_queued_below_a_removed_child(route):
+    """TASK-42014/42150: no container's recompose or child swap drops a
+    pending press.
 
     Same hold as the canvas test above. Every route reaches the screen's
     ``#opener`` handler. A forwarded press matches only selectors the
     detached button matches alone: when the container's own pump runs the
     recompose, the button is detached before the container handles the
-    press, so ``#toolbar Button`` never runs. An ``awaited`` recompose runs on
+    press, so ``#toolbar Button`` never runs (the two swaps run on that pump
+    too, as a container's own method does). An ``awaited`` recompose runs on
     another task, so the container can handle the press before the button
     detaches, and the ancestor selector may run there; it is not pinned.
     """
@@ -558,14 +652,190 @@ async def test_every_recompose_route_keeps_a_press_queued_below_a_removed_child(
         container = screen if recomposing is None else screen.query_one(recomposing)
         opener = screen.query_one("#opener", Button)
         await _hold_a_press_across(
-            opener, screen.query_one(removed), lambda: trigger(container)
+            pilot, opener, screen.query_one(removed), lambda: trigger(container)
         )
         await _settle_until(pilot, lambda: screen.handled)
 
-        assert screen.handled == 1, f"the {route} recompose dropped the press"
+        assert screen.handled == 1, f"the {route} route dropped the press"
         if route != "awaited":
             assert screen.by_ancestor == 0, "an ancestor selector matched"
+        assert screen.query_one("#opener") is not opener, "nothing was rebuilt"
+
+
+# TASK-42150: the other user actions the app handles above their sender, each
+# driven by a real key. message: (the sender, the action the key runs)
+_MESSAGES = {
+    "Input.Submitted": (lambda: Input("typed", id="opener"), "action_submit"),
+    "ListView.Selected": (
+        lambda: ListView(ListItem(Label("a")), id="opener"),
+        "action_select_cursor",
+    ),
+}
+
+
+class _MessageContainer(Vertical):
+    def __init__(self, sender, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._sender = sender
+
+    def compose(self) -> ComposeResult:
+        yield _toolbar(self._sender())
+
+
+class _MessageScreen(Screen):
+    def __init__(self, sender) -> None:
+        super().__init__()
+        self._sender = sender
+        self.seen: list[tuple[str, Widget]] = []
+
+    def compose(self) -> ComposeResult:
+        yield _MessageContainer(self._sender, id="container")
+
+    @on(Input.Submitted, "#opener")
+    @on(ListView.Selected, "#opener")
+    def _record(self, event) -> None:
+        self.seen.append((type(event).__qualname__, event.control))
+
+
+class _MessageApp(App):
+    def __init__(self, sender) -> None:
+        super().__init__()
+        self._sender = sender
+
+    def get_default_screen(self) -> Screen:
+        return _MessageScreen(self._sender)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", sorted(_MESSAGES))
+async def test_a_user_message_queued_below_a_removed_child_is_kept(message):
+    """TASK-42150: Enter in an Input or on a ListView, queued below a removed
+    child, reaches the screen once, as a press does. Same hold as the press
+    routes, driven by the real key."""
+    sender, action = _MESSAGES[message]
+    app = _MessageApp(sender)
+    async with app.run_test(size=(40, 12)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        opener = screen.query_one("#opener")
+        opener.focus()
+        await pilot.pause()
+        screen.seen.clear()
+        await _hold_a_press_across(
+            pilot,
+            opener,
+            screen.query_one("#toolbar"),
+            lambda: _recompose(screen.query_one("#container")),
+            action=action,
+            user=lambda: pilot.press("enter"),
+        )
+        await _settle_until(pilot, lambda: any(c is opener for _, c in screen.seen))
+
+        mine = [name for name, control in screen.seen if control is opener]
+        assert mine == [message], f"the recompose dropped the {message}"
         assert screen.query_one("#opener") is not opener, "nothing recomposed"
+
+
+class _EchoSelect(Select):
+    """Holds its pump, queued ahead of the echo its own mount posts."""
+
+    def __init__(self, *args, held, release, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._held, self._release = held, release
+
+    def _on_mount(self, event) -> None:
+        async def hold() -> None:
+            self._held.set()
+            await self._release.wait()
+
+        self.call_later(hold)
+        super()._on_mount(event)
+
+
+class _EchoScreen(Screen):
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: list[tuple[object, bool]] = []
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(id="container")
+
+    @on(Select.Changed, "#picker")
+    def _record(self, event: Select.Changed) -> None:
+        self.seen.append((event.value, event.control.is_attached))
+
+
+class _EchoApp(App):
+    def get_default_screen(self) -> Screen:
+        return _EchoScreen()
+
+
+@pytest.mark.asyncio
+async def test_a_mount_echo_below_a_removed_child_is_not_forwarded():
+    """TASK-42150 review r19rc-rev1: a Select posts ``Changed`` when it mounts
+    and on every programmatic ``value =``, not only when the user picks. An
+    echo from a removed generation must not reach the screen as if the user
+    had chosen it, so ``Select.Changed`` (like ``Checkbox``'s and ``Switch``'s)
+    is not kept: only the new generation's own echo arrives."""
+    held, release = asyncio.Event(), asyncio.Event()
+    app = _EchoApp()
+    async with app.run_test(size=(40, 10)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        container = screen.query_one("#container")
+        stale = _EchoSelect(
+            [("a", 1), ("b", 2)], value=1, id="picker", held=held, release=release
+        )
+        await container.mount(Horizontal(stale, id="toolbar"))
+        await asyncio.wait_for(held.wait(), timeout=5)
+        toolbar = screen.query_one("#toolbar")
+
+        async def swap() -> None:  # the next generation, on the container's pump
+            await container.remove_children()
+            await container.mount(
+                Horizontal(Select([("a", 1), ("b", 2)], value=2, id="picker"), id="toolbar")
+            )
+
+        container.call_later(swap)
+        try:
+            deadline = asyncio.get_running_loop().time() + 5
+            while not toolbar._closing:
+                assert asyncio.get_running_loop().time() < deadline, "no swap"
+                await asyncio.sleep(0)
+        finally:
+            release.set()
+        await _settle_until(pilot, lambda: screen.seen)
+        await pilot.pause(0.2)
+
+        assert screen.seen == [(2, True)], "a removed Select's echo was forwarded"
+
+
+class _PoppedApp(App):
+    def __init__(self) -> None:
+        super().__init__()
+        self.handled = 0
+
+    @on(Button.Pressed)
+    def _count(self, event: Button.Pressed) -> None:
+        self.handled += 1
+
+
+@pytest.mark.asyncio
+async def test_a_press_queued_in_a_popped_screen_never_reaches_the_app():
+    """TASK-42150: every removal now reaches the keeper, a screen's included,
+    and a press below a removed screen is still never handed to the App."""
+    app = _PoppedApp()
+    async with app.run_test(size=(40, 8)) as pilot:
+        await app.push_screen(Screen())
+        await app.screen.mount(_toolbar())
+        await pilot.pause()
+        opener = app.screen.query_one("#opener", Button)
+        await _hold_a_press_across(
+            pilot, opener, app.screen.query_one("#toolbar"), app.pop_screen
+        )
+        await pilot.pause(0.2)
+
+        assert app.handled == 0, "a press from a removed screen reached the App"
 
 
 class _RemovedApp(App):
@@ -575,8 +845,10 @@ class _RemovedApp(App):
 
 @pytest.mark.asyncio
 async def test_a_removed_container_recompose_never_waits_for_its_lock():
-    """TASK-42014 review r18lib-rev2: like native ``Widget.recompose``, the
-    keeper's wrapper returns at once for a removed container, before the lock.
+    """TASK-42014 review r18lib-rev2, kept after TASK-42150 removed the
+    ``Widget.recompose`` wrapper: native ``Widget.recompose`` returns at once
+    for a removed container, before its lock, and the keeper on ``App._prune``
+    never takes the lock at all.
 
     A child's handler recomposes its container after the container's
     ``remove()``, while another task holds the container's lock and awaits
@@ -659,7 +931,7 @@ async def test_an_external_model_action_pressed_across_a_reload_still_runs(tmp_p
         view = app.query_one(ExternalModelView)
         change = view.query_one("#external-model-change-v2_int8", Button)
         await _hold_a_press_across(
-            change, view.query_one(".external-model-list"), view.reload
+            pilot, change, view.query_one(".external-model-list"), view.reload
         )
         await _settle_until(pilot, lambda: app.requests)
 
@@ -690,8 +962,16 @@ async def test_a_speech_credential_action_pressed_across_a_recompose_still_runs(
         panel = app.query_one(SpeechTTSSettingsPanel)
         edit = panel.query_one("#settings-speech-openai-credential-edit", Button)
         closing = next(node for node in edit.ancestors if node.parent is panel)
+        # Without the app stylesheet the row covers the button in a mouse hit
+        # test, so the real input here is Enter on the focused button.
+        edit.focus()
+        await pilot.pause()
         await _hold_a_press_across(
-            edit, closing, lambda: panel.refresh(recompose=True)
+            pilot,
+            edit,
+            closing,
+            lambda: panel.refresh(recompose=True),
+            user=lambda: pilot.press("enter"),
         )
         await _settle_until(pilot, lambda: app.screen is not app.screen_stack[0])
 
@@ -700,77 +980,291 @@ async def test_a_speech_credential_action_pressed_across_a_recompose_still_runs(
         )
 
 
-#: Removals a ``recompose`` override may make: ``x.remove()`` and
-#: ``x.remove_children()``.
-_REMOVALS = (".remove", ".remove_children")
+def test_every_removal_reaches_the_message_keeper():
+    """TASK-42150: the keeper sits on ``App._prune``, which every removal goes
+    through (a recompose, ``remove_children()``, ``remove()``, a query's
+    ``remove()``), so no override can remove children ahead of it."""
+    assert getattr(App._prune, QUEUED_MESSAGE_KEEPER, False)
 
 
-def _unkept_removals(source: str) -> list[str]:
-    """Each removal a ``recompose`` override makes before
-    ``keep_queued_presses``: a direct call, or a call to a method of the same
-    class that removes (one hop; deeper chains are not followed)."""
-    unkept = []
-    for cls in ast.walk(ast.parse(source)):
-        if not isinstance(cls, ast.ClassDef):
-            continue
-        methods = {
-            method.name: method
-            for method in cls.body
-            if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        override = methods.get("recompose")
-        if not isinstance(override, ast.AsyncFunctionDef):
-            continue
+# --- TASK-42150 review r19rc-rev1: a late press resolves its target by
+# identity. The keeper hands a press below a rebuilt row to a live ancestor
+# after the rebuild, and a press already past the row reaches its handler
+# then too, so a handler that reads a position from the button's id would
+# act on whatever row holds that position now.
 
-        def removes(name: str) -> bool:
-            if name.endswith(_REMOVALS):
-                return True
-            helper = methods.get(name.removeprefix("self."))
-            return (
-                name.startswith("self.")
-                and helper is not None
-                and helper is not override
-                and any(
-                    isinstance(call, ast.Call)
-                    and ast.unparse(call.func).endswith(_REMOVALS)
-                    for call in ast.walk(helper)
-                )
+
+async def _press_a_stale_row_across(pilot, stale: Button, rebuild, closing) -> None:
+    """A press (``stale``) is still in transit when ``rebuild`` (the user's
+    earlier press, or an update) rebuilds the rows: hold it in its button
+    until the rebuild is closing ``closing``, then let it go."""
+    held, release = asyncio.Event(), asyncio.Event()
+
+    async def hold() -> None:
+        held.set()
+        await release.wait()
+
+    stale.call_later(hold)
+    try:
+        await asyncio.wait_for(held.wait(), timeout=5)
+        stale.press()
+        rebuild()
+        deadline = asyncio.get_running_loop().time() + 5
+        while not closing._closing:
+            assert asyncio.get_running_loop().time() < deadline, "no rebuild"
+            await asyncio.sleep(0)
+    finally:
+        release.set()
+    for _ in range(50):
+        await pilot.pause(0.02)
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_stale_bench_target_remove_never_unstages_another_target(
+    evals_app, bench_with_mixed_readiness  # noqa: F811 -- fixtures imported above
+):
+    """Remove row 0, then row 1 before the first rebuild lands. The second
+    press belongs to "warned-target"; once row 0 is gone, index 1 is
+    "blocked-target". It must not be un-staged (and then saved)."""
+    task_id, ids = bench_with_mixed_readiness
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+        assert editor._staged_target_ids == [ids["ready"], ids["warned"], ids["blocked"]]
+        await _press_a_stale_row_across(
+            pilot,
+            screen.query_one("#evals-bench-target-remove-1", Button),
+            screen.query_one("#evals-bench-target-remove-0", Button).press,
+            screen.query_one("#evals-bench-targets-body"),
+        )
+
+        names = {target: name for name, target in ids.items()}
+        staged = [names[target] for target in editor._staged_target_ids]
+        assert staged == ["warned", "blocked"], "a stale Remove un-staged another target"
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_stale_bench_target_add_never_stages_the_rebuilt_pickers_default(
+    evals_app, evals_db, bench_with_mixed_readiness, monkeypatch  # noqa: F811 -- fixtures imported above
+):
+    """Pick "spare-a" and press Add while a Remove rebuilds the picker. The
+    rebuilt picker shows its first option, "spare-b"; the late Add must not
+    stage that (nor anything else) in place of what the user picked."""
+    task_id, ids = bench_with_mixed_readiness
+    spare_a = evals_db.create_model(name="spare-a", provider="llama_cpp", model_id="m")
+    spare_b = evals_db.create_model(name="spare-b", provider="llama_cpp", model_id="m")
+    real_targets = EvalsViewModel.llama_targets
+    monkeypatch.setattr(
+        EvalsViewModel,
+        "llama_targets",
+        lambda self: sorted(real_targets(self), key=lambda row: row["name"] != "spare-b"),
+    )
+    async with evals_app.run_test(size=_REALISTIC_SIZE) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="bench", id=task_id)
+        await pilot.pause()
+        screen = evals_app.screen
+        editor = screen.query_one(BenchEditor)
+        screen.query_one("#evals-bench-add-target", Select).value = spare_a
+        await pilot.pause()
+        await _press_a_stale_row_across(
+            pilot,
+            screen.query_one("#evals-bench-add-target-button", Button),
+            screen.query_one("#evals-bench-target-remove-0", Button).press,
+            screen.query_one("#evals-bench-targets-body"),
+        )
+
+        assert screen.query_one("#evals-bench-add-target", Select).value == spare_b
+        names = {target: name for name, target in ids.items()}
+        names |= {spare_a: "spare-a", spare_b: "spare-b"}
+        staged = [names[target] for target in editor._staged_target_ids]
+        assert staged == ["warned", "blocked"], "a stale Add staged the rebuilt default"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_briefing_speaker_remove_never_removes_another_speaker(tmp_path):
+    """Remove speaker 0 ("A"), then speaker 1 ("B") before the modal's
+    recompose lands. Once "A" is gone, index 1 is "C"; it must stay."""
+    modal = BriefingPresetModal(
+        SubscriptionsDB(tmp_path / "subs.db", "test"),
+        character_options=[],
+        voice_options=[],
+    )
+    modal._speakers = [dict(_blank_speaker(), name=name) for name in "ABC"]
+    app = App()
+    async with app.run_test(size=(160, 42)) as pilot:
+        app.push_screen(modal)
+        await _settle_until(pilot, lambda: modal.is_mounted)
+        await pilot.pause(0.2)  # the mount-time preset load recomposes once
+        await _press_a_stale_row_across(
+            pilot,
+            modal.query_one("#bpm-speaker-remove-1", Button),
+            modal.query_one("#bpm-speaker-remove-0", Button).press,
+            modal.query_one("#bpm-dialog"),
+        )
+
+        names = [speaker["name"] for speaker in modal._speakers]
+        assert names == ["B", "C"], "a stale Remove removed another speaker"
+
+
+def _hook_snapshot(*names: str) -> SimpleNamespace:
+    """A review snapshot of approved, enabled hooks (only what the modal reads)."""
+    rows = tuple(
+        SimpleNamespace(
+            entry=SimpleNamespace(
+                key=name, source="hook", index=index, spec=None, error=None, enabled=True
+            ),
+            state="approved",
+            change="Unchanged",
+        )
+        for index, name in enumerate(names)
+    )
+    section = {"hook": [{"name": name} for name in names]}
+    return SimpleNamespace(
+        rows=rows,
+        config=SimpleNamespace(section=section),
+        store_revision=("rev", 1),
+        blocked_reason=None,
+        notice=None,
+        ready=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stale_hook_revoke_never_revokes_another_hook():
+    """A Revoke for hook "b" (row 1) is in transit when an update drops hook
+    "a" and the rows are rebuilt; row 1 is then "c". "c" must not be revoked."""
+    revoked: list[str] = []
+
+    async def revoke(snapshot, key):
+        revoked.append(key)
+        return snapshot
+
+    async def unused(*_args):
+        raise AssertionError("not part of this review")
+
+    modal = ConsoleHooksReviewModal(
+        snapshot=_hook_snapshot("a", "b", "c"),
+        waiting_for_send=False,
+        approve=unused,
+        revoke=revoke,
+        disable=unused,
+        recover=unused,
+        reset=unused,
+        on_cancel=lambda: None,
+    )
+    modal._all = True  # approved hooks show their Revoke only under "All hooks"
+    app = App()
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.push_screen(modal)
+        await _settle_until(pilot, lambda: modal.query("#hook-review-revoke-1"))
+        await _press_a_stale_row_across(
+            pilot,
+            modal.query_one("#hook-review-revoke-1", Button),
+            lambda: modal.update_runtime_projection(
+                SimpleNamespace(snapshot=_hook_snapshot("b", "c"), busy=False)
+            ),
+            modal.query_one("#hook-review-row-0"),
+        )
+
+        assert revoked == [], "a stale Revoke revoked another hook"
+
+
+@pytest.mark.asyncio
+async def test_a_stale_personal_context_apply_never_rewrites_another_change():
+    """An Apply for row 1 ("change-2") is in transit when the review's diff
+    is replaced in a new order and the modal recomposes; row 1 is then
+    "change-1". No rewrite may be sent for it."""
+    coordinator = _ReviewCoordinator()
+    host = _ReviewHost()
+    async with host.run_test(size=(110, 34)) as pilot:
+        modal = PersonalContextReviewModal(
+            coordinator, session_id="session-1", diff=coordinator.diff
+        )
+        await _push_review(host, modal)
+        await pilot.pause()
+
+        def reorder() -> None:
+            modal._diff = replace(modal._diff, changes=modal._diff.changes[::-1])
+            modal._revision += 1
+
+        await _press_a_stale_row_across(
+            pilot,
+            modal.query_one("#personal-context-review-apply-1", Button),
+            reorder,
+            modal.query_one("#personal-context-review-modal"),
+        )
+        await host.workers.wait_for_complete()
+
+        assert coordinator.rewrites == [], "a stale Apply rewrote another change"
+
+
+def _legend_state(db, media_id):
+    return dataclasses.replace(
+        build_library_media_viewer_state(dict(db.get_media_by_id(media_id))),
+        can_rename_speakers=True,
+        speaker_legend_rows=(("S1", "Speaker 1"),),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_stale_speaker_rename_never_renames_another_items_speaker(
+    tmp_media_db, meeting_folder_media_item  # noqa: F811 -- fixtures imported above
+):
+    """Review r19rc-rev2: Enter in item A's "S1" rename field is still in
+    transit when the user selects item B, which also has an "S1". The kept
+    submit must not rename B's speaker (the handler read the media id from
+    the viewer's current item); a submit from an earlier render is dropped."""
+    db = tmp_media_db
+    a, _ = meeting_folder_media_item(names={}, segments=[("S1", "hello from a")])
+    b, _ = meeting_folder_media_item(
+        names={}, segments=[("S1", "hello from b"), ("S1", "again")]
+    )
+
+    class _ViewerApp(App):
+        def compose(self) -> ComposeResult:
+            yield LibraryMediaViewer(
+                _legend_state(db, a),
+                media_db=db,
+                speaker_rename_media_id=a,
+                id="library-media-viewer",
             )
 
-        calls = [
-            (call.lineno, ast.unparse(call.func))
-            for call in ast.walk(override)
-            if isinstance(call, ast.Call)
-        ]
-        kept = [line for line, name in calls if name == "keep_queued_presses"]
-        unkept += [
-            f"{cls.name}.recompose:{line} {name}"
-            for line, name in calls
-            if removes(name) and not any(k < line for k in kept)
-        ]
-    return unkept
+    app = _ViewerApp()
+    async with app.run_test(size=(80, 40)) as pilot:
+        await pilot.pause()
+        viewer = app.query_one(LibraryMediaViewer)
+        field = app.query_one("#library-media-speaker-input-S1", Input)
+        field.focus()
+        field.value = "Alice"
+        await pilot.pause()
 
+        def select_b() -> None:  # the controller's sync on a new selection
+            viewer.viewer = _legend_state(db, b)
+            viewer.speaker_rename_media_id = b
+            viewer.refresh(recompose=True)
 
-_ONE_HOP = """
-class Pane:
-    async def recompose(self):
-        self._clear()
-        await super().recompose()
+        await _hold_a_press_across(
+            pilot,
+            field,
+            app.query_one("#library-media-speaker-legend"),
+            select_b,
+            action="action_submit",
+            user=lambda: pilot.press("enter"),
+        )
+        for _ in range(30):
+            await pilot.pause(0.02)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
-    def _clear(self):
-        self.query_children("*").remove()
-"""
-
-
-def test_every_recompose_reaches_the_press_keeper():
-    """TASK-42014: ``Widget.recompose`` keeps presses, and no override in the
-    package removes children, directly or through a method of its own class,
-    before calling the keeper."""
-    assert getattr(Widget.recompose, RECOMPOSE_PRESS_KEEPER, False)
-    assert _unkept_removals(_ONE_HOP) == ["Pane.recompose:4 self._clear"]
-    unkept = []
-    for path in sorted(Path(tldw_chatbook.__file__).parent.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
-        if "def recompose(" in source:
-            unkept += [f"{path.name}: {row}" for row in _unkept_removals(source)]
-    assert unkept == []
+    renamed = (
+        "Alice" in db.get_media_by_id(a)["content"],
+        "Alice" in db.get_media_by_id(b)["content"],
+    )
+    assert renamed == (False, False), "a stale rename landed on another item"

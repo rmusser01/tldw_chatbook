@@ -62,6 +62,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static
 
+from ... import rendered_target
 from ...Subscriptions.briefing_cast import (
     ScriptCastError,
     dump_roster,
@@ -198,10 +199,14 @@ class BriefingPresetModal(ModalScreen[bool]):
         self._draft_provider = ""
         self._draft_model = ""
         self._speakers: list[dict[str, Any]] = [_blank_speaker()]
+        #: Each speaker's Remove button to its row, rebuilt by every compose
+        #: (TASK-42150): a Remove from an earlier compose resolves to nothing.
+        self._speaker_removers: dict[Button, int] = {}
 
     # --- Compose -------------------------------------------------------
 
     def compose(self) -> ComposeResult:
+        self._speaker_removers = {}
         with Vertical(id="bpm-dialog"):
             yield Static("Briefing presets", id="bpm-title")
             with Horizontal(id="bpm-body"):
@@ -336,12 +341,14 @@ class BriefingPresetModal(ModalScreen[bool]):
                                     else _VOICE_INERT_COPY
                                 ),
                             )
-                            yield Button(
+                            remove = Button(
                                 "Remove",
                                 id=f"bpm-speaker-remove-{index}",
                                 compact=True,
                                 disabled=len(self._speakers) <= 1,
                             )
+                            self._speaker_removers[remove] = index
+                            yield remove
                     yield Button("Add speaker", id="bpm-add-speaker", compact=True)
                     yield Static("", id="bpm-error")
             with Horizontal(id="bpm-actions"):
@@ -657,8 +664,11 @@ class BriefingPresetModal(ModalScreen[bool]):
         elif button_id == "bpm-delete":
             self._dispatch_write(self._handle_delete())
         elif button_id.startswith("bpm-speaker-remove-"):
-            index = int(button_id[len("bpm-speaker-remove-") :])
-            self._remove_speaker_row(index)
+            # The row this button was composed for, not the index in its id:
+            # a press from an earlier compose would remove another speaker.
+            index = rendered_target(self._speaker_removers, event.button)
+            if index is not None:
+                self._remove_speaker_row(index)
         elif button_id.startswith("bpm-preset-btn-"):
             preset_id = int(button_id[len("bpm-preset-btn-") :])
             self._select_preset_for_edit(preset_id)
