@@ -453,13 +453,25 @@ DREAMS_BOUNDARY_TARGETS = (
 )
 #: TASK-34929: the Dreams tracking tests, gated whole in their own job.
 DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
-#: Round 21 ports (TASK-42191): riders on no PR lane before. Tool_Packs last:
-#: its two bootstrap_profile nodes may precede only its own sandboxed files,
-#: which read no config in-process (TASK-32873).
+#: Round 21 ports: riders on no PR lane before (the Workspaces files
+#: TASK-42382, Tool_Packs TASK-42191). Tool_Packs last: its bootstrap_profile
+#: nodes enroll the process, and every later test then fails any in-process
+#: config read with RecoveryRequired: raw_source_selection_changed -- in this
+#: serial lane only, since -n 4 locally runs them on other workers
+#: (TASK-32873). So no Tool_Packs file may read config in-process, and nothing
+#: sandboxed may follow the directory. A config read cannot be found
+#: statically, so TOOL_PACKS_BOOTSTRAP_NODES pins the enrolling nodes instead:
+#: a new one widens the window and must be looked at.
 DREAMS_TRACKING_RIDERS = (
     "Tests/Workspaces/test_console_workspace_create_handler.py",
+    "Tests/Workspaces/test_console_workspace_reconcile.py",
     "Tests/Workspaces/test_workspace_create_modal.py",
     "Tests/Tool_Packs",
+)
+#: TASK-42191's C7 nodes, the only bootstrap_profile tests in Tests/Tool_Packs.
+TOOL_PACKS_BOOTSTRAP_NODES = (
+    "Tests/Tool_Packs/test_catalog_snapshot.py::test_concrete_v1_provider_inventory_is_complete_unbound_and_path_private",
+    "Tests/Tool_Packs/test_export.py::test_v1_zero_tool_namespace_receives_a_portable_fallback",
 )
 #: TASK-38989: Architecture guards red on dev in no PR lane, in their own job.
 #: The profile inventory runs by node, without its CLI test: preflight runs the
@@ -1342,7 +1354,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
         ("pr-fast-lane-admission-4", "Require successful PR fast lane (admission-sensitive 4)"),
         ("plugins-recovery-ui", "Require successful managed plugin recovery UI"),
         ("dreams-boundary", "Require successful Dreams and Guardian boundary contracts"),
-        ("dreams-tracking", "Require successful Dreams tracking tests"),
+        ("dreams-tracking", "Require successful Dreams tracking tests and unlaned riders"),
         ("architecture-guards", "Require successful Architecture guard contracts"),
         ("pr-fast-lane-arch", "Require successful PR fast lane (architecture-review tests)"),
         ("recovered-suites", "Require successful PR lane (recovered suites)"),
@@ -2031,7 +2043,7 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     workflow = _workflow("derived-artifacts.yml")
     job = workflow["jobs"]["dreams-tracking"]
 
-    assert job["name"] == "Dreams tracking tests"
+    assert job["name"] == "Dreams tracking tests and unlaned riders"
     assert job["if"] == LANES
     assert job["runs-on"] == PR_TEST_RUNNER
     assert job["timeout-minutes"] == 20
@@ -2045,7 +2057,7 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     assert shlex.split(install) == shlex.split(
         _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
     )
-    step = _named_step(job, "Run the Dreams tracking tests")
+    step = _named_step(job, "Run the Dreams tracking tests and unlaned riders")
     assert "if" not in step
     assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
         "pytest",
@@ -2054,7 +2066,8 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
         "--timeout=180",
         "--tb=short",
     )
-    # Each runs once: no other PR-lane step lists one of them or a test in one.
+    # Each runs once: no other PR-lane step lists one of them, a test in one,
+    # or a directory holding one.
     owned = (DREAMS_TRACKING_TARGET, *DREAMS_TRACKING_RIDERS)
     others = [
         f"{key}: {candidate['name']}"
@@ -2062,13 +2075,58 @@ def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
         if key != "dreams-tracking"
         for candidate in other.get("steps", ())
         if any(
-            target.split("::", 1)[0] == path
-            or target.split("::", 1)[0].startswith(path + "/")
+            _runs_any_of(target, path)
             for target in _pytest_targets(str(candidate.get("run", "")))
             for path in owned
         )
     ]
     assert others == []
+
+
+def _runs_any_of(target: str, path: str) -> bool:
+    """Whether a pytest `target` runs some test under file or directory `path`."""
+    listed = target.split("::", 1)[0].rstrip("/")
+    return listed == path or listed.startswith(path + "/") or path.startswith(listed + "/")
+
+
+def test_one_owner_check_sees_files_tests_and_parent_directories() -> None:
+    """Review r21: a parent directory listed in another step also runs a rider."""
+    rider = "Tests/Workspaces/test_workspace_create_modal.py"
+    assert _runs_any_of(rider, rider)
+    assert _runs_any_of(rider + "::test_x[1]", rider)
+    assert _runs_any_of("Tests/Workspaces", rider)
+    assert _runs_any_of("Tests/", rider)
+    assert _runs_any_of("Tests/Tool_Packs/test_export.py", "Tests/Tool_Packs")
+    assert not _runs_any_of("Tests/Workspaces/test_workspace_create_modal_extra.py", rider)
+    assert not _runs_any_of("Tests/Tool_Packs_extra", "Tests/Tool_Packs")
+
+
+def _load_p0_gate_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "p0_gate_bootstrap_rule", PROJECT_ROOT / "Tests" / "CI" / "test_console_p0_regression_gate.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_tool_packs_bootstrap_nodes_are_the_pinned_two() -> None:
+    """Tool_Packs runs last in dreams-tracking, a sandboxed invocation, and
+    its bootstrap_profile nodes poison config access for every test after
+    them there (TASK-32873). Read with the conftest's own rule (the P0 gate's
+    helper), so a new marked node, class or module mark fails here first."""
+    uses_bootstrap = _load_p0_gate_module()._uses_bootstrap_profile
+    found = []
+    for path in sorted((PROJECT_ROOT / "Tests" / "Tool_Packs").rglob("test_*.py")):
+        relative = path.relative_to(PROJECT_ROOT).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for item in tree.body:
+            name = getattr(item, "name", "")
+            if name.startswith(("test_", "Test")) and uses_bootstrap(f"{relative}::{name}"):
+                found.append(f"{relative}::{name}")
+    assert tuple(found) == TOOL_PACKS_BOOTSTRAP_NODES
 
 
 def test_architecture_guards_lane_is_one_serial_minimal_python_312_job() -> None:
@@ -2359,8 +2417,8 @@ def test_required_aggregation_contract_rejects_a_dropped_admission_lane(lane: st
         ("pr-fast-lane-arch", "Run the architecture-review tests"),
         ("derived-artifacts", "Require successful PR fast lane (architecture-review tests)"),
         ("dreams-tracking", None),
-        ("dreams-tracking", "Run the Dreams tracking tests"),
-        ("derived-artifacts", "Require successful Dreams tracking tests"),
+        ("dreams-tracking", "Run the Dreams tracking tests and unlaned riders"),
+        ("derived-artifacts", "Require successful Dreams tracking tests and unlaned riders"),
         ("architecture-guards", None),
         ("architecture-guards", "Run Architecture guard contracts"),
         ("derived-artifacts", "Require successful Architecture guard contracts"),

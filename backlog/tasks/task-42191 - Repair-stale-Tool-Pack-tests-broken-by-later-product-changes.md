@@ -5,7 +5,7 @@ status: Done
 assignee:
 - '@claude'
 created_date: 2026-11-21 13:40
-updated_date: 2026-11-22 20:01
+updated_date: 2026-11-22 20:15
 labels:
 - tests
 - tool-packs
@@ -40,6 +40,7 @@ This task repairs the tests only. The product behaviour they now contradict is c
 - [x] #5 The four touched test files show no new failures against `dev` on Windows
 - [x] #6 No product code changes
 - [x] #7 On POSIX, the directory-fsync injection matches the directory itself rather than a reused fd number, so `test_save_propagates_real_directory_fsync_failure` and every `test_save_tolerates_unsupported_directory_fsync` case pass, and each tolerance case proves its injected failure fired (added 2026-11-22 by coordinator decision: the same file's stale fixture left this repair incomplete on POSIX)
+- [x] #8 `Tests/Tool_Packs` runs whole in a required PR lane (dreams-tracking), ordered so its two bootstrap_profile nodes follow every other sandboxed target (added 2026-11-22 by coordinator decision: no PR lane ran the directory, which is how these tests went stale unseen)
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -76,18 +77,12 @@ Verification (Windows 10, Python 3.12, `Tests/windows_private_fixture_runner` pr
 - Whole `Tests/Tool_Packs` on this branch: 420 passed, 0 failed. The other two Tool Pack ports (TASK-42225, PR #3684) fix Windows-only paths, so no reds remain for them here.
 - **Review fixes (2026-11-22).** `tracked_open` is gone, and the samestat match is the only gate. `_fail_directory_fsync` now returns a hit count, and each tolerance case asserts `injected == [1]`. Before this, the four tolerance cases passed with `_save_locked`'s `_fsync_parent_directory` call removed; now all four fail without it. With the barrier in place the file is 21 of 21 green. AC #7 records the samestat repair.
 
-**Lanes for the round 21 ports (2026-11-22, coordinator decision).** These notes cover all four stacked ports (PRs #3687, #3689, #3684, #3682). #3682 has no task file, and #3684's is the @codex-owned TASK-34406. Measured serially on macOS, CPython 3.12.11.
-- **`dreams-tracking` ("Run the Dreams tracking tests", `--timeout=180`), after `Tests/Dreams/test_track_service.py`, in this order:**
-  - `Tests/Workspaces/test_console_workspace_create_handler.py`: 6 tests, 3.5 s.
-  - `Tests/Workspaces/test_workspace_create_modal.py`: 28 tests, 66.6 s.
-  - `Tests/Tool_Packs`, whole and last: 437 tests, 43.1 s.
-  - Together the three took 107 s (load 15-17). The whole step, 724 tests, took 500.7 s (load 14-21).
+**Lanes for the round 21 ports (2026-11-22, coordinator decision).** This task records the Tool_Packs lane. The four stacked ports are PRs #3687 (this task), #3689 (TASK-42225), #3684 (no task file; its receipt-store fix is AC32 of @codex's TASK-34406, which this round leaves untouched; overlap noted in the PR body), and #3682. TASK-42382 records #3682's port and the Workspaces and UI lanes. Measured serially on macOS, CPython 3.12.11.
+- **`dreams-tracking` ("Run the Dreams tracking tests and unlaned riders", `--timeout=180`): `Tests/Tool_Packs` whole, after `Tests/Dreams/test_track_service.py` and TASK-42382's Workspaces riders.**
+  - 437 tests, 43.1 s (load 15-17). The whole step, before the reconcile rider, ran 724 tests in 500.7 s (load 14-21).
   - The job ran median 6.7 / max 8.0 min of its 20 over 22 PR runs.
-  - `Tests/Tool_Packs` goes last because of its two `bootstrap_profile` nodes (C7). Its later sandboxed files pass after them because they read no config in-process.
-  - Not `dreams-boundary`: under its `--storage-lease-guard`, 31 Tool_Packs tests error at teardown on a leftover WorkspaceDB lease.
+  - `Tests/Tool_Packs` goes last because of its two `bootstrap_profile` nodes (C7). Their enrollment poisons config access for every later test in the process (TASK-32873). So a Tool_Packs file must not read config in-process: one that did would pass at `-n 4` locally and fail only in this lane.
+  - `Tests/CI`'s `test_tool_packs_bootstrap_nodes_are_the_pinned_two` pins those two nodes. A config read cannot be found statically, so the pin catches the other way the hazard grows: a new enrolling node. A synthetic `bootstrap_profile` mark on another Tool_Packs test turns it red.
+  - Not `dreams-boundary`: under its `--storage-lease-guard`, 31 Tool_Packs tests error at teardown on a leftover WorkspaceDB lease (a follow-up for the coordinator).
   - Not `pr-fast-lane` (near its cap), not `recovered-suites` (reserved), and not an admission lane (a bootstrap invocation would poison the sandboxed tests).
-- **UI census tail, with the lane's flags (`-p no:xdist --timeout=180 --durations=0`):**
-  - `Tests/UI/test_console_new_workspace.py`, whole: 3 tests, 28.9 s (load 13-15).
-  - `Tests/UI/test_post_release_workspaces_library_depth.py`: the whole file took 114.1 s, over the 30 s per-entry budget, so it goes in as 14 test-function nodes. Each takes 6.4-8.7 s; the two-theme function takes 15.4 s.
-  - `MINIMUM_FILES` 2457 → 2472. There is no re-deal; the coordinator owns the shard balance.
 <!-- SECTION:NOTES:END -->

@@ -3606,7 +3606,7 @@ Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_workbench_panes_an
 Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_workbench_panes_fit_at_every_width_from_80_to_220
 Tests/UI/test_personas_workbench.py::TestWorkbenchShell::test_compact_cut_off_is_the_widest_width_the_minimums_cannot_fill
 Tests/UI/test_personas_generation_wiring.py::test_blank_after_generate_whole_character_closes_the_concept_row
-# Round 21 ports (2026-11-22; TASK-42191 notes): on no lane before. The
+# Round 21 ports (2026-11-22; TASK-42382 notes): on no lane before. The
 # Console [New] workspace file (3 @private_profile_test tests) serially with
 # the lane's flags at load 13-15: 3 passed in 28.9 s, whole file. The Library
 # workspace-depth file runs 114.1 s (15 private-profile tests, load 13-15),
