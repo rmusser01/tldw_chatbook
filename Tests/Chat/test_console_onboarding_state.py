@@ -12,25 +12,59 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     console_setup_is_blocking,
 )
 from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSessionSettings,
     ConsoleSettingsReadiness,
+    build_console_settings_readiness,
     readiness_words,
 )
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 
 
-def _readiness(
-    label: str, *, ready: bool = False, detail: str = ""
-) -> ConsoleSettingsReadiness:
+def _ready() -> ConsoleSettingsReadiness:
+    """A ready readiness, built the legacy (label-only) way.
+
+    A blocked one comes only from ``_blocked``: built this way it would carry
+    ``blocker="readiness_unknown"`` whatever its label, so step one would read
+    "Finish provider setup" (TASK-42139).
+    """
     return ConsoleSettingsReadiness(
-        label=label,
-        detail=detail,
-        native_send_supported=ready,
+        label="Ready",
+        detail="",
+        native_send_supported=True,
+    )
+
+
+#: Settings and config that production reads as each blocked setup.
+_BLOCKED_SETUPS = {
+    "missing_key": ("openai", None, {"openai": {}}),
+    "invalid_endpoint": ("llama_cpp", None, {"llama_cpp": {"api_url": "not a url"}}),
+    "unsaved_endpoint": (
+        "vllm",
+        "http://127.0.0.1:9001/v1",
+        {"vllm": {"api_url": "http://127.0.0.1:9000/v1"}},
+    ),
+    "no_provider": ("", None, {}),
+    "unsupported_provider": ("not_a_provider", None, {}),
+}
+
+
+def _blocked(setup: str) -> ConsoleSettingsReadiness:
+    """The readiness production builds for one blocked setup (TASK-42139).
+
+    Step one's label is keyed by ``readiness.blocker`` (since #2365), so a
+    test of it must carry the blocker production derives, not just a label.
+    """
+    provider, base_url, api_settings = _BLOCKED_SETUPS[setup]
+    return build_console_settings_readiness(
+        ConsoleSessionSettings(provider=provider, model="model-a", base_url=base_url),
+        app_config={"api_settings": api_settings},
+        environ={},
     )
 
 
 def _build(**overrides) -> ConsoleSetupCardState:
     defaults = dict(
-        readiness=_readiness("Missing key"),
+        readiness=_blocked("missing_key"),
         provider_label="OpenAI",
         has_model=True,
         first_send_completed=False,
@@ -64,32 +98,32 @@ def test_template_default_model_does_not_precheck_step_two():
     assert blocked_with_default_model.steps[1].state == "pending"
 
     ready_without_model = _build(
-        readiness=_readiness("Ready", ready=True), has_model=False
+        readiness=_ready(), has_model=False
     )
     assert ready_without_model.steps[1].state == "active"
 
 
 def test_endpoint_problems_relabel_step_one():
     assert (
-        _build(readiness=_readiness("Invalid URL")).steps[0].label
+        _build(readiness=_blocked("invalid_endpoint")).steps[0].label
         == "Save the provider's server address (endpoint)"
     )
     assert (
-        _build(readiness=_readiness("Endpoint not saved")).steps[0].label
+        _build(readiness=_blocked("unsaved_endpoint")).steps[0].label
         == "Save the provider's server address (endpoint)"
     )
     assert (
-        _build(readiness=_readiness("Unknown")).steps[0].label
+        _build(readiness=_blocked("no_provider")).steps[0].label
         == "Choose a supported provider"
     )
     assert (
-        _build(readiness=_readiness("Pending")).steps[0].label
+        _build(readiness=_blocked("unsupported_provider")).steps[0].label
         == "Choose a provider that works in the Console"
     )
 
 
 def test_provider_ready_without_model_activates_model_step():
-    state = _build(readiness=_readiness("Ready", ready=True), has_model=False)
+    state = _build(readiness=_ready(), has_model=False)
     assert state.mode == "card"
     assert [step.state for step in state.steps] == ["done", "active", "pending"]
     assert state.steps[0].glyph == "✓"
@@ -143,7 +177,7 @@ def test_the_active_step_carries_the_one_readiness_word():
 
 
 def test_setup_complete_collapses_to_ready_line():
-    state = _build(readiness=_readiness("Ready", ready=True), has_model=True)
+    state = _build(readiness=_ready(), has_model=True)
     assert state.mode == "ready_line"
     # TASK-33005.7 (rewritten on purpose): the line leads with the word.
     assert state.body_copy == CONSOLE_READY_EMPTY_COPY.replace(
@@ -183,7 +217,7 @@ def test_the_ready_line_leads_with_the_readiness_word_every_surface_shows():
     reachable = build_console_settings_readiness(
         settings, app_config=config, environ={}, connection_evidence=owner
     )
-    untested = _readiness("Ready", ready=True)
+    untested = _ready()
 
     for readiness, word in (
         (untested, "Ready · not tested"),
@@ -201,7 +235,7 @@ def test_the_ready_line_leads_with_the_readiness_word_every_surface_shows():
 
 def test_first_send_completed_is_quiet_forever():
     state = _build(
-        readiness=_readiness("Ready", ready=True),
+        readiness=_ready(),
         first_send_completed=True,
     )
     assert state.mode == "quiet"
@@ -216,7 +250,7 @@ def test_messages_present_is_quiet():
 
 def test_dismissal_hides_ready_line_but_not_setup_card():
     ready = _build(
-        readiness=_readiness("Ready", ready=True),
+        readiness=_ready(),
         guidance_dismissed=True,
     )
     assert ready.mode == "quiet"
@@ -314,7 +348,7 @@ def test_detected_server_action_drops_non_loopback_and_malformed_servers():
 def test_setup_is_blocking_when_provider_missing():
     assert (
         console_setup_is_blocking(
-            readiness=_readiness("Missing key"),
+            readiness=_blocked("missing_key"),
             has_model=True,
             first_send_completed=False,
         )
@@ -325,7 +359,7 @@ def test_setup_is_blocking_when_provider_missing():
 def test_setup_is_blocking_when_ready_but_no_model():
     assert (
         console_setup_is_blocking(
-            readiness=_readiness("Ready", ready=True),
+            readiness=_ready(),
             has_model=False,
             first_send_completed=False,
         )
@@ -336,7 +370,7 @@ def test_setup_is_blocking_when_ready_but_no_model():
 def test_setup_not_blocking_once_provider_and_model_ready():
     assert (
         console_setup_is_blocking(
-            readiness=_readiness("Ready", ready=True),
+            readiness=_ready(),
             has_model=True,
             first_send_completed=False,
         )
@@ -352,7 +386,7 @@ def test_setup_not_blocking_once_first_send_completed():
     session must agree."""
     assert (
         console_setup_is_blocking(
-            readiness=_readiness("Missing key"),
+            readiness=_blocked("missing_key"),
             has_model=False,
             first_send_completed=True,
         )

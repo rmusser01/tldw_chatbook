@@ -3586,3 +3586,14 @@ Tests/UI/test_console_turn_undo_all.py
 Tests/UI/test_change_review_screen.py
 Tests/UI/test_change_review_commit_ui.py
 Tests/UI/test_change_review_push_ui.py
+# TASK-42140 (2026-11-21): the off-pump file's eight nodes that were red on
+# dev in no lane. Seven held admission's MCP read with a reader that made the
+# service non-stock; the image-only one faked its image beside the route the
+# Enter takes. Appended at the tail.
+Tests/UI/test_console_send_admission_off_pump.py::test_a_key_typed_while_admission_reads_mcp_is_handled_before_the_read_returns
+Tests/UI/test_console_send_admission_off_pump.py::test_enter_during_admission_is_replayed_after_it_as_the_held_pump_did
+Tests/UI/test_console_send_admission_off_pump.py::test_an_enter_deferred_behind_a_send_never_sends_another_tab_draft
+Tests/UI/test_console_send_admission_off_pump.py::test_leaving_a_tab_while_its_send_is_admitted_still_sends_it_there
+Tests/UI/test_console_send_admission_off_pump.py::test_an_enter_made_while_the_sent_draft_still_shows_never_takes_later_keys
+Tests/UI/test_console_send_admission_off_pump.py::test_a_bare_second_enter_never_sends_a_committed_draft_again
+Tests/UI/test_console_send_admission_off_pump.py::test_an_image_only_enter_never_takes_text_typed_after_it
