@@ -920,7 +920,11 @@ _BUDGETS: dict[str, int] = {
     # own +1692; same owner decision: expand limits, don't contort code).
     # 2026-11-19, rebased onto dev a6df4d8d48: 7492 -> 9183 (polish-1b's
     # own +1691; same owner decision: expand limits, don't contort code).
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9183,
+    # 2026-11-22, UI Fast Lane 30 red (same owner decision: expand limits,
+    # don't contort code): the import publish re-derives the footer, so a
+    # running check says "esc cancel" wherever focus is: 9183 -> 9186
+    # (measured).
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 9186,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
