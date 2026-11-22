@@ -617,9 +617,9 @@ def _roleplay_import_filters() -> Any:
     )
 
 
-# The 2:4:2 split needs its CSS minimums (library 24 + work area 40 + inspector
-# 30, css/components/_agentic_terminal.tcss) plus the workbench's 4 border and
-# padding cells; any narrower uses the compact split (pinned by a test).
+# The 2:4:2 split needs its min-widths ($ds-size-24/-40/-30 for library, work
+# area, inspector in css/components/_agentic_terminal.tcss) plus the
+# workbench's 4 border and padding cells; narrower is compact (test-pinned).
 PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH = 24 + 40 + 30 + 4 - 1
 PERSONAS_LIBRARY_RAIL_HANDLE_WIDTH = 13
 PERSONAS_INSPECTOR_RAIL_HANDLE_WIDTH = 11
