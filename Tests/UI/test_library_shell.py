@@ -13149,11 +13149,14 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
                 controller.applied_result is not None
                 and controller.applied_result.total == 2
                 and not screen.query("#library-media-retry")
+                and str(screen.query_one("#library-media-title", Static).renderable)
+                == "Media (2)"
                 and getattr(screen.focused, "id", None) == "library-media-type-filter"
             ),
             message=lambda: (
                 "Media Retry never recovered to a bounded focus target; "
-                f"focused={getattr(screen.focused, 'id', None)!r}."
+                f"focused={getattr(screen.focused, 'id', None)!r}, title="
+                f"{bool(screen.query('#library-media-title')) and str(screen.query_one('#library-media-title', Static).renderable)!r}."
             ),
         )
         assert str(screen.query_one("#library-media-title", Static).renderable) == (
@@ -13481,9 +13484,9 @@ async def test_library_media_durable_mutation_gates_and_refreshes_applied_scope(
                 lambda: (
                     controller.applied_scope == MediaBrowseScope()
                     and bool(controller.type_options)
-                    and bool(screen.query("#library-media-next"))
+                    and not screen.query_one("#library-media-next", Button).disabled
                 ),
-                message="Initial Media page and facets never settled.",
+                message="Initial Media page and facets never enabled Next.",
             )
             screen.query_one("#library-media-next", Button).press()
             await _wait_for_condition(
@@ -17159,12 +17162,15 @@ async def test_browse_row_error_callout_remounts_when_the_failure_shape_changes(
             lambda: notes.calls > calls_before,
             message="Retry never re-ran the source snapshot.",
         )
+        # A remounted Static can be in the DOM before Textual lays it out.
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_source_load_failure() is None
-            and len(screen.query("#library-canvas-error")) == 1
-            and isinstance(screen.query_one("#library-canvas-error"), Static),
-            message="The denied snapshot never remounted the bare error surface.",
+            lambda: (
+                screen._library_source_load_failure() is None
+                and len(screen.query("#library-canvas-error")) == 1
+                and bool(screen.query_one("#library-canvas-error", Static).outer_size)
+            ),
+            message="The denied snapshot never laid out the remounted bare error surface.",
         )
         node = screen.query_one("#library-canvas-error", Static)
         assert not list(node.query(Button))
@@ -24583,20 +24589,18 @@ async def test_library_shell_blank_note_untouched_is_gc_from_real_db_on_rail_swi
 
         # Leave via a rail-row press (not Back/Escape) without ever typing.
         screen.query_one("#library-row-browse-media").press()
+        # The DB commit can precede the rail handler's route change.
         for _ in range(150):
-            if (
-                await app.notes_scope_service.count_notes(
-                    scope="local_note", user_id="default_user"
-                )
-                == 0
-            ):
+            note_count = await app.notes_scope_service.count_notes(
+                scope="local_note", user_id="default_user"
+            )
+            if note_count == 0 and screen._library_selected_row_id == "browse-media":
                 break
             await pilot.pause(0.02)
-        else:
-            raise AssertionError(
-                "The untouched blank note was never GC'd from the real DB "
-                "via a rail-row switch."
-            )
+        assert note_count == 0, (
+            "The untouched blank note was never GC'd from the real DB "
+            "via a rail-row switch."
+        )
         assert screen._library_selected_row_id == "browse-media"
 
 

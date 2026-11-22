@@ -536,6 +536,7 @@ async def test_run_poll_repaints_send_when_a_completed_turn_releases_its_queue(
     """Queue release changes the composer after the run status is already final."""
     from textual.widgets import Button
 
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
     from tldw_chatbook.Chat.console_chat_models import (
         ConsoleRunState,
@@ -559,7 +560,14 @@ async def test_run_poll_repaints_send_when_a_completed_turn_releases_its_queue(
 
             async def project_poll(screen):
                 config_sync.begin_console_sync(screen)
-                return config_sync.project_console_tick(screen)
+                # Isolate the queue's repaint from unrelated storage admission.
+                assert storage._lock.acquire(timeout=30), (
+                    "storage coordinator stayed busy"
+                )
+                try:
+                    return config_sync.project_console_tick(screen)
+                finally:
+                    storage._lock.release()
 
             async def complete_turn():
                 queue.turn_accepted(

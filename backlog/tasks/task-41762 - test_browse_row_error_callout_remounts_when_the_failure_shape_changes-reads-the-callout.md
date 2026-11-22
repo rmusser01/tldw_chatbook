@@ -3,6 +3,7 @@ id: TASK-41762
 title: "test_browse_row_error_callout_remounts_when_the_failure_shape_changes reads the callout's region before layout"
 status: To Do
 created_date: 2026-11-18 16:14
+updated_date: '2026-11-22 16:12'
 labels:
 - follow-up
 - architecture-review-2026-10-25
@@ -35,7 +36,11 @@ The file runs whole on every push to dev (`derived-artifacts.yml:1851`). The sib
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The test reads the callout's painted text only after the callout has a laid-out, non-zero region
+- [x] #1 The test reads the callout's painted text only after the callout has a laid-out, non-zero region
 - [ ] #2 It passes 10 of 10 at -n 4 under load, with the load recorded
 - [ ] #3 The sibling tint test is checked for the same shape, and fixed if it has it
 <!-- AC:END -->
+
+## Implementation Notes
+
+**2026-11-22 (round 20, branch fu/r20-libraces): AC#1 met by 1ae18ce611**, the partial port of another contributor's PR #3535 (recorded in TASK-39152). The test now waits until the remounted `#library-canvas-error` Static has a non-zero `outer_size`, which Textual sets in the same layout pass that gives the compositor its region, before it reads `_painted_text(host, node.region)`. Dev push runs d46f753d82 and 97f8c58c0c failed this node with `assert 'Capability disabled' in ''`. With the bare Static mounted hidden for 0.4 s (a temporary source edit, reverted), dev's wait failed 3 of 3 with that message and the ported wait passed 3 of 3. AC#2 (10 of 10 under load) and AC#3 (the sibling tint test) are not done here, so the status stays To Do.
