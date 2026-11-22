@@ -2217,8 +2217,13 @@ def _recovery_admission_record(journal, admission_root):
     return names, prepared, records
 
 
-def _recovery_admission_aliases(journal, admission_root, names, roots):
-    """Resolve only missing registered roots inside a checked native move gap."""
+def _recovery_admission_aliases(journal, admission_root, names, roots, *, deleted=()):
+    """Resolve only missing registered roots inside a checked native move gap.
+
+    TASK-42115: a root in ``deleted`` (a deleted file root) that this journal
+    never moved is passed over, not refused; the caller treats it as holding
+    nothing. A root the journal moved keeps the journal's proof.
+    """
     from .journal import _absent, _MoveIntent, _RollbackCredentialPlan
     from .publication import _check_parents, _directory_state, _move_position
 
@@ -2255,6 +2260,11 @@ def _recovery_admission_aliases(journal, admission_root, names, roots):
             for item in prepared.artifacts
             if resolved == Path(item.target) or Path(item.target) in resolved.parents
         ]
+        # Any candidate this journal moved keeps the journal's proof, so
+        # several candidates still refuse below.
+        unmoved = not any(item.logical_id in latest for item in candidates)
+        if unmoved and root in deleted:
+            continue
         if len(candidates) != 1:
             raise ValueError("recovery_root_unverified")
         item = candidates[0]
@@ -2352,16 +2362,25 @@ def _recovery_admission_aliases(journal, admission_root, names, roots):
 
 def _recovery_staging_roots(journal, admission_root, names, roots):
     """Freeze original canonical source names for private-staging overlap checks."""
+    from .effective_roots import registered_deleted_file_roots
+
     canonical, missing = set(), []
     for root in roots:
         try:
             canonical.add(root.resolve(strict=True))
         except FileNotFoundError:
             missing.append(root)
+    deleted = registered_deleted_file_roots(admission_root.parent) if missing else ()
     aliases = _recovery_admission_aliases(
-        journal, admission_root, names, tuple(missing)
+        journal, admission_root, names, tuple(missing), deleted=deleted
     )
     canonical.update(resolved for resolved, _ in aliases.values())
+    # TASK-42115: a deleted file root this journal never moved keeps its name.
+    canonical.update(
+        root.parent.resolve(strict=True) / root.name
+        for root in missing
+        if root not in aliases
+    )
     return tuple(sorted(canonical))
 
 

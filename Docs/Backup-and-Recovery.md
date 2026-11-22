@@ -147,17 +147,28 @@ the safety copy retains the removed data.
 Pet settings are part of **Settings** and live in each profile's configuration
 folder, beside `config.toml`, so Replace treats them like the profile's other
 settings files. A backup's pets replace the profile's pets, and a backup from a
-profile without pets removes them. At the default configuration location
-(`~/.config/tldw_cli`), a backup's pets are not yet restored into a profile
-there that has none, and a backup without pets does not yet remove a profile's
-pets; such a Replace refuses with nothing changed, until a later fix. The pet's dated copies are its own rotating
+profile without pets removes them, at the default configuration location
+(`~/.config/tldw_cli`) as in a configuration folder of its own. The pet's dated copies are its own rotating
 backups, so a backup leaves them out and Replace leaves the profile's copies in
 place. A backup made before this change holds dated copies; a restore skips
 them and still restores the current pets. An older backup taken while every profile
 shared one pet folder restores its pets into this profile. If that backup holds
 several profiles, restore all of them together, as for any data they share. The old shared folder
 (`~/.config/tldw_chatbook`, or `%APPDATA%\tldw_chatbook` on Windows) is never
-changed or removed. If source and target locations cannot
+changed or removed.
+
+A backup keeps track of each single file it saves, such as a database or a
+settings file beside `config.toml`. If such a file is later removed, by a
+restore or by you, the app still starts and later backups and restores still
+work, as long as the same folder that held it is still there. A folder that
+was deleted and created again, for example by a sync tool, is not the same
+folder. If that folder is gone, as when the drive it is on is not connected,
+or has been replaced, the app stops with "Recovery required" instead of
+carrying on without it. So does a removed file that sat at the top level of a
+drive or in a folder another drive is mounted on. A file the app started
+tracking in an earlier version still stops it once the file is removed.
+
+If source and target locations cannot
 be matched safely, replacement refuses. Restore into a separate profile to recover
 that selection without guessing which existing files to remove.
 

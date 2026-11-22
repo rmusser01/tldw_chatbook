@@ -173,6 +173,14 @@ def sibling_selector(source, route, selected):
             return None
         _, path, installed = bound
         leaf = "runtime_policy.json"
+    elif route == "pet":
+        # TASK-42115: the profile's pet file is a config companion, so a bound
+        # profile never needs its config folder (or a pet file) as a root.
+        bound = raw.settings_files.binding(source)
+        if bound is None or bound[0] != "tamagotchi.config":
+            return None
+        _, path, installed = bound
+        leaf = "tamagotchi_pets.json"
     else:
         return None
     if not installed:
@@ -187,7 +195,6 @@ def companion_guard(operation, attempt):
     """Keep exact installed config siblings disjoint until their IO retires."""
     from . import raw_participants as raw
     from .native_files import pinned_directory
-    from .service_storage import default_control_root, work_root
 
     state = raw._states[operation]
     selected = state.config_anchor or state.selected
@@ -284,35 +291,11 @@ def companion_guard(operation, attempt):
         info = os.fstat(directory)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
             raise bootstrap.RecoveryRequired("config_companion_parent_unsafe")
-        controls = (root, default_control_root(), work_root(default_control_root()))
-        foreign = [entry for name, entry in registry.items() if name not in hold.names]
-        for member in state.paths:
-            if member.parent != selected.parent or any(
-                bootstrap._overlap(member, control) for control in controls
-            ):
-                raise bootstrap.RecoveryRequired("config_companion_scope_changed")
-            tokens = {"path:" + str(member), "path:" + str(member.resolve())}
-            try:
-                member_info = os.stat(member, follow_symlinks=False)
-            except FileNotFoundError:
-                pass
-            else:
-                if not stat.S_ISREG(member_info.st_mode) or member_info.st_nlink != 1:
-                    raise bootstrap.RecoveryRequired("config_companion_scope_changed")
-                tokens.add(bootstrap.inode_token(member_info))
-            if any(
-                tokens.intersection(bootstrap.identity_view(entry["historical"]))
-                or any(
-                    bootstrap._overlap(member, Path(path)) for path in entry["roots"]
-                )
-                or any(
-                    bootstrap._overlap(member, Path(token[5:]))
-                    for token in entry["historical"]
-                    if token.startswith("path:")
-                )
-                for entry in foreign
-            ):
-                raise bootstrap.RecoveryRequired("config_companion_scope_changed")
+        if any(
+            _foreign_member(member, selected, root, registry, hold.names)
+            for member in state.paths
+        ):
+            raise bootstrap.RecoveryRequired("config_companion_scope_changed")
         # Existing parent posture is verified, never delegated for creation.
         state.directories = ()
         state.companion_roots = tuple(Path(path) for path in record["roots"])
@@ -332,6 +315,64 @@ def companion_guard(operation, attempt):
             hold.derived_evidence.pop(("companions", str(selected)), None)
         guard.close()
         raise
+
+
+def _foreign_member(member, selected, root, registry, names):
+    """Whether a namespace outside ``names`` claims this exact config sibling.
+
+    A sibling outside the config folder, over a control root, or not a single
+    regular file refuses outright.
+    """
+    from .service_storage import default_control_root, work_root
+
+    controls = (root, default_control_root(), work_root(default_control_root()))
+    if member.parent != selected.parent or any(
+        bootstrap._overlap(member, control) for control in controls
+    ):
+        raise bootstrap.RecoveryRequired("config_companion_scope_changed")
+    tokens = {"path:" + str(member), "path:" + str(member.resolve())}
+    try:
+        info = os.stat(member, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise bootstrap.RecoveryRequired("config_companion_scope_changed")
+        tokens.add(bootstrap.inode_token(info))
+    return any(
+        tokens.intersection(bootstrap.identity_view(entry["historical"]))
+        or any(bootstrap._overlap(member, Path(path)) for path in entry["roots"])
+        or any(
+            bootstrap._overlap(member, Path(token[5:]))
+            for token in entry["historical"]
+            if token.startswith("path:")
+        )
+        for name, entry in registry.items()
+        if name not in names
+    )
+
+
+def foreign_companion_members(state, members):
+    """Check more exact siblings under this operation's held companion guard.
+
+    TASK-42115: the pet store's dated copies are checked like the guard's own
+    members, so a bound profile needs no root for them. The guard still holds
+    the registry lock, so the registry read here is the one it checked.
+
+    Returns:
+        The members a namespace outside the profile claims (a dated copy a
+        backup registered before TASK-42114); the caller leases those.
+    """
+    if state.companion_guard is None or state.config_anchor is None:
+        raise bootstrap.RecoveryRequired("config_companion_scope_changed")
+    root = bootstrap.default_bootstrap_root()
+    registry = bootstrap._registry(root)
+    names = state.holds[0].names
+    return tuple(
+        member
+        for member in members
+        if _foreign_member(member, state.config_anchor, root, registry, names)
+    )
 
 
 def verified_companion_parent(source, path):

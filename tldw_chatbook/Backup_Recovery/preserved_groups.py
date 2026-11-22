@@ -19,6 +19,7 @@ def _read_scope(items, target):
         _DiscoveryScope,
         _local,
         _PreviewScope,
+        _session_config_sources,
     )
 
     scope = getattr(_local, "discovery_scope", None) or getattr(
@@ -27,16 +28,25 @@ def _read_scope(items, target):
     if type(scope) not in {_DiscoveryScope, _PreviewScope}:
         raise ValueError("preserved_group_read_scope_required")
     scope.check()
-    if type(scope) is _DiscoveryScope and (
+    if type(scope) is not _DiscoveryScope:
+        return scope
+    if (
         scope.session._control != bootstrap.default_bootstrap_root() / "admission"
         or UNBOUND_NAMESPACE not in scope.session._names
-        or any(
-            not _contains_capture_path(scope.session._roots, item.path)
-            and not _config_capture_item(item, target, scope.config_sources)
-            for item in items
-        )
     ):
         raise ValueError("preserved_group_native_scope_required")
+    outside = [
+        item
+        for item in items
+        if not _contains_capture_path(scope.session._roots, item.path)
+        and not _config_capture_item(item, target, scope.config_sources)
+    ]
+    if outside:
+        # TASK-42115: a fixed config leaf created after the binding (the pet's
+        # seed-once marker) is a companion of a selector this session holds.
+        sources = _session_config_sources(scope.session, target)
+        if any(not _config_capture_item(item, target, sources) for item in outside):
+            raise ValueError("preserved_group_native_scope_required")
     return scope
 
 

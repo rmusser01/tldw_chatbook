@@ -2,12 +2,97 @@
 
 import stat
 from contextlib import ExitStack
+from os.path import ismount
 from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
 
 from . import bootstrap
 from .native_files import pinned_directory
+
+
+def file_root_token(folder, root):
+    """Registration evidence that ``root`` was a regular file in this folder."""
+    return f"file:{folder.st_ino}:{root}"
+
+
+def file_root_tokens(roots):
+    """The folder evidence ``Admission.register`` records for its file roots."""
+    return {
+        file_root_token(os.stat(root.parent), root)
+        for root in roots
+        if stat.S_ISREG(os.stat(root, follow_symlinks=False).st_mode)
+    }
+
+
+def deleted_file_roots(roots, entries):
+    """Registered files deleted from a folder that is still there (TASK-42115).
+
+    The one deleted-root rule: such a root holds nothing and scopes exactly its
+    own path, at every root consumer, with or without a recovery journal. It
+    qualifies only when it was registered as a regular file with its folder's
+    evidence, and its folder is present, is not a mount point and is still that
+    folder (by inode, checked twice). A file inside an enrolled folder root
+    qualifies too: without a journal ``effective_roots``' alias proof (with its
+    profile co-ownership check) still runs first, and under a journal, which
+    skips that proof, this rule is what lets a retired alias be recovered. A
+    folder root, a root registered before the evidence existed, or a file whose
+    folder is gone, replaced or a mount point (an unmounted drive) stays
+    strict. Callers pass every registered root and entry.
+
+    Args:
+        roots: Every registered root.
+        entries: Every registry entry (``roots`` and ``historical``).
+
+    Returns:
+        The deleted file roots, as ``Path`` objects.
+    """
+    roots = {Path(root) for root in roots}
+    entries = tuple(entries)
+    result = set()
+    for root in roots:
+        if os.path.lexists(root):
+            continue
+        try:
+            if ismount(root.parent):
+                continue
+            with pinned_directory(root.parent) as folder:
+                info = os.fstat(folder)
+                try:
+                    os.stat(root.name, dir_fd=folder, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    continue
+            with pinned_directory(root.parent) as folder:
+                again = os.fstat(folder)
+        except (OSError, ValueError, RuntimeError):
+            continue
+        token = file_root_token(info, root)
+        if (again.st_dev, again.st_ino) == (info.st_dev, info.st_ino) and any(
+            str(root) in entry["roots"] and token in entry["historical"]
+            for entry in entries
+        ):
+            result.add(root)
+    return result
+
+
+def registered_deleted_file_roots(bootstrap_root):
+    """``deleted_file_roots`` over the settled registry under ``bootstrap_root``.
+
+    A missing, unreadable or pending registry yields nothing, so every root
+    stays strict.
+    """
+    try:
+        registry = bootstrap._registry(bootstrap_root)
+    except (OSError, ValueError, RuntimeError):
+        return set()
+    if registry is None:
+        return set()
+    return deleted_file_roots(
+        (root for entry in registry.values() for root in entry["roots"]),
+        registry.values(),
+    )
 
 
 def effective_roots(roots, entries):

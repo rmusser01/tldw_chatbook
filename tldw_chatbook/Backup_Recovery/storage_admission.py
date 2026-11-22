@@ -721,8 +721,10 @@ def _contains_owned_path(root: Path, selected: Path) -> bool:
     except FileNotFoundError:
         # An absent root holds nothing (TASK-42000: e.g. a registered file a
         # Replace has since retired). Containment is only positive evidence,
-        # so absence grants nothing beneath the root.
-        return False
+        # so absence grants nothing beneath the root. A deleted file root
+        # (TASK-42115) still scopes exactly its own path, as a present file
+        # root scopes its object.
+        return _deleted_file_root_scopes(root, selected)
     resolved_selected = selected.resolve()
     if stat.S_ISDIR(info.st_mode):
         return (
@@ -738,6 +740,23 @@ def _contains_owned_path(root: Path, selected: Path) -> bool:
     return (info.st_dev, info.st_ino) == (selected_info.st_dev, selected_info.st_ino)
 
 
+def _deleted_file_root_scopes(root: Path, selected: Path) -> bool:
+    """Whether ``selected`` is exactly ``root``, a deleted file root (TASK-42115).
+
+    It always reads the registry under ``default_bootstrap_root()``: callers do
+    not pass their authority, so under any other authority every absent root
+    stays strict and holds nothing.
+    """
+    from .effective_roots import registered_deleted_file_roots
+
+    try:
+        if selected.resolve() != root.parent.resolve(strict=True) / root.name:
+            return False
+    except (OSError, RuntimeError):
+        return False
+    return root in registered_deleted_file_roots(bootstrap.default_bootstrap_root())
+
+
 def _contains_capture_path(roots: Iterable[Path], selected: Path) -> bool:
     """Try likely roots first, retaining native checks and physical alias fallback."""
     candidates = {selected, *selected.parents}
@@ -745,11 +764,51 @@ def _contains_capture_path(roots: Iterable[Path], selected: Path) -> bool:
     return any(_contains_owned_path(root, selected) for root in ordered)
 
 
+#: Fixed files beside a bound ``config.toml`` that are config companions,
+#: never roots of their own: owner -> {local id: leaf}. TASK-42115: the pet
+#: owner has two (its pet file and the seed-once marker).
 _CONFIG_CAPTURE_LEAVES = {
-    "ui.state": "ui_state.toml",
-    "ui.emoji_recents": "recent_emojis.json",
-    "runtime.source_state": "runtime_policy.json",
+    "ui.state": {"": "ui_state.toml"},
+    "ui.emoji_recents": {"": "recent_emojis.json"},
+    "runtime.source_state": {"": "runtime_policy.json"},
+    "tamagotchi.config": {
+        "": "tamagotchi_pets.json",
+        "seeded": "tamagotchi_pets.seeded",
+    },
 }
+
+
+#: Fixed leaves an owner lists only while they exist, so a missing target row
+#: stands for absence (TASK-42115: the pet's seed-once marker).
+_CONFIG_ROWLESS_LEAVES = frozenset({("tamagotchi.config", "seeded")})
+
+
+def _rowless_config_leaf(owner, logical_id):
+    """Whether ``logical_id`` is a leaf its owner lists only while it exists."""
+    parts = logical_id.split(":", 3)
+    return (
+        _config_leaf(owner, logical_id) is not None
+        and len(parts) == 4
+        and (owner, parts[3]) in _CONFIG_ROWLESS_LEAVES
+    )
+
+
+def _config_leaf(owner, logical_id):
+    """The fixed config leaf of ``owner``'s ``logical_id``, or None.
+
+    Args:
+        owner: A storage owner ID.
+        logical_id: ``profile:<id>:<owner>``, plus ``:<local id>`` for a
+            second leaf of the same owner.
+
+    Returns:
+        The leaf's file name, or None when the ID is not one of its leaves.
+    """
+    leaves = _CONFIG_CAPTURE_LEAVES.get(owner)
+    parts = logical_id.split(":", 3)
+    if leaves is None or len(parts) < 3 or parts[0] != "profile" or parts[2] != owner:
+        return None
+    return leaves.get(parts[3] if len(parts) == 4 else "")
 
 
 def _config_capture_bindings(root, selectors):
@@ -797,7 +856,11 @@ def _config_capture_sources(root, selectors, bindings):
         selector = Path(row["selector"])
         if not _contains_capture_path(map(Path, row["roots"]), selector):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
-        for owner, leaf in _CONFIG_CAPTURE_LEAVES.items():
+        for owner, leaf in (
+            (owner, leaf)
+            for owner, leaves in _CONFIG_CAPTURE_LEAVES.items()
+            for leaf in leaves.values()
+        ):
             path = selector.parent / leaf
             tokens = {"path:" + str(path), "path:" + str(path.resolve())}
             try:
@@ -828,12 +891,38 @@ def _config_capture_sources(root, selectors, bindings):
     return tuple(result)
 
 
+def _session_config_sources(session, inventory):
+    """Fixed config leaves of the selectors a maintenance session holds bound.
+
+    TASK-42115: a Replace or rollback session reads a leaf created after the
+    binding (no root of its own) as a companion of its held selector. The
+    session's exclusive namespaces are the authority; the leaf still refuses a
+    foreign registry claim (``_config_capture_sources``).
+    """
+    root = session._control.parent
+    _, profiles = bootstrap._records(root)
+    selectors = {
+        item.path
+        for item in inventory.items
+        if item.owner == "config" and item.status == "included"
+    }
+    bindings = tuple(
+        (row, None)
+        for row in profiles
+        if Path(row["selector"]) in selectors
+        and set(row["namespaces"]) <= set(session._names)
+    )
+    return _config_capture_sources(
+        root, tuple(Path(row["selector"]) for row, _ in bindings), bindings
+    )
+
+
 def _config_capture_item(item, inventory, sources):
     """Require the installed rediscovered file's exact config dependency."""
     for path, owner, selector, _ in sources:
         if item.path != path or item.owner != owner:
             continue
-        if any(
+        if _config_leaf(owner, item.logical_id) == path.name and any(
             row.owner == "config"
             and row.path == selector
             and item.dependencies == (row.logical_id,)
@@ -2518,8 +2607,19 @@ class MaintenanceSession:
             *(self._recovery_roots or ()),
             *(path for path, _ in self._publication_roots),
         }
+        deleted = None
         for root in self._all_roots + (self._control,):
-            protected.add(root.resolve(strict=self._recovery_roots is None))
+            try:
+                protected.add(root.resolve(strict=self._recovery_roots is None))
+            except FileNotFoundError:
+                from .effective_roots import registered_deleted_file_roots
+
+                if deleted is None:
+                    deleted = registered_deleted_file_roots(self._control.parent)
+                if root not in deleted:
+                    raise
+                # TASK-42115: a deleted file root keeps its own name here.
+                protected.add(root.parent.resolve(strict=True) / root.name)
         for root in protected:
             if root == staging or root in staging.parents or staging in root.parents:
                 raise bootstrap.RecoveryRequired("capture_staging_overlaps_source")

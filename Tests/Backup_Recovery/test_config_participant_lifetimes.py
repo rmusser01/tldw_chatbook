@@ -624,6 +624,174 @@ def test_an_absent_registered_root_grants_nothing_beneath_it(tmp_path, monkeypat
         storage.acquire_storage(owned / "x")
 
 
+def _registered_file(tmp_path, name="backup.source.file"):
+    """A file registered as a root of its own, as a backup registers one."""
+    from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+
+    files = tmp_path / "files"
+    files.mkdir(mode=0o700)
+    registered = files / "copy.json"
+    registered.write_text("{}")
+    registered.chmod(0o600)
+    authority = admission_authority(bootstrap.default_bootstrap_root())
+    authority.register(name, (registered,))
+    return authority, files, registered
+
+
+@pytest.mark.usefixtures("local_root")
+@pytest.mark.parametrize(
+    "gone",
+    [
+        "file",
+        "folder_root",
+        "file_and_its_folder",
+        "file_folder_replaced",
+        "file_under_mount_point",
+        "file_without_evidence",
+    ],
+)
+def test_a_deleted_file_root_holds_nothing_but_a_missing_folder_still_refuses(
+    tmp_path, monkeypatch, gone
+):
+    """TASK-42115: a backup registers single files as roots of their own. Once
+    one is deleted, admission treats it as holding nothing while the folder it
+    was registered in is still that folder. A missing folder root, a file root
+    whose folder is gone or replaced or is a mount point (an unmounted drive),
+    or a file registered without its folder's evidence (before TASK-42115)
+    still refuses every admission."""
+    from tldw_chatbook.Backup_Recovery import effective_roots as proof
+
+    if gone == "file_without_evidence":
+        monkeypatch.setattr(proof, "file_root_tokens", lambda roots: set())
+    authority, files, registered = _registered_file(tmp_path)
+    folder = tmp_path / "folder"
+    folder.mkdir(mode=0o700)
+    selector = tmp_path / "selected.toml"
+    selector.write_text('[general]\nusers_name="fixture"\n')
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
+    authority.register("backup.source.folder", (folder,))
+    if gone == "folder_root":
+        folder.rmdir()
+    else:
+        registered.unlink()
+    if gone == "file_under_mount_point":
+        monkeypatch.setattr(proof, "ismount", lambda path: path == files)
+    if gone in {"file_and_its_folder", "file_folder_replaced"}:
+        files.rename(tmp_path / "moved")
+    if gone == "file_folder_replaced":
+        files.mkdir(mode=0o700)
+    if gone == "file":
+        with storage.acquire_storage(tmp_path / "app.db"):
+            pass
+        return
+    with pytest.raises(
+        bootstrap.RecoveryRequired, match="storage_admission_unavailable"
+    ):
+        with storage.acquire_storage(tmp_path / "app.db"):
+            pass
+
+
+@pytest.mark.usefixtures("local_root")
+def test_a_deleted_file_root_stays_strict_while_a_remap_is_pending(tmp_path):
+    """TASK-42115: the deleted-file rule applies only to a settled registry;
+    while any remap is pending, a missing root still refuses admission."""
+    from tldw_chatbook.Backup_Recovery.admission import fcntl
+
+    authority, _, registered = _registered_file(tmp_path)
+    folder = tmp_path / "folder"
+    folder.mkdir(mode=0o700)
+    authority.register("backup.source.folder", (folder,))
+    registered.unlink()
+    with authority._directory() as parent:
+        settled = authority._read(parent)
+        assert "backup.source.folder" in authority._groups(
+            settled, ("backup.source.folder",)
+        )
+        with authority._lock(parent, "registry.lock", fcntl.LOCK_EX):
+            pending = settled.model_copy(deep=True)
+            pending.entries["backup.source.folder"].pending = "remap-in-flight"
+            authority._write(parent, pending)
+        with pytest.raises(FileNotFoundError):
+            authority._groups(authority._read(parent), ("backup.source.folder",))
+
+
+@pytest.mark.usefixtures("local_root")
+@pytest.mark.parametrize("evidence", [True, False])
+def test_a_deleted_file_root_scopes_exactly_its_own_path(
+    tmp_path, monkeypatch, evidence
+):
+    """TASK-42115: a deleted file root still contains exactly its own path, as
+    a present file root contains its object, so a rollback or the next Replace
+    can publish it again. It contains nothing else; without the folder
+    evidence it contains nothing."""
+    from tldw_chatbook.Backup_Recovery import effective_roots as proof
+
+    if not evidence:
+        monkeypatch.setattr(proof, "file_root_tokens", lambda roots: set())
+    _, files, registered = _registered_file(tmp_path)
+    registered.unlink()
+    assert storage._contains_capture_path((registered,), registered) is evidence
+    assert storage._contains_capture_path((registered,), files / "other.json") is False
+    assert storage._contains_capture_path((registered,), files) is False
+
+
+@pytest.mark.usefixtures("local_root")
+def test_a_bound_profile_with_a_deleted_file_root_admits_and_scopes_its_path(
+    tmp_path, monkeypatch
+):
+    """TASK-42115: a bound profile's binding check and storage scope pass once
+    one of its file roots is deleted. The deleted path itself is admitted
+    again, so its owner can recreate it, and the folder's other files are
+    still outside the profile."""
+    from tldw_chatbook.Backup_Recovery.control_records import bind_profile
+
+    authority, files, registered = _registered_file(tmp_path, "core")
+    selector = tmp_path / "selected.toml"
+    selector.write_text('[general]\nusers_name="fixture"\n')
+    selector.chmod(0o600)
+    authority.register("selected", (selector,))
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
+    root = bootstrap.default_bootstrap_root()
+    bind_profile(root, selector, ("core", "selected"), root / "admission")
+    registered.unlink()
+    _, profiles = bootstrap._records(root)
+    assert bootstrap._binding(selector, profiles, bootstrap._registry(root))
+    assert bootstrap.startup_permission(selector, root) == (True, "startup_allowed")
+    with storage.acquire_storage(registered):
+        pass
+    with pytest.raises(bootstrap.RecoveryRequired, match="storage_scope_not_enrolled"):
+        storage.acquire_storage(files / "other.json")
+
+
+@pytest.mark.usefixtures("local_root")
+def test_capture_naming_and_maintenance_skip_a_deleted_file_root(tmp_path):
+    """TASK-42115: capture naming covers nothing with a deleted file root, and a
+    maintenance session's publication roots, containment and staging-overlap
+    names keep its exact path without resolving it."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Backup_Recovery.capture_service import _capture_names
+    from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+    from tldw_chatbook.Backup_Recovery.models import StorageItem
+
+    authority, _, registered = _registered_file(tmp_path)
+    data = tmp_path / "data.db"
+    data.write_bytes(b"x")
+    data.chmod(0o600)
+    registered.unlink()
+    item = StorageItem("fixture", "profile:fixture:fixture", data, "included", ())
+    names = _capture_names(authority, SimpleNamespace(items=(item,)))
+    assert "backup.source.file" not in names
+    with authority.maintenance(("backup.source.file",), 5) as session:
+        assert (registered, False) in session._publication_roots
+        assert registered in session._all_roots
+        assert storage._contains_capture_path(session._roots, registered)
+        staging = tmp_path / "staging"
+        staging.mkdir(mode=0o700)
+        with session._capture_bound_sources((), staging, ArchiveLimits(), 1):
+            pass
+
+
 def _verified_data_directory(tmp_path, monkeypatch, roots):
     """Run the start-up data-directory check against these enrolled roots."""
     from types import SimpleNamespace

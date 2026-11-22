@@ -1722,6 +1722,11 @@ jobs:
       # Round 16: TASK-41604's import-error masking, TASK-41701's deep-nesting
       # import and TASK-41603's v1 export masking nodes (pure or a temp DB,
       # 17 cases, 5.4 s serial at load 29-31) join the Trace export nodes.
+      # Round 19: TASK-42115's deleted-root guards (the journal-first
+      # same-session retirement file, the effective admission roots file and
+      # the companion record-evidence file with its bootstrap digest pin),
+      # sandboxed, follow the config participant lifetimes; timings in the
+      # task's notes.
       # test_closed_loop_pending_submit_is_emergency_detachment: deselected
       # 2026-11-12: red on dev e0186fa10a (console_send_diagnostic ContextVar
       # token reset across contexts), owned by TASK-33621.36 AC#3; remove when fixed.
@@ -1761,6 +1766,9 @@ jobs:
             Tests/Chat/test_console_trace_maintenance_parking.py \
             Tests/Chat/test_console_trace_projection.py \
             Tests/Backup_Recovery/test_config_participant_lifetimes.py \
+            Tests/Backup_Recovery/test_same_session_retirement_capture.py \
+            Tests/Backup_Recovery/test_effective_admission_roots.py \
+            Tests/Backup_Recovery/test_config_companion_missing_record_evidence.py \
             Tests/Chat/test_subscription_background_readiness.py \
             Tests/Wizards/test_first_run_subscription_readiness.py \
             Tests/Actor_Packs/test_actor_pack_export.py \

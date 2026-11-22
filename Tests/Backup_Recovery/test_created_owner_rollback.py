@@ -193,6 +193,7 @@ _PET_GROUPS = ("conversations", "settings", "workspaces")
 _CASES.update(
     {
         "pets-missing": {
+            "start": True,
             "groups": _PET_GROUPS,
             "stores": (),
             "extra": (),
@@ -257,6 +258,7 @@ _CASES.update(
             "refusal": None,
         },
         "pets-present": {
+            "start": True,
             "groups": _PET_GROUPS,
             "stores": (),
             "extra": (),
@@ -268,6 +270,7 @@ _CASES.update(
             "refusal": None,
         },
         "pets-dated-only": {
+            "start": True,
             "groups": _PET_GROUPS,
             "stores": (),
             "extra": (),
@@ -293,6 +296,7 @@ _CASES.update(
         # The retired file's root stays bound and storage still works
         # (TASK-42022).
         "pets-none": {
+            "start": True,
             "groups": _PET_GROUPS,
             "stores": (),
             "extra": (),
@@ -307,9 +311,27 @@ _CASES.update(
             "delete": (),
             "refusal": None,
         },
+        # The most common pet restore (TASK-42115 review): the backup holds the
+        # pet file and its seed-once marker, and the target has neither. The
+        # owner lists the marker only while it exists, so the target has no
+        # row for it; the Replace still creates it, and the later rollback
+        # retires both files.
+        "pets-seeded": {
+            "start": True,
+            "groups": _PET_GROUPS,
+            "stores": (),
+            "extra": (),
+            "files": {
+                "pets": ("pets", "tamagotchi_pets.json", _PET),
+                "seeded": ("pets", "tamagotchi_pets.seeded", "{}\n"),
+            },
+            "delete": (),
+            "refusal": None,
+        },
         # An ungrouped backup (format 1 with no data_groups) Replaces the
         # whole profile; its pet rows are the rows older backups hold.
         "pets-ungrouped": {
+            "start": True,
             "groups": None,
             "stores": (),
             "extra": (),
@@ -365,10 +387,12 @@ if LOCATION=='default':
     # root, and each file beside config.toml is registered on its own.
     os.environ['TLDW_CONFIG_PATH']=str(Path.home()/'.config'/'tldw_cli'/'config.toml')
 source=Path(os.environ['TLDW_CONFIG_PATH'])
-source.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-data=Path(os.environ['XDG_DATA_HOME'])/'fixture';data.mkdir(mode=0o700)
-source.write_text('[general]\nusers_name="default_user"\n[paths]\ndata_dir='+json.dumps(str(data))+'\n')
-source.chmod(0o600)
+if role!='crash':
+    # The crash role runs inside the target's restored profile (TASK-42115).
+    source.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+    data=Path(os.environ['XDG_DATA_HOME'])/'fixture';data.mkdir(mode=0o700)
+    source.write_text('[general]\nusers_name="default_user"\n[paths]\ndata_dir='+json.dumps(str(data))+'\n')
+    source.chmod(0o600)
 admission_authority(bootstrap.default_bootstrap_root())
 producer='''
 import importlib,json,os,sys
@@ -391,18 +415,21 @@ if sys.argv[1]=='start':
     # makes it: admission of the pet path, containment over the profile's
     # declared roots, and the pet store's own read.
     from tldw_chatbook.Backup_Recovery import bootstrap
-    from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage,_contains_capture_path,_contains_owned_path
+    from tldw_chatbook.Backup_Recovery.storage_admission import _contains_capture_path,_contains_owned_path
     from tldw_chatbook.Widgets.Tamagotchi.tamagotchi_storage import ConfigFileStorage
     roots=next(row['roots'] for row in bootstrap._records(bootstrap.default_bootstrap_root())[1] if row['selector']==str(selector))
     pets=selector.parent/'tamagotchi_pets.json'
     # Before the store recreates a retired pet file.
     absent=[root for root in roots if not os.path.lexists(root)]
-    # The config folder sorts first, so the any() below stops there; check
-    # the retired root itself: an absent root holds nothing (TASK-42000).
-    for root in absent:assert _contains_owned_path(Path(root),pets) is False,absent
+    # An absent root holds nothing else (TASK-42000); a deleted file root
+    # scopes only its own path (TASK-42115).
+    for root in absent:assert _contains_owned_path(Path(root),selector.parent/'other.json') is False,absent
     contained=_contains_capture_path(tuple(map(Path,roots)),pets)
-    with acquire_storage(pets):pass
-    print(json.dumps({'pets':sorted(ConfigFileStorage().list_pets()),'absent_roots':absent,'contained':contained}))
+    store=ConfigFileStorage()
+    listed=sorted(store.list_pets())
+    # TASK-42115: the pet also saves (its dated copy under the config).
+    saved=store.save('saved',{'name':'Saved','happiness':60,'hunger':30,'energy':80,'health':90,'age':0})
+    print(json.dumps({'pets':listed,'saved':saved,'after_save':sorted(ConfigFileStorage().list_pets()),'absent_roots':absent,'contained':contained}))
     raise SystemExit(0)
 from Tests.Backup_Recovery.test_capture_service import _populate_required_dependencies
 from tldw_chatbook.Backup_Recovery.capture_service import preview_capture
@@ -469,18 +496,20 @@ def succeeded(service,operation):
     assert result['state']=='succeeded',dict(result)
     return result
 
+ABORTS=[]
 def reviewed(service,start,retry,expect='succeeded'):
     result=service.wait(start())
     if result['state']=='recovery_required' and result['review_issues']:
         issues=tuple(result['review_issues'])
         assert all(code.startswith('credential_') for code in issues),issues
+        ABORTS.append(result['result']['journal_operation_id'])
         succeeded(service,service.start_recovery(result['result']['journal_operation_id'],action='abort'))
         result=service.wait(retry(issues))
     assert result['state']==expect,dict(result)
     return result
 
 class RestoreOnly(Exception):
-    # Ends a case after its restore (TASK-42113's default-location refusals).
+    # Ends a case before its later rollback (TASK-42115's chain).
     pass
 
 def located(folders,made):
@@ -506,7 +535,31 @@ def board_only_in_wal(paths,stage):
 shared=Path.home().parent.parent/'source'/'home'
 shared_pets=(Path(os.environ['APPDATA']) if os.name=='nt' else Path.home()/'.config')/'tldw_chatbook'
 service=RecoveryService(default_control_root() if LOCATION=='default' else Path.home()/'recovery-control')
+def plan_for(inspection,issues=()):
+    profile=service.summary(inspection)['profile_ids'][0]
+    choices=dict(mode='replace',profile_bases={},target_configs={profile:source},external_destinations={},
+        profile_names={},target=service.preview_backup((source,),options={}),data_groups=groups,
+        acknowledged_credential_issues=issues)
+    first=service.preview_restore(inspection,**choices)
+    required=required_rollback_dependencies(first)
+    return service.preview_restore(inspection,**choices,safety_scope=required) if required else first
+def inspected():
+    inspection=service.start_inspection(shared/'created.tldw-backup.zip',password=None)
+    succeeded(service,inspection)
+    return inspection
+def crash_at_finalize():
+    # The one crash point (TASK-42154, TASK-42115): this process exits 17 at
+    # finalize_candidate, after publication, and a fresh process recovers it.
+    from tldw_chatbook.Backup_Recovery import publication as crashed
+    crashed.finalize_candidate=lambda *args,**kwargs:os._exit(17)
 try:
+    if role=='crash':
+        # TASK-42115: the chain's next Replace, killed at that crash point.
+        inspection=inspected()
+        crash_at_finalize()
+        reviewed(service,lambda:service.start_restore(inspection,plan_for(inspection),rollback_password=b'rollback-test-password'),
+            lambda issues:service.start_restore(inspection,plan_for(inspection,issues),rollback_password=b'rollback-test-password'))
+        raise AssertionError('the Replace never reached finalize_candidate')
     if role=='source':
         made=produce('source')['made']
         if case.get('legacy_dated_capture'):
@@ -530,41 +583,28 @@ try:
         assert not present(paths),sorted(present(paths))
         own={label:(Path(folders[folder])/leaf,text) for label,(folder,leaf,text) in case.get('target_files',{}).items()}
         shared_before=snapshot(shared_pets)
-        inspection=service.start_inspection(shared/'created.tldw-backup.zip',password=None)
-        succeeded(service,inspection)
-        profile=service.summary(inspection)['profile_ids'][0]
+        inspection=inspected()
         def plan(issues=()):
-            choices=dict(mode='replace',profile_bases={},target_configs={profile:source},external_destinations={},
-                profile_names={},target=service.preview_backup((source,),options={}),data_groups=groups,
-                acknowledged_credential_issues=issues)
-            first=service.preview_restore(inspection,**choices)
-            required=required_rollback_dependencies(first)
-            return service.preview_restore(inspection,**choices,safety_scope=required) if required else first
+            return plan_for(inspection,issues)
+        # Name any refusal behind backup_operation_failed: activation's, which
+        # replacement_rolled_back hides, or the service's own (TASK-42113).
         refusals=[]
-        if case.get('restore_refusal'):
-            # Name the refusal behind backup_operation_failed: activation's,
-            # which replacement_rolled_back hides, or the service's own.
-            from tldw_chatbook.Backup_Recovery import publication,recovery_service as service_module
-            finalize,issue=publication.finalize_candidate,service_module.issue_code
-            def observed_finalize(*args,**kwargs):
-                try:return finalize(*args,**kwargs)
-                except (OSError,ValueError,RuntimeError) as error:
-                    refusals.append(str(error));raise
-            def observed_issue(error,**kwargs):
-                refusals.append(str(error));return issue(error,**kwargs)
-            publication.finalize_candidate,service_module.issue_code=observed_finalize,observed_issue
-        restored=reviewed(service,lambda:service.start_restore(inspection,plan(),rollback_password=b'rollback-test-password'),
-            lambda issues:service.start_restore(inspection,plan(issues),rollback_password=b'rollback-test-password'),
-            expect='failed' if case.get('restore_refusal') else 'succeeded')
-        if case.get('restore_refusal'):
-            # Fail-safe: refused (and rolled back), nothing created, the
-            # profile keeps its pets, and the app starts.
-            assert case['restore_refusal'] in refusals,refusals
-            assert not present(paths),sorted(present(paths))
-            assert all(path.read_text()==text for path,text in own.values()),'the refusal lost the profile\'s pets'
-            assert snapshot(shared_pets)==shared_before,'restore changed the old shared pet folder'
-            assert produce('admit')['permission'][0] is True
-            raise RestoreOnly
+        from tldw_chatbook.Backup_Recovery import publication,recovery_service as service_module
+        finalize,issue=publication.finalize_candidate,service_module.issue_code
+        def observed_finalize(*args,**kwargs):
+            try:return finalize(*args,**kwargs)
+            except (OSError,ValueError,RuntimeError) as error:
+                refusals.append(str(error));raise
+        def observed_issue(error,**kwargs):
+            refusals.append(str(error));return issue(error,**kwargs)
+        publication.finalize_candidate,service_module.issue_code=observed_finalize,observed_issue
+        def named(step):
+            # Each step's failure carries the refusals seen so far.
+            try:return step()
+            except AssertionError as error:
+                raise AssertionError(str(error)+' refusals='+repr(refusals)) from None
+        restored=named(lambda:reviewed(service,lambda:service.start_restore(inspection,plan(),rollback_password=b'rollback-test-password'),
+            lambda issues:service.start_restore(inspection,plan(issues),rollback_password=b'rollback-test-password')))
         operation=restored['result']['journal_operation_id']
         assert present(paths)==set(paths),sorted(set(paths)-present(paths))
         if case.get('admit_after_restore'):
@@ -584,15 +624,64 @@ try:
         retired=[label for label in case.get('retired',()) if own[label][0].exists()]
         assert not retired,'restore kept '+repr(retired)
         assert snapshot(shared_pets)==shared_before,'restore changed the old shared pet folder'
-        if 'pets_after_restore' in case:
+        if case.get('then')=='chain':
+            # TASK-42115: every operation after the Replace retired the pet
+            # file, whose root stays bound and gone (at the default location a
+            # deleted file root), each followed by a fresh start.
+            assert produce('admit')['permission'][0] is True
+            # A backup: capture naming, its session and publication roots.
+            preview=service.preview_backup((source,),options=backup_options)
+            assert preview.complete,[(row.owner,row.status) for row in preview.items if row.status in {'missing_required','unsupported','unavailable'}]
+            named(lambda:succeeded(service,service.start_backup((source,),preview.scope_digest,Path.home()/'after.tldw-backup.zip',options=backup_options,password=None)))
+            assert produce('admit')['permission'][0] is True
+            # A second Replace killed at finalize_candidate, then rollback in
+            # this fresh process: the recovery journal meets the deleted root.
+            crashed=subprocess.run([sys.executable,'-c',Path(os.environ['CREATED_SCENARIO']).read_text(),name,'crash'],
+                capture_output=True,text=True,env=dict(os.environ),timeout=900 if sys.platform=='win32' else 300)
+            assert crashed.returncode==17,crashed.stderr[-4000:]+crashed.stdout[-1000:]
+            pending,_=bootstrap._records(bootstrap.default_bootstrap_root())
+            assert len(pending)==1,pending
+            crash=pending[0]['operation_id']
+            assert 'rollback' in service.status(crash)['actions'],service.status(crash)
+            named(lambda:succeeded(service,service.start_recovery(crash,action='rollback',rollback_password=b'rollback-test-password')))
+            assert not bootstrap._records(bootstrap.default_bootstrap_root())[0]
+            assert produce('admit')['permission'][0] is True
+            # The next Replace completes over the deleted root.
+            second=named(lambda:reviewed(service,lambda:service.start_restore(inspection,plan(),rollback_password=b'rollback-test-password'),
+                lambda issues:service.start_restore(inspection,plan(issues),rollback_password=b'rollback-test-password')))['result']['journal_operation_id']
+            assert produce('admit')['permission'][0] is True
+            # Its later rollback: stopped for review and aborted, then done.
+            first=service.preview_rollback(second,old_password=b'rollback-test-password',target=service.preview_backup((source,),options={}))
+            def later_second(issues=()):
+                approved=first if not issues else service.preview_rollback(second,old_password=b'rollback-test-password',
+                    target=service.preview_backup((source,),options={}),acknowledged_credential_issues=issues)
+                return service.start_rollback(second,approved,old_password=b'rollback-test-password',new_password=b'second-safety-password')
+            aborted=len(ABORTS)
+            named(lambda:reviewed(service,later_second,later_second))
+            assert len(ABORTS)==aborted+1,'the later rollback never stopped for review'
+            assert produce('admit')['permission'][0] is True
+            assert not any(own[label][0].exists() for label in case['retired']),'the retire did not stay in place'
+        if case.get('start'):
             started=produce('start')
-            assert started['pets']==case['pets_after_restore']
+            if 'pets_after_restore' in case:
+                assert started['pets']==case['pets_after_restore']
+            # TASK-42115: the footer pet starts and saves.
+            assert started['saved'] is True and 'saved' in started['after_save'],started
             # TASK-42022: the retired pet file keeps its root in the profile
             # binding (the registry keeps root history by design), and the
             # profile's storage still admits, contains and reads.
-            assert [Path(root) for root in started['absent_roots']]==[own[label][0] for label in case['retired']],started
-            assert started['contained'] is True,started
+            assert [Path(root) for root in started['absent_roots']]==[own[label][0] for label in case.get('retired',())],started
+            if case.get('retired'):assert started['contained'] is True,started
             assert snapshot(shared_pets)==shared_before,'pet start changed the old shared pet folder'
+            assert produce('admit')['permission'][0] is True
+            # TASK-42115 AC#3: once the profile is bound, its pet files are
+            # config companions; only the target's own pet files, which its
+            # first binding found, are roots of their own.
+            registry=bootstrap._registry(bootstrap.default_bootstrap_root())
+            pet_roots={Path(root) for entry in registry.values() for root in entry['roots'] if Path(root).name.startswith('tamagotchi_pets')}
+            assert pet_roots<={path for path,_ in own.values()},sorted(map(str,pet_roots))
+        if case.get('then')=='chain':
+            raise RestoreOnly
         if case.get('extract'):
             # Manual extraction of the backup's pet rows (TASK-42000 AC#3).
             from tldw_chatbook.Backup_Recovery import archive_reader
@@ -640,7 +729,7 @@ try:
                 approved=rollback if not issues else service.preview_rollback(operation,old_password=b'rollback-test-password',
                     target=service.preview_backup((source,),options={}),acknowledged_credential_issues=issues)
                 return service.start_rollback(operation,approved,old_password=b'rollback-test-password',new_password=b'second-safety-password')
-            rolled=reviewed(service,later,later)
+            rolled=named(lambda:reviewed(service,later,later))
             kept=present(paths)
             assert not kept,'rollback kept created files: '+repr(sorted(kept))
             for label in case.get('retired',()):
@@ -790,40 +879,43 @@ def test_a_backup_then_pet_rotation_keeps_the_app_starting(tmp_path, location):
     )
 
 
-@pytest.mark.timeout(2500 if sys.platform == "win32" else 900)
-@pytest.mark.parametrize(
-    "case,refusal",
-    [
-        ("pets-none", "activation_profile_outside_maintenance"),
-        ("pets-missing", "replacement_destination_parent_required"),
-    ],
+# TASK-42115: the pet cases the separate-folder test runs, at the default
+# config location, where the config folder holds recovery-bootstrap and is
+# never a root: the Replace, the pet's start and save, and the later rollback.
+_DEFAULT_PET_CASES = (
+    "pets-dated-only",
+    "pets-missing",
+    "pets-none",
+    "pets-present",
+    "pets-seeded",
+    "pets-ungrouped",
 )
-def test_a_default_location_pet_replace_refuses_and_keeps_the_pets(
-    tmp_path, case, refusal
-):
-    """TASK-42113: at the default config location the config folder holds
-    recovery-bootstrap, so it is never a root and each file beside
-    config.toml is its own. A Replace that retires the profile's pet file
-    refuses at activation and rolls back; one that would create a pet file
-    refuses before publication. Both are fail-safe: nothing is created, the
-    profile keeps its pets and the app starts. TASK-42115 makes them
-    complete."""
-    spec = {
-        key: value
-        for key, value in _CASES[case].items()
-        if key not in ("pets_after_restore", "extract")
-    }
-    spec["restore_refusal"] = refusal
+
+
+def _scenario(tmp_path, case, spec, location):
     script = (
         "CASES="
         + repr({case: spec})
         + "\nBOARD_INSERT="
         + repr(_BOARD_INSERT)
-        + "\nLOCATION='default'\n"
+        + "\nLOCATION="
+        + repr(location)
+        + "\n"
         + _SCENARIO
     )
     for name in ("source", "target"):
         (tmp_path / name).mkdir(mode=0o700)
+    return script
+
+
+@pytest.mark.timeout(2500 if sys.platform == "win32" else 900)
+@pytest.mark.parametrize("case", _DEFAULT_PET_CASES)
+def test_a_default_location_pet_replace_completes_and_rolls_back(tmp_path, case):
+    """TASK-42115: at the default config location a pet Replace completes with
+    the same outcome as on a separate config folder, the pet then starts and
+    saves, and the later rollback retires what the Replace created and brings
+    back what it retired."""
+    script = _scenario(tmp_path, case, _CASES[case], "default")
     _run(
         tmp_path / "source",
         case,
@@ -852,14 +944,13 @@ _CRASH_CASE = {
     "delete": (),
     "refusal": None,
 }
-_CRASH_POINT = "        restored=reviewed(service,"
+_CRASH_POINT = "        restored=named(lambda:reviewed(service,"
 # A missing anchor would leave the scenario uncrashed; fail at import instead.
 assert _SCENARIO.count(_CRASH_POINT) == 1
+# The scenario's own crash point, shared with the chain's crash role
+# (TASK-42115), armed just before the target's restore.
 _CRASH_SCENARIO = _SCENARIO.replace(
-    _CRASH_POINT,
-    "        from tldw_chatbook.Backup_Recovery import publication as crashed\n"
-    "        crashed.finalize_candidate=lambda *args,**kwargs:os._exit(17)\n"
-    + _CRASH_POINT,
+    _CRASH_POINT, "        crash_at_finalize()\n" + _CRASH_POINT
 )
 
 # Each child is a fresh process: the crashed Replace, each recovery step, and
@@ -1025,6 +1116,37 @@ def test_a_default_location_replace_without_settings_completes(tmp_path, case):
     _run(
         tmp_path / "target",
         case,
+        "target",
+        script=script,
+        timeout=2500 if sys.platform == "win32" else 900,
+    )
+
+
+@pytest.mark.timeout(4200 if sys.platform == "win32" else 1500)
+@pytest.mark.parametrize("location", ["default", "separate"])
+def test_the_operations_after_a_retired_pet_root(tmp_path, monkeypatch, location):
+    """TASK-42115 AC#6: after a Replace retires the pet file, its root stays
+    bound and gone (at the default location a deleted file root, on a
+    separate folder an alias its folder root covers). A backup, a second
+    Replace killed at finalize_candidate and then rolled back, the next
+    Replace, and that Replace's later rollback (stopped for review, aborted,
+    then done) all complete, each followed by a fresh start; then the pet
+    starts and saves."""
+    spec = dict(_CASES["pets-none"], then="chain")
+    script = _scenario(tmp_path, "pets-none", spec, location)
+    scenario = tmp_path / "scenario.py"
+    scenario.write_text(script)
+    monkeypatch.setenv("CREATED_SCENARIO", str(scenario))
+    _run(
+        tmp_path / "source",
+        "pets-none",
+        "source",
+        script=script,
+        timeout=1500 if sys.platform == "win32" else 300,
+    )
+    _run(
+        tmp_path / "target",
+        "pets-none",
         "target",
         script=script,
         timeout=2500 if sys.platform == "win32" else 900,

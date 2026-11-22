@@ -70,6 +70,21 @@ _LOCK_POLL_INTERVAL_SECONDS = 0.01
 _local = threading.local()
 
 
+def _deleted_file_roots(registry: _Registry) -> set[Path]:
+    """TASK-42115's deleted file roots over a settled registry, else none.
+
+    While any remap is pending or proposed, every missing root stays strict.
+    """
+    from .effective_roots import deleted_file_roots
+
+    if any(entry.pending or entry.proposed for entry in registry.entries.values()):
+        return set()
+    return deleted_file_roots(
+        (root for entry in registry.entries.values() for root in entry.roots),
+        (entry.model_dump() for entry in registry.entries.values()),
+    )
+
+
 class Admission:
     """Participating-owner leases with stable persistent lock objects."""
 
@@ -420,6 +435,7 @@ class Admission:
                     profiles,
                 )
         tokens, missing = {}, {}
+        deleted = None
         for name, entry in registry.entries.items():
             roots = tuple(
                 Path(r) for r in entry.roots + entry.proposed if Path(r) not in omitted
@@ -431,18 +447,28 @@ class Admission:
                     # redundant alias contributes its unchanged history alone.
                     tokens[name].update(self._tokens(roots))
             except FileNotFoundError:
-                if recovery_journal is None:
-                    raise
+                if deleted is None:
+                    deleted = _deleted_file_roots(registry)
                 for root in roots:
                     try:
                         tokens[name].update(self._tokens((root,)))
                     except FileNotFoundError:
-                        missing.setdefault(root, set()).add(name)
+                        if recovery_journal is not None:
+                            # The journal proves the roots it moved first.
+                            missing.setdefault(root, set()).add(name)
+                        elif root not in deleted:
+                            raise
+                        # TASK-42115: a deleted file root holds nothing; its
+                        # history above still groups it.
         if recovery_journal is not None:
             from .replacement import _recovery_admission_aliases
 
             aliases = _recovery_admission_aliases(
-                recovery_journal, self.control_root, names, tuple(missing)
+                recovery_journal,
+                self.control_root,
+                names,
+                tuple(missing),
+                deleted=deleted or set(),
             )
             for root, (resolved, held) in aliases.items():
                 recovered = self._tokens(held) | {
@@ -497,22 +523,37 @@ class Admission:
             raise AdmissionError("root_identity_unverified")
         return resolved, stat.S_ISDIR(info.st_mode)
 
-    def _publication_roots(self, roots, names, recovery_journal):
+    def _publication_roots(self, roots, names, recovery_journal, registry):
         """Retain selected publication scope across this session's native moves."""
         observed, missing = set(), []
+        deleted = None
         for root in roots:
             try:
                 observed.add(self._publication_root(root))
             except FileNotFoundError:
-                if recovery_journal is None:
+                if deleted is None:
+                    deleted = _deleted_file_roots(registry)
+                if recovery_journal is None and root not in deleted:
                     raise
                 missing.append(root)
-        if missing:
+        aliases = {}
+        if missing and recovery_journal is not None:
             from .replacement import _recovery_admission_aliases
 
+            # The journal proves the roots it moved first (TASK-42115).
             aliases = _recovery_admission_aliases(
-                recovery_journal, self.control_root, names, tuple(missing)
+                recovery_journal,
+                self.control_root,
+                names,
+                tuple(missing),
+                deleted=deleted,
             )
+        for root in missing:
+            if root not in aliases:
+                # TASK-42115: a deleted file root scopes exactly its own path,
+                # so it can be published again.
+                observed.add((root.parent.resolve(strict=True) / root.name, False))
+        if aliases:
             for resolved, held in aliases.values():
                 kinds = [self._publication_root(path)[1] for path in held]
                 # If a replacement changes kind, neither version can widen an
@@ -535,8 +576,13 @@ class Admission:
                 if registry.entries[namespace].roots != [str(r) for r in roots]:
                     raise AdmissionError("remap_required")
                 return
+            from .effective_roots import file_root_tokens
+
+            # TASK-42115: a file root also records the folder it sits in, so a
+            # later deletion is told apart from a missing folder.
             registry.entries[namespace] = _Entry(
-                roots=[str(r) for r in roots], historical=sorted(tokens)
+                roots=[str(r) for r in roots],
+                historical=sorted(tokens | file_root_tokens(roots)),
             )
             group = self._groups(registry, (namespace,))
             with ExitStack() as stack:
@@ -735,6 +781,7 @@ class Admission:
                             self._effective_publication_roots(current, group, recovery_journal),
                             names,
                             recovery_journal,
+                            current,
                         ),
                     )
                     try:
