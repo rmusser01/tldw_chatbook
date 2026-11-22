@@ -28,7 +28,7 @@ class _Stub:
         self.calls.append("context")
 
     def _sync_native_console_chat_ui(self):
-        return "ui-sync-sentinel"
+        """Only its identity matters: run_worker receives the callable."""
 
     def run_worker(self, work, **kw):
         # Since d043e22438 the worker gets the sync callable itself, not a

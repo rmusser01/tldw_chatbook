@@ -308,6 +308,54 @@ async def test_any_early_activation_failure_is_left_to_the_caller(request, tmp_p
 
 @pytest.mark.asyncio
 @private_profile_test
+@pytest.mark.parametrize("second_press", ["retry", "escape"])
+async def test_binding_retry_activates_only_when_the_retry_closes_the_dialog(
+    request, tmp_path, second_press
+):
+    """After a folder binding fails, a successful Retry activates the new
+    workspace before the dialog closes, as a first-try success does. Escape
+    instead delivers the partial result and leaves activation to the caller."""
+    inner = _registry(tmp_path)
+    inner.ensure_default_workspace()
+    log: list = []
+    flaky = _FlakyBindRegistry(_ActivationOrderRegistry(inner, log))
+    project = tmp_path / "project"
+    project.mkdir()
+    app = _HarnessApp(flaky)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#workspace-create-name", Input).value = "Retried"
+        modal.query_one("#workspace-create-make-active", Checkbox).value = True
+        modal.query_one("#workspace-create-folder-path", Input).value = str(project)
+        await _click_visible(pilot, "#workspace-create-folder-add")
+        await pilot.pause()
+        await _click_visible(pilot, "#workspace-create-confirm")
+        await pilot.pause()
+        assert app.result == "unset"
+        assert log == []
+
+        flaky.should_fail = False
+        if second_press == "retry":
+            modal.query_one("#workspace-create-confirm", Button).press()
+        else:
+            await pilot.press("escape")
+        await pilot.pause()
+
+    result = app.result
+    assert isinstance(result, WorkspaceCreateResult)
+    assert result.make_active is True
+    active = inner.get_active_workspace().workspace_id
+    if second_press == "retry":
+        assert log == [("activate", result.workspace_id)]
+        assert active == result.workspace_id
+    else:
+        assert log == []
+        assert active == "workspace-default"
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_profile_interview_offer_is_opt_in_and_carried_on_result(
     request, tmp_path
 ):
