@@ -296,7 +296,14 @@ _DECLARED_ENTRY = {
         "library-conversations-filter",
     ),
     "browse-notes": ("library-notes-filter", "library-notes-new", "library-notes-row-"),
-    "browse-prompts": ("library-prompts-filter", "library-prompt-row-"),
+    # Sort is Prompts' own "stable sort control": its page reload, started
+    # by the resume while nothing was focused, restores there after the
+    # landing when it finishes last (``_restore_library_prompts_focus``).
+    "browse-prompts": (
+        "library-prompts-filter",
+        "library-prompt-row-",
+        "library-prompts-sort",
+    ),
     "browse-skills": ("library-skills-filter", "library-skill-row-"),
     "browse-collections": (
         "library-collections-quick-capture",
@@ -344,11 +351,15 @@ def _declares(row: str, widget_id: str | None) -> bool:
 async def _walk_routes(tmp_path, monkeypatch, group: int) -> list[str]:
     """Resume over nothing focused on every row of one group; report misses.
 
-    Each row is judged only after its last landing check ran: the resume's
-    own, and for a list route the one more check after the entry window.
+    Each row is judged only after every landing check the resume queued has
+    run: its own, and any re-check it set a timer for after the entry
+    window. Prompts gets a real prompt source, so its page loads (without
+    one its failed load rebuilds the canvas after the landing, a drift of
+    its own that is not this walk's subject).
     """
     navigation = library_navigation_controller.LibraryNavigationController
     checks: list[str] = []
+    rechecks: list[float] = []
     last_resort = navigation._land_content_focus_if_unfocused
 
     def counted(self) -> None:
@@ -356,13 +367,24 @@ async def _walk_routes(tmp_path, monkeypatch, group: int) -> list[str]:
         last_resort(self)
 
     monkeypatch.setattr(navigation, "_land_content_focus_if_unfocused", counted)
+    db, prompts = _real_prompt_scope_service(tmp_path)
+    db.add_prompt(name="Release assistant", author="Ada", details="Release notes")
     profile = _Profile(tmp_path, monkeypatch)
     host = profile.host()
+    host.app_instance.prompt_scope_service = prompts
     misses: list[str] = []
     try:
         async with host.run_test(size=SIZE) as pilot:
             screen = _active_library_screen(host)
             await _wait_for_library_shell(screen, pilot)
+            set_timer = screen.set_timer
+
+            def recorded_set_timer(delay, callback=None, *args, **kwargs):
+                if getattr(callback, "__func__", None) is counted:
+                    rechecks.append(delay)
+                return set_timer(delay, callback, *args, **kwargs)
+
+            monkeypatch.setattr(screen, "set_timer", recorded_set_timer)
             shell = build_library_shell_state(screen._build_library_shell_input())
             rows = [""]
             rows += [row.row_id for section in shell.sections for row in section.rows]
@@ -376,13 +398,11 @@ async def _walk_routes(tmp_path, monkeypatch, group: int) -> list[str]:
                 await pilot.pause()
                 screen._disarm_library_list_entry_focus()
                 await _clear_focus(screen, pilot)
-                expected = len(checks) + (
-                    2 if row in library_navigation_controller._LIST_ENTRY_ROWS else 1
-                )
+                before = len(checks) - len(rechecks)
                 await _f1_shortcuts(host, screen, pilot)
                 await _until(
                     pilot,
-                    lambda expected=expected: len(checks) >= expected
+                    lambda before=before: len(checks) - len(rechecks) > before
                     and not screen._library_pending_list_entry_focus,
                     lambda row=row: f"{row or '(hub)'}: the landing checks to run",
                 )

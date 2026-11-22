@@ -568,7 +568,12 @@ async def test_a_check_started_with_focus_outside_the_import_says_esc_cancel(
     check's recompose removed the focused control and Textual's focus reset
     refreshed the screen. With focus outside the import -- here on the Items
     pane grip, where that reset parks it -- the footer said Escape goes back
-    to Notes while Escape cancelled the check.
+    to Notes while Escape cancelled the check. The grip is focused as a
+    click focuses it, so the check's own repaint keeps it (TASK-41600). A
+    grip focused in code reads as Textual's reset to that repaint, which
+    restores focus into the import -- a focus move that repaints the footer
+    by itself, and that under load could land before the publish did
+    (nav-home round 3: 1 red in 40 solo runs).
     """
     profile = _Profile(tmp_path, monkeypatch)
     check = _Gate()
@@ -606,6 +611,8 @@ async def test_a_check_started_with_focus_outside_the_import_says_esc_cancel(
                 "the selection to settle",
             )
             grip = screen.query_one("#library-browse-items-grip")
+            # What a click on the grip records (``get_focusable_widget_at``).
+            screen._library_input_focus = grip
             screen.set_focus(grip)
 
             await _press(host, screen, pilot, "#note-import-check")
