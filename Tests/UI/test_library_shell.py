@@ -13155,7 +13155,8 @@ async def test_library_media_initial_error_is_unknown_and_retry_is_unique() -> N
             ),
             message=lambda: (
                 "Media Retry never recovered to a bounded focus target; "
-                f"focused={getattr(screen.focused, 'id', None)!r}."
+                f"focused={getattr(screen.focused, 'id', None)!r}, title="
+                f"{bool(screen.query('#library-media-title')) and str(screen.query_one('#library-media-title', Static).renderable)!r}."
             ),
         )
         assert str(screen.query_one("#library-media-title", Static).renderable) == (
