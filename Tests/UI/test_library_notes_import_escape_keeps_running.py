@@ -269,14 +269,7 @@ async def _f1_shortcuts(host, screen, pilot) -> tuple[tuple[str, str], ...]:
     )
     shortcuts = tuple(host.screen.state.shortcuts)
     await pilot.press("escape")
-    # ``App.pop_screen`` flips the stack and only POSTS ``ScreenResume``, and
-    # that dispatch runs Textual's auto-focus: a key pressed before it is
-    # handled lets it land inside the Escape's parked-focus window.
-    await _until(
-        pilot,
-        lambda: host.screen is screen and not screen._library_screen_suspended,
-        "help to close and the Library to resume",
-    )
+    await _until(pilot, lambda: host.screen is screen, "help to close")
     return shortcuts
 
 
