@@ -21,6 +21,7 @@ from textual.widgets import Button, Input, Select, Static, Tree
 from Tests.UI.test_console_narrow_layout import _compositor_text
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.UI.Screens.change_review_screen import (
+    ChangeRevertConfirmModal,
     ChangeReviewDiffPane,
     ChangeReviewScreen,
     _hunk_containing_line,
@@ -203,6 +204,40 @@ async def _wait_for(pilot, predicate, what: str, timeout: float = 8.0):
             return result
         await pilot.pause(0.05)
     raise AssertionError(f"timed out waiting for {what}")
+
+
+async def click_modal_button(pilot, selector="#change-revert-yes"):
+    """Click a confirmation button once the modal has laid it out.
+
+    TASK-41505: `pilot.click` aims at the region the button has when it is
+    called. A mounted button has an empty region until the modal's next
+    layout, so an earlier click lands at (0, 0) and the Undo never runs.
+    TASK-42137 moved it here from the native Undo tests, so every
+    confirmation click in the Review, Console Undo All and native Undo
+    tests shares one copy.
+    """
+
+    def placed():
+        screen = pilot.app.screen
+        if not isinstance(screen, ChangeRevertConfirmModal):
+            return False
+        return any(button.region for button in screen.query(selector))
+
+    await _wait_for(pilot, placed, f"{selector} laid out on the confirmation")
+    region = pilot.app.screen.query_one(selector).region
+    assert await pilot.click(selector), f"the click at {region} missed {selector}"
+
+
+def _reads(path: Path, text: str) -> bool:
+    """Whether ``path`` holds ``text``; absent counts as not yet.
+
+    TASK-42137: the revert's ``git checkout`` unlinks and rewrites the file,
+    so a wait that read it mid-restore raised FileNotFoundError.
+    """
+    try:
+        return path.read_text() == text
+    except FileNotFoundError:
+        return False
 
 
 def _tree_labels(tree: Tree) -> list[str]:
@@ -479,10 +514,10 @@ async def test_u_reverts_the_focused_file_through_the_confirm(review_fixture):
         assert "edit.txt" in str(
             modal.query_one("#change-revert-confirm").children[0].renderable
         )
-        await pilot.click("#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(
             pilot,
-            lambda: (root / "edit.txt").read_text() == "before\n" or None,
+            lambda: _reads(root / "edit.txt", "before\n") or None,
             "disk restored to baseline",
         )
 
@@ -534,10 +569,10 @@ async def test_revert_preflight_and_apply_run_off_the_ui_thread(
             ),
             "confirm modal",
         )
-        await pilot.click("#change-revert-yes")
+        await click_modal_button(pilot)
         await _wait_for(
             pilot,
-            lambda: (root / "edit.txt").read_text() == "before\n" or None,
+            lambda: _reads(root / "edit.txt", "before\n") or None,
             "disk restored to baseline",
         )
 
@@ -614,7 +649,7 @@ async def test_revert_refusal_during_active_run_reaches_the_user(review_fixture)
             ),
             "confirm modal",
         )
-        await pilot.click("#change-revert-yes")
+        await click_modal_button(pilot)
         await pilot.pause()
         await pilot.pause()
         assert (root / "edit.txt").read_text() == "after\n", (
@@ -1320,7 +1355,7 @@ async def test_undo_all_refuses_same_root_windows_before_preflight(
         assert (root / "shared.txt").read_text() == "BRAVO_ONLY_MARKER\n"
         assert notices == [
             (
-                "This turn has multiple change windows for the same workspace. "
+                "This turn has multiple change windows for the same folder. "
                 "Revert files individually from one labeled window at a time.",
                 "warning",
             )

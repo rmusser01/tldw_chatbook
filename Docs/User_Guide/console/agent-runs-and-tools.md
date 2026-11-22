@@ -1045,6 +1045,38 @@ not enable automatic routing or establish savings by themselves.
 
 ### Change review — reviewing a turn's file changes
 
+Change Review is **off for every new workspace until you enable it** in
+**Settings ▸ Workspaces**: select the workspace and choose **Enable change
+review** under "Change review (post-run diffs)". The global `[change_review]
+enabled` setting (default `true`) is only a capability switch; it never opts a
+workspace in by itself. When Git is missing, the global setting is off, or the
+workspace's Change Review state cannot be read, Settings shows why in place of
+the button, and Console continues without change tracking.
+
+Enabling prepares each bound folder in a bounded background queue; chat and
+file tools never wait for it. Settings counts the folders that are preparing,
+ready or failed, and offers **Retry failed preparation** when any failed. A
+full queue also marks a folder failed, so it can be retried. A folder whose
+earlier cleanup could not be proven instead waits for an app restart, which a
+retry does not clear. A turn that starts while a folder is not ready continues
+normally, and its transcript gets a "⚠ change review skipped …" warning that
+names the folder by its binding id, not its path, and gives the reason. The
+warning is only a note: it is not a snapshot, so it cannot be reviewed,
+reverted, retained or cleaned up.
+
+The privacy tradeoff is explicit: Change Review stores shadow Git history,
+including file contents, in a `change_review` folder in the application's data
+directory. While the app runs, a retention pass runs about a minute after
+startup and then daily. It removes recorded turns older than 30 days
+(`[change_review] retention_days`; 0 or less turns retention off and keeps
+everything), except turns a phased workflow still refers to. Each snapshot
+builds on the one before it, so a folder's shadow history is deleted only once
+none of its recorded turns is left, or once the folder itself is gone and its
+history is older than that period. While a folder keeps recording turns, the
+file contents of its older turns stay in that history. Disabling a workspace
+stops new snapshots but does **not** erase history already kept; retention
+still governs it.
+
 When an agent turn edits files in a workspace with Change Review enabled
 (**Settings ▸ Workspaces**), the transcript shows a **turn file card**
 directly under that turn instead of a plain summary line: a header with the
@@ -1218,9 +1250,9 @@ listed and checked (uncheck one to leave it out), **Commit message
 (required)** must be filled, and **Create branch first (optional)** checks
 out a new branch before committing. A warning line such as "⚠ committing
 directly to main" or "⚠ detached HEAD — this commit will not be on any
-branch" never blocks the commit. While an agent run is active on that
-workspace, the commit is refused before the dialog opens: "a run is active
-on this workspace — finish or stop the run first". A repository in the
+branch" never blocks the commit. While an agent run is active in that
+repository's folder, the commit is refused before the dialog opens: "a run
+is active in this folder — finish or stop the run first". A repository in the
 middle of a merge, rebase or cherry-pick is refused when you confirm, not
 before: the dialog closes and the notice reads "Commit failed at
 in-progress-check: finish or abort the merge/rebase/cherry-pick first". The

@@ -505,6 +505,10 @@ async def test_active_run_refuses_before_any_modal_or_status_read(
 
         assert notes, "an active run must refuse audibly"
         assert COMMIT_RUN_ACTIVE_REFUSAL in str(notes[0][0][0])
+        # TASK-42137: the check is per root folder, as Console's Undo All says.
+        assert COMMIT_RUN_ACTIVE_REFUSAL == (
+            "a run is active in this folder — finish or stop the run first"
+        )
         assert app.screen is screen, "no commit modal may be pushed"
         assert status_calls == [], (
             f"no preflight read may run for a refused commit; got {status_calls!r}"
@@ -840,7 +844,7 @@ async def test_an_unexpected_commit_error_is_not_dressed_as_a_refusal(
         def refusing_commit(root, files, message, new_branch):
             from tldw_chatbook.Workspaces.git_workspace import CommitRefusedError
 
-            raise CommitRefusedError("a run is active on this workspace")
+            raise CommitRefusedError(COMMIT_RUN_ACTIVE_REFUSAL)
 
         provider.commit_selected = refusing_commit
         seen.clear()
@@ -850,7 +854,7 @@ async def test_an_unexpected_commit_error_is_not_dressed_as_a_refusal(
         await _wait_idle(pilot, app, GIT_ACTION_WORKER_GROUP)
 
         message, kwargs = seen[0]
-        assert message == "a run is active on this workspace", message
+        assert message == COMMIT_RUN_ACTIVE_REFUSAL, message
         assert kwargs.get("severity") == "warning", kwargs
 
 

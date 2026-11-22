@@ -97,7 +97,7 @@ GIT_ACTION_WORKER_GROUP = "change-review-git-action"
 #: carries, so the screen's early refusal and the engine's own last-moment
 #: one can never read differently to the user.
 COMMIT_RUN_ACTIVE_REFUSAL = (
-    "a run is active on this workspace — finish or stop the run first"
+    "a run is active in this folder — finish or stop the run first"
 )
 
 #: Why the `Commit…` button is disabled, as tooltip AND notify copy -- spec
@@ -164,7 +164,7 @@ _OTHER_GROUP = "Other"
 #: card already uses this wording when it routes the user here; Review adds
 #: the recovery because its whole-turn shortcut must not replay those rows.
 MULTI_WINDOW_UNDO_REFUSAL = (
-    "This turn has multiple change windows for the same workspace. "
+    "This turn has multiple change windows for the same folder. "
     "Revert files individually from one labeled window at a time."
 )
 
@@ -1973,8 +1973,8 @@ class ChangeReviewScreen(Screen):
         """A commit the engine DECLINED to run: report its reason verbatim.
 
         Only ``CommitRefusedError``/``GitWorkspaceError`` reaches here --
-        the engine's own honest preconditions ("a run is active on this
-        workspace…", "no files selected to commit", "commit message must
+        the engine's own honest preconditions ("a run is active in this
+        folder…", "no files selected to commit", "commit message must
         not be blank"). An unexpected exception goes to
         :meth:`_land_commit_error` instead, so the two can never read
         alike (the push side has said this since T8).

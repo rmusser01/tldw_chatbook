@@ -165,8 +165,12 @@ def test_traversal_paths_are_refused_lexically(turn):
 
 def test_revert_refuses_while_a_run_is_active(turn):
     service, db, root, row = turn
-    with pytest.raises(RevertRefusedError, match="run"):
+    with pytest.raises(RevertRefusedError) as raised:
         revert_paths(service, db, row, ["edit.txt"], run_active=lambda: True)
+    # TASK-42137: the run-active check is per root folder, so it says so.
+    assert str(raised.value) == (
+        "a run is active in this folder — finish or stop the run first"
+    )
     assert (root / "edit.txt").read_text() == "after\n", (
         "the refusal must happen BEFORE any file is touched"
     )

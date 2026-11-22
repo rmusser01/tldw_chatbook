@@ -182,7 +182,7 @@ def revert_paths(
         native.require_revert(service, db, row, paths)
     if run_active():
         raise RevertRefusedError(
-            "a run is active on this workspace — finish or stop the run first"
+            "a run is active in this folder — finish or stop the run first"
         )
     repo = service.repo_for_root(row["root"])
     root = Path(str(row["root"]))

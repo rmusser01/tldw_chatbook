@@ -921,7 +921,7 @@ def commit_selected(
     """
     if run_active():
         raise CommitRefusedError(
-            "a run is active on this workspace — finish or stop the run first"
+            "a run is active in this folder — finish or stop the run first"
         )
     if not files:
         raise GitWorkspaceError("no files selected to commit")

@@ -392,18 +392,18 @@ def prepare_console_turn_undo(provider: Any, run_id: str) -> ConsoleTurnUndoPlan
         root = str(row.get("root") or "")
         if not root:
             raise ConsoleTurnUndoUnavailableError(
-                "Undo All is unavailable because a change snapshot has no workspace."
+                "Undo All is unavailable because a change snapshot has no folder."
             )
         canonical = os.path.normcase(os.path.normpath(root))
         if canonical in seen_roots:
             raise ConsoleTurnUndoAmbiguousError(
-                "This turn has multiple change windows for the same workspace."
+                "This turn has multiple change windows for the same folder."
             )
         seen_roots.add(canonical)
     roots = tuple(str(row["root"]) for row in turn.rows)
     if _console_turn_undo_run_active(provider, roots):
         raise ConsoleTurnUndoUnavailableError(
-            "A run is active on this workspace — finish or stop the run first."
+            "A run is active in a folder this turn changed — finish or stop the run first."
         )
 
     rows_paths: list[tuple[dict, tuple[str, ...]]] = []
@@ -463,7 +463,7 @@ def apply_console_turn_undo(provider: Any, plan: ConsoleTurnUndoPlan) -> list:
     roots = tuple(str(row["root"]) for row, _paths in plan.rows_paths)
     if _console_turn_undo_run_active(provider, roots):
         raise ConsoleTurnUndoUnavailableError(
-            "A run is active on this workspace — finish or stop the run first."
+            "A run is active in a folder this turn changed — finish or stop the run first."
         )
 
     current_edited: set[tuple[str, str]] = set()
