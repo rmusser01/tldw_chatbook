@@ -190,32 +190,6 @@ async def test_actual_composer_refusal_preserves_draft_and_rules_is_native(tmp_p
         )
 
 
-async def _wait_for_visible_stop(case):
-    stop = case.console.query_one("#console-stop-generation", Button)
-    # Rule copy publishes immediately; checked controls may replay later.
-    # Pilot caches the click origin before its own layout pause.
-    async with asyncio.timeout(5):
-        while True:
-            region = stop.region
-            if (
-                stop.is_mounted
-                and stop.display
-                and stop.visible
-                and not stop.disabled
-                and region.width > 0
-                and region.height > 0
-            ):
-                try:
-                    hit, _ = case.host.screen.get_widget_at(region.x, region.y)
-                except NoWidget:
-                    pass
-                else:
-                    if hit is stop:
-                        break
-            await asyncio.sleep(0.01)
-    assert stop.display and not stop.disabled
-
-
 @pytest.mark.asyncio
 async def test_actual_stop_after_generation_cancels_rule_check(tmp_path):
     from Tests.Chat.response_rules_fixtures import source
@@ -570,7 +544,29 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
             assert not case.console._console_transcript_poll_needed()
             assert _run_visible(case.console)
             assert "Drafting rule" in _run_text(case.console)
-            await _wait_for_visible_stop(case)
+            stop = case.console.query_one("#console-stop-generation", Button)
+            # Rule copy publishes immediately; checked controls may replay later.
+            # Pilot caches the click origin before its own layout pause.
+            async with asyncio.timeout(5):
+                while True:
+                    region = stop.region
+                    if (
+                        stop.is_mounted
+                        and stop.display
+                        and stop.visible
+                        and not stop.disabled
+                        and region.width > 0
+                        and region.height > 0
+                    ):
+                        try:
+                            hit, _ = case.host.screen.get_widget_at(region.x, region.y)
+                        except NoWidget:
+                            pass
+                        else:
+                            if hit is stop:
+                                break
+                    await asyncio.sleep(0.01)
+            assert stop.display and not stop.disabled
             assert await case.pilot.click("#console-stop-generation")
             await case.pilot.pause()
             assert case.composer.draft_text() == complaint
