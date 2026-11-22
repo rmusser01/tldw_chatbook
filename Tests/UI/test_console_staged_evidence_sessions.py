@@ -865,11 +865,15 @@ async def test_original_stock_handler_accepts_b_without_consuming_a_staging(
         await _wait_for_new_chat(store, pilot, first)
         second = store.active_session_id
         await _select_llamacpp_console(console)
+        # The received route also needs the Console's arrival read of the
+        # emergency stop; a press before it lands correctly takes the
+        # ordinary dispatch (received_send_held), which the pin below refuses.
         assert await _until(
             lambda: console._console_visible_draft_session_id == second
             and console._console_attach_reconciled
             and not console._console_attach_reconcile_running
-            and console._hooks._permissions().snapshot().ready,
+            and console._hooks._permissions().snapshot().ready
+            and getattr(console, "_console_emergency_stop_path", None) is not None,
             15,
         )
         assert runtime.snapshot_console_staged_evidence(second) == (None, 0, None)
@@ -924,30 +928,30 @@ async def test_original_stock_handler_accepts_b_without_consuming_a_staging(
             assert record.store is store
             assert record.request is not None and record.request.session_id == second
             assert record.request.staged_evidence_launch is None
-            if record.received_intent is not None:
-                assert record.received_intent.staged_evidence_launch is None
-                # This press now takes the received route (it took the
-                # ordinary one at fc80778b01, 2026-11-02; bisected into the
-                # TASK-39147 native-phase series that landed by 064d5cb014,
-                # 2026-11-09). Its intent carries B's own snapshot at the
-                # press: nothing staged, revision 0, the empty answer of
-                # snapshot_console_staged_evidence asserted above. That is
-                # harmless: 0 is no launch's revision (each stage and release
-                # takes the next one, from 1); it only fences B's staging
-                # during preparation (require_received_source); and with no
-                # launch no evidence lease, so no release, is built from it.
-                # The ordinary route carries None instead.
-                assert record.inputs.staged_evidence_revision == 0
-                assert record.received_intent.staged_evidence_revision == 0
-            else:
-                assert record.inputs.staged_evidence_revision is None
+            record_property(
+                "pr3331_received_intent", record.received_intent is not None
+            )
+            # This press takes the received route (it took the ordinary one at
+            # fc80778b01, 2026-11-02; bisected into the TASK-39147 native-phase
+            # series that landed by 064d5cb014, 2026-11-09). Pinned, so a
+            # silent fall-back to the ordinary dispatch fails here.
+            assert record.received_intent is not None, (
+                "the stock handler's send fell back to the ordinary dispatch"
+            )
+            assert record.received_intent.staged_evidence_launch is None
+            # The intent carries B's own snapshot at the press: nothing staged,
+            # revision 0, the empty answer of snapshot_console_staged_evidence
+            # asserted above. That is harmless: 0 is no launch's revision (each
+            # stage and release takes the next one, from 1); it only fences B's
+            # staging during preparation (require_received_source); and with no
+            # launch no evidence lease, so no release, is built from it. The
+            # ordinary route would carry None.
+            assert record.inputs.staged_evidence_revision == 0
+            assert record.received_intent.staged_evidence_revision == 0
             assert record.inputs.staged_evidence_revision != first_state[1]
             # Issued only by the real acceptance owner, never set by this test.
             assert record.inputs.durable_accepted is True
             record_property("pr3331_durable_accepted", record.inputs.durable_accepted)
-            record_property(
-                "pr3331_received_intent", record.received_intent is not None
-            )
             assert len(gateway.sent_messages) == 1
             assert EVIDENCE not in _last_request_text(gateway)
             assert capture.await_count == 0

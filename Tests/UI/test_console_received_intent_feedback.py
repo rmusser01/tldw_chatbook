@@ -877,6 +877,11 @@ async def test_keys_typed_onto_the_shown_draft_after_enter_keep_the_send(
             5,
         ), (case.composer.draft_text(), case.store.session_draft(case.session.id))
         assert record.received_intent.inputs.draft == case.draft
+        # The probe gives up holding after 8 s; past that the keys did not
+        # land while the send prepared, so the case proves nothing.
+        assert not case.probe.release_timed_out, (
+            "the preparation hold timed out before the typed keys landed"
+        )
 
         case.probe.release.set()
         await _turn_settles(case, record.task)
