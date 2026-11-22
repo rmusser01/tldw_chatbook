@@ -938,7 +938,11 @@ _BUDGETS: dict[str, int] = {
     # contort code): `land_entry_focus_after_resume` lands a Library that
     # resumed with nothing focused on its route's own entry, never the nav
     # bar: 203 -> 256 (measured).
-    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 256,
+    # 2026-11-22, review r11n (same owner decision: expand limits, don't
+    # contort code): Folder files' own landing, a re-check after the
+    # list-entry window, and each route's entry control in the last resort:
+    # 256 -> 323 (measured).
+    "tldw_chatbook/UI/Library_Modules/library_navigation_controller.py": 323,
     "tldw_chatbook/UI/Library_Modules/library_media_trash_browse_controller.py": 319,
     # 2026-09-09, task-32129 (Obsidian mode for Import once): 587 -> 602
     # (+15), a BEHAVIOUR ADD -- `set_obsidian_mode` (6 lines) plus the

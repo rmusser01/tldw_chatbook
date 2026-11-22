@@ -1695,7 +1695,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: contort code): ``on_screen_resume`` suppresses Textual's nav-bar
     #: auto-focus and lands the route's entry when nothing is focused:
     #: 33532 -> 33537 lines, methods unchanged (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33537, 1314),
+    #: 2026-11-22, review r11n M-1 (same owner decision): the lifecycle
+    #: restore keeps a landing action in place instead of the rail's Import:
+    #: 33537 -> 33543 lines, methods unchanged (measured).
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 33543, 1314),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
