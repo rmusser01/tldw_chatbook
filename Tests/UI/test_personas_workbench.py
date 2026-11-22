@@ -435,7 +435,7 @@ _LIBRARY_CONTROL_IDS = (
 
 #: Painted ``(x, width)`` of the library, the work area and the inspector at
 #: height 36 under both styled tiers. At or below 90 and from 98 up these are
-#: origin/dev 29592ecc9b's columns, measured there, and TASK-33910.49 keeps
+#: dev 8a55555798's columns, measured there, and TASK-33910.49 keeps
 #: them. On that dev 91-97 painted the 2:4:2 split at about twice the screen
 #: (library 174-186 columns wide); this PR fixes that, and these rows are the
 #: compact split it shows there instead, as at 90 (measured on this branch).
@@ -562,7 +562,7 @@ class TestWorkbenchShell:
     ):
         """TASK-33910.49: the panes and the library's controls fit, at dev's columns.
 
-        On origin/dev 29592ecc9b the compact cut-off is 90 while the 2:4:2
+        On dev 8a55555798 the compact cut-off is 90 while the 2:4:2
         minimums need 98 columns, so from 91 to 97 the library pane paints
         174-186 columns wide and its Import… and + New sit off-screen. This
         PR fixes it. Outside 91-97 the columns are dev's, unchanged.
@@ -580,7 +580,7 @@ class TestWorkbenchShell:
     ):
         """TASK-33910.49: one resize sweep, every column count from 80 to 220.
 
-        On origin/dev 29592ecc9b this is red at 91 (the first width past the
+        On dev 8a55555798 this is red at 91 (the first width past the
         compact cut-off of 90 that the 2:4:2 minimums cannot fill); this PR
         fixes it.
         """
@@ -602,7 +602,7 @@ class TestWorkbenchShell:
         """TASK-33910.49: the cut-off is pinned to the CSS minimums it depends on.
 
         The 2:4:2 split's minimum widths live in the stylesheet and the cut-off
-        in ``personas_screen.py``. On origin/dev 29592ecc9b they disagree (90
+        in ``personas_screen.py``. On dev 8a55555798 they disagree (90
         against the 98 columns the minimums need), which is the 91-97 overflow;
         this PR fixes it. Measured from the mounted panes, so a CSS change to
         a minimum, a margin or the workbench's border or padding fails here

@@ -1082,9 +1082,9 @@ async def test_blank_after_from_a_concept_closes_the_concept_row(
 ):
     """TASK-33910.50: Character · Blank after From a concept hides the row.
 
-    On origin/dev 29592ecc9b the row and its text stay on the blank draft
+    On dev 8a55555798 the row and its text stay on the blank draft
     (B2b made it reachable from the New chooser); this PR fixes it. The row
-    comes back, empty and focused, only when From a concept is picked again.
+    comes back, empty and focused, when From a concept is picked again.
     """
     async with open_styled_roleplay(
         "mock", mock_app_instance, size=(160, 45), character_db=volume_348

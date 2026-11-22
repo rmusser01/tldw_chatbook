@@ -137,7 +137,7 @@ async def test_preview_is_hidden_until_a_generation_arrives():
 async def test_a_new_editor_session_closes_and_empties_the_concept_row(session):
     """TASK-33910.50: the concept row belongs to the session that opened it.
 
-    On origin/dev 29592ecc9b ``new_character`` (New › Character · Blank, and
+    On dev 8a55555798 ``new_character`` (New › Character · Blank, and
     From a portrait with ``actor_pack=True``) and ``load_character`` (Edit)
     leave a concept row opened by "Generate whole character…" or From a
     concept showing, with its text; this PR fixes it.

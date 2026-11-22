@@ -236,7 +236,7 @@ async def test_blank_after_generate_whole_character_closes_the_concept_row(
 ):
     """TASK-33910.50 on dev's own path: "Generate whole character…", then Blank.
 
-    On origin/dev 29592ecc9b New › Character · Blank leaves the row this
+    On dev 8a55555798 New › Character · Blank leaves the row this
     button opened showing, with its text; this PR fixes it.
     """
     controller = _FakeController(result={})
