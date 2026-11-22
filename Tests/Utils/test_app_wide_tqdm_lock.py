@@ -194,3 +194,45 @@ def test_the_package_decides_tqdms_lock_without_importing_tqdm(tmp_path, order):
     assert result["tqdm_after_package"] is (order == "tqdm-first")
     assert result["mp_lock"] == "None"
     assert result["app_modules_added_by_tqdm"] == []
+
+
+_DOUBLE_ARMING_PROBE = textwrap.dedent(
+    """
+    import importlib, json, sys
+
+    sys.path.insert(0, sys.argv[1])
+    import tldw_chatbook
+
+    # The package init runs again before tqdm loads (a reload, or a second
+    # copy of the package): each run defines its own finder class.
+    importlib.reload(tldw_chatbook)
+    result = {
+        "armers": sum(
+            1 for finder in sys.meta_path if type(finder).__name__ == "_TqdmLockArmingFinder"
+        )
+    }
+    try:
+        from tqdm import std
+    except RecursionError as exc:
+        result["error"] = f"RecursionError: {exc}"
+    else:
+        result["mp_lock"] = repr(
+            std.TqdmDefaultWriteLock.__dict__.get("mp_lock", "<unset>")
+        )
+    print("RESULT " + json.dumps(result))
+    """
+)
+
+
+def test_running_the_package_init_twice_still_imports_tqdm(tmp_path):
+    """Two executions of the init must not leave finders delegating to each other.
+
+    Each execution defined a new finder class, so the isinstance guard missed
+    the first finder; the two then asked each other for ``tqdm.std`` and every
+    later ``import tqdm`` raised RecursionError.
+    """
+    result = _run(_DOUBLE_ARMING_PROBE, tmp_path=tmp_path)
+
+    assert "error" not in result, result["error"][:200]
+    assert result["armers"] == 1
+    assert result["mp_lock"] == "None"

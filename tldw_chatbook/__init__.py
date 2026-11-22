@@ -45,7 +45,15 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Nothing is imported here, so the boot import census is unchanged. Console
 # dictation keeps its own guard (``Utils/model_download_guard.py``), which
 # also repairs a lock that was wedged before this ran.
+# Incompatible: ``tqdm.contrib.concurrent.process_map``. It shares the lock's
+# ``mp_lock`` with its workers (``ensure_lock(lock_name="mp_lock")``), which is
+# None here, so tqdm 4.67.3 calls ``set_lock(None)`` and the next bar raises
+# TypeError. Nothing in this repo or its dependencies calls it today;
+# ``thread_map`` is unaffected.
 _TQDM_LOCK_MODULE = "tqdm.std"
+#: Marks an armer from ANY execution of this init (a reload defines a new
+#: class), so two never coexist or ask each other for ``tqdm.std``.
+_TQDM_ARMER_MARKER = "_tldw_tqdm_lock_armer"
 
 
 def _decide_tqdm_write_lock(module: object) -> None:
@@ -82,15 +90,18 @@ class _TqdmLockArmingLoader:
 class _TqdmLockArmingFinder:
     """Meta-path finder that arms ``tqdm.std``'s first import, then retires."""
 
+    _tldw_tqdm_lock_armer = True
+
     def find_spec(
         self, fullname: str, path: object = None, target: object = None
     ) -> object:
         if fullname != _TQDM_LOCK_MODULE:
             return None
-        # Ask the remaining finders, as the import system would after us.
+        # Ask the remaining finders, as the import system would after us; never
+        # another armer, which would ask us back (unbounded recursion).
         for finder in tuple(sys.meta_path):
             find_spec = getattr(finder, "find_spec", None)
-            if finder is self or find_spec is None:
+            if find_spec is None or getattr(finder, _TQDM_ARMER_MARKER, False):
                 continue
             spec = find_spec(fullname, path, target)
             if spec is not None:
@@ -114,7 +125,7 @@ def _arm_tqdm_write_lock() -> None:
     if module is not None:
         _decide_tqdm_write_lock(module)
         return
-    if not any(isinstance(f, _TqdmLockArmingFinder) for f in sys.meta_path):
+    if not any(getattr(f, _TQDM_ARMER_MARKER, False) for f in sys.meta_path):
         sys.meta_path.insert(0, _TqdmLockArmingFinder())
 
 
